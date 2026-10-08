@@ -15,7 +15,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "manifest.json"
 UPDATES = ROOT / "extension" / "updates.json"
-ZIP_OUT = ROOT / "dist" / "i2nclip-extension.zip"
 XPI_OUT = ROOT / "dist" / "i2nclip.xpi"
 XPI_ASSET = "i2nclip.xpi"
 ADDON_ID = "i2nclip@i2n"
@@ -31,10 +30,9 @@ def main() -> int:
 
     pack = ROOT / "scripts" / "pack-extension.py"
     subprocess.run([sys.executable, str(pack)], check=True, cwd=ROOT)
-    if not ZIP_OUT.is_file():
-        print(f"missing {ZIP_OUT}", file=sys.stderr)
+    if not XPI_OUT.is_file():
+        print(f"missing {XPI_OUT}", file=sys.stderr)
         return 1
-    shutil.copyfile(ZIP_OUT, XPI_OUT)
 
     tag = f"v{version}"
     update_link = f"https://github.com/{repo}/releases/download/{tag}/{XPI_ASSET}"

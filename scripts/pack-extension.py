@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Zip the Firefox add-on. The archive root is the add-on root."""
+"""Pack the Firefox add-on as an XPI (zip). The archive root is the add-on root."""
 
 import pathlib
 import zipfile
 
 root = pathlib.Path(__file__).resolve().parent.parent
-out = root / "dist" / "i2nclip-extension.zip"
+out = root / "dist" / "i2nclip.xpi"
 out.parent.mkdir(parents=True, exist_ok=True)
 
 paths = [root / "manifest.json"]
