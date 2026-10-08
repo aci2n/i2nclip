@@ -31,8 +31,8 @@ pub enum Error {
     /// 400. The String is a safe explanation, not an echo of the request body.
     #[error("{0}")]
     BadRequest(String),
-    /// Stored or imported authorized key data is invalid. The request becomes a
-    /// 500 so a typo is not mistaken for a wrong password.
+    /// Invalid `ssh-ed25519` line text from the multi-line parser. Registration
+    /// maps this to [`Error::BadRequest`] via [`crate::auth::parse_ssh_public_key_line`].
     #[error("authorized keys: {0}")]
     Keys(String),
     /// `Mutex` was poisoned: a thread panicked while holding the database lock.

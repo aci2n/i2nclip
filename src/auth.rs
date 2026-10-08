@@ -1,6 +1,6 @@
 //! Request authentication.
 //!
-//! The client never sends the API key. It sends:
+//! The client never sends the OpenSSH private key. It sends:
 //!
 //! ```text
 //! Authorization: Bearer <b64url(public key)>.<unix seconds>.<b64url(nonce)>.<hex body hash>.<b64url(signature)>
@@ -27,7 +27,7 @@ use crate::store::AppState;
 use crate::Error;
 use crate::SKEW_SECS;
 
-/// Parse one or more `ssh-ed25519 AAAA...` lines (for the admin tool). Blank
+/// Parse one or more `ssh-ed25519 AAAA...` lines (registration and imports). Blank
 /// lines and `#` comments are skipped. A bad line fails the whole input so a
 /// typo is not silently skipped.
 pub(crate) fn parse_ssh_public_key_lines(text: &str) -> Result<Vec<[u8; 32]>, Error> {

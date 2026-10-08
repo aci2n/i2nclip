@@ -12,40 +12,50 @@ const nameEl = document.querySelector("#name");
 if (!srcUrl) {
   status.textContent = "Nothing to upload.";
 } else {
-  const response = await fetchMedia(source);
-  const blob = await response.blob();
-  const bytes = await blob.bytes();
-  const name = fileName(srcUrl);
-  nameEl.textContent = name;
-  if (blob.type.startsWith("image/")) {
-    const preview = document.querySelector("#preview");
-    preview.hidden = false;
-    preview.src = URL.createObjectURL(blob);
-  }
   const send = document.querySelector("#send");
-  send.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const privateKey = await sessionPrivateKey();
-    if (!privateKey) {
-      document.querySelector("#unlock").hidden = false;
-      status.textContent = "Unlock to upload.";
-      return;
+  let bytes;
+  let blob;
+  let name;
+  try {
+    const response = await fetchMedia(source);
+    blob = await response.blob();
+    bytes = await blob.bytes();
+    name = fileName(srcUrl);
+    nameEl.textContent = name;
+    if (blob.type.startsWith("image/")) {
+      const preview = document.querySelector("#preview");
+      preview.hidden = false;
+      preview.src = URL.createObjectURL(blob);
     }
-    status.textContent = "Uploading…";
-    try {
-      await sendUpload(
-        { ...source, bytes, blob, name, contentType: blob.type || "application/octet-stream" },
-        privateKey,
-        document.querySelector("#tags").value,
-      );
-      window.close();
-    } catch (err) {
-      status.textContent = err.message;
-    }
-  });
-  bindUnlock(document.querySelector("#unlock"), status, async () => {
-    document.querySelector("#unlock").hidden = true;
-    status.textContent = "Unlocked.";
-    send.requestSubmit();
-  });
+  } catch (err) {
+    status.textContent = err.message || "Could not load the file.";
+    send.querySelector("button[type=submit]")?.setAttribute("disabled", "");
+  }
+  if (bytes) {
+    send.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const privateKey = await sessionPrivateKey();
+      if (!privateKey) {
+        document.querySelector("#unlock").hidden = false;
+        status.textContent = "Unlock to upload.";
+        return;
+      }
+      status.textContent = "Uploading…";
+      try {
+        await sendUpload(
+          { ...source, bytes, blob, name, contentType: blob.type || "application/octet-stream" },
+          privateKey,
+          document.querySelector("#tags").value,
+        );
+        window.close();
+      } catch (err) {
+        status.textContent = err.message;
+      }
+    });
+    bindUnlock(document.querySelector("#unlock"), status, async () => {
+      document.querySelector("#unlock").hidden = true;
+      status.textContent = "Unlocked.";
+      send.requestSubmit();
+    });
+  }
 }

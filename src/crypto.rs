@@ -394,7 +394,7 @@ pub fn looks_sealed(blob: &[u8], max: usize) -> bool {
 /// `HMAC-SHA256(tag_key, "tag\n" + normalized)`. The output is 32 bytes,
 /// encoded as base64url with no `=` padding, which is always 43 characters.
 /// The same key and the same word always produce the same token, so SQL can
-/// compare them. A different API key produces a different token, so one
+/// compare them. A different owner key produces a different token, so one
 /// person's search does not hit another person's rows.
 ///
 /// Normalization is `trim`, then Unicode NFC, then lowercase. `Vacation` and

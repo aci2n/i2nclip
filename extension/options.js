@@ -117,7 +117,7 @@ document.querySelector("#settings").addEventListener("submit", async (event) => 
   if (!server.reportValidity()) return;
   pass.required = true;
   pass2.required = true;
-  pass.setCustomValidity(!pass.value.trim() ? "Set a passphrase." : "");
+  pass.setCustomValidity(!pass.value ? "Set a passphrase." : "");
   pass2.setCustomValidity(pass.value === pass2.value ? "" : "The passphrases do not match.");
   if (!privateKey) {
     pass.setCustomValidity("");

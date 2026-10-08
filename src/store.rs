@@ -118,8 +118,7 @@ pub(crate) fn prepare(data_dir: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-/// Whether `public` is registered. Rows are inserted by the admin tool, not
-/// the HTTP server.
+/// Whether `public` is registered (`POST /api/register-key`, or direct SQL in tests).
 pub(crate) fn is_allowed_public_key(conn: &Connection, public: &[u8; 32]) -> Result<bool, Error> {
     let found = conn
         .query_row(
@@ -231,9 +230,11 @@ pub(crate) fn add(state: &AppState, owner: [u8; 32], body: &[u8]) -> Result<Item
     let id = parse_id(&parts.id)?;
     check_blob(&parts.meta, MAX_META)?;
     check_blob(&parts.content, MAX_CONTENT)?;
-    let conn = state.lock()?;
-    if row_exists(&conn, &id)? {
-        return Err(Error::Conflict);
+    {
+        let conn = state.lock()?;
+        if row_exists(&conn, &id)? {
+            return Err(Error::Conflict);
+        }
     }
     let path = state.blob_path(&id);
     // Write the ciphertext first. If we crash before the INSERT, the blob is
@@ -247,6 +248,7 @@ pub(crate) fn add(state: &AppState, owner: [u8; 32], body: &[u8]) -> Result<Item
     }
     let created = i64::try_from(crypto::now_secs()).unwrap_or(i64::MAX);
     let bytes = i64::try_from(parts.content.len()).unwrap_or(i64::MAX);
+    let conn = state.lock()?;
     let result = insert_file(&conn, &id, &owner, &parts.meta, bytes, created, &parts.tokens);
     if let Err(err) = result {
         let _ = std::fs::remove_file(&path);
@@ -349,9 +351,11 @@ pub(crate) fn parse_cursor(text: &str) -> Result<(i64, String), Error> {
 
 pub(crate) fn read_content(state: &AppState, owner: [u8; 32], id: &str) -> Result<Vec<u8>, Error> {
     let id = parse_id(id)?;
-    let conn = state.lock()?;
-    if !owned(&conn, &id, &owner)? {
-        return Err(Error::NotFound);
+    {
+        let conn = state.lock()?;
+        if !owned(&conn, &id, &owner)? {
+            return Err(Error::NotFound);
+        }
     }
     match std::fs::read(state.blob_path(&id)) {
         Ok(bytes) => Ok(bytes),
@@ -464,16 +468,19 @@ pub fn gc_orphan_blobs(
 
 pub(crate) fn remove(state: &AppState, owner: [u8; 32], id: &str) -> Result<(), Error> {
     let id = parse_id(id)?;
-    let conn = state.lock()?;
-    let deleted = conn.execute(
-        "DELETE FROM files WHERE id = ?1 AND owner = ?2",
-        params![id, owner.as_slice()],
-    )?;
-    if deleted == 0 {
-        return Err(Error::NotFound);
+    let path = state.blob_path(&id);
+    {
+        let conn = state.lock()?;
+        let deleted = conn.execute(
+            "DELETE FROM files WHERE id = ?1 AND owner = ?2",
+            params![id, owner.as_slice()],
+        )?;
+        if deleted == 0 {
+            return Err(Error::NotFound);
+        }
     }
     // The row is already gone, so a missing blob is not a failed delete.
-    match std::fs::remove_file(state.blob_path(&id)) {
+    match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err.into()),

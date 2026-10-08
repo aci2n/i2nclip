@@ -11,14 +11,13 @@ export const DEFAULT_SERVER_URL = "https://clip.example.com";
 const MIN_PASSPHRASE_LENGTH = 8;
 
 export async function saveWrappedKey({ serverUrl, privateKey, passphrase, authorizedLine }) {
-  const trimmed = passphrase?.trim() ?? "";
-  if (!trimmed) {
+  if (passphrase == null || passphrase === "") {
     throw new Error("Set a passphrase.");
   }
-  if (trimmed.length < MIN_PASSPHRASE_LENGTH) {
+  if (passphrase.length < MIN_PASSPHRASE_LENGTH) {
     throw new Error(`Passphrase must be at least ${MIN_PASSPHRASE_LENGTH} characters.`);
   }
-  const wrappedKey = await wrapPrivateKey(privateKey, trimmed);
+  const wrappedKey = await wrapPrivateKey(privateKey, passphrase);
   await browser.storage.local.set({ serverUrl, wrappedKey, authorizedLine });
   await browser.storage.session.set({ [SESSION_KEY]: privateKey });
 }
