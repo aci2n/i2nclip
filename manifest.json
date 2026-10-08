@@ -7,7 +7,11 @@
     "gecko": {
       "id": "i2nclip@i2n",
       "strict_min_version": "128.0",
-      "update_url": "https://raw.githubusercontent.com/aci2n/i2nclip/master/extension/updates.json"
+      "update_url": "https://raw.githubusercontent.com/aci2n/i2nclip/master/extension/updates.json",
+      "data_collection_permissions": {
+	"required": ["authenticationInfo", "websiteContent"],
+	"optional": []
+      }
     }
   },
   "permissions": ["contextMenus", "downloads", "notifications", "scripting", "storage"],
