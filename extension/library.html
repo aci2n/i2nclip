@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>i2nclip</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <h1>i2nclip</h1>
+    <p><a href="options.html">Options</a></p>
+    <form id="unlock" class="bar" hidden>
+      <input id="pass" type="password" placeholder="Passphrase" aria-label="Passphrase" autocomplete="current-password" />
+      <button type="submit">Unlock</button>
+      <p id="unlock-status"></p>
+    </form>
+    <form id="find" class="bar">
+      <input id="tags" type="search" placeholder="Tags" aria-label="Tags, separated by commas" />
+      <button type="submit">Search</button>
+      <label class="file">Upload<input id="files" type="file" multiple /></label>
+    </form>
+    <p id="status"></p>
+    <p id="setup" hidden>No key in this browser yet. <a href="options.html">Generate one</a>, then give the public key to whoever runs the server.</p>
+    <div id="results"></div>
+    <button id="more" type="button" hidden>More</button>
+    <dialog id="full"></dialog>
+    <template id="card">
+      <article class="card">
+        <div class="media"></div>
+        <strong></strong>
+        <p></p>
+        <form class="tags bar">
+          <input name="tags" type="text" placeholder="Tags" aria-label="Tags, separated by commas" />
+          <button type="submit">Update</button>
+          <output></output>
+        </form>
+        <button type="button" data-act="download">Download</button>
+        <button type="button" data-act="delete">Delete</button>
+      </article>
+    </template>
+    <script type="module" src="library.js"></script>
+  </body>
+</html>

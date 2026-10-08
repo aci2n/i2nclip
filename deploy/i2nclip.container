@@ -1,0 +1,16 @@
+# Example quadlet: published port and named volume. Put TLS and rate limits on a reverse proxy.
+# Copy to ~/.config/containers/systemd/i2nclip.container, then:
+# systemctl --user daemon-reload && systemctl --user start i2nclip.service
+
+[Container]
+Image=localhost/i2nclip:latest
+ContainerName=i2nclip
+PublishPort=8080:8080
+Volume=i2nclip-data:/var/lib/i2nclip:Z
+Environment=I2N_ORIGIN=https://clip.example.com
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

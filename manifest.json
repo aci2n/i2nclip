@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "i2nclip",
+  "version": "0.1.0",
+  "description": "Upload media to your i2nclip server. The private key stays in this browser.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "i2nclip@i2n",
+      "strict_min_version": "128.0"
+    }
+  },
+  "permissions": ["contextMenus", "downloads", "notifications", "scripting", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "icons": {
+    "48": "extension/icon.svg",
+    "96": "extension/icon.svg",
+    "128": "extension/icon.svg"
+  },
+  "background": {
+    "scripts": ["extension/background.js"],
+    "type": "module"
+  },
+  "options_ui": {
+    "page": "extension/options.html",
+    "open_in_tab": true
+  },
+  "action": {
+    "default_title": "i2nclip",
+    "default_icon": "extension/icon.svg"
+  }
+}

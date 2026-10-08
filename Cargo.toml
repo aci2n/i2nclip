@@ -1,0 +1,46 @@
+[package]
+name = "i2nclip"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Encrypted media store. The server keeps ciphertext and public keys."
+
+[dependencies]
+# AES-256-GCM: the cipher the client uses for file bytes and metadata.
+aes-gcm = "0.10"
+# HTTP framework. Handlers look a bit like small servlet methods.
+axum = "0.8"
+# Standard base64 (api key, SSH line) and base64url (bearer token, tag tokens).
+base64 = "0.22"
+# Ed25519 signatures. Same algorithm OpenSSH uses for ssh-ed25519 keys.
+ed25519-dalek = "2"
+# Operating-system random bytes for nonces and new keys.
+getrandom = "0.2"
+# Turns the 32-byte API-key seed into separate AES and HMAC keys.
+hkdf = "0.12"
+# HMAC-SHA256, used for the searchable tag fingerprint.
+hmac = "0.12"
+# Helpers for reading an HTTP body with a size cap.
+http-body-util = "0.1"
+# SQLite, bundled so the container does not need a system libsqlite.
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+# Implements Rust's Error trait the way a base exception type would.
+thiserror = "2"
+# Async runtime. `#[tokio::main]` is the event loop, like asyncio.run.
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# NFC normalization so "é" and its decomposed form hash as the same tag.
+unicode-normalization = "0.1"
+# Parses UUIDs. Does not generate them; the client picks the id.
+uuid = "1"
+
+[dev-dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde_json = "1"
+# Lets tests call the router in-process, without binding a port.
+tower = { version = "0.5", features = ["util"] }

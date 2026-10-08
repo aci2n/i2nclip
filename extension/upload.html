@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Upload to i2nclip</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body class="upload-popup">
+    <h1>Upload</h1>
+    <p id="name"></p>
+    <img id="preview" alt="" hidden />
+    <form id="send">
+      <label for="tags">Tags, separated by commas</label>
+      <input id="tags" type="text" autofocus />
+      <button type="submit">Upload</button>
+    </form>
+    <form id="unlock" hidden>
+      <label for="pass">Passphrase</label>
+      <input id="pass" type="password" autocomplete="current-password" />
+      <button type="submit">Unlock</button>
+    </form>
+    <p id="status"></p>
+    <script type="module" src="upload.js"></script>
+  </body>
+</html>
