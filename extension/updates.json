@@ -1,0 +1,13 @@
+{
+  "addons": {
+    "i2nclip@i2n": {
+      "updates": [
+        {
+          "version": "0.0.1",
+          "update_link": "https://github.com/aci2n/i2nclip/releases/download/v0.0.1/i2nclip.xpi",
+          "update_hash": "sha256:1e27d7573e98835406769a75db7227cea85dfec8ed2f295f3331dd7d7afcdf78"
+        },
+      ]
+    }
+  }
+}

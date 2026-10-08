@@ -6,7 +6,9 @@ PORT ?= 8080
 HOST ?= deploy@example.com
 CONNECTION ?= remote-podman
 
-.PHONY: build run test audit e2e container push extension
+GH_REPO ?= aci2n/i2nclip
+
+.PHONY: build run test audit e2e container push extension release-extension
 
 build:
 	cargo build
@@ -31,6 +33,11 @@ e2e:
 # Zip the add-on only. Testers load manifest.json from the unzipped folder.
 extension:
 	python3 scripts/pack-extension.py
+
+# Bump manifest.json version first. Builds i2nclip.xpi, updates extension/updates.json,
+# and creates or refreshes the matching GitHub release (needs gh auth).
+release-extension:
+	GH_REPO=$(GH_REPO) python3 scripts/release-extension.py
 
 container:
 	podman build -t $(IMAGE):$(TAG) -f Containerfile .
