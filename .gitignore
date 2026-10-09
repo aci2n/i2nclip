@@ -1,8 +1,9 @@
 /target/
 /dist/
-/node_modules/
-/e2e/shots/
-/test-results/
-/playwright-report/
+/client/e2e/shots/
+/client/test-results/
+/client/playwright-report/
 /local.mk
 __pycache__/
+/client/dist/
+/client/node_modules/

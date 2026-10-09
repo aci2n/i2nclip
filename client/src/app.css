@@ -1,0 +1,70 @@
+:root {
+  color-scheme: light dark;
+  font: 15px/1.5 system-ui, sans-serif;
+  color: #2c2a28;
+  background: #f4f0ea;
+  --paper: #fffdf8;
+  --muted: #6a645c;
+  --line: #e6dfd6;
+  --accent: #27675b;
+  --soft: #e5eee9;
+}
+@media (prefers-color-scheme: dark) {
+  :root { color: #f3efe8; background: #1c1b19; --paper: #262522; --muted: #b7b0a6; --line: #403d37; --accent: #a4d9c9; --soft: #303e37; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: inherit; }
+main { max-width: 76rem; padding: 1.5rem; margin: auto; }
+main.compact { max-width: 32rem; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 2rem; }
+a { color: var(--accent); text-underline-offset: .2em; }
+.brand { font-size: 1.35rem; font-weight: 700; text-decoration: none; color: inherit; }
+nav { display: flex; gap: 1rem; }
+nav a { color: var(--muted); text-decoration: none; }
+nav a[aria-current] { color: var(--accent); font-weight: 600; }
+h2 { font-size: 1.05rem; margin: 0 0 .6rem; }
+p { margin: .6rem 0; color: var(--muted); }
+label { display: block; margin: 1rem 0 .3rem; font-size: .9rem; }
+input, button, .file { font: inherit; border: 1px solid var(--line); border-radius: .4rem; padding: .55rem .75rem; }
+input { width: 100%; color: inherit; background: var(--paper); min-width: 0; }
+input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+::placeholder { color: var(--muted); }
+button, .file { background: var(--accent); color: var(--paper); cursor: pointer; border-color: transparent; }
+button.secondary { background: var(--soft); color: var(--accent); }
+button:disabled, .disabled { opacity: .5; cursor: default; }
+form > button, section > button { margin-top: 1rem; }
+.bar { display: flex; align-items: center; gap: .5rem; }
+.bar input { flex: 1; }
+.bar button, .bar .file { flex: none; margin: 0; }
+.file { display: inline-block; }
+.file input { position: absolute; width: 1px; height: 1px; opacity: 0; padding: 0; }
+.file:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
+.toolbar { margin-bottom: 1rem; }
+.panel, .card { background: var(--paper); border: 1px solid var(--line); border-radius: .6rem; padding: 1.2rem; min-width: 0; }
+.settings { max-width: 42rem; display: grid; gap: 1rem; margin: auto; }
+#settings + #status { max-width: 42rem; margin: 1rem auto; }
+.empty { max-width: 42rem; margin: 3rem auto; text-align: center; padding: 3rem 1rem; }
+#unlock { max-width: 32rem; margin: 2rem auto; }
+#results { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: 1rem; align-items: start; }
+.card { padding: .8rem; }
+.card strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: .6rem; }
+.card .meta { font-size: .8rem; }
+.card.deleted { opacity: .2; }
+.media { position: relative; }
+.media img, .media video, .media audio { width: 100%; display: block; }
+.media img, .media video { max-height: 18rem; object-fit: contain; border-radius: .25rem; }
+.image-button { border: 0; padding: 0; background: transparent; width: 100%; display: block; }
+.play { width: 100%; min-height: 6rem; background: var(--soft); color: var(--accent); font-size: 2rem; }
+.media:has(img) .play { position: absolute; inset: 0; background: #0006; color: white; }
+.pct { position: absolute; inset: 0; display: grid; place-items: center; background: #0006; color: white; }
+.tags { margin: .8rem 0; }
+.tags input, .tags button, .actions button { font-size: .85rem; padding: .4rem .55rem; }
+output { display: block; color: var(--muted); font-size: .85rem; margin-top: .4rem; }
+#more { display: block; margin: 1.5rem auto; }
+#full { padding: 0; border: 0; background: transparent; max-width: 95vw; max-height: 95vh; }
+#full::backdrop { background: #000b; }
+#full img { display: block; max-width: 95vw; max-height: 95vh; object-fit: contain; }
+.close { position: fixed; top: 1rem; right: 1rem; font-size: 1.5rem; background: var(--paper); color: inherit; }
+.upload-preview { display: block; max-width: 100%; max-height: 12rem; margin: 1rem auto; }
+[hidden] { display: none !important; }
+@media (max-width: 480px) { main { padding: 1rem; } .toolbar { flex-wrap: wrap; } .toolbar input { flex-basis: 100%; } }

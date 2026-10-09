@@ -29,7 +29,7 @@ make test
 cargo run
 ```
 
-`make test` runs the Rust tests and `node --test client/*.test.js`. `cargo run` needs a writable `/var/lib/i2nclip`.
+`make test` runs Rust tests, client tests, and the Svelte checker. Install the client dependencies first with `npm ci --prefix client` (Node 22 from `client/.nvmrc`). `cargo run` needs a writable `/var/lib/i2nclip`.
 
 For a local container:
 
@@ -104,7 +104,28 @@ One Ed25519 signature covers the origin, time, a one-time nonce, the method, the
 
 ## Extension
 
-In Firefox 128 or newer, `about:debugging`, Load Temporary Add-on, pick `manifest.json` in this repo. The pages import `client/`, so the add-on root is the repository.
+All frontend code lives in `client/`, a Svelte 5 + Vite project. Build the Firefox add-on before loading it:
+
+```sh
+npm ci --prefix client
+npm run build:extension --prefix client
+```
+
+In Firefox 128 or newer, open `about:debugging`, choose **Load Temporary Add-on**, and pick `client/dist/extension/manifest.json`. That directory is the complete add-on; it contains no development dependencies. `make extension` builds and packs `client/dist/i2nclip.xpi`.
+
+For development, `npm run dev:extension --prefix client` rebuilds on changes; reload the temporary add-on in Firefox. `npm run dev --prefix client` runs the same UI in a regular browser with a local-storage adapter. Its `/api` proxy points to `http://127.0.0.1:8080` (override with `I2N_API_TARGET`); set the backend's `I2N_ORIGIN` and the UI's server URL to `http://localhost:5173` for this mode. The standalone browser session is separate from the extension.
+
+The source has three boundaries:
+
+- `client/src/lib/`: encryption, API calls, media preparation, stores, and Svelte components. No Firefox APIs.
+- `client/src/extension/`: Firefox storage, tab media fetching, downloads, notifications, and context menus.
+- `client/public/`: manifest, extension page shells, icons, and update metadata.
+
+Stores own session mutations, request cancellation, pagination, and upload batches. Media cards own and release their decrypted bytes and object URLs. Settings mutations use a Web Lock across open pages; tag changes and uploads prevent overlapping submissions. The tests cover stale completions, identity changes, retry behavior, and file-size limits as well as the full browser flows.
+
+`client/Makefile` owns the frontend targets and is included by the root Makefile. `make -C client build` and `make -C client test` work independently. `make build` builds the Rust server and both frontend bundles. `make client` builds just the standalone UI and extension (`npm run build --prefix client`). `npm run e2e --prefix client` builds the extension and runs Firefox tests; `make e2e` also installs dependencies and Firefox.
+
+The manifest's update URL now points to `client/public/updates.json`. Previously installed releases that use the old update URL need a manual update when this layout is published.
 
 On an image, video, or audio, **Upload to i2nclip** sends it immediately, and **Upload to i2nclip with tags** opens a window for the tag list. The toolbar button opens the library.
 
@@ -112,10 +133,10 @@ The library lists 24 items at a time. Each card is painted from a small WebP pre
 
 ## Client library
 
-`client/` is plain JavaScript with no browser APIs. The extension imports it. Another program can too:
+`client/src/lib/index.js` exports the plain JavaScript encryption and API library. It has no Firefox or Svelte dependency. Another program can import it too:
 
 ```js
-import { generatePrivateKey, registerKey, upload, list } from "./client/index.js";
+import { generatePrivateKey, registerKey, upload, list } from "./client/src/lib/index.js";
 ```
 
 `generatePrivateKey()` returns `{ privateKey, publicKey }`. `privateKey` is an internal JSON identity document containing version `1`, a base64url Ed25519 seed, and its public key. Keep it secret. Register with `registerKey({ serverUrl, publicKey, otc })`; the server accepts `{ "otc": "…", "public_key": "…" }` at `POST /api/register-key`. Public keys are raw 32-byte Ed25519 keys encoded as base64url without padding. `list` returns `{ items, next }`. Pass `next` back as `after` for the following page.

@@ -3,7 +3,7 @@
 //! A library identity contains a random 32-byte Ed25519 seed and its public
 //! key. The seed signs requests and derives separate encryption and tag keys
 //! through HKDF-SHA256. The server receives only the public key and ciphertext.
-//! `client/test-vectors.json` checks that both implementations agree.
+//! `client/tests/test-vectors.json` checks that both implementations agree.
 //!
 //! # Blob layout
 //!
@@ -170,7 +170,7 @@ pub fn looks_sealed(blob: &[u8], max: usize) -> bool {
 /// person's search does not hit another person's rows.
 ///
 /// Normalization is `trim`, then Unicode NFC, then lowercase. `Vacation` and
-/// `vacation` match. The rules are the same in `client/crypto.js`.
+/// `vacation` match. The rules are the same in `client/src/lib/crypto.js`.
 pub fn tag_token(seed: &[u8; 32], tag: &str) -> Result<String, Error> {
     let normalized = normalize_tag(tag)?;
     let key = derive_key(seed, b"tag");
@@ -405,7 +405,7 @@ mod tests {
         assert!(verify(&id.public, other_method.as_bytes(), &signature).is_err());
     }
 
-    /// Writes `client/test-vectors.json` the first time, then checks it still
+    /// Writes `client/tests/test-vectors.json` the first time, then checks it still
     /// matches. The JS tests read that file. Fixed inputs only, no randomness,
     /// so the file is stable.
     #[test]
@@ -474,7 +474,7 @@ mod tests {
             authorization,
         };
         let body = serde_json::to_string_pretty(&vectors).unwrap() + "\n";
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("client/test-vectors.json");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("client/tests/test-vectors.json");
         if !path.exists() {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, &body).unwrap();
@@ -482,7 +482,7 @@ mod tests {
         let existing = std::fs::read_to_string(&path).unwrap_or_default();
         assert_eq!(
             existing, body,
-            "client/test-vectors.json drifted; delete it and rerun this test"
+            "client/tests/test-vectors.json drifted; delete it and rerun this test"
         );
     }
 

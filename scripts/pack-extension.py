@@ -1,25 +1,19 @@
 #!/usr/bin/env python3
-"""Pack the Firefox add-on as an XPI (zip). The archive root is the add-on root."""
+"""Build and pack the Firefox add-on. Source and development tools stay out."""
 
 import pathlib
+import subprocess
 import zipfile
 
 root = pathlib.Path(__file__).resolve().parent.parent
-out = root / "dist" / "i2nclip.xpi"
+subprocess.run(["npm", "run", "build:extension"], cwd=root / "client", check=True)
+out = root / "client/dist/i2nclip.xpi"
 out.parent.mkdir(parents=True, exist_ok=True)
-
-paths = [root / "manifest.json"]
-paths += [path for path in (root / "extension").rglob("*") if path.is_file()]
-paths += [
-    path
-    for path in (root / "client").rglob("*")
-    if path.is_file()
-    and not path.name.endswith(".test.js")
-    and path.name != "test-vectors.json"
-]
+built = root / "client/dist/extension"
+paths = [path for path in built.rglob("*") if path.is_file() and path.name != "updates.json"]
 
 with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as archive:
     for path in sorted(paths):
-        archive.write(path, path.relative_to(root).as_posix())
+        archive.write(path, path.relative_to(built).as_posix())
 
 print(out.relative_to(root))

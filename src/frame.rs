@@ -23,8 +23,8 @@
 //!   bytes     UTF-8 tokens separated by '\n'
 //! ```
 //!
-//! Lengths are big-endian. The JavaScript client in `client/frame.js` writes
-//! the same layout. `client/test-vectors.json` includes one full POST frame.
+//! Lengths are big-endian. The JavaScript client in `client/src/lib/frame.js` writes
+//! the same layout. `client/tests/test-vectors.json` includes one full POST frame.
 
 use crate::Error;
 use crate::MAX_CONTENT;
