@@ -530,6 +530,10 @@ test("tag edits preserve the preview and remain searchable", async ({ page, app 
   await page.locator("#tags").fill("vacation");
   await page.locator("#tags").press("Enter");
   await expect(card.locator("strong")).toHaveText("dot.png");
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('link', { name: 'Library' }).click();
+  await expect(page.locator('#tags')).toHaveValue('vacation');
+  await expect(page.locator('.card strong')).toHaveText('dot.png');
   await expect(card.locator(".media img")).toBeVisible();
   await expect(card.locator('.tag-text')).toHaveText(['Vacation', 'dog']);
   await expect(card.getByRole('button', { name: 'Add tag to dot.png' })).toBeVisible();
@@ -797,6 +801,30 @@ test("uploads continue across Library and Settings views and retain progress", a
   await expect(page.locator('.card strong')).toHaveText('slow.png');
   await expect(page.getByRole('region', { name: 'Upload progress' })).toBeHidden();
   await expect(page.locator('#status')).toBeEmpty();
+});
+
+test("decrypted card content survives navigating away from the Library", async ({ page, app }) => {
+  await createLibrary(page, app);
+  await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
+  await page.locator('#files').setInputFiles({ name: 'saved.png', mimeType: 'image/png', buffer: png });
+  const card = page.locator('.card');
+  await expect(card.locator('.card-title')).toHaveText('saved.png');
+  let contentRequests = 0;
+  await page.route(/\/api\/media\/[^/?]+$/, async (route) => {
+    if (route.request().method() === 'GET') contentRequests++;
+    await route.continue();
+  });
+  await card.getByRole('button', { name: 'Open saved.png' }).click();
+  await expect(page.locator('#full')).toBeVisible();
+  await page.locator('#full .close').click();
+  const decryptedUrl = await card.locator('.media img').getAttribute('src');
+  expect(decryptedUrl).toMatch(/^blob:/);
+  expect(contentRequests).toBe(1);
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('link', { name: 'Library' }).click();
+  const restoredCard = page.locator('.card');
+  await expect(restoredCard.locator('.media img')).toHaveAttribute('src', decryptedUrl);
+  expect(contentRequests).toBe(1);
 });
 
 test("a slow search cannot clear the newer search results", async ({ page, app }) => {

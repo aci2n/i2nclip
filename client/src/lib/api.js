@@ -19,6 +19,7 @@ import { uniqueTags } from './tags.js';
 
 // Plaintext limit. The server allows this plus a small encryption header.
 export const MAX_FILE_BYTES = 32 * 1024 * 1024;
+const MAX_ENCRYPTED_FILE_BYTES = MAX_FILE_BYTES + 64;
 
 export async function upload({ serverUrl, privateKey, bytes, name, contentType, tags, id, image, thumb, onProgress, signal }) {
   if (bytes.length > MAX_FILE_BYTES) {
@@ -121,7 +122,7 @@ async function send(serverUrl, key, method, path, body, onProgress, signal) {
 async function sendBytes(serverUrl, key, method, path, body, onProgress, signal) {
   const response = await signedFetch(serverUrl, key, method, path, body, undefined, signal);
   if (!response.ok) throw await responseError(response);
-  return readBody(response, onProgress);
+  return readBody(response, onProgress, signal);
 }
 
 async function sealedMetadata(key, id, metadata, thumb) {
@@ -137,18 +138,38 @@ async function responseError(response) {
   return new Error(message);
 }
 
-async function readBody(response, onProgress) {
+async function readBody(response, onProgress, signal) {
   const total = Number(response.headers.get("content-length")) || 0;
-  if (!response.body || !onProgress || !total) return new Uint8Array(await response.arrayBuffer());
+  if (total > MAX_ENCRYPTED_FILE_BYTES) {
+    await response.body?.cancel();
+    throw new Error("File is larger than 32 MB.");
+  }
+  if (!response.body) return new Uint8Array();
   const reader = response.body.getReader();
   const chunks = [];
   let received = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    received += value.length;
-    onProgress(Math.min(100, Math.round((received / total) * 100)));
+  const abort = () => reader.cancel();
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    while (true) {
+      signal?.throwIfAborted();
+      const { done, value } = await reader.read();
+      signal?.throwIfAborted();
+      if (done) break;
+      received += value.length;
+      if (received > MAX_ENCRYPTED_FILE_BYTES) {
+        await reader.cancel();
+        throw new Error("File is larger than 32 MB.");
+      }
+      chunks.push(value);
+      if (onProgress && total) onProgress(Math.min(100, Math.round((received / total) * 100)));
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    signal?.removeEventListener("abort", abort);
+    reader.releaseLock();
   }
   const out = new Uint8Array(received);
   let offset = 0;

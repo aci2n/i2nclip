@@ -18,6 +18,7 @@ export async function readMedia(response, signal) {
     await response.body?.cancel();
     checkFileSize(declared);
   }
+  if (!response.body) return new Blob([], { type: response.headers.get('content-type') || '' });
   const reader = response.body.getReader();
   const chunks = [];
   let size = 0;
@@ -43,7 +44,10 @@ export async function readMedia(response, signal) {
 
 export async function prepareMedia(source, platform, signal) {
   let blob = source.blob;
-  if (!blob && source.bytes) blob = new Blob([source.bytes], { type: source.contentType || '' });
+  if (!blob && source.bytes) {
+    checkFileSize(source.bytes.byteLength);
+    blob = new Blob([source.bytes], { type: source.contentType || '' });
+  }
   blob ??= await readMedia(await platform.fetchMedia(source, signal), signal);
   checkFileSize(blob.size);
   signal?.throwIfAborted();

@@ -1,10 +1,9 @@
 <script>
-  import { onDestroy, untrack } from 'svelte';
-  import { createMediaItem } from '../stores/media-item.js';
+  import { untrack } from 'svelte';
   import { fileSize, fileType, uploadedAt } from '../format.js';
   import TagEditor from './TagEditor.svelte';
-  let { item, credentials, platform, onopen, onremove, onretag = () => {} } = $props();
-  const media = untrack(() => createMediaItem(item, credentials, platform));
+  let { item, library, onopen, onremove, onretag = () => {} } = $props();
+  const media = untrack(() => library.media(item));
   const type = $derived($media.metadata?.content_type || '');
   const name = $derived($media.metadata?.name || item.id);
   const summary = $derived([fileType(type), fileSize($media.metadata?.size)].filter(Boolean).join(' · '));
@@ -16,11 +15,10 @@
     if (confirm(`Delete ${name}? This cannot be undone.`) && await media.remove()) onremove();
   }
   async function saveTags(tags) {
-    const metadata = await media.retag(tags);
-    if (metadata) onretag(metadata);
-    return metadata;
+    const result = await media.retag(tags);
+    if (result) onretag(result.metadata, result.tokens);
+    return result?.metadata;
   }
-  onDestroy(media.dispose);
 </script>
 
 <article class="panel card" class:busy={$media.busy} class:deleted={$media.deleted}>

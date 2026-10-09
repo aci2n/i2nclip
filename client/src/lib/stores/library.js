@@ -2,20 +2,28 @@ import { get, writable } from 'svelte/store';
 import { splitTags } from '../crypto.js';
 import { list } from '../api.js';
 import { sendUpload } from '../media.js';
+import { createMediaItem } from './media-item.js';
 
 export function createLibrary(session, platform, api = { list, sendUpload }) {
-  const state = writable({ items: [], next: null, loading: false, empty: null, status: '', uploadStatus: '', uploading: false, uploadProgress: null, uploadFailures: [], epoch: 0 });
+  const state = writable({ items: [], next: null, query: '', loading: false, empty: null, status: '', uploadStatus: '', uploading: false, uploadProgress: null, uploadFailures: [], epoch: 0 });
   let credentials = null;
   let tags = '';
   let revision = 0;
   let request;
   let uploadRequest;
   let disposed = false;
+  const mediaItems = new Map();
+
+  function clearMediaItems() {
+    for (const media of mediaItems.values()) media.dispose();
+    mediaItems.clear();
+  }
 
   function invalidate() {
     revision++;
     request?.abort();
     uploadRequest?.abort();
+    clearMediaItems();
     state.update((value) => ({ ...value, items: [], next: null, loading: false, empty: null, status: '', uploadStatus: '', uploading: false, uploadProgress: null, uploadFailures: [], epoch: value.epoch + 1 }));
   }
 
@@ -90,11 +98,25 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 
   return {
     subscribe: state.subscribe,
-    search(value = tags) { tags = value; return load(); },
+    search(value = tags) { tags = value; state.update((current) => ({ ...current, query: tags })); return load(); },
     more: () => load(true),
-    credentials: () => credentials,
-    updateTags(id, metadata) {
-      if (!disposed) state.update((value) => ({ ...value, items: value.items.map((item) => item.id === id ? { ...item, metadata } : item) }));
+    query: () => tags,
+    updateTags(id, metadata, tokens) {
+      if (!disposed) state.update((value) => ({ ...value, items: value.items.map((item) => {
+        if (item.id !== id) return item;
+        const updated = { ...item, metadata, tokens };
+        mediaItems.get(id)?.updateItem(updated);
+        return updated;
+      }) }));
+    },
+    media(item) {
+      if (disposed || !credentials) return null;
+      let media = mediaItems.get(item.id);
+      if (!media) {
+        media = createMediaItem(item, credentials, platform);
+        mediaItems.set(item.id, media);
+      } else media.updateItem(item);
+      return media;
     },
     upload,
     retryUploads: () => upload(get(state).uploadFailures.map(({ file }) => file)),

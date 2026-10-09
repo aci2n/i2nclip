@@ -6,7 +6,8 @@ import { audioArt } from '../audio-art.js';
 import { sniffContentType } from '../metadata.js';
 import { downloadName } from '../format.js';
 
-export function createMediaItem(item, credentials, platform, api = { getContent, remove, updateMetadata }) {
+export function createMediaItem(initialItem, credentials, platform, api = { getContent, remove, updateMetadata }) {
+  let item = initialItem;
   const urls = new Set();
   const controller = new AbortController();
   const signal = controller.signal;
@@ -58,6 +59,11 @@ export function createMediaItem(item, credentials, platform, api = { getContent,
 
   return {
     subscribe: state.subscribe,
+    updateItem(nextItem) {
+      item = nextItem;
+      state.update((value) => ({ ...value, ...nextItem, url: value.url,
+        preview: value.preview || (nextItem.thumb?.length ? makeUrl(nextItem.thumb, 'image/webp') : '') }));
+    },
     reveal: () => run(async () => {
       const url = await content();
       signal.throwIfAborted();
@@ -79,7 +85,7 @@ export function createMediaItem(item, credentials, platform, api = { getContent,
       const result = await api.updateMetadata({ ...options, metadata, thumb: item.thumb });
       signal.throwIfAborted();
       state.update((current) => ({ ...current, metadata, tokens: result.tokens, message: '' }));
-      return metadata;
+      return { metadata, tokens: result.tokens };
     }),
     remove: () => run(async () => {
       await api.remove(options);

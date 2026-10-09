@@ -1,8 +1,9 @@
 <script>
+  import { untrack } from 'svelte';
   import Unlock from './Unlock.svelte';
   import MediaCard from './MediaCard.svelte';
   let { session, platform, library, settingsHref, onsettings } = $props();
-  let tags = $state('');
+  let tags = $state(untrack(() => library.query()));
   let selected = $state(null);
   let dialog;
   let filesInput = $state();
@@ -56,7 +57,7 @@
 <div id="results">
   {#key $library.epoch}
     {#each $library.items as item (item.id)}
-      <MediaCard {item} credentials={library.credentials()} {platform} onopen={open} onremove={close} onretag={(metadata) => library.updateTags(item.id, metadata)} />
+      <MediaCard {item} {library} onopen={open} onremove={close} onretag={(metadata, tokens) => library.updateTags(item.id, metadata, tokens)} />
     {/each}
   {/key}
 </div>

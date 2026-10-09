@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getContent, list, registerKey, remove, upload } from "../src/lib/api.js";
+import { getContent, list, MAX_FILE_BYTES, registerKey, remove, upload } from "../src/lib/api.js";
 import { generatePrivateKey } from "../src/lib/identity.js";
 
 for (const [body, contentType, message] of [
@@ -56,4 +56,14 @@ test("upload progress uses the same response handling as fetch", async (t) => {
   assert.deepEqual(result.metadata.tags, ["Vacation", "dog", "Cat"]);
   assert.deepEqual(progress, [100]);
   assert.deepEqual(requests, [{ method: "POST", url: "https://clip.example.com/api/media" }]);
+});
+
+test("downloaded encrypted content is capped before buffering", async (t) => {
+  const { privateKey } = await generatePrivateKey();
+  let cancelled = false;
+  t.mock.method(globalThis, "fetch", async () => new Response(new ReadableStream({
+    cancel() { cancelled = true; },
+  }), { headers: { "content-length": String(MAX_FILE_BYTES + 65) } }));
+  await assert.rejects(getContent({ serverUrl: "https://clip.example.com", privateKey, id: "test" }), /larger than 32 MB/);
+  assert.equal(cancelled, true);
 });
