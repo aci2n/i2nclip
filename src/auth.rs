@@ -16,11 +16,11 @@
 //! A missing key and a bad signature both become 401. Malformed public keys
 //! submitted for registration become 400.
 
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use axum::http::HeaderMap;
 use axum::http::Method;
 use axum::http::Uri;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 
 use crate::crypto;
 use crate::store::AppState;
@@ -29,9 +29,10 @@ use crate::SKEW_SECS;
 
 /// Registration uses a canonical base64url encoding of a raw Ed25519 public key.
 pub(crate) fn parse_public_key(text: &str) -> Result<[u8; 32], Error> {
-    let bytes = crypto::b64url_decode(text)
-        .map_err(|_| Error::BadRequest("invalid public_key".into()))?;
-    let public: [u8; 32] = bytes.try_into()
+    let bytes =
+        crypto::b64url_decode(text).map_err(|_| Error::BadRequest("invalid public_key".into()))?;
+    let public: [u8; 32] = bytes
+        .try_into()
         .map_err(|_| Error::BadRequest("public_key must contain 32 bytes".into()))?;
     if URL_SAFE_NO_PAD.encode(public) != text {
         return Err(Error::BadRequest("invalid public_key".into()));
@@ -82,7 +83,11 @@ pub(crate) fn verify_request(
         &path_and_query(uri),
         &bearer.body_hash,
     );
-    crypto::verify(&bearer.public, request_message.as_bytes(), &bearer.signature)?;
+    crypto::verify(
+        &bearer.public,
+        request_message.as_bytes(),
+        &bearer.signature,
+    )?;
     // Spent here, before the body, so a captured header cannot be aimed at a
     // new payload. A body that does not match the signed hash still uses up
     // the nonce.
@@ -114,7 +119,10 @@ fn path_and_query(uri: &Uri) -> String {
 /// Split the bearer token. `None` means the header is missing or malformed,
 /// which the caller turns into 401.
 fn parse_bearer(headers: &HeaderMap) -> Option<Bearer> {
-    let value = headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
+    let value = headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?;
     let mut parts = value.trim().splitn(2, char::is_whitespace);
     let scheme = parts.next().unwrap_or("");
     let token = parts.next().unwrap_or("").trim();
@@ -130,7 +138,11 @@ fn parse_bearer(headers: &HeaderMap) -> Option<Bearer> {
     if bits.next().is_some() {
         return None;
     }
-    if body_hash.len() != 64 || !body_hash.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
+    if body_hash.len() != 64
+        || !body_hash
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
         return None;
     }
     let public = crypto::b64url_decode(public_b64).ok()?;

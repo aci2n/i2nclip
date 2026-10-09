@@ -137,18 +137,22 @@ fn registration_code_hash(otc: &str) -> [u8; 32] {
 }
 
 /// Insert a new one-time code. Returns the plaintext code once (for the admin to copy).
-pub(crate) fn issue_registration_code(conn: &mut Connection, ttl_secs: u64) -> Result<String, Error> {
+pub(crate) fn issue_registration_code(
+    conn: &mut Connection,
+    ttl_secs: u64,
+) -> Result<String, Error> {
     let mut secret = [0u8; 16];
-    getrandom::getrandom(&mut secret).map_err(|err| {
-        std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
-    })?;
+    getrandom::getrandom(&mut secret).map_err(|err| std::io::Error::other(err.to_string()))?;
     let code = URL_SAFE_NO_PAD.encode(secret);
     let hash = registration_code_hash(&code);
     let now = crypto::now_secs();
     let expires = i64::try_from(now.saturating_add(ttl_secs)).unwrap_or(i64::MAX);
     let now_i64 = i64::try_from(now).unwrap_or(i64::MAX);
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    tx.execute("DELETE FROM registration_codes WHERE expires_at < ?1", [now_i64])?;
+    tx.execute(
+        "DELETE FROM registration_codes WHERE expires_at < ?1",
+        [now_i64],
+    )?;
     tx.execute(
         "INSERT INTO registration_codes (code_hash, expires_at) VALUES (?1, ?2)",
         params![hash.as_slice(), expires],
@@ -249,7 +253,15 @@ pub(crate) fn add(state: &AppState, owner: [u8; 32], body: &[u8]) -> Result<Item
     let created = i64::try_from(crypto::now_secs()).unwrap_or(i64::MAX);
     let bytes = i64::try_from(parts.content.len()).unwrap_or(i64::MAX);
     let conn = state.lock()?;
-    let result = insert_file(&conn, &id, &owner, &parts.meta, bytes, created, &parts.tokens);
+    let result = insert_file(
+        &conn,
+        &id,
+        &owner,
+        &parts.meta,
+        bytes,
+        created,
+        &parts.tokens,
+    );
     if let Err(err) = result {
         let _ = std::fs::remove_file(&path);
         return Err(err);
@@ -275,9 +287,7 @@ pub(crate) fn list(
     let conn = state.lock()?;
     // The owner filter is always present. Tag tokens, when asked for, are an
     // AND: the file must contain every token, not merely one of them.
-    let mut sql = String::from(
-        "SELECT id, meta, bytes, created_at FROM files WHERE owner = ?1",
-    );
+    let mut sql = String::from("SELECT id, meta, bytes, created_at FROM files WHERE owner = ?1");
     let mut boxed: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     boxed.push(Box::new(owner.to_vec()));
     if !tokens.is_empty() {
@@ -304,7 +314,10 @@ pub(crate) fn list(
             " AND (created_at < ?{older} OR (created_at = ?{same} AND id > ?{tie}))"
         ));
     }
-    sql.push_str(&format!(" ORDER BY created_at DESC, id ASC LIMIT {}", PAGE + 1));
+    sql.push_str(&format!(
+        " ORDER BY created_at DESC, id ASC LIMIT {}",
+        PAGE + 1
+    ));
     let mut stmt = conn.prepare(&sql)?;
     let refs: Vec<&dyn rusqlite::types::ToSql> = boxed.iter().map(|value| value.as_ref()).collect();
     let rows = stmt.query_map(refs.as_slice(), |row| {
@@ -326,7 +339,8 @@ pub(crate) fn list(
         items.truncate(PAGE);
     }
     for item in &mut items {
-        let mut tag_stmt = conn.prepare("SELECT token FROM tags WHERE file_id = ?1 ORDER BY token")?;
+        let mut tag_stmt =
+            conn.prepare("SELECT token FROM tags WHERE file_id = ?1 ORDER BY token")?;
         let tags = tag_stmt.query_map([&item.id], |row| row.get::<_, String>(0))?;
         for tag in tags {
             item.tokens.push(tag?);
@@ -364,7 +378,12 @@ pub(crate) fn read_content(state: &AppState, owner: [u8; 32], id: &str) -> Resul
     }
 }
 
-pub(crate) fn update_meta(state: &AppState, owner: [u8; 32], id: &str, body: &[u8]) -> Result<Item, Error> {
+pub(crate) fn update_meta(
+    state: &AppState,
+    owner: [u8; 32],
+    id: &str,
+    body: &[u8],
+) -> Result<Item, Error> {
     let id = parse_id(id)?;
     let parts = frame::decode_meta(body)?;
     check_blob(&parts.meta, MAX_META)?;
@@ -417,7 +436,9 @@ pub fn gc_orphan_blobs(
     let blobs = data_dir.join("blobs");
     let read = match std::fs::read_dir(&blobs) {
         Ok(read) => read,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(GcBlobsReport::default()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(GcBlobsReport::default())
+        }
         Err(err) => return Err(err.into()),
     };
 

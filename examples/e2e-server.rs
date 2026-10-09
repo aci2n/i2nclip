@@ -38,8 +38,14 @@ async fn allow_browser(request: Request, next: Next) -> Response {
         return Response::builder()
             .status(204)
             .header("access-control-allow-origin", "*")
-            .header("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS")
-            .header("access-control-allow-headers", "authorization, content-type")
+            .header(
+                "access-control-allow-methods",
+                "GET, POST, PUT, DELETE, OPTIONS",
+            )
+            .header(
+                "access-control-allow-headers",
+                "authorization, content-type",
+            )
             .header("access-control-max-age", "600")
             .body(Body::empty())
             .expect("options response");

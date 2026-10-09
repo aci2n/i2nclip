@@ -71,17 +71,11 @@ async fn enroll_key(app: &axum::Router, key: &Identity, otc: &str) {
         response.status(),
         StatusCode::NO_CONTENT,
         "{}",
-        String::from_utf8_lossy(
-            &response.into_body().collect().await.unwrap().to_bytes()
-        )
+        String::from_utf8_lossy(&response.into_body().collect().await.unwrap().to_bytes())
     );
 }
 
-async fn register(
-    app: &axum::Router,
-    key: &Identity,
-    otc: &str,
-) -> (StatusCode, Vec<u8>) {
+async fn register(app: &axum::Router, key: &Identity, otc: &str) -> (StatusCode, Vec<u8>) {
     let body = serde_json::json!({
         "otc": otc,
         "public_key": key.registration_key(),
@@ -124,7 +118,12 @@ async fn call(
 async fn health_needs_no_key() {
     let (_dir, app) = app(&[]);
     let response = app
-        .oneshot(Request::builder().uri("/api/health").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -138,18 +137,29 @@ async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
     let marker = b"PLAINTEXT-MARKER-i2nclip-upload";
     let filename = "vacation-photo.jpg";
     let tag = "secret-tag-zebra";
-    let meta_json = format!(
-        r#"{{"name":"{filename}","content_type":"image/jpeg","size":1,"tags":["{tag}"]}}"#
-    );
+    let meta_json =
+        format!(r#"{{"name":"{filename}","content_type":"image/jpeg","size":1,"tags":["{tag}"]}}"#);
     let meta = crypto::encrypt(&key.seed, &crypto::meta_aad(id), meta_json.as_bytes()).unwrap();
     let content = crypto::encrypt(&key.seed, &crypto::content_aad(id), marker).unwrap();
     let token = crypto::tag_token(&key.seed, tag).unwrap();
     let body = frame::encode_post(id, &meta, &content, &token);
 
     let (status, bytes) = call(&app, &key, "POST", "/api/media", body).await;
-    assert_eq!(status, StatusCode::CREATED, "{}", String::from_utf8_lossy(&bytes));
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
 
-    let (status, listed) = call(&app, &key, "GET", &format!("/api/media?tag={token}"), Vec::new()).await;
+    let (status, listed) = call(
+        &app,
+        &key,
+        "GET",
+        &format!("/api/media?tag={token}"),
+        Vec::new(),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let listed: serde_json::Value = serde_json::from_slice(&listed).unwrap();
     assert_eq!(listed["media"][0]["id"], id);
@@ -173,7 +183,14 @@ async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
         }
     }
 
-    let (status, _) = call(&app, &key, "DELETE", &format!("/api/media/{id}"), Vec::new()).await;
+    let (status, _) = call(
+        &app,
+        &key,
+        "DELETE",
+        &format!("/api/media/{id}"),
+        Vec::new(),
+    )
+    .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (status, _) = call(&app, &key, "GET", &format!("/api/media/{id}"), Vec::new()).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -191,16 +208,36 @@ async fn another_key_cannot_see_or_search() {
     let other_token = crypto::tag_token(&other.seed, "shared-word").unwrap();
     assert_ne!(token, other_token);
     let body = frame::encode_post(id, &meta, &content, &token);
-    assert_eq!(call(&app, &owner, "POST", "/api/media", body).await.0, StatusCode::CREATED);
     assert_eq!(
-        call(&app, &other, "GET", &format!("/api/media/{id}"), Vec::new()).await.0,
+        call(&app, &owner, "POST", "/api/media", body).await.0,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        call(&app, &other, "GET", &format!("/api/media/{id}"), Vec::new())
+            .await
+            .0,
         StatusCode::NOT_FOUND
     );
-    let (_status, listed) = call(&app, &other, "GET", &format!("/api/media?tag={other_token}"), Vec::new()).await;
+    let (_status, listed) = call(
+        &app,
+        &other,
+        "GET",
+        &format!("/api/media?tag={other_token}"),
+        Vec::new(),
+    )
+    .await;
     let listed: serde_json::Value = serde_json::from_slice(&listed).unwrap();
     assert_eq!(listed["media"].as_array().unwrap().len(), 0);
     assert_eq!(
-        call(&app, &other, "DELETE", &format!("/api/media/{id}"), Vec::new()).await.0,
+        call(
+            &app,
+            &other,
+            "DELETE",
+            &format!("/api/media/{id}"),
+            Vec::new()
+        )
+        .await
+        .0,
         StatusCode::NOT_FOUND
     );
 }
@@ -214,7 +251,15 @@ async fn rejects_bad_signature_replay_and_raw_jpeg() {
     // The first call already stored its nonce. Sign a fresh one and send it twice.
     let ts = crypto::now_secs();
     let nonce = crypto::fresh_nonce();
-    let header = crypto::authorization(&key, "http://i2nclip.test", ts, &nonce, "GET", "/api/media", b"");
+    let header = crypto::authorization(
+        &key,
+        "http://i2nclip.test",
+        ts,
+        &nonce,
+        "GET",
+        "/api/media",
+        b"",
+    );
     let request = Request::builder()
         .method("GET")
         .uri("/api/media")
@@ -227,8 +272,14 @@ async fn rejects_bad_signature_replay_and_raw_jpeg() {
         .header("authorization", header)
         .body(Body::empty())
         .unwrap();
-    assert_eq!(app.clone().oneshot(request).await.unwrap().status(), StatusCode::OK);
-    assert_eq!(app.clone().oneshot(again).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        app.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.clone().oneshot(again).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
 
     let id = "33333333-3333-4333-8333-333333333333";
     let meta = crypto::encrypt(&key.seed, &crypto::meta_aad(id), b"{}").unwrap();

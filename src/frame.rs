@@ -79,7 +79,8 @@ pub(crate) fn decode_post(bytes: &[u8]) -> Result<PostParts, Error> {
         return Err(Error::BadRequest("trailing bytes in body".into()));
     }
     let id = std::str::from_utf8(id).map_err(|_| Error::BadRequest("id is not utf-8".into()))?;
-    let tags = std::str::from_utf8(tags).map_err(|_| Error::BadRequest("tags are not utf-8".into()))?;
+    let tags =
+        std::str::from_utf8(tags).map_err(|_| Error::BadRequest("tags are not utf-8".into()))?;
     Ok(PostParts {
         id: id.to_string(),
         meta: meta.to_vec(),
@@ -95,7 +96,8 @@ pub(crate) fn decode_meta(bytes: &[u8]) -> Result<MetaParts, Error> {
     if i != bytes.len() {
         return Err(Error::BadRequest("trailing bytes in body".into()));
     }
-    let tags = std::str::from_utf8(tags).map_err(|_| Error::BadRequest("tags are not utf-8".into()))?;
+    let tags =
+        std::str::from_utf8(tags).map_err(|_| Error::BadRequest("tags are not utf-8".into()))?;
     Ok(MetaParts {
         meta: meta.to_vec(),
         tokens: parse_tokens(tags)?,
@@ -169,7 +171,12 @@ mod tests {
 
     #[test]
     fn post_roundtrip_and_truncation() {
-        let body = encode_post("11111111-1111-4111-8111-111111111111", b"meta", b"content", "aaaa");
+        let body = encode_post(
+            "11111111-1111-4111-8111-111111111111",
+            b"meta",
+            b"content",
+            "aaaa",
+        );
         // "aaaa" is not a 43-char token, so decode must reject it.
         assert!(decode_post(&body).is_err());
         let token = "A".repeat(43);

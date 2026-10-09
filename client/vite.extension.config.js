@@ -1,25 +1,34 @@
-import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
-import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { fileURLToPath } from "node:url";
+import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [svelte(), {
-    name: 'watch-extension-assets',
-    buildStart() {
-      this.addWatchFile(fileURLToPath(new URL('./public', import.meta.url)));
-    },
-  }],
-  build: {
-    outDir: 'dist/extension',
-    minify: false,
-    cssMinify: false,
-    target: 'firefox128',
-    rollupOptions: {
-      input: {
-        app: fileURLToPath(new URL('./src/extension/app.js', import.meta.url)),
-        background: fileURLToPath(new URL('./src/extension/background.js', import.meta.url)),
-      },
-      output: { entryFileNames: '[name].js', chunkFileNames: 'chunks/[name]-[hash].js', assetFileNames: '[name][extname]' },
-    },
-  },
+	plugins: [
+		svelte(),
+		{
+			name: "watch-extension-assets",
+			buildStart() {
+				this.addWatchFile(fileURLToPath(new URL("./public", import.meta.url)));
+			},
+		},
+	],
+	build: {
+		outDir: "dist/extension",
+		minify: false,
+		cssMinify: false,
+		target: "firefox128",
+		rollupOptions: {
+			input: {
+				app: fileURLToPath(new URL("./src/extension/app.js", import.meta.url)),
+				background: fileURLToPath(
+					new URL("./src/extension/background.js", import.meta.url),
+				),
+			},
+			output: {
+				entryFileNames: "[name].js",
+				chunkFileNames: "chunks/[name]-[hash].js",
+				assetFileNames: "[name][extname]",
+			},
+		},
+	},
 });

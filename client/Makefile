@@ -1,7 +1,7 @@
 # Frontend commands. Run directly here or through the repository Makefile.
 NODE ?= $(HOME)/.nvm/versions/node/v$(strip $(file <.nvmrc))/bin/node
 
-.PHONY: build test e2e extension dev-extension
+.PHONY: build test lint format-check e2e extension dev-extension
 
 build:
 	npm run build
@@ -9,6 +9,12 @@ build:
 test:
 	npm run test
 	npm run check
+
+lint:
+	npm run lint
+
+format-check:
+	npm run format:check
 
 # Override NODE when Node 22 is installed outside the default nvm directory.
 e2e: export PATH := $(dir $(NODE)):$(PATH)

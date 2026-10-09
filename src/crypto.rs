@@ -312,8 +312,8 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-pub fn b64url_decode(text: &str) -> Result<Vec<u8>, ()> {
-    URL_SAFE_NO_PAD.decode(text).map_err(|_| ())
+pub fn b64url_decode(text: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    URL_SAFE_NO_PAD.decode(text)
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -341,7 +341,12 @@ mod tests {
         // the property the HTTP tests also check on disk.
         assert!(!blob.windows(plain.len()).any(|window| window == plain));
         assert_eq!(decrypt(&id.seed, &aad, &blob).unwrap(), plain);
-        assert!(decrypt(&id.seed, &meta_aad("11111111-1111-4111-8111-111111111111"), &blob).is_err());
+        assert!(decrypt(
+            &id.seed,
+            &meta_aad("11111111-1111-4111-8111-111111111111"),
+            &blob
+        )
+        .is_err());
         assert!(decrypt(&[8u8; 32], &aad, &blob).is_err());
         blob[20] ^= 0x01;
         assert!(decrypt(&id.seed, &aad, &blob).is_err());
@@ -474,7 +479,8 @@ mod tests {
             authorization,
         };
         let body = serde_json::to_string_pretty(&vectors).unwrap() + "\n";
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("client/tests/test-vectors.json");
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("client/tests/test-vectors.json");
         if !path.exists() {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, &body).unwrap();

@@ -22,8 +22,8 @@ use tokio::net::TcpListener;
 pub use error::Error;
 pub use store::gc_orphan_blobs;
 pub use store::GcBlobsReport;
-pub use store::GC_BLOB_MIN_AGE;
 pub use store::DEFAULT_REGISTRATION_TTL_SECS;
+pub use store::GC_BLOB_MIN_AGE;
 
 /// Persistent state. One volume mount covers the database (including public keys) and blobs.
 pub const DATA_DIR: &str = "/var/lib/i2nclip";

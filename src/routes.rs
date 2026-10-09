@@ -25,10 +25,10 @@ use axum::routing::get;
 use axum::routing::post;
 use axum::Json;
 use axum::Router;
-use serde::Deserialize;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use http_body_util::BodyExt;
+use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
 
@@ -78,10 +78,11 @@ impl FromRequest<AppState> for Authed {
         let method = parts.method.clone();
         let uri = parts.uri.clone();
         let headers = parts.headers.clone();
-        let verified = match blocking(move || auth::verify_request(&shared, &method, &uri, &headers)).await {
-            Ok(verified) => verified,
-            Err(err) => return Err(fail(err)),
-        };
+        let verified =
+            match blocking(move || auth::verify_request(&shared, &method, &uri, &headers)).await {
+                Ok(verified) => verified,
+                Err(err) => return Err(fail(err)),
+            };
         let (query, after) = match list_query(parts.uri.query()) {
             Ok(parsed) => parsed,
             Err(err) => return Err(fail(err)),
@@ -97,7 +98,7 @@ impl FromRequest<AppState> for Authed {
         }
         let bytes = match read_body(body).await {
             Ok(bytes) => bytes,
-            Err(response) => return Err(response),
+            Err(response) => return Err(*response),
         };
         // SHA-256 of the body is CPU, not disk, but a 32 MB digest would still
         // hold an async worker for the whole hash. Same pool as the file IO.
@@ -119,21 +120,21 @@ impl FromRequest<AppState> for Authed {
     }
 }
 
-async fn read_body(body: Body) -> Result<Vec<u8>, Response> {
+async fn read_body(body: Body) -> Result<Vec<u8>, Box<Response>> {
     read_body_with_limit(body, MAX_BODY).await
 }
 
-async fn read_body_with_limit(mut body: Body, max: usize) -> Result<Vec<u8>, Response> {
+async fn read_body_with_limit(mut body: Body, max: usize) -> Result<Vec<u8>, Box<Response>> {
     let mut buf = Vec::new();
     while let Some(next) = body.frame().await {
-        let frame = next.map_err(|_| fail(Error::BadRequest("bad body".into())))?;
+        let frame = next.map_err(|_| Box::new(fail(Error::BadRequest("bad body".into()))))?;
         // Trailers and other non-data frames are ignored. `into_data` is
         // `Ok` only for the bytes of the body.
         let Ok(data) = frame.into_data() else {
             continue;
         };
         if buf.len().saturating_add(data.len()) > max {
-            return Err(too_large());
+            return Err(Box::new(too_large()));
         }
         buf.extend_from_slice(&data);
     }
@@ -142,7 +143,9 @@ async fn read_body_with_limit(mut body: Body, max: usize) -> Result<Vec<u8>, Res
 
 /// `?tag=TOKEN&tag=TOKEN&after=<created_at>.<id>`. Tokens are base64url, so
 /// they need no escaping. `after` is the cursor of the last row already shown.
-fn list_query(query: Option<&str>) -> Result<(Vec<String>, Option<(i64, String)>), Error> {
+type ListQuery = (Vec<String>, Option<(i64, String)>);
+
+fn list_query(query: Option<&str>) -> Result<ListQuery, Error> {
     let Some(query) = query else {
         return Ok((Vec::new(), None));
     };
@@ -178,7 +181,7 @@ async fn register_key(State(state): State<AppState>, request: Request) -> Respon
     let (_parts, body) = request.into_parts();
     let bytes = match read_body_with_limit(body, MAX_REGISTER_BODY).await {
         Ok(bytes) => bytes,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     match blocking(move || register_key_body(&state, &bytes)).await {
         Ok(()) => empty(StatusCode::NO_CONTENT),
@@ -187,8 +190,8 @@ async fn register_key(State(state): State<AppState>, request: Request) -> Respon
 }
 
 fn register_key_body(state: &AppState, body: &[u8]) -> Result<(), Error> {
-    let payload: RegisterKeyJson = serde_json::from_slice(body)
-        .map_err(|_| Error::BadRequest("invalid json".into()))?;
+    let payload: RegisterKeyJson =
+        serde_json::from_slice(body).map_err(|_| Error::BadRequest("invalid json".into()))?;
     if payload.otc.len() > 512 || payload.public_key.len() != 43 {
         return Err(Error::BadRequest("invalid registration payload".into()));
     }
@@ -202,7 +205,10 @@ async fn list(State(state): State<AppState>, authed: Authed) -> Response {
     let query = authed.query;
     let after = authed.after;
     match blocking(move || store::list(&state, owner, &query, after)).await {
-        Ok((items, next)) => json_response(StatusCode::OK, json!({ "media": items_json(items), "next": next })),
+        Ok((items, next)) => json_response(
+            StatusCode::OK,
+            json!({ "media": items_json(items), "next": next }),
+        ),
         Err(err) => fail(err),
     }
 }
@@ -219,7 +225,11 @@ async fn upload(State(state): State<AppState>, authed: Authed) -> Response {
     }
 }
 
-async fn download(State(state): State<AppState>, UrlPath(id): UrlPath<String>, authed: Authed) -> Response {
+async fn download(
+    State(state): State<AppState>,
+    UrlPath(id): UrlPath<String>,
+    authed: Authed,
+) -> Response {
     let owner = authed.owner;
     match blocking(move || store::read_content(&state, owner, &id)).await {
         Ok(bytes) => bytes_response(bytes),
@@ -227,7 +237,11 @@ async fn download(State(state): State<AppState>, UrlPath(id): UrlPath<String>, a
     }
 }
 
-async fn retag(State(state): State<AppState>, UrlPath(id): UrlPath<String>, authed: Authed) -> Response {
+async fn retag(
+    State(state): State<AppState>,
+    UrlPath(id): UrlPath<String>,
+    authed: Authed,
+) -> Response {
     let owner = authed.owner;
     let body = authed.body;
     match blocking(move || store::update_meta(&state, owner, &id, &body)).await {
@@ -236,7 +250,11 @@ async fn retag(State(state): State<AppState>, UrlPath(id): UrlPath<String>, auth
     }
 }
 
-async fn remove(State(state): State<AppState>, UrlPath(id): UrlPath<String>, authed: Authed) -> Response {
+async fn remove(
+    State(state): State<AppState>,
+    UrlPath(id): UrlPath<String>,
+    authed: Authed,
+) -> Response {
     let owner = authed.owner;
     match blocking(move || store::remove(&state, owner, &id)).await {
         Ok(()) => empty(StatusCode::NO_CONTENT),
@@ -252,7 +270,9 @@ async fn remove(State(state): State<AppState>, UrlPath(id): UrlPath<String>, aut
 /// worker, including the signature check that is supposed to reject a body
 /// before it is read. The pool is a separate set of threads for this kind of
 /// work. The database lock is still one mutex, so writes stay serialized.
-async fn blocking<T: Send + 'static>(job: impl FnOnce() -> Result<T, Error> + Send + 'static) -> Result<T, Error> {
+async fn blocking<T: Send + 'static>(
+    job: impl FnOnce() -> Result<T, Error> + Send + 'static,
+) -> Result<T, Error> {
     match tokio::task::spawn_blocking(job).await {
         Ok(result) => result,
         // The closure panicked. The mutex poison path is a different error,
@@ -287,10 +307,9 @@ struct MediaJson {
 
 fn json_response(status: StatusCode, body: impl Serialize) -> Response {
     let mut response = (status, Json(body)).into_response();
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("no-store"),
-    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
 
@@ -316,15 +335,17 @@ fn bytes_response(body: Vec<u8>) -> Response {
 
 fn empty(status: StatusCode) -> Response {
     let mut response = status.into_response();
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("no-store"),
-    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
 
 fn too_large() -> Response {
-    json_response(StatusCode::PAYLOAD_TOO_LARGE, json!({ "error": "too large" }))
+    json_response(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        json!({ "error": "too large" }),
+    )
 }
 
 fn fail(err: Error) -> Response {
