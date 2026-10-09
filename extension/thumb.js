@@ -11,7 +11,7 @@ export async function thumbnail(blob) {
   const type = blob.type || "";
   try {
     if (type.startsWith("audio/")) {
-      const art = audioArt(new Uint8Array(await blob.arrayBuffer()));
+      const art = audioArt(await blob.bytes());
       if (!art) return null;
       return await fromBitmap(new Blob([art]));
     }
@@ -33,24 +33,17 @@ async function fromBitmap(blob) {
   }
 }
 
-function webp(source) {
+async function webp(source) {
   const width = source.videoWidth || source.width;
   const height = source.videoHeight || source.height;
-  if (!width || !height) return Promise.resolve(null);
+  if (!width || !height) return null;
   const scale = Math.min(1, EDGE / Math.max(width, height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(width * scale));
   canvas.height = Math.max(1, Math.round(height * scale));
   canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
-  return new Promise((resolve) => {
-    canvas.toBlob(async (file) => {
-      if (!file) {
-        resolve(null);
-        return;
-      }
-      resolve(new Uint8Array(await file.arrayBuffer()));
-    }, "image/webp", 0.75);
-  });
+  const file = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.75));
+  return file ? file.bytes() : null;
 }
 
 function fromVideo(blob) {
@@ -64,20 +57,19 @@ function fromVideo(blob) {
     const finish = (value) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
       URL.revokeObjectURL(url);
       video.removeAttribute("src");
       video.load();
       resolve(value);
     };
     const timer = setTimeout(() => finish(null), 8000);
-    video.addEventListener("error", () => {
-      clearTimeout(timer);
-      finish(null);
-    });
+    video.addEventListener("error", () => finish(null));
     video.addEventListener("loadeddata", async () => {
-      clearTimeout(timer);
-      const thumb = await webp(video);
-      finish(thumb ? { thumb, image: { width: video.videoWidth, height: video.videoHeight } } : null);
+      try {
+        const thumb = await webp(video);
+        finish(thumb ? { thumb, image: { width: video.videoWidth, height: video.videoHeight } } : null);
+      } catch { finish(null); }
     });
     video.src = url;
   });

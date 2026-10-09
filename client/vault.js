@@ -1,4 +1,4 @@
-// Encrypt the OpenSSH private key before it is written to the Firefox profile.
+// Encrypt the library identity before it is written to the Firefox profile.
 // The passphrase is not an input we store. PBKDF2 turns it into an AES key,
 // AES-GCM encrypts the key text, and a wrong passphrase fails the auth tag.
 
@@ -25,6 +25,7 @@ export async function wrapPrivateKey(privateKey, passphrase, iterations = PBKDF2
 }
 
 export async function unwrapPrivateKey(wrapped, passphrase) {
+  validateWrappedKey(wrapped);
   const key = await wrappingKey(passphrase, b64ToBytes(wrapped.salt), wrapped.iterations);
   try {
     const plain = await crypto.subtle.decrypt(
@@ -34,7 +35,7 @@ export async function unwrapPrivateKey(wrapped, passphrase) {
     );
     return new TextDecoder().decode(plain);
   } catch {
-    throw new Error("Wrong passphrase.");
+    throw new Error("Wrong password or damaged recovery file.");
   }
 }
 
@@ -47,4 +48,20 @@ async function wrappingKey(passphrase, salt, iterations) {
     false,
     ["encrypt", "decrypt"],
   );
+}
+
+export function validateWrappedKey(wrapped) {
+  if (wrapped?.v !== 1 || !Number.isInteger(wrapped.iterations)
+      || wrapped.iterations < 1 || wrapped.iterations > 2_000_000) {
+    throw new Error("Invalid encrypted library.");
+  }
+  for (const [name, min, max] of [["salt", 16, 16], ["iv", 12, 12], ["ct", 17, 4096]]) {
+    const text = wrapped[name];
+    if (typeof text !== "string" || text.length > 5500) throw new Error("Invalid encrypted library.");
+    let bytes;
+    try { bytes = b64ToBytes(text); } catch { throw new Error("Invalid encrypted library."); }
+    if (bytes.length < min || bytes.length > max || bytesToB64(bytes) !== text) {
+      throw new Error("Invalid encrypted library.");
+    }
+  }
 }

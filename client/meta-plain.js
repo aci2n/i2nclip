@@ -5,7 +5,7 @@
 //   uint32be  thumb length (0 = none)
 //   bytes     WebP preview bytes
 
-import { concat, utf8 } from "./bytes.js";
+import { chunk, concat, utf8 } from "./bytes.js";
 
 /** Room left for the 1-byte version, 12-byte nonce, and 16-byte GCM tag. */
 export const MAX_META_PLAINTEXT = 64 * 1024 - 29;
@@ -43,8 +43,3 @@ function readChunk(bytes, offset) {
   return bytes.subarray(offset, offset + len);
 }
 
-function chunk(data) {
-  const len = new Uint8Array(4);
-  new DataView(len.buffer).setUint32(0, data.length);
-  return concat([len, data]);
-}

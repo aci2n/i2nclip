@@ -3,6 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Talk to an i2nclip server with an OpenSSH Ed25519 key. No browser APIs.",
+  "description": "Encrypt media and sign requests for an i2nclip server.",
   "exports": "./index.js"
 }

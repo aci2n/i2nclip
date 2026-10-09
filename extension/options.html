@@ -2,55 +2,60 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>i2nclip options</title>
+    <title>i2nclip settings</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <h1>i2nclip</h1>
     <p><a href="library.html">Library</a></p>
-    <form id="settings">
-      <fieldset>
-        <legend>Server</legend>
-        <p>HTTPS URL of your i2nclip instance.</p>
-        <label for="server">URL</label>
-        <input id="server" type="url" required placeholder="https://clip.example.com" />
-        <button id="save-server" type="button">Update URL</button>
+    <div id="settings">
+      <form id="server-settings">
+        <fieldset>
+          <legend>Server</legend>
+          <div class="bar">
+            <input id="server" type="url" required aria-label="Server URL" placeholder="https://clip.i2n.duckdns.org" />
+            <button id="save-server" type="submit">Update URL</button>
+          </div>
+        </fieldset>
+      </form>
+      <form id="create">
+        <fieldset>
+          <legend>Create your library</legend>
+          <p>Your browser encrypts your uploads before sending them to the server.</p>
+          <label for="otc">Invitation code</label>
+          <input id="otc" type="text" required autocomplete="off" spellcheck="false" />
+          <label for="pass">Unlock password</label>
+          <input id="pass" type="password" required autocomplete="new-password" minlength="8" />
+          <p>Use at least 8 characters. Your password is never stored or sent to the server.</p>
+          <button id="create-library" type="submit">Create library</button>
+        </fieldset>
+      </form>
+      <section id="configured" hidden>
+        <fieldset>
+          <legend>Your library</legend>
+          <p>Your library is saved in this browser. Enter your password once each Firefox session to unlock it.</p>
+          <p>Keep a recovery file and remember your password. You need both to restore your library in another browser.</p>
+          <button id="backup" type="button">Download recovery file</button>
+        </fieldset>
+      </section>
+      <fieldset id="reset-settings" hidden>
+        <legend>Reset everything</legend>
+        <p>Reset clears the library, settings, and unlocked session in this browser. Keep a recovery file first. Uploads on the server stay saved.</p>
+        <button id="reset" type="button">Reset everything</button>
       </fieldset>
-
-      <fieldset>
-        <legend>Key in this browser</legend>
-        <p id="configured" hidden>A key is saved here. Firefox asks for your passphrase once each session.</p>
-        <p id="needs-key" hidden>Set up a key below, then save it in Firefox.</p>
-        <details id="replace" open>
-          <summary id="replace-summary">Create or import a key</summary>
-          <p>The private key decrypts your uploads. Keep a backup. Only the public key goes to the server.</p>
-          <p class="bar">
-            <button id="generate" type="button">Generate a key</button>
-            <label class="file">Import a file<input id="file" type="file" /></label>
-          </p>
-          <label for="key">Private key</label>
-          <textarea id="key" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
-          <label for="pass">Passphrase</label>
-          <input id="pass" type="password" autocomplete="new-password" minlength="8" />
-          <label for="pass2">Passphrase again</label>
-          <input id="pass2" type="password" autocomplete="new-password" minlength="8" />
-          <p>Firefox encrypts the private key with this passphrase. The passphrase itself is not stored.</p>
-        </details>
-        <label for="pub">Public key</label>
-        <textarea id="pub" readonly spellcheck="false"></textarea>
-        <button id="copy" type="button">Copy public key</button>
-        <button id="save-key" type="submit">Save key in Firefox</button>
-      </fieldset>
-
-      <fieldset>
-        <legend>Register on the server</legend>
-        <p>Ask the admin for a one-time code. Registration allows this public key to upload and list files.</p>
-        <label for="otc">One-time code</label>
-        <input id="otc" type="text" autocomplete="off" spellcheck="false" />
-        <button id="register-server" type="button">Register public key</button>
-      </fieldset>
-    </form>
-    <p id="status"></p>
+      <form id="restore-settings" hidden>
+        <fieldset>
+          <legend>Restore from a recovery file</legend>
+          <p id="restore-help">Choose your recovery file and enter the password used when it was downloaded.</p>
+          <label for="file">Recovery file</label>
+          <input id="file" type="file" required accept=".json,application/json" />
+          <label for="restore-pass">Recovery password</label>
+          <input id="restore-pass" type="password" required autocomplete="current-password" />
+          <button id="restore" type="submit">Restore library</button>
+        </fieldset>
+      </form>
+    </div>
+    <p id="status" role="status"></p>
     <script type="module" src="options.js"></script>
   </body>
 </html>

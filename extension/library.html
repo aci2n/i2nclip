@@ -7,9 +7,9 @@
   </head>
   <body>
     <h1>i2nclip</h1>
-    <p><a href="options.html">Options</a></p>
+    <p><a href="options.html">Settings</a></p>
     <form id="unlock" class="bar" hidden>
-      <input id="pass" type="password" placeholder="Passphrase" aria-label="Passphrase" autocomplete="current-password" />
+      <input id="pass" type="password" placeholder="Unlock password" aria-label="Unlock password" autocomplete="current-password" />
       <button type="submit">Unlock</button>
       <p id="unlock-status"></p>
     </form>
@@ -19,7 +19,7 @@
       <label class="file">Upload<input id="files" type="file" multiple /></label>
     </form>
     <p id="status"></p>
-    <p id="setup" hidden>No key in this browser yet. <a href="options.html">Generate one</a>, register with a one-time code from the admin, then save.</p>
+    <p id="setup" hidden>No library in this browser yet. <a href="options.html">Create or restore your library</a>.</p>
     <div id="results"></div>
     <button id="more" type="button" hidden>More</button>
     <dialog id="full"></dialog>

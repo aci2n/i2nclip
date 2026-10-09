@@ -1,39 +1,9 @@
-//! The cryptographic client.
+//! Cryptographic protocol shared with the JavaScript client.
 //!
-//! Two copies of this protocol exist on purpose:
-//!
-//! - This Rust module, used by tests and by any Rust caller that already has
-//!   an OpenSSH private key. This program does not generate keys.
-//! - `client/` (plain JavaScript), used by the Firefox extension and by any
-//!   other JS host. `client/test-vectors.json` is generated from this file
-//!   so the two cannot drift quietly.
-//!
-//! Request handlers must not call [`decrypt`]. The server never has the API
-//! key. It only checks signatures ([`verify`]) and checks that a blob starts
-//! with the version byte ([`looks_sealed`]).
-//!
-//! # Where the key comes from
-//!
-//! Create it with OpenSSH, not with this program:
-//!
-//! ```text
-//! ssh-keygen -t ed25519 -f i2nclip -N ''
-//! ```
-//!
-//! `-N ''` leaves the private key unencrypted. A passphrase would wrap the
-//! seed in bcrypt and AES, and this parser does not prompt for one. Register
-//! the public line from `ssh-keygen` (or the extension) in the database. The
-//! extension stores the private file (`-----BEGIN OPENSSH PRIVATE KEY-----`).
-//!
-//! Inside that file the secret is a 32-byte Ed25519 seed:
-//!
-//! - Ed25519 turns the seed into a key pair. The private half signs requests.
-//!   The public half is the `.pub` line. A signature proves the caller has the
-//!   seed without sending the seed.
-//! - HKDF-SHA256 stretches the same seed into two more keys. One is for
-//!   AES-256-GCM (file bytes and metadata). One is for HMAC-SHA256 (tag
-//!   fingerprints). Splitting them means a bug in the tag index cannot be
-//!   used to decrypt a file, and the other way around.
+//! A library identity contains a random 32-byte Ed25519 seed and its public
+//! key. The seed signs requests and derives separate encryption and tag keys
+//! through HKDF-SHA256. The server receives only the public key and ciphertext.
+//! `client/test-vectors.json` checks that both implementations agree.
 //!
 //! # Blob layout
 //!
@@ -57,7 +27,6 @@
 use aes_gcm::aead::Aead;
 use aes_gcm::aead::Payload;
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
-use base64::engine::general_purpose::STANDARD;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use ed25519_dalek::Signature;
@@ -84,7 +53,7 @@ type HmacSha256 = Hmac<Sha256>;
 
 /// A key pair derived from one 32-byte seed.
 ///
-/// `seed` is the 32-byte secret taken from an OpenSSH private key.
+/// `seed` is the 32-byte secret in a library identity.
 /// `public` is what the database stores. Debug is implemented by hand
 /// so a log line cannot print the seed.
 pub struct Identity {
@@ -101,213 +70,16 @@ impl std::fmt::Debug for Identity {
 }
 
 impl Identity {
-    /// One `ssh-ed25519 AAAA... i2nclip` line. The comment is ours; the key
-    /// blob matches what `ssh-keygen` wrote in the `.pub` file. Either line
-    /// can be registered on the server.
-    pub fn authorized_line(&self) -> String {
-        authorized_line(&self.public)
+    pub fn registration_key(&self) -> String {
+        URL_SAFE_NO_PAD.encode(self.public)
     }
 }
 
-/// Read an unencrypted `ssh-keygen -t ed25519` private key.
-///
-/// The text is the whole file, including the `BEGIN OPENSSH PRIVATE KEY`
-/// lines. OpenSSH packs several length-prefixed fields (the same style as
-/// the public key) and then base64-encodes them. We unwrap that and take
-/// the 32-byte seed. We do not create a new key.
-pub fn parse_private_key(text: &str) -> Result<Identity, Error> {
-    let armored: String = text
-        .lines()
-        .filter(|line| !line.starts_with("-----"))
-        .collect();
-    let compact: String = armored.chars().filter(|c| !c.is_whitespace()).collect();
-    let bytes = STANDARD.decode(compact.trim()).map_err(|_| {
-        Error::BadRequest("not an OpenSSH private key".into())
-    })?;
-    let magic = b"openssh-key-v1\0";
-    if !bytes.starts_with(magic) {
-        return Err(Error::BadRequest(
-            "not an OpenSSH private key from ssh-keygen".into(),
-        ));
-    }
-    let mut cur = Cursor {
-        data: &bytes[magic.len()..],
-        i: 0,
-    };
-    let cipher = cur.ssh_string()?;
-    let kdf = cur.ssh_string()?;
-    // Present even when empty. For a passphrase this holds the bcrypt salt.
-    let _kdf_options = cur.ssh_string()?;
-    if cipher != b"none" || kdf != b"none" {
-        return Err(Error::BadRequest(
-            "this OpenSSH key has a passphrase. Create one with: ssh-keygen -t ed25519 -N ''"
-                .into(),
-        ));
-    }
-    let nkeys = cur.u32()?;
-    if nkeys != 1 {
-        return Err(Error::BadRequest("OpenSSH key must contain one key".into()));
-    }
-    let public_blob = cur.ssh_string()?;
-    let public = parse_ssh_ed25519_blob(public_blob).map_err(|_| {
-        Error::BadRequest("OpenSSH private key is not ssh-ed25519".into())
-    })?;
-    let private_section = cur.ssh_string()?;
-    if cur.i != cur.data.len() {
-        return Err(Error::BadRequest("trailing data in OpenSSH private key".into()));
-    }
-    let seed = ed25519_seed(private_section, &public)?;
-    let id = from_seed(seed);
-    if id.public != public {
-        return Err(Error::BadRequest(
-            "OpenSSH private key does not match its public key".into(),
-        ));
-    }
-    Ok(id)
-}
-
-/// Cursor over the binary key. `i` is the read offset, like an index you would
-/// pass around in C. Each `ssh_string` consumes a big-endian length and then
-/// that many bytes.
-struct Cursor<'a> {
-    data: &'a [u8],
-    i: usize,
-}
-
-impl<'a> Cursor<'a> {
-    fn u32(&mut self) -> Result<u32, Error> {
-        let bytes = self.take(4)?;
-        let arr: [u8; 4] = bytes.try_into().expect("4 bytes");
-        Ok(u32::from_be_bytes(arr))
-    }
-
-    fn ssh_string(&mut self) -> Result<&'a [u8], Error> {
-        let len = self.u32()? as usize;
-        self.take(len)
-    }
-
-    fn take(&mut self, n: usize) -> Result<&'a [u8], Error> {
-        let end = self
-            .i
-            .checked_add(n)
-            .filter(|end| *end <= self.data.len())
-            .ok_or_else(|| Error::BadRequest("truncated OpenSSH private key".into()))?;
-        let out = &self.data[self.i..end];
-        self.i = end;
-        Ok(out)
-    }
-}
-
-/// The private section is another list of SSH strings, padded with 1, 2, 3...
-/// until the length is a multiple of 8 (the block size OpenSSH uses even when
-/// the key is not encrypted).
-fn ed25519_seed(section: &[u8], public: &[u8; 32]) -> Result<[u8; 32], Error> {
-    let mut cur = Cursor {
-        data: section,
-        i: 0,
-    };
-    let check_a = cur.u32()?;
-    let check_b = cur.u32()?;
-    if check_a != check_b {
-        return Err(Error::BadRequest(
-            "OpenSSH private key checksum does not match".into(),
-        ));
-    }
-    let kind = cur.ssh_string()?;
-    if kind != b"ssh-ed25519" {
-        return Err(Error::BadRequest("OpenSSH private key is not ssh-ed25519".into()));
-    }
-    // Inside the private section this field is the raw 32-byte public key,
-    // not the length-prefixed `ssh-ed25519 || key` blob used on the outside.
-    let inner_public = cur.ssh_string()?;
-    let secret = cur.ssh_string()?;
-    let _comment = cur.ssh_string()?;
-    let mut pad = 1u8;
-    while cur.i < cur.data.len() {
-        let byte = cur.data[cur.i];
-        cur.i += 1;
-        if byte != pad {
-            return Err(Error::BadRequest("OpenSSH private key padding is wrong".into()));
-        }
-        pad = pad.wrapping_add(1);
-    }
-    if inner_public != public
-        || secret.len() != 64
-        || secret[32..] != public[..]
-    {
-        return Err(Error::BadRequest(
-            "OpenSSH private key does not match its public key".into(),
-        ));
-    }
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(&secret[..32]);
-    Ok(seed)
-}
-
-/// Rebuild the public key from a seed. Ed25519's public key is a pure
-/// function of the seed. Callers outside this crate start from
-/// [`parse_private_key`] instead, so we do not offer a way to invent a seed.
-pub(crate) fn from_seed(seed: [u8; 32]) -> Identity {
-    // `from_bytes` does not check a checksum. Any 32 bytes are a valid seed.
+/// Construct a library identity from its secret seed.
+pub fn from_seed(seed: [u8; 32]) -> Identity {
     let signing = SigningKey::from_bytes(&seed);
     let public = signing.verifying_key().to_bytes();
     Identity { seed, public }
-}
-
-/// `ssh-ed25519 AAAA... i2nclip`
-///
-/// OpenSSH stores a public key as a blob of length-prefixed fields, then
-/// base64-encodes that blob. The layout is the same as
-/// `ssh-keygen -t ed25519` writes in a `.pub` file:
-///
-/// ```text
-/// uint32 length = 11
-/// bytes  "ssh-ed25519"
-/// uint32 length = 32
-/// bytes  raw public key
-/// ```
-///
-/// Lengths are big-endian, like `DataOutputStream.writeInt` in Java.
-pub fn authorized_line(public: &[u8; 32]) -> String {
-    let mut blob = Vec::new();
-    ssh_string(&mut blob, b"ssh-ed25519");
-    ssh_string(&mut blob, public);
-    format!("ssh-ed25519 {} i2nclip", STANDARD.encode(blob))
-}
-
-fn ssh_string(out: &mut Vec<u8>, data: &[u8]) {
-    let len = u32::try_from(data.len()).expect("ssh field fits in a u32");
-    out.extend_from_slice(&len.to_be_bytes());
-    out.extend_from_slice(data);
-}
-
-/// Decode an `ssh-ed25519` blob back to the raw 32-byte public key.
-/// `Err` means the line is not a key we accept.
-pub fn parse_ssh_ed25519_blob(blob: &[u8]) -> Result<[u8; 32], ()> {
-    let (kind, rest) = read_ssh_string(blob)?;
-    if kind != b"ssh-ed25519" {
-        return Err(());
-    }
-    let (key, rest) = read_ssh_string(rest)?;
-    // Leftover bytes would mean we only understood a prefix of the blob.
-    if !rest.is_empty() || key.len() != 32 {
-        return Err(());
-    }
-    let mut public = [0u8; 32];
-    public.copy_from_slice(key);
-    Ok(public)
-}
-
-fn read_ssh_string(input: &[u8]) -> Result<(&[u8], &[u8]), ()> {
-    if input.len() < 4 {
-        return Err(());
-    }
-    let len = u32::from_be_bytes(input[0..4].try_into().expect("4 bytes")) as usize;
-    let rest = &input[4..];
-    if rest.len() < len {
-        return Err(());
-    }
-    Ok(rest.split_at(len))
 }
 
 /// Associated data for file bytes. `id` must be the exact lowercase UUID
@@ -595,11 +367,11 @@ mod tests {
     }
 
     #[test]
-    fn authorized_line_roundtrips_and_signature_verifies() {
+    fn registration_key_roundtrips_and_signature_verifies() {
         let id = from_seed([4u8; 32]);
-        let line = id.authorized_line();
-        let parsed = crate::auth::parse_ssh_public_key_lines(&format!("# comment\n\n{line}\n")).unwrap();
-        assert_eq!(parsed, vec![id.public]);
+        let key = id.registration_key();
+        let parsed = crate::auth::parse_public_key(&key).unwrap();
+        assert_eq!(parsed, id.public);
         let hash = body_hash(b"hello");
         let request = request_message(
             "https://clip.example.com",
@@ -673,12 +445,11 @@ mod tests {
             sign_body.as_bytes(),
         );
         let frame = crate::frame::encode_post(media_id, &meta_ct, &ciphertext, &token);
-        let pem = unencrypted_openssh_private(&seed, "i2nclip-test");
-        assert_eq!(parse_private_key(&pem).unwrap().public, id.public);
+        let private_key = serde_json::json!({ "v": 1, "seed": URL_SAFE_NO_PAD.encode(seed), "publicKey": id.registration_key() }).to_string();
         let vectors = Vectors {
-            openssh_private: pem,
+            private_key,
             public_hex: hex(&id.public),
-            authorized_line: id.authorized_line(),
+            public_key: id.registration_key(),
             tag: "Vacation".to_string(),
             token,
             cafe_tag: "Café".to_string(),
@@ -715,88 +486,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn parses_a_real_ssh_keygen_file() {
-        let dir = std::env::temp_dir().join(format!(
-            "i2nclip-ssh-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let key = dir.join("id_ed25519");
-        let output = std::process::Command::new("ssh-keygen")
-            .args([
-                "-t",
-                "ed25519",
-                "-f",
-                key.to_str().unwrap(),
-                "-N",
-                "",
-                "-C",
-                "i2nclip-test",
-            ])
-            .output()
-            .expect("ssh-keygen");
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        let private_key = std::fs::read_to_string(&key).unwrap();
-        let public_line = std::fs::read_to_string(dir.join("id_ed25519.pub")).unwrap();
-        let id = parse_private_key(&private_key).unwrap();
-        let fields: Vec<&str> = public_line.split_whitespace().collect();
-        assert_eq!(fields[0], "ssh-ed25519");
-        let blob = STANDARD.decode(fields[1]).unwrap();
-        assert_eq!(parse_ssh_ed25519_blob(&blob).unwrap(), id.public);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// Build the same text `ssh-keygen -N ''` writes, for the fixed test seed.
-    /// Not used by the server. The JavaScript client only parses this text.
-    fn unencrypted_openssh_private(seed: &[u8; 32], comment: &str) -> String {
-        let id = from_seed(*seed);
-        let mut public_blob = Vec::new();
-        ssh_string(&mut public_blob, b"ssh-ed25519");
-        ssh_string(&mut public_blob, &id.public);
-        let mut section = Vec::new();
-        section.extend_from_slice(&0x0a0b0c0du32.to_be_bytes());
-        section.extend_from_slice(&0x0a0b0c0du32.to_be_bytes());
-        ssh_string(&mut section, b"ssh-ed25519");
-        // Raw 32-byte public key, matching what ssh-keygen writes here.
-        ssh_string(&mut section, &id.public);
-        let mut secret = [0u8; 64];
-        secret[..32].copy_from_slice(seed);
-        secret[32..].copy_from_slice(&id.public);
-        ssh_string(&mut section, &secret);
-        ssh_string(&mut section, comment.as_bytes());
-        let mut pad = 1u8;
-        while section.len() % 8 != 0 {
-            section.push(pad);
-            pad += 1;
-        }
-        let mut outer = Vec::new();
-        outer.extend_from_slice(b"openssh-key-v1\0");
-        ssh_string(&mut outer, b"none");
-        ssh_string(&mut outer, b"none");
-        ssh_string(&mut outer, b"");
-        outer.extend_from_slice(&1u32.to_be_bytes());
-        ssh_string(&mut outer, &public_blob);
-        ssh_string(&mut outer, &section);
-        let b64 = STANDARD.encode(outer);
-        let mut pem = String::from("-----BEGIN OPENSSH PRIVATE KEY-----\n");
-        for chunk in b64.as_bytes().chunks(70) {
-            pem.push_str(std::str::from_utf8(chunk).unwrap());
-            pem.push('\n');
-        }
-        pem.push_str("-----END OPENSSH PRIVATE KEY-----\n");
-        pem
-    }
-
     #[derive(Serialize)]
     struct Vectors {
-        openssh_private: String,
+        private_key: String,
         public_hex: String,
-        authorized_line: String,
+        public_key: String,
         tag: String,
         token: String,
         cafe_tag: String,

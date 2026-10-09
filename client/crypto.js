@@ -1,7 +1,7 @@
 // Encryption and request signatures. Must match src/crypto.rs byte for byte.
 // The lock is client/test-vectors.json, produced by the Rust tests.
 //
-// The secret is the 32-byte seed inside an OpenSSH private key. From it:
+// The secret is the 32-byte seed in a library identity. From it:
 //
 // - Ed25519 signs HTTP requests. The server only has the public key.
 // - HKDF-SHA256 with salt "i2nclip" and info "enc" is the AES-256-GCM key.
@@ -9,8 +9,8 @@
 //
 // Those are two keys on purpose. A bug in tag search must not decrypt a file.
 
-import { b64urlToBytes, bytesToB64url, bytesToHex, concat, hexToBytes, utf8 } from "./bytes.js";
-import { authorizedLine, parsePrivateKey } from "./openssh.js";
+import { bytesToB64url, bytesToHex, concat, hexToBytes, utf8 } from "./bytes.js";
+import { parsePrivateKey } from "./identity.js";
 
 const PKCS8_PREFIX = hexToBytes("302e020100300506032b657004220420");
 
@@ -31,29 +31,28 @@ export function normalizeTag(tag) {
   return text;
 }
 
+/** Split user-entered tags while preserving spelling in encrypted metadata. */
+export function splitTags(text) {
+  if (Array.isArray(text)) return text.flatMap(splitTags);
+  return String(text ?? "").split(",").map((tag) => tag.trim()).filter(Boolean);
+}
+
 export function parseTagList(text) {
-  if (Array.isArray(text)) {
-    return text.flatMap((part) => parseTagList(String(part)));
-  }
-  return String(text)
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map(normalizeTag);
+  return splitTags(text).map(normalizeTag);
 }
 
 /**
- * Load `ssh-keygen` output. `privateKey` is the whole private file.
- * Returns the public line to register on the server, plus handles the
+ * Load an internal library identity document.
+ * Returns the public key to register on the server, plus handles the
  * page can pass back into encrypt/sign without parsing again.
  */
 export async function loadKey(privateKey) {
   const parsed = parsePrivateKey(privateKey);
-  await materialFromSeed(parsed.seed, parsed.publicKey);
+  const { privateCryptoKey } = await materialFromSeed(parsed.seed, parsed.publicKey);
   return {
-    privateKey,
+    privateCryptoKey,
     publicKey: parsed.publicKey,
-    authorizedLine: authorizedLine(parsed.publicKey),
+    registrationKey: bytesToB64url(parsed.publicKey),
     seed: parsed.seed,
   };
 }
@@ -114,11 +113,10 @@ export function requestMessage({ origin, ts, nonce, method, path, hash }) {
 }
 
 export async function authorizationHeader({ key, origin, ts, nonce, method, path, body }) {
-  const seed = await seedOf(key);
+  const loaded = key.privateCryptoKey ? key : await loadKey(key.privateKey ?? key);
   const hash = await bodyHash(body);
   const request = requestMessage({ origin, ts, nonce, method, path, hash });
-  const knownPublic = key.publicKey ?? (await loadKey(key.privateKey ?? key)).publicKey;
-  const { privateCryptoKey, publicKey } = await materialFromSeed(seed, knownPublic);
+  const { privateCryptoKey, publicKey } = loaded;
   const signature = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, privateCryptoKey, request));
   return `Bearer ${bytesToB64url(publicKey)}.${ts}.${nonce}.${hash}.${bytesToB64url(signature)}`;
 }
@@ -137,14 +135,14 @@ async function materialFromSeed(seed, publicKey) {
   // WebCrypto will not import a raw Ed25519 seed. It will import PKCS#8, and
   // an Ed25519 PKCS#8 key is a fixed 16-byte header plus that seed.
   // Firefox can sign with that key, then refuses to export it as a JWK, so
-  // the public key comes from the OpenSSH file and is checked with a signature.
+  // the public key comes from the identity document and is checked with a signature.
   const pkcs8 = concat([PKCS8_PREFIX, seed]);
   const privateCryptoKey = await crypto.subtle.importKey("pkcs8", pkcs8, { name: "Ed25519" }, false, ["sign"]);
   const probe = utf8("i2nclip");
   const signature = await crypto.subtle.sign({ name: "Ed25519" }, privateCryptoKey, probe);
   const verifying = await crypto.subtle.importKey("raw", publicKey, { name: "Ed25519" }, false, ["verify"]);
   const matches = await crypto.subtle.verify({ name: "Ed25519" }, verifying, signature, probe);
-  if (!matches) throw new Error("OpenSSH private key does not match its public key");
+  if (!matches) throw new Error("Library identity does not match its public key");
   return { privateCryptoKey, publicKey };
 }
 

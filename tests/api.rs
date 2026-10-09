@@ -33,16 +33,10 @@ impl Drop for TempDir {
     }
 }
 
-fn ssh_key() -> Identity {
-    let dir = TempDir::new();
-    let path = dir.0.join("id_ed25519");
-    let output = std::process::Command::new("ssh-keygen")
-        .args(["-t", "ed25519", "-f", path.to_str().unwrap(), "-N", "", "-C", "test"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let text = std::fs::read_to_string(path).unwrap();
-    crypto::parse_private_key(&text).unwrap()
+fn new_identity() -> Identity {
+    let mut seed = [0u8; 32];
+    getrandom::getrandom(&mut seed).unwrap();
+    crypto::from_seed(seed)
 }
 
 fn app(keys: &[&Identity]) -> (TempDir, axum::Router) {
@@ -52,7 +46,7 @@ fn app(keys: &[&Identity]) -> (TempDir, axum::Router) {
         let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
         for key in keys {
             conn.execute(
-                "INSERT OR IGNORE INTO authorized_keys (public_key) VALUES (?1)",
+                "INSERT OR IGNORE INTO registered_keys (public_key) VALUES (?1)",
                 rusqlite::params![key.public.as_slice()],
             )
             .unwrap();
@@ -64,7 +58,7 @@ fn app(keys: &[&Identity]) -> (TempDir, axum::Router) {
 async fn enroll_key(app: &axum::Router, key: &Identity, otc: &str) {
     let body = serde_json::json!({
         "otc": otc,
-        "authorized_line": key.authorized_line(),
+        "public_key": key.registration_key(),
     });
     let request = Request::builder()
         .method("POST")
@@ -90,7 +84,7 @@ async fn register(
 ) -> (StatusCode, Vec<u8>) {
     let body = serde_json::json!({
         "otc": otc,
-        "authorized_line": key.authorized_line(),
+        "public_key": key.registration_key(),
     });
     let request = Request::builder()
         .method("POST")
@@ -138,7 +132,7 @@ async fn health_needs_no_key() {
 
 #[tokio::test]
 async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
-    let key = ssh_key();
+    let key = new_identity();
     let (dir, app) = app(&[&key]);
     let id = "11111111-1111-4111-8111-111111111111";
     let marker = b"PLAINTEXT-MARKER-i2nclip-upload";
@@ -187,8 +181,8 @@ async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
 
 #[tokio::test]
 async fn another_key_cannot_see_or_search() {
-    let owner = ssh_key();
-    let other = ssh_key();
+    let owner = new_identity();
+    let other = new_identity();
     let (_dir, app) = app(&[&owner, &other]);
     let id = "22222222-2222-4222-8222-222222222222";
     let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
@@ -213,7 +207,7 @@ async fn another_key_cannot_see_or_search() {
 
 #[tokio::test]
 async fn rejects_bad_signature_replay_and_raw_jpeg() {
-    let key = ssh_key();
+    let key = new_identity();
     let (_dir, app) = app(&[&key]);
     let (status, _) = call(&app, &key, "GET", "/api/media", Vec::new()).await;
     assert_eq!(status, StatusCode::OK);
@@ -245,7 +239,7 @@ async fn rejects_bad_signature_replay_and_raw_jpeg() {
 
 #[tokio::test]
 async fn rejects_wrong_origin_and_a_body_other_than_the_signed_one() {
-    let key = ssh_key();
+    let key = new_identity();
     let (_dir, app) = app(&[&key]);
     let ts = crypto::now_secs();
     let body = b"signed-body".to_vec();
@@ -293,7 +287,7 @@ async fn rejects_wrong_origin_and_a_body_other_than_the_signed_one() {
 
 #[tokio::test]
 async fn register_rejects_bad_and_expired_otc() {
-    let key = ssh_key();
+    let key = new_identity();
     let dir = TempDir::new();
     let app = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
     let (status, _) = register(&app, &key, "not-a-real-code").await;
@@ -309,7 +303,7 @@ async fn register_rejects_bad_and_expired_otc() {
 
 #[tokio::test]
 async fn register_otc_is_single_use_and_idempotent_for_key() {
-    let key = ssh_key();
+    let key = new_identity();
     let dir = TempDir::new();
     let app = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
     let otc = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();

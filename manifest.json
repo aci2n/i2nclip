@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "i2nclip",
   "version": "0.0.1",
-  "description": "Upload media to your i2nclip server. The private key stays in this browser.",
+  "description": "Upload media to your i2nclip server. Your library is encrypted in this browser.",
   "browser_specific_settings": {
     "gecko": {
       "id": "i2nclip@i2n",

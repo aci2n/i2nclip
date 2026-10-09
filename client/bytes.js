@@ -49,3 +49,10 @@ export function concat(parts) {
 export function utf8(text) {
   return new TextEncoder().encode(text);
 }
+
+/** Big-endian uint32 length followed by the bytes. */
+export function chunk(data) {
+  const length = new Uint8Array(4);
+  new DataView(length.buffer).setUint32(0, data.length);
+  return concat([length, data]);
+}

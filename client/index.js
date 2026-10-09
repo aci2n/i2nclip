@@ -1,8 +1,8 @@
 // Public API for the extension and for any other JavaScript host.
-// Pass the text of an OpenSSH private key (`ssh-keygen -t ed25519 -N ''`).
+// Pass the internal identity document returned by generatePrivateKey().
 // This module does not touch browser.storage.
 
-export { authorizedLine, generatePrivateKey, parsePrivateKey } from "./openssh.js";
+export { generatePrivateKey, parsePrivateKey } from "./identity.js";
 export {
   authorizationHeader,
   bodyHash,
@@ -15,6 +15,7 @@ export {
   metaAad,
   normalizeTag,
   parseTagList,
+  splitTags,
   tagToken,
   tagTokens,
 } from "./crypto.js";

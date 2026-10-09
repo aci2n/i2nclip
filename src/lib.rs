@@ -25,7 +25,7 @@ pub use store::GcBlobsReport;
 pub use store::GC_BLOB_MIN_AGE;
 pub use store::DEFAULT_REGISTRATION_TTL_SECS;
 
-/// Persistent state. One volume mount covers keys, the database, and blobs.
+/// Persistent state. One volume mount covers the database (including public keys) and blobs.
 pub const DATA_DIR: &str = "/var/lib/i2nclip";
 
 /// Fixed listen address. Publish a host port onto 8080 instead of configuring this.

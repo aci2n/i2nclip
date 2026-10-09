@@ -10,9 +10,9 @@ description = "Encrypted media store. The server keeps ciphertext and public key
 aes-gcm = "0.10"
 # HTTP framework. Handlers look a bit like small servlet methods.
 axum = "0.8"
-# Standard base64 (api key, SSH line) and base64url (bearer token, tag tokens).
+# Base64 for ciphertext and base64url for public keys, bearer tokens, and tags.
 base64 = "0.22"
-# Ed25519 signatures. Same algorithm OpenSSH uses for ssh-ed25519 keys.
+# Ed25519 request signatures.
 ed25519-dalek = "2"
 # Operating-system random bytes for nonces and new keys.
 getrandom = "0.2"

@@ -1,6 +1,7 @@
 // Background module so a context-menu click can upload without opening a page.
 // The tag entry still opens upload.html, which imports the same client.
 
+import { notify } from "./notify.js";
 import { sendUpload } from "./send-upload.js";
 import { sessionPrivateKey } from "./secrets.js";
 
@@ -68,15 +69,6 @@ async function openTagWindow(source) {
     type: "popup",
     width: 420,
     height: 640,
-  });
-}
-
-function notify(message) {
-  browser.notifications.create({
-    type: "basic",
-    iconUrl: browser.runtime.getURL("extension/icon.svg"),
-    title: "i2nclip",
-    message,
   });
 }
 

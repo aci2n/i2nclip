@@ -35,8 +35,7 @@ h1 { font-size: 1.3rem; }
 
 label { display: block; margin-top: 0.8rem; }
 
-input,
-textarea {
+input {
   display: block;
   width: 100%;
   margin-top: 0.25rem;
@@ -46,8 +45,6 @@ textarea {
   color: inherit;
   font: inherit;
 }
-
-textarea { min-height: 6rem; }
 
 ::placeholder { color: var(--muted); opacity: 1; }
 
@@ -88,16 +85,12 @@ button:disabled { opacity: 0.45; }
 
 #settings { grid-template-columns: 1fr; }
 
-#settings > details,
-#settings > fieldset {
-  margin: 0;
-  padding: 0.6rem;
-  border: 1px solid var(--line);
-  background: var(--paper);
-  min-width: 0;
-}
+input[type="url"] { max-width: 28rem; }
 
-.card {
+fieldset,
+.card,
+.upload-popup form {
+  margin: 0;
   padding: 0.6rem;
   border: 1px solid var(--line);
   background: var(--paper);
@@ -106,6 +99,11 @@ button:disabled { opacity: 0.45; }
 
 .card.busy {
   opacity: 0.45;
+  pointer-events: none;
+}
+
+.card.deleted {
+  opacity: 0.2;
   pointer-events: none;
 }
 
@@ -122,14 +120,13 @@ button:disabled { opacity: 0.45; }
   color: #fff;
 }
 
-.card .media img { cursor: pointer; }
-
 .card .media img {
-  display: block;
-  width: 100%;
-  max-height: 18rem;
   object-fit: contain;
+  cursor: pointer;
 }
+
+.card .media img,
+.card video { max-height: 18rem; }
 
 .media .play {
   display: grid;
@@ -138,12 +135,10 @@ button:disabled { opacity: 0.45; }
   min-height: 6rem;
   margin: 0;
   padding: 0;
-  border: 0;
   background: var(--bg);
-  color: var(--ink);
+  color: inherit;
   font-size: 2rem;
   line-height: 1;
-  cursor: pointer;
 }
 
 .media:has(img) .play {
@@ -154,13 +149,12 @@ button:disabled { opacity: 0.45; }
   color: #fff;
 }
 
+.card .media img,
 .card video,
 .card audio {
   display: block;
   width: 100%;
 }
-
-.card video { max-height: 18rem; }
 
 #full {
   max-width: 100vw;
@@ -172,10 +166,8 @@ button:disabled { opacity: 0.45; }
 
 #full img {
   display: block;
-  max-width: 100%;
   max-height: 100vh;
 }
-
 
 .card strong {
   display: block;
@@ -200,11 +192,10 @@ audio { max-width: 100%; }
 
 #status,
 #name,
-#server-name,
 .card p,
 .tags output { color: var(--muted); }
 
-body.upload-popup {
+.upload-popup {
   margin: 0;
   max-width: none;
   min-height: 100%;
@@ -214,42 +205,16 @@ body.upload-popup {
   gap: 0.65rem;
 }
 
-body.upload-popup h1 {
-  margin: 0;
-  font-size: 1.15rem;
-}
+.upload-popup > h1,
+.upload-popup > p { margin: 0; }
 
-body.upload-popup #name,
-body.upload-popup #status {
-  margin: 0;
-  line-height: 1.35;
-}
-
-body.upload-popup #preview {
+.upload-popup > img {
   display: block;
   max-height: 7rem;
-  max-width: 100%;
   width: auto;
   object-fit: contain;
-  border: 1px solid var(--line);
-  border-radius: 0.25rem;
 }
 
-body.upload-popup form {
-  margin: 0;
-  padding: 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: 0.25rem;
-  background: var(--paper);
-}
-
-body.upload-popup form label:first-child {
-  margin-top: 0;
-}
-
-body.upload-popup form button[type="submit"] {
-  margin-top: 0.75rem;
-  margin-bottom: 0;
-}
+form > label:first-child { margin-top: 0; }
 
 [hidden] { display: none !important; }

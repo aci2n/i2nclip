@@ -1,7 +1,7 @@
 {
-  "openssh_private": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACDQSrIydCu0qzoTaL1GFeTm0CJKtxoBa6+FIKMyyXeHNwAAAJAKCwwNCgsM\nDQAAAAtzc2gtZWQyNTUxOQAAACDQSrIydCu0qzoTaL1GFeTm0CJKtxoBa6+FIKMyyXeHNw\nAAAEAREREREREREREREREREREREREREREREREREREREREREdBKsjJ0K7SrOhNovUYV5ObQ\nIkq3GgFrr4UgozLJd4c3AAAADGkybmNsaXAtdGVzdAE=\n-----END OPENSSH PRIVATE KEY-----\n",
+  "private_key": "{\"publicKey\":\"0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc\",\"seed\":\"ERERERERERERERERERERERERERERERERERERERERERE\",\"v\":1}",
   "public_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
-  "authorized_line": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINBKsjJ0K7SrOhNovUYV5ObQIkq3GgFrr4UgozLJd4c3 i2nclip",
+  "public_key": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc",
   "tag": "Vacation",
   "token": "FaYsZyf0tbmiHMBur3enXHg_Tk_mSLmj9uWaK2i4Qo8",
   "cafe_tag": "Café",

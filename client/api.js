@@ -1,7 +1,7 @@
 // HTTP calls. `fetch` exists in Firefox extension pages, browsers, and Node.
-// The private key never leaves this module except as a signature.
+// HTTP requests contain signatures and ciphertext, never the private key.
 
-import { b64ToBytes, utf8 } from "./bytes.js";
+import { b64ToBytes } from "./bytes.js";
 import {
   authorizationHeader,
   contentAad,
@@ -10,6 +10,7 @@ import {
   freshNonce,
   loadKey,
   metaAad,
+  splitTags,
   tagTokens,
 } from "./crypto.js";
 import { encodeMeta, encodePost } from "./frame.js";
@@ -25,7 +26,7 @@ export async function upload({ serverUrl, privateKey, bytes, name, contentType, 
   }
   const key = await loadKey(privateKey);
   const mediaId = id ?? crypto.randomUUID();
-  const plainTags = tagsToList(tags);
+  const plainTags = splitTags(tags);
   const storedType = sniffContentType(bytes, contentType);
   const metadata = {
     name: cleanName(name),
@@ -34,11 +35,7 @@ export async function upload({ serverUrl, privateKey, bytes, name, contentType, 
     tags: plainTags,
   };
   if (image && Object.keys(image).length > 0) metadata.image = image;
-  let metaPlain = encodeMetaPlain(metadata, thumb ?? null);
-  if (metaPlain.length > MAX_META_PLAINTEXT) {
-    metaPlain = encodeMetaPlain(metadata, null);
-  }
-  const meta = await encrypt(key, metaAad(mediaId), metaPlain);
+  const meta = await sealedMetadata(key, mediaId, metadata, thumb);
   const content = await encrypt(key, contentAad(mediaId), bytes);
   const tokens = await tagTokens(key, plainTags);
   const body = encodePost({ id: mediaId, meta, content, tags: tokens.join("\n") });
@@ -71,11 +68,7 @@ export async function getContent({ serverUrl, privateKey, id, onProgress }) {
 export async function updateMetadata({ serverUrl, privateKey, id, metadata, thumb }) {
   const key = await loadKey(privateKey);
   const tokens = await tagTokens(key, metadata.tags ?? []);
-  let metaPlain = encodeMetaPlain(metadata, thumb ?? null);
-  if (metaPlain.length > MAX_META_PLAINTEXT) {
-    metaPlain = encodeMetaPlain(metadata, null);
-  }
-  const meta = await encrypt(key, metaAad(id), metaPlain);
+  const meta = await sealedMetadata(key, id, metadata, thumb);
   const body = encodeMeta({ meta, tags: tokens.join("\n") });
   return send(serverUrl, key, "PUT", `/api/media/${id}`, body);
 }
@@ -85,27 +78,20 @@ export async function remove({ serverUrl, privateKey, id }) {
   await sendBytes(serverUrl, key, "DELETE", `/api/media/${id}`, new Uint8Array());
 }
 
-/** Register `authorizedLine` with a one-time code from the server admin. */
-export async function registerKey({ serverUrl, authorizedLine, otc }) {
-  const url = new URL("/api/register-key", serverUrl.endsWith("/") ? serverUrl : `${serverUrl}/`);
+/** Register a base64url public key with an invitation code. */
+export async function registerKey({ serverUrl, publicKey, otc }) {
+  const url = new URL("/api/register-key", serverUrl);
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       otc: String(otc).trim(),
-      authorized_line: String(authorizedLine).trim(),
+      public_key: String(publicKey).trim(),
     }),
     cache: "no-store",
   });
   if (response.status === 204) return;
-  const text = await response.text();
-  let message = response.statusText;
-  try {
-    message = JSON.parse(text).error || message;
-  } catch {
-    message = text || message;
-  }
-  throw new Error(message);
+  throw await responseError(response);
 }
 
 async function openMeta(key, item) {
@@ -127,27 +113,27 @@ async function openMeta(key, item) {
 async function send(serverUrl, key, method, path, body, onProgress) {
   const response = await signedFetch(serverUrl, key, method, path, body, onProgress);
   if (response.status === 204) return null;
-  const text = await response.text();
-  const parsed = text ? JSON.parse(text) : null;
-  if (!response.ok) {
-    throw new Error(parsed?.error || response.statusText);
-  }
-  return parsed;
+  if (!response.ok) throw await responseError(response);
+  return response.json();
 }
 
 async function sendBytes(serverUrl, key, method, path, body, onProgress) {
   const response = await signedFetch(serverUrl, key, method, path, body);
-  if (!response.ok) {
-    const text = await response.text();
-    let message = response.statusText;
-    try {
-      message = JSON.parse(text).error || message;
-    } catch {
-      message = text || message;
-    }
-    throw new Error(message);
-  }
+  if (!response.ok) throw await responseError(response);
   return readBody(response, onProgress);
+}
+
+async function sealedMetadata(key, id, metadata, thumb) {
+  let plain = encodeMetaPlain(metadata, thumb ?? null);
+  if (plain.length > MAX_META_PLAINTEXT) plain = encodeMetaPlain(metadata, null);
+  return encrypt(key, metaAad(id), plain);
+}
+
+async function responseError(response) {
+  const text = await response.text();
+  let message = text || response.statusText;
+  try { message = JSON.parse(text).error || response.statusText; } catch {}
+  return new Error(message);
 }
 
 async function readBody(response, onProgress) {
@@ -177,12 +163,12 @@ async function signedFetch(serverUrl, key, method, path, body, onProgress) {
   const nonce = freshNonce();
   const origin = new URL(serverUrl).origin;
   const authorization = await authorizationHeader({ key, origin, ts, nonce, method, path, body });
-  const url = new URL(path, serverUrl.endsWith("/") ? serverUrl : `${serverUrl}/`);
+  const url = new URL(path, serverUrl);
   const headers = { authorization, "content-type": "application/octet-stream" };
   const payload = method === "GET" || method === "DELETE" ? undefined : body;
   // fetch() cannot report how much of the body has been sent. The upload
   // events on XMLHttpRequest can.
-  if (onProgress && payload) return postUpload(url, headers, payload, onProgress);
+  if (onProgress && payload) return requestWithProgress(method, url, headers, payload, onProgress);
   return fetch(url, {
     method,
     headers,
@@ -193,35 +179,24 @@ async function signedFetch(serverUrl, key, method, path, body, onProgress) {
   });
 }
 
-function postUpload(url, headers, body, onProgress) {
+function requestWithProgress(method, url, headers, body, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", url);
+    xhr.open(method, url);
     for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable) return;
       onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
     };
     xhr.onload = () => {
-      resolve({
-        ok: xhr.status >= 200 && xhr.status < 300,
+      resolve(new Response(xhr.status === 204 ? null : xhr.responseText, {
         status: xhr.status,
         statusText: xhr.statusText,
-        text: async () => xhr.responseText,
-      });
+      }));
     };
     xhr.onerror = () => reject(new Error("Upload failed."));
     xhr.send(body);
   });
-}
-
-function tagsToList(tags) {
-  if (!tags) return [];
-  if (Array.isArray(tags)) return tags.map((tag) => String(tag).trim()).filter(Boolean);
-  return String(tags)
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter(Boolean);
 }
 
 function cleanName(name) {

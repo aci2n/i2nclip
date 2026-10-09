@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS authorized_keys (
+CREATE TABLE IF NOT EXISTS registered_keys (
     public_key BLOB PRIMARY KEY NOT NULL CHECK (length(public_key) = 32)
 );
 

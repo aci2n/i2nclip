@@ -2,28 +2,45 @@
 // only after a successful unlock, and Firefox drops that when it exits.
 // The passphrase is never written.
 
+import { loadKey } from "../client/crypto.js";
 import { unwrapPrivateKey, wrapPrivateKey } from "../client/vault.js";
 
 const SESSION_KEY = "privateKey";
 
-export const DEFAULT_SERVER_URL = "https://clip.example.com";
+export const DEFAULT_SERVER_URL = "https://clip.i2n.duckdns.org";
 
 const MIN_PASSPHRASE_LENGTH = 8;
 
-export async function saveWrappedKey({ serverUrl, privateKey, passphrase, authorizedLine }) {
+export async function saveWrappedKey({ serverUrl, privateKey, passphrase }) {
   if (passphrase == null || passphrase === "") {
-    throw new Error("Set a passphrase.");
+    throw new Error("Set an unlock password.");
   }
   if (passphrase.length < MIN_PASSPHRASE_LENGTH) {
-    throw new Error(`Passphrase must be at least ${MIN_PASSPHRASE_LENGTH} characters.`);
+    throw new Error(`Password must be at least ${MIN_PASSPHRASE_LENGTH} characters.`);
   }
+  const loaded = await loadKey(privateKey);
   const wrappedKey = await wrapPrivateKey(privateKey, passphrase);
-  await browser.storage.local.set({ serverUrl, wrappedKey, authorizedLine });
+  await saveIdentity({ serverUrl, wrappedKey, publicKey: loaded.registrationKey }, privateKey);
+}
+
+export async function restoreWrappedKey(recovered, passphrase) {
+  const { privateKey, loaded } = await openIdentity(recovered.wrappedKey, passphrase);
+  await saveIdentity({ ...recovered, publicKey: loaded.registrationKey }, privateKey);
+}
+
+async function saveIdentity(settings, privateKey) {
+  await browser.storage.local.set(settings);
   await browser.storage.session.set({ [SESSION_KEY]: privateKey });
 }
 
+async function openIdentity(wrappedKey, passphrase) {
+  const privateKey = await unwrapPrivateKey(wrappedKey, passphrase);
+  const loaded = await loadKey(privateKey);
+  return { privateKey, loaded };
+}
+
 export async function readLocal() {
-  const stored = await browser.storage.local.get(["serverUrl", "wrappedKey", "authorizedLine"]);
+  const stored = await browser.storage.local.get(["serverUrl", "wrappedKey", "publicKey"]);
   return { ...stored, serverUrl: stored.serverUrl || DEFAULT_SERVER_URL };
 }
 
@@ -50,9 +67,9 @@ export function bindUnlock(form, status, done) {
 export async function unlock(passphrase) {
   const { wrappedKey } = await browser.storage.local.get("wrappedKey");
   if (!wrappedKey) {
-    throw new Error("Set the private key in the extension options.");
+    throw new Error("Create or restore your library in the extension settings.");
   }
-  const privateKey = await unwrapPrivateKey(wrappedKey, passphrase);
+  const { privateKey } = await openIdentity(wrappedKey, passphrase);
   await browser.storage.session.set({ [SESSION_KEY]: privateKey });
   return privateKey;
 }

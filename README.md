@@ -1,16 +1,16 @@
 # i2nclip
 
-Encrypted media store. The browser encrypts each file with your OpenSSH key before upload. The server keeps ciphertext, public keys, and tag fingerprints. It cannot read the files.
+Encrypted media store. The browser encrypts each file in your browser before upload. The server keeps ciphertext, public keys, and tag fingerprints. It cannot read the files.
 
-## Key
+## Set up your library
 
-```sh
-ssh-keygen -t ed25519 -f i2nclip -N ''
-```
+Open the extension settings, use the default server (`https://clip.i2n.duckdns.org`) or enter your own URL and an invitation code from the admin, then choose an unlock password of at least 8 characters and click **Create library**. The browser generates the library identity and registers its public key automatically.
 
-`-N ''` leaves the OpenSSH file itself unencrypted. This program does not read an OpenSSH passphrase. The server admin creates a one-time code; you register your public key in the extension with that code (`POST /api/register-key`). Keep `i2nclip` (the private file) for the extension. Losing it makes the uploads unreadable.
+Download your **recovery file** before uploading. It contains your encrypted library identity and server URL. Keep it and remember your password: both are required to restore your library in another browser. The server cannot recover either for you. Settings also let you download the recovery file again later.
 
-The extension will not save that file unless you set a passphrase of at least 8 characters. The passphrase is not stored. It wraps the key in the Firefox profile. Firefox asks for it once each time it starts, and the unwrapped key stays in memory until Firefox exits. Generate or import a key on the options page, register on the server with the admin’s one-time code, then save.
+The password encrypts the identity in your Firefox profile and recovery file. It is never stored or sent to the server. Firefox asks for it once each session; the unlocked identity stays in session storage until Firefox exits. Restore accepts only i2nclip recovery files and is available when no library is configured. To switch libraries, download your recovery file, then click **Reset everything**. Reset clears the browser's saved settings and session; uploads on the server stay saved. You can then create a library or restore a recovery file.
+
+Registration happens automatically during creation. The library identity is saved and unlocked only after registration succeeds. If registration fails, check your invitation code and try again; no reset is needed.
 
 Admin (on the host or in the container data volume):
 
@@ -65,7 +65,7 @@ i2nclip serves plain HTTP on port 8080 inside the container. It does not termina
 | --- | --- |
 | `Containerfile` | Builds `localhost/i2nclip:latest` |
 | `deploy/i2nclip.container` | Example Podman quadlet with a published port |
-| `make push` | Optional: build the image and copy it to a remote rootless Podman host (`HOST`, `CONNECTION` in the Makefile) |
+| `make push` | Optional: build the image and stream it over SSH into the remote user's Podman image store (`HOST` in `local.mk`) |
 
 Typical setup:
 
@@ -115,10 +115,10 @@ The library lists 24 items at a time. Each card is painted from a small WebP pre
 `client/` is plain JavaScript with no browser APIs. The extension imports it. Another program can too:
 
 ```js
-import { upload, list } from "./client/index.js";
+import { generatePrivateKey, registerKey, upload, list } from "./client/index.js";
 ```
 
-`privateKey` is the text of the OpenSSH private file. `list` returns `{ items, next }`. Pass `next` back as `after` for the following page.
+`generatePrivateKey()` returns `{ privateKey, publicKey }`. `privateKey` is an internal JSON identity document containing version `1`, a base64url Ed25519 seed, and its public key. Keep it secret. Register with `registerKey({ serverUrl, publicKey, otc })`; the server accepts `{ "otc": "…", "public_key": "…" }` at `POST /api/register-key`. Public keys are raw 32-byte Ed25519 keys encoded as base64url without padding. `list` returns `{ items, next }`. Pass `next` back as `after` for the following page.
 
 ## Tags
 

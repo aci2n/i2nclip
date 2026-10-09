@@ -6,7 +6,7 @@ import { thumbnail } from "./thumb.js";
 export async function sendUpload(source, privateKey, tags, onProgress) {
   const { serverUrl } = await readLocal();
   if (!serverUrl || !privateKey) {
-    throw new Error("Set the server and private key in the extension options.");
+    throw new Error("Set up your library in the extension settings.");
   }
   let blob = source.blob ?? null;
   let bytes = source.bytes ?? null;

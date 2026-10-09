@@ -1,5 +1,5 @@
 import { audioArt } from "../client/audio-art.js";
-import { getContent, list, remove, sniffContentType, tagTokens, updateMetadata } from "../client/index.js";
+import { getContent, list, remove, sniffContentType, splitTags, tagTokens, updateMetadata } from "../client/index.js";
 import { bindUnlock, readLocal, sessionPrivateKey } from "./secrets.js";
 import { sendUpload } from "./send-upload.js";
 
@@ -16,9 +16,9 @@ function setStatus(key, text) {
   status.textContent = [...statusScopes.values()].join(" | ");
 }
 let active = null;
+let searchVersion = 0;
 let nextCursor = null;
-const details = new Map();
-const thumbs = new Map();
+const items = new Map();
 
 find.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -30,6 +30,13 @@ more.addEventListener("click", () => {
   loadPage(nextCursor, true);
 });
 search();
+
+browser.storage.onChanged.addListener((changes, area) => {
+  if ((area === "session" && "privateKey" in changes)
+      || (area === "local" && ("wrappedKey" in changes || "serverUrl" in changes))) {
+    search();
+  }
+});
 
 bindUnlock(document.querySelector("#unlock"), document.querySelector("#unlock-status"), async () => {
   document.querySelector("#unlock").hidden = true;
@@ -70,10 +77,12 @@ results.addEventListener("click", async (event) => {
     card.classList.add("busy");
     try {
       await remove({
-        serverUrl: active.serverUrl,
-        privateKey: active.privateKey,
+        ...active,
         id: card.dataset.id,
       });
+      card.classList.remove("busy");
+      card.classList.add("deleted");
+      card.querySelectorAll("button, input").forEach((control) => { control.disabled = true; });
     } catch (err) {
       card.classList.remove("busy");
       note(card, err.message);
@@ -84,7 +93,7 @@ results.addEventListener("click", async (event) => {
     button.disabled = true;
     try {
       if (button.dataset.act === "play") await reveal(card);
-      else saveFile(await ensureContent(card), card.dataset.filename);
+      else await saveFile(await ensureContent(card), card.dataset.filename);
     } catch (err) {
       note(card, err.message);
     } finally {
@@ -98,24 +107,24 @@ results.addEventListener("submit", async (event) => {
   if (!form.classList.contains("tags") || !active) return;
   event.preventDefault();
   const card = form.closest(".card");
-  const metadata = details.get(card.dataset.id);
+  const item = items.get(card.dataset.id);
+  const metadata = item?.metadata;
   const output = form.querySelector("output");
   if (!metadata) {
     output.textContent = "No metadata to update.";
     return;
   }
-  const tags = form.tags.value.split(",").map((tag) => tag.trim()).filter(Boolean);
+  const tags = splitTags(form.tags.value);
   output.textContent = "Updating…";
   try {
     const next = { ...metadata, tags };
     await updateMetadata({
-      serverUrl: active.serverUrl,
-      privateKey: active.privateKey,
+      ...active,
       id: card.dataset.id,
       metadata: next,
-      thumb: thumbs.get(card.dataset.id) ?? null,
+      thumb: item.thumb,
     });
-    details.set(card.dataset.id, next);
+    items.set(card.dataset.id, { ...item, metadata: next });
     output.textContent = "Updated.";
   } catch (err) {
     output.textContent = err.message;
@@ -153,6 +162,9 @@ async function uploadFiles(files) {
 }
 
 async function search() {
+  const version = ++searchVersion;
+  active = null;
+  items.clear();
   if (full.open) full.close();
   for (const card of results.querySelectorAll(".card")) releaseCard(card);
   results.textContent = "";
@@ -161,9 +173,11 @@ async function search() {
   nextCursor = null;
   const settings = await readLocal();
   const privateKey = await sessionPrivateKey();
+  if (version !== searchVersion) return;
   const setup = document.querySelector("#setup");
   const unlock = document.querySelector("#unlock");
   setup.hidden = true;
+  unlock.hidden = true;
   if (!settings.wrappedKey && !privateKey) {
     setup.hidden = false;
     return;
@@ -176,21 +190,20 @@ async function search() {
   }
   unlock.hidden = true;
   active = { serverUrl: settings.serverUrl, privateKey };
-  details.clear();
-  thumbs.clear();
   await loadPage(null, false);
 }
 
 async function loadPage(after, keep) {
+  const library = active;
   more.disabled = true;
   setStatus("search", "Loading…");
   try {
     const page = await list({
-      serverUrl: active.serverUrl,
-      privateKey: active.privateKey,
+      ...library,
       tags: document.querySelector("#tags").value,
       after,
     });
+    if (active !== library) return;
     if (!keep && page.items.length === 0) {
       setStatus("search", "Nothing stored for those tags.");
       more.hidden = true;
@@ -199,16 +212,15 @@ async function loadPage(after, keep) {
     setStatus("search", "");
     const stamp = document.querySelector("#card");
     for (const item of page.items) {
-      if (item.metadata) details.set(item.id, item.metadata);
-      thumbs.set(item.id, item.thumb ?? null);
+      items.set(item.id, item);
       results.append(renderCard(stamp, item));
     }
     nextCursor = page.next;
     more.hidden = !page.next;
   } catch (err) {
-    setStatus("search", err.message);
+    if (active === library) setStatus("search", err.message);
   } finally {
-    more.disabled = false;
+    if (active === library) more.disabled = false;
   }
 }
 
@@ -239,37 +251,39 @@ function renderCard(stamp, item) {
   }
   if (item.thumb?.length) {
     card.dataset.preview = URL.createObjectURL(new Blob([item.thumb], { type: "image/webp" }));
-    const img = document.createElement("img");
-    img.src = card.dataset.preview;
-    img.alt = title.textContent;
-    media.append(img);
+    media.append(image(card, card.dataset.preview));
   }
   if (type.startsWith("audio/") || type.startsWith("video/")) media.append(playButton());
   return card;
 }
 
-const fetching = new WeakMap();
-const files = new WeakMap();
+// A card owns its pending request and decrypted bytes. Failed requests can retry.
+const content = new WeakMap();
 
 function ensureContent(card) {
   if (card.dataset.url) return Promise.resolve(card.dataset.url);
-  if (fetching.has(card)) return fetching.get(card);
+  if (content.has(card)) return content.get(card).promise;
   showProgress(card, 0);
-  const job = getContent({
-    serverUrl: active.serverUrl,
-    privateKey: active.privateKey,
+  const entry = {};
+  entry.promise = getContent({
+    ...active,
     id: card.dataset.id,
-    onProgress: (pct) => showProgress(card, pct),
+    onProgress: (pct) => { if (card.isConnected) showProgress(card, pct); },
   })
     .then((bytes) => {
-      files.set(card, bytes);
+      if (!card.isConnected) throw new Error("Library changed. Try again.");
+      entry.bytes = bytes;
       const url = URL.createObjectURL(new Blob([bytes], { type: card.dataset.type || "application/octet-stream" }));
       card.dataset.url = url;
       return url;
     })
+    .catch((err) => {
+      content.delete(card);
+      throw err;
+    })
     .finally(() => card.querySelector(".pct")?.remove());
-  fetching.set(card, job);
-  return job;
+  content.set(card, entry);
+  return entry.promise;
 }
 
 async function noteTagMismatch(item, output) {
@@ -297,6 +311,7 @@ function showProgress(card, pct) {
 }
 
 function releaseCard(card) {
+  content.delete(card);
   if (card.dataset.url) URL.revokeObjectURL(card.dataset.url);
   if (card.dataset.preview) URL.revokeObjectURL(card.dataset.preview);
 }
@@ -309,7 +324,7 @@ async function reveal(card) {
     const media = card.querySelector(".media");
     media.querySelector(".play")?.remove();
     if (type.startsWith("audio/")) {
-      const art = audioArt(files.get(card));
+      const art = audioArt(content.get(card).bytes);
       if (art) cover(card, media, art);
       const audio = player(type, url);
       audio.autoplay = true;
@@ -355,10 +370,7 @@ function note(card, text) {
 }
 
 function showImage(card) {
-  const img = document.createElement("img");
-  img.src = card.dataset.url;
-  img.alt = card.querySelector("strong").textContent;
-  full.replaceChildren(img);
+  full.replaceChildren(image(card, card.dataset.url));
   if (!full.open) full.showModal();
 }
 

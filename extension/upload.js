@@ -2,36 +2,32 @@ import { fetchMedia } from "./fetch-media.js";
 import { bindUnlock, sessionPrivateKey } from "./secrets.js";
 import { fileName, sendUpload } from "./send-upload.js";
 
-const params = new URLSearchParams(location.search);
-const stored = await browser.storage.session.get(`upload:${params.get("id")}`);
-const source = stored[`upload:${params.get("id")}`];
-const srcUrl = source?.srcUrl;
-const status = document.querySelector("#status");
-const nameEl = document.querySelector("#name");
+await setupUpload();
 
-if (!srcUrl) {
-  status.textContent = "Nothing to upload.";
-} else {
+async function setupUpload() {
+  const id = new URLSearchParams(location.search).get("id");
+  const stored = await browser.storage.session.get(`upload:${id}`);
+  const source = stored[`upload:${id}`];
+  const status = document.querySelector("#status");
+
+  if (!source?.srcUrl) {
+    status.textContent = "Nothing to upload.";
+    return;
+  }
   const send = document.querySelector("#send");
-  let bytes;
-  let blob;
-  let name;
   try {
     const response = await fetchMedia(source);
-    blob = await response.blob();
-    bytes = await blob.bytes();
-    name = fileName(srcUrl);
-    nameEl.textContent = name;
+    const blob = await response.blob();
+    const bytes = await blob.bytes();
+    const name = fileName(source.srcUrl);
+    document.querySelector("#name").textContent = name;
     if (blob.type.startsWith("image/")) {
       const preview = document.querySelector("#preview");
+      const url = URL.createObjectURL(blob);
       preview.hidden = false;
-      preview.src = URL.createObjectURL(blob);
+      preview.src = url;
+      window.addEventListener("pagehide", () => URL.revokeObjectURL(url), { once: true });
     }
-  } catch (err) {
-    status.textContent = err.message || "Could not load the file.";
-    send.querySelector("button[type=submit]")?.setAttribute("disabled", "");
-  }
-  if (bytes) {
     send.addEventListener("submit", async (event) => {
       event.preventDefault();
       const privateKey = await sessionPrivateKey();
@@ -57,5 +53,8 @@ if (!srcUrl) {
       status.textContent = "Unlocked.";
       send.requestSubmit();
     });
+  } catch (err) {
+    status.textContent = err.message || "Could not load the file.";
+    send.querySelector("button[type=submit]").disabled = true;
   }
 }

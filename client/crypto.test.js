@@ -9,18 +9,18 @@ import {
   contentAad,
   decrypt,
   encrypt,
+  loadKey,
   metaAad,
   tagToken,
 } from "./crypto.js";
 import { encodePost } from "./frame.js";
-import { loadKey } from "./crypto.js";
 
 const vectors = JSON.parse(readFileSync(new URL("./test-vectors.json", import.meta.url), "utf8"));
 
-test("openssh private key matches the rust vectors", async () => {
-  const key = await loadKey(vectors.openssh_private);
+test("library identity matches the rust vectors", async () => {
+  const key = await loadKey(vectors.private_key);
   assert.equal(bytesToHex(key.publicKey), vectors.public_hex);
-  assert.equal(key.authorizedLine, vectors.authorized_line);
+  assert.equal(key.registrationKey, vectors.public_key);
   assert.equal(await tagToken(key, vectors.tag), vectors.token);
   assert.equal(await tagToken(key, " vacation "), vectors.token);
   assert.equal(await tagToken(key, vectors.cafe_tag), vectors.cafe_token);

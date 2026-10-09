@@ -122,7 +122,7 @@ pub(crate) fn prepare(data_dir: &Path) -> Result<(), Error> {
 pub(crate) fn is_allowed_public_key(conn: &Connection, public: &[u8; 32]) -> Result<bool, Error> {
     let found = conn
         .query_row(
-            "SELECT 1 FROM authorized_keys WHERE public_key = ?1",
+            "SELECT 1 FROM registered_keys WHERE public_key = ?1",
             params![public.as_slice()],
             |_| Ok(()),
         )
@@ -177,7 +177,7 @@ pub(crate) fn consume_registration_code(
         return Err(Error::RegistrationFailed);
     }
     tx.execute(
-        "INSERT OR IGNORE INTO authorized_keys (public_key) VALUES (?1)",
+        "INSERT OR IGNORE INTO registered_keys (public_key) VALUES (?1)",
         params![public.as_slice()],
     )?;
     tx.commit()?;

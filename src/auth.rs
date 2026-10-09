@@ -1,6 +1,6 @@
 //! Request authentication.
 //!
-//! The client never sends the OpenSSH private key. It sends:
+//! The client never sends the library identity. It sends:
 //!
 //! ```text
 //! Authorization: Bearer <b64url(public key)>.<unix seconds>.<b64url(nonce)>.<hex body hash>.<b64url(signature)>
@@ -13,11 +13,11 @@
 //! payload. [`verify_body`] then hashes the bytes and compares them to the
 //! hash from the header.
 //!
-//! A missing key and a bad signature both become 401. A file we cannot parse
-//! becomes 500, because that is a server mistake, not a wrong password.
+//! A missing key and a bad signature both become 401. Malformed public keys
+//! submitted for registration become 400.
 
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use axum::http::HeaderMap;
 use axum::http::Method;
 use axum::http::Uri;
@@ -27,55 +27,16 @@ use crate::store::AppState;
 use crate::Error;
 use crate::SKEW_SECS;
 
-/// Parse one or more `ssh-ed25519 AAAA...` lines (registration and imports). Blank
-/// lines and `#` comments are skipped. A bad line fails the whole input so a
-/// typo is not silently skipped.
-pub(crate) fn parse_ssh_public_key_lines(text: &str) -> Result<Vec<[u8; 32]>, Error> {
-    let mut keys = Vec::new();
-    for (idx, raw) in text.lines().enumerate() {
-        let line_no = idx + 1;
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        // `split_whitespace` collapses runs of spaces. The comment may contain
-        // spaces, so we only take the first two fields: type and key blob.
-        let mut fields = line.split_whitespace();
-        let kind = fields.next().unwrap_or("");
-        let blob_b64 = fields.next().ok_or_else(|| {
-            Error::Keys(format!("line {line_no}: expected `ssh-ed25519 <key>`"))
-        })?;
-        if kind != "ssh-ed25519" {
-            return Err(Error::Keys(format!(
-                "line {line_no}: only ssh-ed25519 keys are supported"
-            )));
-        }
-        let blob = STANDARD.decode(blob_b64).map_err(|_| {
-            Error::Keys(format!("line {line_no}: key is not standard base64"))
-        })?;
-        let public = crypto::parse_ssh_ed25519_blob(&blob).map_err(|_| {
-            Error::Keys(format!("line {line_no}: key blob is not ssh-ed25519"))
-        })?;
-        if !keys.iter().any(|existing| existing == &public) {
-            keys.push(public);
-        }
+/// Registration uses a canonical base64url encoding of a raw Ed25519 public key.
+pub(crate) fn parse_public_key(text: &str) -> Result<[u8; 32], Error> {
+    let bytes = crypto::b64url_decode(text)
+        .map_err(|_| Error::BadRequest("invalid public_key".into()))?;
+    let public: [u8; 32] = bytes.try_into()
+        .map_err(|_| Error::BadRequest("public_key must contain 32 bytes".into()))?;
+    if URL_SAFE_NO_PAD.encode(public) != text {
+        return Err(Error::BadRequest("invalid public_key".into()));
     }
-    Ok(keys)
-}
-
-/// One `ssh-ed25519` line for registration. Maps parse errors to [`Error::BadRequest`].
-pub(crate) fn parse_ssh_public_key_line(text: &str) -> Result<[u8; 32], Error> {
-    let keys = parse_ssh_public_key_lines(text).map_err(|err| match err {
-        Error::Keys(message) => Error::BadRequest(message),
-        other => other,
-    })?;
-    match keys.len() {
-        0 => Err(Error::BadRequest("authorized_line is required".into())),
-        1 => Ok(keys[0]),
-        _ => Err(Error::BadRequest(
-            "authorized_line must be a single ssh-ed25519 key".into(),
-        )),
-    }
+    Ok(public)
 }
 
 /// A request whose signature has already been checked. `body_hash` is the
@@ -207,20 +168,14 @@ fn decode_sig(text: &str) -> Option<[u8; 64]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::from_seed;
 
     #[test]
-    fn parses_comments_and_rejects_other_types() {
-        let a = from_seed([1u8; 32]);
-        let b = from_seed([2u8; 32]);
-        let text = format!("# keep\n\n{}\n{}\n", a.authorized_line(), b.authorized_line());
-        let keys = parse_ssh_public_key_lines(&text).unwrap();
-        assert_eq!(keys, vec![a.public, b.public]);
-        // A duplicate line is one key, not an error.
-        let doubled = format!("{}\n{}\n", a.authorized_line(), a.authorized_line());
-        assert_eq!(parse_ssh_public_key_lines(&doubled).unwrap().len(), 1);
-        assert!(parse_ssh_public_key_lines("ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC\n").is_err());
-        assert!(parse_ssh_public_key_lines("no-port-forwarding ssh-ed25519 AAAA\n").is_err());
-        assert!(parse_ssh_public_key_lines("").unwrap().is_empty());
+    fn registration_requires_a_raw_canonical_public_key() {
+        let id = crypto::from_seed([1u8; 32]);
+        assert_eq!(parse_public_key(&id.registration_key()).unwrap(), id.public);
+        for text in ["", "AAAA", "not a key"] {
+            assert!(parse_public_key(text).is_err());
+        }
+        assert!(parse_public_key(&(id.registration_key() + "=")).is_err());
     }
 }

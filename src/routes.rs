@@ -7,7 +7,7 @@
 //! That is the same job as a servlet filter.
 //!
 //! Nothing in this file decrypts. Bodies are ciphertext the client already
-//! sealed with the OpenSSH key.
+//! sealed with the library identity.
 
 use std::path::Path;
 
@@ -71,8 +71,8 @@ impl FromRequest<AppState> for Authed {
     async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
         // The signature is checked here, before any body byte. It already
         // covers the body hash from the Authorization header. Knowing a
-        // public key is not enough to reach `read_body`. That check reads
-        // Allowed public keys live in SQLite, so it runs on the blocking pool.
+        // public key is not enough to reach `read_body`. The allow-list lives
+        // in SQLite, so authentication runs on the blocking pool.
         let (parts, body) = req.into_parts();
         let shared = state.clone();
         let method = parts.method.clone();
@@ -171,7 +171,7 @@ async fn health() -> Response {
 #[derive(Deserialize)]
 struct RegisterKeyJson {
     otc: String,
-    authorized_line: String,
+    public_key: String,
 }
 
 async fn register_key(State(state): State<AppState>, request: Request) -> Response {
@@ -189,10 +189,10 @@ async fn register_key(State(state): State<AppState>, request: Request) -> Respon
 fn register_key_body(state: &AppState, body: &[u8]) -> Result<(), Error> {
     let payload: RegisterKeyJson = serde_json::from_slice(body)
         .map_err(|_| Error::BadRequest("invalid json".into()))?;
-    if payload.otc.len() > 512 || payload.authorized_line.len() > 4096 {
-        return Err(Error::BadRequest("payload too large".into()));
+    if payload.otc.len() > 512 || payload.public_key.len() != 43 {
+        return Err(Error::BadRequest("invalid registration payload".into()));
     }
-    let public = auth::parse_ssh_public_key_line(&payload.authorized_line)?;
+    let public = auth::parse_public_key(&payload.public_key)?;
     let mut conn = state.lock()?;
     store::consume_registration_code(&mut conn, &payload.otc, &public)
 }
@@ -334,13 +334,6 @@ fn fail(err: Error) -> Response {
         Error::Conflict => (StatusCode::CONFLICT, "already exists".to_string()),
         Error::BadRequest(message) => (StatusCode::BAD_REQUEST, message.clone()),
         Error::RegistrationFailed => (StatusCode::FORBIDDEN, "registration failed".to_string()),
-        Error::Keys(message) => {
-            tracing::error!(error = %message, "authorized keys");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "server configuration error".to_string(),
-            )
-        }
         other => {
             tracing::error!(error = %other, "request failed");
             (
