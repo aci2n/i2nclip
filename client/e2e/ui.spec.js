@@ -112,7 +112,7 @@ test("create, reset, recover, unlock, upload, and both color schemes", async ({ 
   await expect(page.locator("#status")).toHaveText("Library restored and unlocked.");
   await expect(page.locator("#restore-settings")).toBeHidden();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("i2nclip-e2e")).publicKey)).toBe(identity);
-  await page.evaluate(() => sessionStorage.clear());
+  await page.evaluate(() => browser.storage.session.clear());
   await page.getByRole("link", { name: "Library" }).click();
   await expect(page.locator("#unlock")).toBeVisible();
   await page.locator('#unlock input[type="password"]').fill("test-pass-1");
@@ -772,6 +772,31 @@ test("inline tag saves deduplicate and guard a slow request", async ({ page, app
   await expect(card.locator('output')).toBeHidden();
   await expect(add).toBeFocused();
   expect(saves).toBe(1);
+});
+
+test("uploads continue across Library and Settings views and retain progress", async ({ page, app }) => {
+  await createLibrary(page, app);
+  await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
+  let release, started;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const requestStarted = new Promise((resolve) => { started = resolve; });
+  await page.route('**/api/media', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    started(); await gate; await route.continue();
+  });
+  try {
+    await page.locator('#files').setInputFiles({ name: 'slow.png', mimeType: 'image/png', buffer: png });
+    await requestStarted;
+    await expect(page.getByRole('region', { name: 'Upload progress' })).toContainText('Uploading 1 of 1: slow.png');
+    await page.getByRole('link', { name: 'Settings' }).click();
+    await expect(page).toHaveURL(/options\.html$/);
+    await page.getByRole('link', { name: 'Library' }).click();
+    await expect(page).toHaveURL(/library\.html$/);
+    await expect(page.getByRole('region', { name: 'Upload progress' })).toContainText('Uploading 1 of 1: slow.png');
+  } finally { release(); }
+  await expect(page.locator('.card strong')).toHaveText('slow.png');
+  await expect(page.getByRole('region', { name: 'Upload progress' })).toBeHidden();
+  await expect(page.locator('#status')).toBeEmpty();
 });
 
 test("a slow search cannot clear the newer search results", async ({ page, app }) => {

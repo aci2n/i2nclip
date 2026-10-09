@@ -83,7 +83,7 @@
   dl { display: grid; gap: .25rem; margin: .75rem 0; font-size: .85rem; }
   dt { color: var(--muted); }
   dd { margin: 0 0 .5rem; overflow-wrap: anywhere; }
-  .actions button { font-size: .85rem; padding: .5rem .75rem; }
+  .actions button { font-size: .85rem; padding: .3rem .5rem; }
   .actions { padding-top: .5rem; margin-top: auto; }
   output { display: block; }
 </style>

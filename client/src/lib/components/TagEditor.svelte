@@ -46,7 +46,7 @@
   {#if editing}
     <form class="tags" onsubmit={save}>
       <div class="entry">
-        <input class="chip" bind:this={input} bind:value disabled={locked} aria-label={`New tag for ${name}`} placeholder="New tag" autocomplete="off" onkeydown={(event) => { if (event.key === 'Escape') { event.preventDefault(); cancel(); } }} />
+        <input class="chip" bind:this={input} bind:value disabled={locked} aria-label={`New tag for ${name}`} placeholder="New tag" autocomplete="on" onkeydown={(event) => { if (event.key === 'Escape') { event.preventDefault(); cancel(); } }} />
         <button class="chip" type="submit" aria-label="Save tag" disabled={locked || !splitTags(value).length}>✓</button>
         <button class="chip" type="button" aria-label="Cancel adding tag" disabled={locked} onclick={cancel}>×</button>
       </div>

@@ -13,6 +13,7 @@
 ## State and resource ownership
 
 - Components render state and invoke actions; stores and services own async workflows. Avoid direct DOM mutation or Firefox storage calls in reusable UI components.
+- Keep the library store at the app root while navigating between Library and Settings so active uploads and their status survive view changes.
 - Use `$state` for bound DOM references read by template handlers. Run the Svelte checker and ensure `make extension` builds without warnings.
 - Search uses cancellation plus stale-result checks. Pagination belongs to the submitted search and allows only one request at a time.
 - Identity or server changes invalidate pending library operations. Upload batches run sequentially; pending context-menu uploads have individual IDs and remain available after failures.

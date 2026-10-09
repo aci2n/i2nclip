@@ -1,10 +1,7 @@
 <script>
-  import { onDestroy, untrack } from 'svelte';
-  import { createLibrary } from '../stores/library.js';
   import Unlock from './Unlock.svelte';
   import MediaCard from './MediaCard.svelte';
-  let { session, platform, settingsHref } = $props();
-  const library = untrack(() => createLibrary(session, platform));
+  let { session, platform, library, settingsHref, onsettings } = $props();
   let tags = $state('');
   let selected = $state(null);
   let dialog;
@@ -13,11 +10,10 @@
   $effect(() => { epoch; selected = null; dialog?.close(); });
   function open(url, name) { selected = { url, name }; dialog.showModal(); }
   function close() { dialog.close(); selected = null; }
-  onDestroy(library.dispose);
 </script>
 
 {#if !$session.wrappedKey}
-  <section id="setup" class="panel empty"><h2>Your library starts here</h2><p><a href={settingsHref}>Create or restore your library</a> to start saving encrypted media.</p></section>
+  <section id="setup" class="panel empty"><h2>Your library starts here</h2><p><a href={settingsHref} onclick={onsettings}>Create or restore your library</a> to start saving encrypted media.</p></section>
 {:else if !$session.privateKey}
   <Unlock {session} />
 {:else}
