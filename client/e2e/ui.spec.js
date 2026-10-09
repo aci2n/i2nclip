@@ -519,7 +519,7 @@ test("tag edits preserve the preview and remain searchable", async ({ page, app 
   await page.locator("#files").setInputFiles({ name: "dot.png", mimeType: "image/png", buffer: png });
   const card = page.locator(".card");
   await expect(card).toHaveCount(1);
-  await card.locator("summary").click();
+  await card.locator(".tag-editor > summary").click();
   await card.locator('.tags input').fill(" Vacation, dog ");
   await shot(page, 'tag-editor');
   await page.setViewportSize({ width: 360, height: 740 });
@@ -681,6 +681,134 @@ test("mixed media has consistent previews without narrow-screen overflow", async
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await shot(page, `mixed-media-${width}`);
   }
+});
+
+test("upload batches show filenames, continue after failure, and retry only failed files", async ({ page, app }) => {
+  await createLibrary(page, app);
+  await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
+  let posts = 0;
+  await page.route('**/api/media', async (route) => {
+    if (route.request().method() === 'POST' && ++posts === 1) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Temporary failure' }) });
+    } else await route.continue();
+  });
+  await page.locator('#files').setInputFiles([
+    { name: 'retry.png', mimeType: 'image/png', buffer: png },
+    { name: 'saved.png', mimeType: 'image/png', buffer: png },
+  ]);
+  await expect(page.locator('.card strong')).toHaveText('saved.png');
+  await expect(page.getByRole('region', { name: 'Failed uploads' })).toContainText('retry.png');
+  await expect(page.locator('#status')).toContainText('1 file uploaded.');
+  await shot(page, 'upload-failure');
+  await page.getByRole('button', { name: 'Retry failed files' }).click();
+  await expect(page.locator('.card')).toHaveCount(2);
+  await expect(page.getByRole('region', { name: 'Failed uploads' })).toBeHidden();
+  expect(posts).toBe(3);
+});
+
+for (const change of ['server', 'reset']) {
+  test(`changing ${change} cancels a slow upload and the remaining batch`, async ({ page, app }) => {
+    await createLibrary(page, app);
+    await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
+    let release, started;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const requestStarted = new Promise((resolve) => { started = resolve; });
+    let posts = 0;
+    await page.route('**/api/media', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      posts++; started(); await gate;
+      await route.fulfill({ status: 503, body: 'Old upload failure' }).catch(() => {});
+    });
+    try {
+      await page.locator('#files').setInputFiles([
+        { name: 'slow.png', mimeType: 'image/png', buffer: png },
+        { name: 'never-sent.png', mimeType: 'image/png', buffer: png },
+      ]);
+      await requestStarted;
+      await expect(page.getByRole('region', { name: 'Upload progress' })).toContainText('Uploading 1 of 2: slow.png');
+      await shot(page, 'upload-progress');
+      await page.evaluate(async ({ change, origin }) => {
+        if (change === 'server') await browser.storage.local.set({ serverUrl: `${origin}/changed` });
+        else { await browser.storage.session.clear(); await browser.storage.local.clear(); }
+      }, { change, origin: app.origin });
+      await expect(page.getByRole('region', { name: 'Upload progress' })).toBeHidden();
+      if (change === 'reset') await expect(page.locator('#setup')).toBeVisible();
+      else await expect(page.getByRole('heading', { name: 'Your library is empty' })).toBeVisible();
+    } finally { release(); }
+    await expect(page.getByRole('region', { name: 'Failed uploads' })).toBeHidden();
+    expect(posts).toBe(1);
+  });
+}
+
+test("tag suggestions work by keyboard, deduplicate tags, and guard a slow save", async ({ page, app }) => {
+  await createLibrary(page, app);
+  await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
+  await page.locator('#files').setInputFiles([
+    { name: 'first.png', mimeType: 'image/png', buffer: png },
+    { name: 'second.png', mimeType: 'image/png', buffer: png },
+  ]);
+  await expect(page.locator('.card')).toHaveCount(2);
+  const first = page.locator('.card').filter({ has: page.locator('strong', { hasText: 'first.png' }) });
+  await first.locator('.tag-editor > summary').focus();
+  await first.locator('.tag-editor > summary').press('Enter');
+  await first.locator('.tags input').fill('Vacation, vacation, dog, DOG');
+  let release, started;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const requestStarted = new Promise((resolve) => { started = resolve; });
+  let saves = 0;
+  await page.route(/\/api\/media\/[^/?]+$/, async (route) => {
+    if (route.request().method() !== 'PUT') return route.continue();
+    saves++; started(); await gate; await route.continue();
+  });
+  try {
+    await first.locator('.tags input').press('Enter');
+    await requestStarted;
+    await expect(first.getByRole('button', { name: 'Save tags' })).toBeDisabled();
+    await expect(first.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled();
+  } finally { release(); }
+  await expect(first.locator('output')).toHaveText('Updated.');
+  expect(saves).toBe(1);
+  await expect(first.locator('.tag-list .tag')).toHaveText(['Vacation', 'dog']);
+  await expect(first.locator('.card-details')).not.toHaveAttribute('open');
+  const second = page.locator('.card').filter({ has: page.locator('strong', { hasText: 'second.png' }) });
+  await second.locator('.tag-editor > summary').click();
+  await second.locator('.tags input').focus();
+  await second.locator('.tags input').press('Tab');
+  await expect(second.getByRole('button', { name: 'Vacation', exact: true })).toBeFocused();
+  await second.getByRole('button', { name: 'Vacation', exact: true }).press('Enter');
+  await expect(second.locator('.tags input')).toHaveValue('Vacation, ');
+  await expect(second.locator('.tags input')).toBeFocused();
+  await shot(page, 'tag-suggestions');
+  await second.getByRole('button', { name: 'Save tags' }).click();
+  await expect(second.locator('.tag-list .tag')).toHaveText(['Vacation']);
+});
+
+test("a slow search cannot clear the newer search results", async ({ page, app }) => {
+  await createLibrary(page, app);
+  await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
+  await page.locator('#files').setInputFiles({ name: 'saved.png', mimeType: 'image/png', buffer: png });
+  await expect(page.locator('.card strong')).toHaveText('saved.png');
+  let release, started, finished;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const requestStarted = new Promise((resolve) => { started = resolve; });
+  const requestFinished = new Promise((resolve) => { finished = resolve; });
+  await page.route('**/api/media?*', async (route) => {
+    started(); await gate;
+    try { await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ media: [], next: null }) }); }
+    catch { /* Superseded requests can already be cancelled by Firefox. */ }
+    finally { finished(); }
+  });
+  try {
+    await page.locator('#tags').fill('missing');
+    await page.locator('#tags').press('Enter');
+    await requestStarted;
+    await page.locator('#tags').fill('');
+    await page.locator('#tags').press('Enter');
+    await expect(page.locator('.card strong')).toHaveText('saved.png');
+  } finally { release(); }
+  await requestFinished;
+  await expect(page.locator('.card strong')).toHaveText('saved.png');
+  await expect(page.getByRole('heading', { name: 'No matching clips' })).toBeHidden();
 });
 
 const execFileAsync = promisify(execFile);

@@ -2,7 +2,8 @@
   import { onDestroy, untrack } from 'svelte';
   import { createMediaItem } from '../stores/media-item.js';
   import { fileSize, fileType, uploadedAt } from '../format.js';
-  let { item, credentials, platform, onopen, onremove } = $props();
+  import TagInput from './TagInput.svelte';
+  let { item, credentials, platform, onopen, onremove, suggestions = [], onretag = () => {} } = $props();
   const media = untrack(() => createMediaItem(item, credentials, platform));
   let tags = $state(untrack(() => item.metadata?.tags?.join(', ') || ''));
   const type = $derived($media.metadata?.content_type || '');
@@ -14,6 +15,11 @@
   }
   async function remove() {
     if (confirm(`Delete ${name}? This cannot be undone.`) && await media.remove()) onremove();
+  }
+  async function saveTags(event) {
+    event.preventDefault();
+    const metadata = await media.retag(tags);
+    if (metadata) { tags = metadata.tags.join(', '); onretag(metadata); }
   }
   onDestroy(media.dispose);
 </script>
@@ -45,20 +51,23 @@
     {#each ($media.metadata?.tags || []).slice(0, 3) as tag}<span class="tag">{tag}</span>{:else}<span class="muted">No tags</span>{/each}
     {#if ($media.metadata?.tags?.length || 0) > 3}<span class="muted">+{$media.metadata.tags.length - 3}</span>{/if}
   </div>
+  {#if $media.metadata}
+    <details class="tag-editor">
+      <summary>Edit tags</summary>
+      <form class="tags" onsubmit={saveTags}>
+        <TagInput id={`tags-${item.id}`} bind:value={tags} {suggestions} label={`Edit tags for ${name}`} disabled={$media.busy || $media.deleted} />
+        <button type="submit" class="secondary" disabled={$media.busy || $media.deleted}>Save tags</button>
+      </form>
+    </details>
+  {/if}
   <details class="card-details">
-    <summary>Details &amp; edit tags</summary>
+    <summary>File details</summary>
     <dl>
       <dt>Filename</dt><dd>{name}</dd>
       <dt>Uploaded</dt><dd>{uploadedAt(item.createdAt)}</dd>
       {#if type}<dt>Type</dt><dd>{type}</dd>{/if}
       {#if $media.metadata?.image}<dt>Dimensions</dt><dd>{$media.metadata.image.width} × {$media.metadata.image.height}</dd>{/if}
     </dl>
-    {#if $media.metadata}
-      <form class="tags" onsubmit={(event) => { event.preventDefault(); media.retag(tags); }}>
-        <label>Tags, separated by commas<input aria-label={`Edit tags for ${name}`} bind:value={tags} disabled={$media.busy || $media.deleted} /></label>
-        <button type="submit" class="secondary" disabled={$media.busy || $media.deleted}>Save tags</button>
-      </form>
-    {/if}
   </details>
   <output class="feedback" class:error={$media.error}>{$media.message}</output>
   <div class="bar actions">

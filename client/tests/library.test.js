@@ -14,7 +14,7 @@ function setup(t) {
   const library = createLibrary(session, {}, {
     list(options) { const job = deferred(); calls.push({ ...job, options }); return job.promise; },
     sendUpload(source, credentials, platform, tags, progress, signal) {
-      const job = deferred(); uploads.push({ ...job, source, credentials, signal }); return job.promise;
+      const job = deferred(); uploads.push({ ...job, source, credentials, signal, progress }); return job.promise;
     },
   });
   t.after(library.dispose);
@@ -77,4 +77,52 @@ test('uploads are serialized and a library change cancels the remaining batch', 
   await upload;
   assert.equal(get(library).uploadStatus, '');
   assert.equal(get(library).uploading, false);
+});
+
+test('a failed file does not stop a batch and retry sends only failed files', async (t) => {
+  const { library, calls, uploads } = setup(t);
+  calls[0].resolve({ items: [], next: null });
+  await tick();
+  const first = { name: 'failed' }, second = { name: 'saved' };
+  const batch = library.upload([first, second]);
+  assert.deepEqual(get(library).uploadProgress, { name: 'failed', index: 1, total: 2, percent: 0 });
+  uploads[0].reject(new Error('temporary'));
+  await tick();
+  assert.equal(uploads[1].source.blob, second);
+  uploads[1].resolve();
+  await tick();
+  calls[1].resolve({ items: [{ id: 'saved' }], next: null });
+  await batch;
+  assert.deepEqual(get(library).uploadFailures, [{ file: first, error: 'temporary' }]);
+  assert.equal(get(library).uploadStatus, '1 file uploaded.');
+  uploads[0].progress(80);
+  assert.equal(get(library).uploadProgress, null);
+  const retry = library.retryUploads();
+  uploads[1].progress(90);
+  assert.equal(get(library).uploadProgress.name, 'failed');
+  assert.equal(uploads[2].source.blob, first);
+  uploads[2].resolve();
+  await tick();
+  calls[2].resolve({ items: [{ id: 'saved' }, { id: 'retried' }], next: null });
+  await retry;
+  assert.deepEqual(get(library).uploadFailures, []);
+  assert.equal(uploads.length, 3);
+});
+
+test('server changes clear failed files and ignore late upload completion', async (t) => {
+  const { session, library, calls, uploads } = setup(t);
+  calls[0].resolve({ items: [], next: null });
+  await tick();
+  const batch = library.upload([{ name: 'old' }, { name: 'never-sent' }]);
+  session.set({ ...identity, serverUrl: 'https://new.example' });
+  calls[1].resolve({ items: [], next: null });
+  uploads[0].resolve();
+  await batch;
+  assert.equal(uploads.length, 1);
+  assert.equal(get(library).uploadProgress, null);
+  assert.deepEqual(get(library).uploadFailures, []);
+  assert.equal(get(library).uploadStatus, '');
+  library.dispose();
+  await library.upload([{ name: 'after-dispose' }]);
+  assert.equal(uploads.length, 1);
 });

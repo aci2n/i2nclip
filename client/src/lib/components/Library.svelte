@@ -3,6 +3,7 @@
   import { createLibrary } from '../stores/library.js';
   import Unlock from './Unlock.svelte';
   import MediaCard from './MediaCard.svelte';
+  import { uniqueTags } from '../tags.js';
   let { session, platform, settingsHref } = $props();
   const library = untrack(() => createLibrary(session, platform));
   let tags = $state('');
@@ -10,6 +11,7 @@
   let dialog;
   let filesInput = $state();
   const epoch = $derived($library.epoch);
+  const knownTags = $derived(uniqueTags($library.items.flatMap((item) => item.metadata?.tags || [])));
   $effect(() => { epoch; selected = null; dialog?.close(); });
   function open(url, name) { selected = { url, name }; dialog.showModal(); }
   function close() { dialog.close(); selected = null; }
@@ -30,6 +32,20 @@
   </form>
 {/if}
 <p id="status" role="status">{[$library.status, $library.uploadStatus, (!$session.wrappedKey || $session.privateKey) ? $session.error : ''].filter(Boolean).join(' | ')}</p>
+{#if $library.uploadProgress}
+  <section class="upload-progress" aria-label="Upload progress">
+    <p role="status">Uploading {$library.uploadProgress.index} of {$library.uploadProgress.total}: {$library.uploadProgress.name}</p>
+    <progress max="100" value={$library.uploadProgress.percent} aria-label="Current file upload"></progress>
+    <span>{$library.uploadProgress.percent}%</span>
+  </section>
+{/if}
+{#if $library.uploadFailures.length}
+  <section class="upload-failures" aria-label="Failed uploads">
+    <h2>Failed uploads</h2>
+    <ul>{#each $library.uploadFailures as failure}<li><strong>{failure.file.name}</strong>: {failure.error}</li>{/each}</ul>
+    <button class="secondary" disabled={$library.uploading} onclick={library.retryUploads}>Retry failed files</button>
+  </section>
+{/if}
 {#if $session.privateKey && $library.empty}
   <section id="empty-library" class="panel empty">
     {#if $library.empty === 'library'}
@@ -46,7 +62,7 @@
 <div id="results">
   {#key $library.epoch}
     {#each $library.items as item (item.id)}
-      <MediaCard {item} credentials={library.credentials()} {platform} onopen={open} onremove={close} />
+      <MediaCard {item} credentials={library.credentials()} {platform} onopen={open} onremove={close} suggestions={knownTags} onretag={(metadata) => library.updateTags(item.id, metadata)} />
     {/each}
   {/key}
 </div>

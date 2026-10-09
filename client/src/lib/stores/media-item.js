@@ -1,6 +1,7 @@
 import { get, writable } from 'svelte/store';
 import { getContent, remove, updateMetadata } from '../api.js';
-import { splitTags, tagTokens } from '../crypto.js';
+import { tagTokens } from '../crypto.js';
+import { uniqueTags } from '../tags.js';
 import { audioArt } from '../audio-art.js';
 import { sniffContentType } from '../metadata.js';
 import { downloadName } from '../format.js';
@@ -74,10 +75,11 @@ export function createMediaItem(item, credentials, platform, api = { getContent,
     retag: (tags) => run(async () => {
       const value = get(state);
       if (!value.metadata) throw new Error('No metadata to update.');
-      const metadata = { ...value.metadata, tags: splitTags(tags) };
+      const metadata = { ...value.metadata, tags: uniqueTags(tags) };
       const result = await api.updateMetadata({ ...options, metadata, thumb: item.thumb });
       signal.throwIfAborted();
       state.update((current) => ({ ...current, metadata, tokens: result.tokens, message: 'Updated.' }));
+      return metadata;
     }),
     remove: () => run(async () => {
       await api.remove(options);

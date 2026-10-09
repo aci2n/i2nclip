@@ -10,12 +10,12 @@ import {
   freshNonce,
   loadKey,
   metaAad,
-  splitTags,
   tagTokens,
 } from "./crypto.js";
 import { encodeMeta, encodePost } from "./frame.js";
 import { decodeMetaPlain, encodeMetaPlain, MAX_META_PLAINTEXT } from "./meta-plain.js";
 import { sniffContentType } from "./metadata.js";
+import { uniqueTags } from './tags.js';
 
 // Plaintext limit. The server allows this plus a small encryption header.
 export const MAX_FILE_BYTES = 32 * 1024 * 1024;
@@ -26,7 +26,7 @@ export async function upload({ serverUrl, privateKey, bytes, name, contentType, 
   }
   const key = await loadKey(privateKey);
   const mediaId = id ?? crypto.randomUUID();
-  const plainTags = splitTags(tags);
+  const plainTags = uniqueTags(tags);
   const storedType = sniffContentType(bytes, contentType);
   const metadata = {
     name: cleanName(name),
@@ -79,7 +79,7 @@ export async function remove({ serverUrl, privateKey, id, signal }) {
 }
 
 /** Register a base64url public key with an invitation code. */
-export async function registerKey({ serverUrl, publicKey, otc }) {
+export async function registerKey({ serverUrl, publicKey, otc, signal }) {
   const url = new URL("/api/register-key", serverUrl);
   const response = await fetch(url, {
     method: "POST",
@@ -89,6 +89,7 @@ export async function registerKey({ serverUrl, publicKey, otc }) {
       public_key: String(publicKey).trim(),
     }),
     cache: "no-store",
+    signal,
   });
   if (response.status === 204) return;
   throw await responseError(response);

@@ -37,3 +37,27 @@ test('pending uploads keep independent IDs, prevent duplicate sends, and survive
   assert.deepEqual(sources, {});
   assert.deepEqual(requests.map((request) => request.name), ['one', 'one', 'two']);
 });
+
+test('changing sessions during notification cannot close the upload page', async (t) => {
+  const state = writable(credentials);
+  const notice = deferred();
+  let closed = 0;
+  const pending = createPendingUpload({ subscribe: state.subscribe, credentials: () => credentials }, {
+    session: { get: async () => ({ 'upload:one': { name: 'one' } }), remove: async () => {} },
+    notify: () => notice.promise,
+    close: () => { closed++; },
+  }, 'one', {
+    prepareMedia: async (source) => ({ ...source, blob: new Blob(['file']) }),
+    sendUpload: async () => {},
+  });
+  t.after(pending.dispose);
+  await pending.ready;
+  const send = pending.send('');
+  await new Promise((resolve) => setImmediate(resolve));
+  state.set({ ...credentials, serverUrl: 'https://other.example' });
+  notice.resolve();
+  await send;
+  assert.equal(closed, 0);
+  assert.equal(get(pending).busy, false);
+  assert.equal(get(pending).status, 'Library changed. Try again.');
+});

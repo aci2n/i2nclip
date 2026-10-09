@@ -12,6 +12,8 @@ export function createSession(platform) {
   let revision = 0;
   let disposed = false;
   let busy = false;
+  const controller = new AbortController();
+  const active = () => controller.signal.throwIfAborted();
 
   async function refresh() {
     const version = ++revision;
@@ -31,27 +33,30 @@ export function createSession(platform) {
   const ready = refresh();
 
   async function mutate(action) {
-    if (busy) return false;
+    if (busy || disposed) return false;
     busy = true;
     state.update((value) => ({ ...value, busy: true, error: '' }));
     try {
       // One settings mutation across all open pages, including password derivation.
       const lock = globalThis.navigator?.locks;
-      await (lock ? lock.request('i2nclip-session', action) : action());
+      const guarded = async () => { active(); await action(); active(); };
+      await (lock ? lock.request('i2nclip-session', { signal: controller.signal }, guarded) : guarded());
       await refresh();
       return true;
     } catch (error) {
-      state.update((value) => ({ ...value, error: error.message }));
+      if (!disposed) state.update((value) => ({ ...value, error: error.message }));
       return false;
     } finally {
       busy = false;
-      state.update((value) => ({ ...value, busy: false }));
+      if (!disposed) state.update((value) => ({ ...value, busy: false }));
     }
   }
 
   async function saveIdentity(serverUrl, privateKey, wrappedKey) {
     const loaded = await loadKey(privateKey);
+    active();
     await platform.local.set({ serverUrl, wrappedKey, publicKey: loaded.registrationKey });
+    active();
     await platform.session.set({ privateKey });
   }
 
@@ -65,7 +70,8 @@ export function createSession(platform) {
       if (!otc.trim()) throw new Error('Enter an invitation code from the admin.');
       const created = await generatePrivateKey();
       const wrapped = await wrapPrivateKey(created.privateKey, password);
-      try { await registerKey({ serverUrl, publicKey: created.publicKey, otc }); }
+      active();
+      try { await registerKey({ serverUrl, publicKey: created.publicKey, otc, signal: controller.signal }); }
       catch (error) { throw new Error(`${error.message === 'registration failed' ? 'Registration failed.' : `Registration failed: ${error.message}.`} Check your invitation code and try again.`); }
       await saveIdentity(serverUrl, created.privateKey, wrapped);
     }),
@@ -81,12 +87,14 @@ export function createSession(platform) {
       if (!wrappedKey) throw new Error('Create or restore your library in Settings.');
       const privateKey = await unwrapPrivateKey(wrappedKey, password);
       await loadKey(privateKey);
+      active();
       await platform.session.set({ privateKey });
     }),
     setServer: (serverUrl) => mutate(() => platform.local.set({ serverUrl })),
     reset: () => mutate(async () => { await platform.session.clear(); await platform.local.clear(); }),
     backup: () => mutate(async () => {
       const file = recoveryFile(await platform.local.get(['serverUrl', 'wrappedKey', 'publicKey']));
+      active();
       const url = URL.createObjectURL(new Blob([file], { type: 'application/json' }));
       try { await platform.download(url, 'i2nclip-recovery.json'); }
       finally { setTimeout(() => URL.revokeObjectURL(url), 60_000); }
@@ -96,6 +104,6 @@ export function createSession(platform) {
       if (!privateKey) throw new Error('Unlock before uploading.');
       return { serverUrl, privateKey };
     },
-    dispose() { disposed = true; revision++; unsubscribe(); },
+    dispose() { disposed = true; controller.abort(); revision++; unsubscribe(); },
   };
 }

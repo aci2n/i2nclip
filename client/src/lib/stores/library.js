@@ -4,7 +4,7 @@ import { list } from '../api.js';
 import { sendUpload } from '../media.js';
 
 export function createLibrary(session, platform, api = { list, sendUpload }) {
-  const state = writable({ items: [], next: null, loading: false, empty: null, status: '', uploadStatus: '', uploading: false, epoch: 0 });
+  const state = writable({ items: [], next: null, loading: false, empty: null, status: '', uploadStatus: '', uploading: false, uploadProgress: null, uploadFailures: [], epoch: 0 });
   let credentials = null;
   let tags = '';
   let revision = 0;
@@ -16,7 +16,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
     revision++;
     request?.abort();
     uploadRequest?.abort();
-    state.update((value) => ({ ...value, items: [], next: null, loading: false, empty: null, status: '', uploadStatus: '', uploading: false, epoch: value.epoch + 1 }));
+    state.update((value) => ({ ...value, items: [], next: null, loading: false, empty: null, status: '', uploadStatus: '', uploading: false, uploadProgress: null, uploadFailures: [], epoch: value.epoch + 1 }));
   }
 
   async function load(more = false) {
@@ -48,33 +48,56 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
     if (credentials) load();
   });
 
+  async function upload(files) {
+    if (disposed || !credentials || get(state).uploading || !files.length) return;
+    const captured = credentials;
+    const controller = new AbortController();
+    uploadRequest = controller;
+    const current = () => !disposed && credentials === captured && uploadRequest === controller && !controller.signal.aborted;
+    let uploaded = 0;
+    state.update((value) => ({ ...value, uploading: true, uploadStatus: '' }));
+    try {
+      for (let index = 0; index < files.length; index++) {
+        controller.signal.throwIfAborted();
+        const file = files[index];
+        const progress = (percent) => {
+          if (current()) state.update((value) => ({ ...value, uploadProgress: { name: file.name, index: index + 1, total: files.length, percent } }));
+        };
+        progress(0);
+        try {
+          await api.sendUpload({ blob: file, name: file.name }, captured, platform, '', progress, controller.signal);
+          controller.signal.throwIfAborted();
+          uploaded++;
+          if (current()) state.update((value) => ({ ...value, uploadFailures: value.uploadFailures.filter((failure) => failure.file !== file) }));
+        } catch (error) {
+          controller.signal.throwIfAborted();
+          if (current()) state.update((value) => ({ ...value, uploadFailures: [...value.uploadFailures.filter((failure) => failure.file !== file), { file, error: error.message }] }));
+        }
+      }
+      if (current()) {
+        state.update((value) => ({ ...value, uploadStatus: `${uploaded} file${uploaded === 1 ? '' : 's'} uploaded.`, uploadProgress: null }));
+        if (uploaded) await load();
+      }
+    } catch (error) {
+      if (current()) state.update((value) => ({ ...value, uploadStatus: error.message }));
+    } finally {
+      if (current()) {
+        state.update((value) => ({ ...value, uploading: false, uploadProgress: null }));
+        uploadRequest = null;
+      }
+    }
+  }
+
   return {
     subscribe: state.subscribe,
     search(value = tags) { tags = value; return load(); },
     more: () => load(true),
     credentials: () => credentials,
-    async upload(files) {
-      if (!credentials || get(state).uploading) return;
-      const captured = credentials;
-      const controller = new AbortController();
-      uploadRequest = controller;
-      state.update((value) => ({ ...value, uploading: true }));
-      try {
-        for (let index = 0; index < files.length; index++) {
-          controller.signal.throwIfAborted();
-          const progress = (percent) => {
-            if (!disposed && credentials === captured && !controller.signal.aborted) state.update((value) => ({ ...value, uploadStatus: `Uploading ${index + 1}/${files.length} (${percent}%)` }));
-          };
-          progress(0);
-          await api.sendUpload({ blob: files[index], name: files[index].name }, captured, platform, '', progress, controller.signal);
-        }
-        if (credentials === captured && !controller.signal.aborted) { state.update((value) => ({ ...value, uploadStatus: '' })); await load(); }
-      } catch (error) {
-        if (!disposed && credentials === captured && !controller.signal.aborted) state.update((value) => ({ ...value, uploadStatus: error.message }));
-      } finally {
-        if (!disposed && credentials === captured && !controller.signal.aborted) state.update((value) => ({ ...value, uploading: false }));
-      }
+    updateTags(id, metadata) {
+      if (!disposed) state.update((value) => ({ ...value, items: value.items.map((item) => item.id === id ? { ...item, metadata } : item) }));
     },
+    upload,
+    retryUploads: () => upload(get(state).uploadFailures.map(({ file }) => file)),
     dispose() { disposed = true; invalidate(); unsubscribe(); },
   };
 }

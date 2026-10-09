@@ -47,8 +47,10 @@ export function createPendingUpload(session, platform, id, media = { prepareMedi
         }, controller.signal);
         controller.signal.throwIfAborted();
         await platform.session.remove(`upload:${id}`);
+        controller.signal.throwIfAborted();
         state.update((value) => ({ ...value, available: false, status: 'Uploaded.' }));
         await platform.notify('Uploaded.');
+        controller.signal.throwIfAborted();
         platform.close();
       } catch (error) {
         if (!disposed && !controller.signal.aborted) state.update((value) => ({ ...value, status: error.message }));

@@ -16,6 +16,7 @@
 - Use `$state` for bound DOM references read by template handlers. Run the Svelte checker and ensure `make extension` builds without warnings.
 - Search uses cancellation plus stale-result checks. Pagination belongs to the submitted search and allows only one request at a time.
 - Identity or server changes invalidate pending library operations. Upload batches run sequentially; pending context-menu uploads have individual IDs and remain available after failures.
+- A failed file must not stop the rest of a batch. Retain only failed files for retry, clear them on identity/server changes, and ignore progress from completed or superseded uploads.
 - Serialize session mutations across pages with the session Web Lock. Prevent overlapping mutations on a media item.
 - Media items own decrypted bytes and object URLs. Abort requests and revoke URLs on disposal; stale downloads must not create URLs or open save dialogs.
 - Check local file size before reading bytes. Cap remote reads while streaming; do not trust Content-Length alone.
@@ -27,6 +28,7 @@
 - Place progress, success, and error messages beside the action that produced them. A status at the bottom of settings can fall below the viewport, especially on narrow screens.
 - Use a consistent preview area for images, audio, video, and ordinary files. Mixed aspect ratios otherwise create large gaps in the grid. Preserve the media's aspect ratio within the preview.
 - Optimize cards for browsing: readable tags, short format/size summaries, and disclosures for detailed metadata and tag editing.
+- Keep tag editing separate from file details. Suggest tags from loaded clips, support keyboard selection, and deduplicate by protocol normalization while preserving the first spelling.
 - Distinguish an empty library from a search with no matches; provide an upload action or a clear-search action respectively.
 - Make Create/Restore the main setup choices. Keep server configuration in a disclosure.
 - Inspect actual Firefox screenshots after visual changes. Test realistic landscape/portrait/panorama media, audio and files, long names, errors, both themes, and narrow widths such as 320/360 px. A one-pixel fixture does not reveal card-layout problems.
