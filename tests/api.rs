@@ -380,3 +380,23 @@ fn walk(dir: &std::path::Path) -> Vec<PathBuf> {
     }
     out
 }
+
+#[tokio::test]
+async fn upload_retries_require_the_same_owner_and_payload() {
+    let owner = new_identity();
+    let other = new_identity();
+    let (_dir, app) = app(&[&owner, &other]);
+    let id = "44444444-4444-4444-8444-444444444444";
+    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(id), b"original").unwrap();
+    let body = frame::encode_post(id, &meta, &content, "");
+    let first = call(&app, &owner, "POST", "/api/media", body.clone()).await;
+    let retry = call(&app, &owner, "POST", "/api/media", body.clone()).await;
+    assert_eq!(first.0, StatusCode::CREATED);
+    assert_eq!(first, retry);
+    assert_eq!(call(&app, &other, "POST", "/api/media", body).await.0, StatusCode::CONFLICT);
+    let changed = crypto::encrypt(&owner.seed, &crypto::content_aad(id), b"changed").unwrap();
+    assert_eq!(call(&app, &owner, "POST", "/api/media", frame::encode_post(id, &meta, &changed, "")).await.0, StatusCode::CONFLICT);
+    let (_, listed) = call(&app, &owner, "GET", "/api/media", vec![]).await;
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&listed).unwrap()["media"].as_array().unwrap().len(), 1);
+}

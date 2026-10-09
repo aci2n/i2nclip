@@ -36,6 +36,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
 		await session.ready;
 		if (info.menuItemId === "tags" || !get(session).privateKey) {
 			const id = crypto.randomUUID();
+			source.id = id;
 			await platform.session.set({ [`upload:${id}`]: source });
 			const page = info.menuItemId === "tags" ? "upload" : "unlock";
 			await browser.windows.create({

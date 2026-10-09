@@ -71,6 +71,7 @@ export async function sendUpload(
 	onProgress,
 	signal,
 ) {
+	if (source.attempt?.prepared) return upload({ ...credentials, tags, attempt: source.attempt, onProgress, signal });
 	const prepared = await prepareMedia(source, platform, signal);
 	const bytes = new Uint8Array(await prepared.blob.arrayBuffer());
 	const preview = await thumbnail(prepared.blob);
@@ -86,5 +87,7 @@ export async function sendUpload(
 		thumb: preview?.thumb,
 		onProgress,
 		signal,
+		id: source.id,
+		attempt: source.attempt,
 	});
 }

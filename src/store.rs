@@ -236,8 +236,8 @@ pub(crate) fn add(state: &AppState, owner: [u8; 32], body: &[u8]) -> Result<Item
     check_blob(&parts.content, MAX_CONTENT)?;
     {
         let conn = state.lock()?;
-        if row_exists(&conn, &id)? {
-            return Err(Error::Conflict);
+        if let Some(item) = replay_upload(&conn, &id, &owner, body)? {
+            return Ok(item);
         }
     }
     let path = state.blob_path(&id);
@@ -261,6 +261,7 @@ pub(crate) fn add(state: &AppState, owner: [u8; 32], body: &[u8]) -> Result<Item
         bytes,
         created,
         &parts.tokens,
+        &crypto::body_hash(body),
     );
     if let Err(err) = result {
         let _ = std::fs::remove_file(&path);
@@ -516,6 +517,7 @@ fn insert_file(
     bytes: i64,
     created: i64,
     tokens: &[String],
+    body_hash: &str,
 ) -> Result<(), Error> {
     let tx = conn.unchecked_transaction()?;
     tx.execute(
@@ -523,6 +525,7 @@ fn insert_file(
         params![id, owner.as_slice(), meta, bytes, created],
     )?;
     replace_tokens(&tx, id, tokens)?;
+    tx.execute("INSERT INTO upload_receipts (file_id, body_hash) VALUES (?1, ?2)", params![id, body_hash])?;
     tx.commit()?;
     Ok(())
 }
@@ -549,11 +552,18 @@ fn owned(conn: &Connection, id: &str, owner: &[u8; 32]) -> Result<bool, Error> {
     Ok(found.is_some())
 }
 
-fn row_exists(conn: &Connection, id: &str) -> Result<bool, Error> {
-    let found = conn
-        .query_row("SELECT 1 FROM files WHERE id = ?1", [id], |_| Ok(()))
-        .optional()?;
-    Ok(found.is_some())
+fn replay_upload(conn: &Connection, id: &str, owner: &[u8; 32], body: &[u8]) -> Result<Option<Item>, Error> {
+    let existing = conn.query_row(
+        "SELECT owner, meta, bytes, created_at, (SELECT body_hash FROM upload_receipts WHERE file_id = files.id) FROM files WHERE id = ?1",
+        [id], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, Option<String>>(4)?)),
+    ).optional()?;
+    let Some((stored_owner, meta, bytes, created_at, hash)) = existing else { return Ok(None); };
+    if stored_owner != owner || hash.as_deref() != Some(crypto::body_hash(body).as_str()) {
+        return Err(Error::Conflict);
+    }
+    let mut stmt = conn.prepare("SELECT token FROM tags WHERE file_id = ?1 ORDER BY token")?;
+    let tokens = stmt.query_map([id], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(Item { id: id.to_string(), meta, bytes, created_at, tokens }))
 }
 
 /// `Uuid::parse_str` accepts uppercase hex. We refuse it. The exact string is
@@ -680,6 +690,7 @@ mod gc_tests {
             16,
             1,
             &[],
+            "fixture",
         )
         .unwrap();
         drop(conn);

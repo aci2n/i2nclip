@@ -37,7 +37,18 @@ export async function upload({
 	thumb,
 	onProgress,
 	signal,
+	attempt,
 }) {
+	if (attempt?.prepared) {
+		if (attempt.serverUrl !== serverUrl || attempt.privateKey !== privateKey) {
+			throw new Error("The upload belongs to a different library.");
+		}
+		const key = await loadKey(privateKey);
+		const saved = await send(serverUrl, key, "POST", "/api/media", attempt.prepared.body, onProgress, signal);
+		const metadata = { ...attempt.prepared.metadata, tags: uniqueTags(tags) };
+		const result = JSON.stringify(metadata.tags) === attempt.tags ? saved : await updateMetadata({ serverUrl, privateKey, id: saved.id, metadata, thumb: attempt.prepared.thumb, signal, expectedVersion: saved.version });
+		return { ...result, metadata };
+	}
 	if (bytes.length > MAX_FILE_BYTES) {
 		throw new Error("File is larger than 32 MB.");
 	}
@@ -61,6 +72,7 @@ export async function upload({
 		content,
 		tags: tokens.join("\n"),
 	});
+	if (attempt) Object.assign(attempt, { serverUrl, privateKey, tags: JSON.stringify(plainTags), prepared: { body, metadata, thumb } });
 	const saved = await send(
 		serverUrl,
 		key,

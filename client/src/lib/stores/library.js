@@ -25,6 +25,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 	let uploadRequest;
 	let disposed = false;
 	const mediaItems = new Map();
+	let uploadSources = new WeakMap();
 
 	function clearMediaItems() {
 		for (const media of mediaItems.values()) media.dispose();
@@ -32,6 +33,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 	}
 
 	function invalidate() {
+		uploadSources = new WeakMap();
 		revision++;
 		request?.abort();
 		uploadRequest?.abort();
@@ -137,6 +139,8 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 			for (let index = 0; index < files.length; index++) {
 				controller.signal.throwIfAborted();
 				const file = files[index];
+				let source = uploadSources.get(file);
+				if (!source) { source = { blob: file, name: file.name, attempt: {} }; uploadSources.set(file, source); }
 				const progress = (percent) => {
 					if (current())
 						state.update((value) => ({
@@ -152,7 +156,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 				progress(0);
 				try {
 					await api.sendUpload(
-						{ blob: file, name: file.name },
+						source,
 						captured,
 						platform,
 						"",
@@ -161,6 +165,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 					);
 					controller.signal.throwIfAborted();
 					uploaded = true;
+					uploadSources.delete(file);
 					if (current())
 						state.update((value) => ({
 							...value,

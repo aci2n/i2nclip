@@ -113,3 +113,17 @@ test("downloaded encrypted content is capped before buffering", async (t) => {
 	);
 	assert.equal(cancelled, true);
 });
+
+test('retry reuses the exact encrypted request after a lost response', async (t) => {
+  const { privateKey } = await generatePrivateKey();
+  const bodies = [];
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    bodies.push(options.body);
+    if (bodies.length === 1) throw new Error('lost response');
+    return new Response('{"id":"saved"}', { status: 201 });
+  });
+  const options = { serverUrl: 'https://clip.example', privateKey, bytes: new Uint8Array([1]), name: 'file', tags: [], attempt: {} };
+  await assert.rejects(upload(options), /lost response/);
+  await upload(options);
+  assert.deepEqual(bodies[0], bodies[1]);
+});
