@@ -14,3 +14,8 @@ export function downloadName(name, type) {
   const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp', 'video/mp4': 'mp4', 'video/webm': 'webm', 'audio/mpeg': 'mp3', 'audio/ogg': 'ogg', 'audio/wav': 'wav' }[type];
   return base.includes('.') || !ext ? base : `${base}.${ext}`;
 }
+
+export function fileType(type) {
+  return ({ 'image/jpeg': 'JPEG', 'audio/mpeg': 'MP3', 'application/octet-stream': 'FILE' })[type]
+    || (type.split('/')[1]?.split(/[;+]/)[0] || 'FILE').toUpperCase();
+}

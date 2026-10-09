@@ -17,7 +17,7 @@ export function createMediaItem(item, credentials, platform, api = { getContent,
     urls.add(url);
     return url;
   };
-  const state = writable({ ...item, busy: false, deleted: false, shown: false, progress: null, message: '', url: '', preview: item.thumb?.length ? makeUrl(item.thumb, 'image/webp') : '' });
+  const state = writable({ ...item, busy: false, deleted: false, shown: false, progress: null, message: '', error: false, url: '', preview: item.thumb?.length ? makeUrl(item.thumb, 'image/webp') : '' });
   const options = { ...credentials, id: item.id, signal };
 
   // This advisory check never replaces an action's result.
@@ -30,10 +30,10 @@ export function createMediaItem(item, credentials, platform, api = { getContent,
 
   async function run(action) {
     if (disposed || get(state).busy || get(state).deleted) return null;
-    state.update((value) => ({ ...value, busy: true, message: '' }));
+    state.update((value) => ({ ...value, busy: true, message: '', error: false }));
     try { return await action(); }
     catch (error) {
-      if (!disposed) state.update((value) => ({ ...value, message: error.message }));
+      if (!disposed) state.update((value) => ({ ...value, message: error.message, error: true }));
       return null;
     } finally {
       if (!disposed) state.update((value) => ({ ...value, busy: false, progress: null }));

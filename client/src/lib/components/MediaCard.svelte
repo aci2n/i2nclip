@@ -1,13 +1,13 @@
 <script>
   import { onDestroy, untrack } from 'svelte';
   import { createMediaItem } from '../stores/media-item.js';
-  import { fileSize, uploadedAt } from '../format.js';
+  import { fileSize, fileType, uploadedAt } from '../format.js';
   let { item, credentials, platform, onopen, onremove } = $props();
   const media = untrack(() => createMediaItem(item, credentials, platform));
   let tags = $state(untrack(() => item.metadata?.tags?.join(', ') || ''));
   const type = $derived($media.metadata?.content_type || '');
   const name = $derived($media.metadata?.name || item.id);
-  const summary = $derived([type, $media.metadata?.image ? `${$media.metadata.image.width}×${$media.metadata.image.height}` : '', fileSize($media.metadata?.size), uploadedAt(item.createdAt)].filter(Boolean).join(' · '));
+  const summary = $derived([fileType(type), fileSize($media.metadata?.size)].filter(Boolean).join(' · '));
   async function reveal() {
     const url = await media.reveal();
     if (url && type.startsWith('image/')) onopen(url, name);
@@ -25,36 +25,44 @@
     {:else if type.startsWith('audio/') || type.startsWith('video/')}
       {#if $media.shown}
         {#if type.startsWith('audio/')}
-          {#if $media.preview}<img src={$media.preview} alt={name} />{/if}
+          {#if $media.preview}<img src={$media.preview} alt={name} />{:else}<span class="file-type">{fileType(type)}</span>{/if}
           <audio controls autoplay src={$media.url}></audio>
-        {:else}
-          <video controls autoplay src={$media.url}><track kind="captions" /></video>
-        {/if}
+        {:else}<video controls autoplay src={$media.url}><track kind="captions" /></video>{/if}
       {:else}
-        {#if $media.preview}<img src={$media.preview} alt={name} />{/if}
+        {#if $media.preview}<img src={$media.preview} alt={name} />{:else}<span class="file-type">{fileType(type)}</span>{/if}
         <button class="play" data-act="play" aria-label={`Play ${name}`} onclick={reveal} disabled={$media.busy || $media.deleted}>▶</button>
       {/if}
+    {:else if type.startsWith('image/') && !$media.deleted}
+      <button class="image-button file-type" onclick={reveal} disabled={$media.busy}>Open image</button>
     {:else if $media.preview}
       <img src={$media.preview} alt={name} />
-    {/if}
+    {:else}<span class="file-type">{fileType(type)}</span>{/if}
     {#if $media.progress !== null}<span class="pct">{$media.progress}%</span>{/if}
   </div>
-  <strong title={name}>{name}</strong>
+  <strong class="card-title" title={name}>{name}</strong>
   <p class="meta">{summary}</p>
-  {#if $media.metadata}
-    <form class="tags" onsubmit={(event) => { event.preventDefault(); media.retag(tags); }}>
-      <div class="bar">
-        <input aria-label={`Tags for ${name}`} placeholder="Tags, separated by commas" bind:value={tags} disabled={$media.busy || $media.deleted} />
-        <button type="submit" class="secondary" disabled={$media.busy || $media.deleted}>Update</button>
-      </div>
-      <output>{$media.message}</output>
-    </form>
-  {:else}<output>{$media.message}</output>{/if}
-  <div class="bar actions">
-    {#if type.startsWith('image/') && !$media.preview && !$media.url}
-      <button class="secondary" onclick={reveal} disabled={$media.busy || $media.deleted}>Open</button>
+  <div class="tag-list" aria-label={`Tags for ${name}`}>
+    {#each ($media.metadata?.tags || []).slice(0, 3) as tag}<span class="tag">{tag}</span>{:else}<span class="muted">No tags</span>{/each}
+    {#if ($media.metadata?.tags?.length || 0) > 3}<span class="muted">+{$media.metadata.tags.length - 3}</span>{/if}
+  </div>
+  <details class="card-details">
+    <summary>Details &amp; edit tags</summary>
+    <dl>
+      <dt>Filename</dt><dd>{name}</dd>
+      <dt>Uploaded</dt><dd>{uploadedAt(item.createdAt)}</dd>
+      {#if type}<dt>Type</dt><dd>{type}</dd>{/if}
+      {#if $media.metadata?.image}<dt>Dimensions</dt><dd>{$media.metadata.image.width} × {$media.metadata.image.height}</dd>{/if}
+    </dl>
+    {#if $media.metadata}
+      <form class="tags" onsubmit={(event) => { event.preventDefault(); media.retag(tags); }}>
+        <label>Tags, separated by commas<input aria-label={`Edit tags for ${name}`} bind:value={tags} disabled={$media.busy || $media.deleted} /></label>
+        <button type="submit" class="secondary" disabled={$media.busy || $media.deleted}>Save tags</button>
+      </form>
     {/if}
+  </details>
+  <output class="feedback" class:error={$media.error}>{$media.message}</output>
+  <div class="bar actions">
     <button class="secondary" data-act="download" onclick={media.download} disabled={$media.busy || $media.deleted}>Download</button>
-    <button class="secondary" data-act="delete" onclick={remove} disabled={$media.busy || $media.deleted}>Delete</button>
+    <button class="secondary danger" data-act="delete" onclick={remove} disabled={$media.busy || $media.deleted}>Delete</button>
   </div>
 </article>

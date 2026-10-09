@@ -8,6 +8,7 @@
   let tags = $state('');
   let selected = $state(null);
   let dialog;
+  let filesInput = $state();
   const epoch = $derived($library.epoch);
   $effect(() => { epoch; selected = null; dialog?.close(); });
   function open(url, name) { selected = { url, name }; dialog.showModal(); }
@@ -23,12 +24,25 @@
   <form id="find" class="bar toolbar" onsubmit={(event) => { event.preventDefault(); library.search(tags); }}>
     <input id="tags" type="search" placeholder="Search tags" aria-label="Tags, separated by commas" bind:value={tags} />
     <button type="submit">Search</button>
-    <label class="file" class:disabled={$library.uploading}>Upload<input id="files" type="file" multiple disabled={$library.uploading} onchange={(event) => {
+    <label class="file" class:disabled={$library.uploading}>Upload<input bind:this={filesInput} id="files" type="file" multiple disabled={$library.uploading} onchange={(event) => {
       const files = [...event.currentTarget.files]; event.currentTarget.value = ''; if (files.length) library.upload(files);
     }} /></label>
   </form>
 {/if}
 <p id="status" role="status">{[$library.status, $library.uploadStatus, (!$session.wrappedKey || $session.privateKey) ? $session.error : ''].filter(Boolean).join(' | ')}</p>
+{#if $session.privateKey && $library.empty}
+  <section id="empty-library" class="panel empty">
+    {#if $library.empty === 'library'}
+      <h2>Your library is empty</h2>
+      <p>Upload a photo, video, or audio file to get started.</p>
+      <button disabled={$library.uploading} onclick={() => filesInput.click()}>Upload files</button>
+    {:else}
+      <h2>No matching clips</h2>
+      <p>Try different tags or clear your search to see all clips.</p>
+      <button class="secondary" onclick={() => { tags = ''; library.search(''); }}>Clear search</button>
+    {/if}
+  </section>
+{/if}
 <div id="results">
   {#key $library.epoch}
     {#each $library.items as item (item.id)}

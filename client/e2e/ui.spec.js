@@ -46,13 +46,15 @@ test("create, reset, recover, unlock, upload, and both color schemes", async ({ 
   await expect(page.locator('#create input[type="password"]')).toHaveCount(1);
   await shot(page, "options");
 
+  await openServer(page);
+
   await page.locator("#server").fill(origin);
   await page.locator("#pass").fill("test-pass-1");
   await page.locator("#otc").fill("invalid-invitation");
   await page.getByRole("button", { name: "Create library", exact: true }).click();
   await expect(page.locator("#status")).toContainText("Registration failed");
   await expect(page.locator("#create")).toBeVisible();
-  await expect(page.locator("#restore-settings")).toBeVisible();
+  await expect(page.locator("#restore-settings")).toBeHidden();
   await expect(page.locator("#configured")).toBeHidden();
   await expect(page.locator("#reset-settings")).toBeHidden();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("i2nclip-e2e") || "{}").wrappedKey)).toBeUndefined();
@@ -71,7 +73,7 @@ test("create, reset, recover, unlock, upload, and both color schemes", async ({ 
   await shot(page, "options-configured");
 
   await page.getByRole("link", { name: "Library" }).click();
-  await expect(page.locator("#status")).toHaveText("Nothing stored for those tags.");
+  await expect(page.getByRole("heading", { name: "Your library is empty", exact: true })).toBeVisible();
   await page.locator("#files").setInputFiles({ name: "dot.png", mimeType: "image/png", buffer: png });
   await expect(page.locator(".card strong")).toHaveText("dot.png");
   await expect(page.locator(".card img")).toBeVisible();
@@ -85,23 +87,26 @@ test("create, reset, recover, unlock, upload, and both color schemes", async ({ 
   await page.goto(`${web.origin}/client/dist/extension/options.html`);
   await expect(page.locator("#restore-settings")).toBeHidden();
   page.once("dialog", (dialog) => dialog.dismiss());
+  await openReset(page);
   await page.getByRole("button", { name: "Reset everything", exact: true }).click();
   await expect(page.locator("#configured")).toBeVisible();
   await expect(page.locator("#restore-settings")).toBeHidden();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("i2nclip-e2e")).wrappedKey)).toBeTruthy();
   page.once("dialog", (dialog) => dialog.accept());
+  await openReset(page);
   await page.getByRole("button", { name: "Reset everything", exact: true }).click();
   await expect(page.locator("#status")).toContainText("Browser settings reset");
   await expect(page.locator("#create")).toBeVisible();
-  await expect(page.locator("#restore-settings")).toBeVisible();
+  await expect(page.locator("#restore-settings")).toBeHidden();
   await expect(page.locator("#configured")).toBeHidden();
   expect(await page.evaluate(() => localStorage.getItem("i2nclip-e2e"))).toBeNull();
   expect(await page.evaluate(() => sessionStorage.getItem("i2nclip-e2e"))).toBeNull();
+  await chooseRestore(page);
   await page.locator("#file").setInputFiles({ name: "i2nclip-recovery.json", mimeType: "application/json", buffer: Buffer.from(recovery) });
   await page.locator("#restore-pass").fill("wrong-password");
   await page.getByRole("button", { name: "Restore library", exact: true }).click();
   await expect(page.locator("#status")).toContainText("Wrong password");
-  await expect(page.locator("#create")).toBeVisible();
+  await expect(page.locator("#restore-settings")).toBeVisible();
   await page.locator("#restore-pass").fill("test-pass-1");
   await page.locator("#restore-pass").press("Enter");
   await expect(page.locator("#status")).toHaveText("Library restored and unlocked.");
@@ -123,6 +128,7 @@ const DEFAULT_SERVER = "https://clip.i2n.duckdns.org";
 
 async function options(page, app) {
   await page.goto(`${app.web.origin}/client/dist/extension/options.html`);
+  await openServer(page);
   await page.locator("#server").fill(app.origin);
 }
 
@@ -139,10 +145,26 @@ async function storage(page) {
 }
 
 async function expectSetup(page) {
-  await expect(page.locator("#create")).toBeVisible();
-  await expect(page.locator("#restore-settings")).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Create', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Restore', exact: true })).toBeVisible();
   await expect(page.locator("#configured")).toBeHidden();
   await expect(page.locator("#reset-settings")).toBeHidden();
+}
+
+async function openServer(page) {
+  const details = page.locator('#server-details');
+  if (!await details.evaluate((element) => element.open)) await details.locator('summary').click();
+}
+
+async function openReset(page) {
+  const details = page.locator('#reset-settings');
+  if (!await details.evaluate((element) => element.open)) await details.locator('summary').click();
+}
+
+async function chooseRestore(page) {
+  await page.getByRole('tab', { name: 'Restore', exact: true }).click();
+  await expect(page.locator('#restore-settings')).toBeVisible();
+  await expect(page.locator('#create')).toBeHidden();
 }
 
 async function expectConfigured(page) {
@@ -175,6 +197,7 @@ async function resetLibrary(page, accept = true) {
     if (accept) await dialog.accept();
     else await dialog.dismiss();
   });
+  await openReset(page);
   await page.getByRole("button", { name: "Reset everything", exact: true }).click();
   if (accept) await expect(page.locator("#status")).toContainText("Browser settings reset");
 }
@@ -265,6 +288,7 @@ for (const failure of ["invalid code", "expired code", "used code", "network err
     } else if (failure === "used code") {
       ({ code } = await createLibrary(page, app));
       await resetLibrary(page);
+      await openServer(page);
       await page.locator("#server").fill(app.origin);
     } else if (failure === "whitespace code") {
       code = "   ";
@@ -318,7 +342,7 @@ for (const theme of ["light", "dark"]) {
         if (state === "locked") await expect(page.locator("#unlock")).toBeVisible();
         else {
           await expect(page.locator("#unlock")).toBeHidden();
-          await expect(page.locator("#status")).toHaveText("Nothing stored for those tags.");
+          await expect(page.getByRole("heading", { name: "Your library is empty", exact: true })).toBeVisible();
         }
       }
     });
@@ -354,6 +378,7 @@ for (const failure of ["missing file", "missing password", "malformed JSON", "wr
     const created = await createLibrary(page, app);
     let recovery = await downloadRecovery(page);
     await resetLibrary(page);
+    await chooseRestore(page);
     const document = JSON.parse(recovery);
     if (failure === "malformed JSON") recovery = "not JSON";
     if (failure === "wrong format") document.format = "other-format";
@@ -380,6 +405,7 @@ for (const failure of ["missing file", "missing password", "malformed JSON", "wr
     if (failure !== "missing file") await page.locator("#file").setInputFiles({ name: "recovery.json", mimeType: "application/json", buffer: Buffer.from(recovery) });
     await page.locator("#restore-pass").fill(failure === "missing password" ? "" : failure === "wrong password" ? "wrong-password" : PASSWORD);
     // Saving a server URL also verifies a failed restore preserves existing settings.
+    await openServer(page);
     await page.locator("#server").fill(app.origin);
     await page.locator("#save-server").click();
     const before = await storage(page);
@@ -400,6 +426,7 @@ for (const submit of ["click", "Enter"]) {
     const created = await createLibrary(page, app);
     const recovery = await downloadRecovery(page);
     await resetLibrary(page);
+    await chooseRestore(page);
     await page.route("**/api/register-key", () => { throw new Error("Restore must not register again"); });
     await page.locator("#file").setInputFiles({ name: "recovery.json", mimeType: "application/json", buffer: Buffer.from(recovery) });
     await page.locator("#restore-pass").fill(PASSWORD);
@@ -422,10 +449,12 @@ for (const state of ["locked", "unlocked"]) {
     if (state === "locked") await page.evaluate(() => browser.storage.session.clear());
     await page.reload();
     const before = await storage(page);
+    await openServer(page);
     await page.locator("#server").fill("not-a-url");
     await page.locator("#save-server").click();
     expect(await storage(page)).toEqual(before);
     const serverUrl = "https://new.example.com";
+    await openServer(page);
     await page.locator("#server").fill(serverUrl);
     await page.locator("#server").press("Enter");
     await expect(page.locator("#status")).toHaveText("Server URL updated.");
@@ -448,7 +477,7 @@ for (const password of ["wrong-password", PASSWORD]) {
     await page.locator("#pass").press("Enter");
     if (password === PASSWORD) {
       await expect(page.locator("#unlock")).toBeHidden();
-      await expect(page.locator("#status")).toHaveText("Nothing stored for those tags.");
+      await expect(page.getByRole("heading", { name: "Your library is empty", exact: true })).toBeVisible();
       expect((await storage(page)).session.privateKey).toBeTruthy();
     } else {
       await expect(page.locator("#unlock-status")).toContainText("Wrong password");
@@ -476,7 +505,7 @@ test("deleted cards stay visible and fade after success", async ({ page, app }) 
 test("clearing the identity invalidates an open library", async ({ page, app }) => {
   await createLibrary(page, app);
   await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
-  await expect(page.locator("#status")).toHaveText("Nothing stored for those tags.");
+  await expect(page.getByRole("heading", { name: "Your library is empty", exact: true })).toBeVisible();
   await page.evaluate(async () => {
     await browser.storage.session.clear();
     await browser.storage.local.clear();
@@ -490,8 +519,12 @@ test("tag edits preserve the preview and remain searchable", async ({ page, app 
   await page.locator("#files").setInputFiles({ name: "dot.png", mimeType: "image/png", buffer: png });
   const card = page.locator(".card");
   await expect(card).toHaveCount(1);
+  await card.locator("summary").click();
   await card.locator('.tags input').fill(" Vacation, dog ");
-  await card.locator('.tags input').press("Enter");
+  await shot(page, 'tag-editor');
+  await page.setViewportSize({ width: 360, height: 740 });
+  await shot(page, 'tag-editor-narrow');
+  await card.getByRole('button', { name: 'Save tags', exact: true }).click();
   await expect(card.locator("output")).toHaveText("Updated.");
   await page.locator("#tags").fill("vacation");
   await page.locator("#tags").press("Enter");
@@ -568,6 +601,86 @@ test("unlock popup resumes only its own queued upload", async ({ page, app }) =>
   expect(saved.session['upload:first']).toBeUndefined();
   expect(saved.session['upload:second']).toBeTruthy();
   expect(await page.evaluate(() => window.uploadClosed)).toBe(true);
+});
+
+test("setup errors stay beside the active form on narrow screens", async ({ page, app }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await options(page, app);
+  await page.locator('#server-details > summary').click();
+  await fillCreation(page, 'invalid-invitation');
+  await page.locator('#pass').press('Enter');
+  await expect(page.locator('#create #status')).toContainText('Registration failed');
+  await expect(page.locator('#create #status')).toBeInViewport();
+  await expect(page.locator('#create #status')).toHaveAttribute('role', 'alert');
+  await expect(page.locator('#restore-settings')).toBeHidden();
+  expect(await page.locator('#server-details').evaluate((element) => element.open)).toBe(false);
+  await shot(page, 'setup-error-narrow');
+  await chooseRestore(page);
+  await expect(page.locator('#create #status')).toBeHidden();
+  await shot(page, 'restore-narrow');
+  const restoreTab = page.getByRole('tab', { name: 'Restore', exact: true });
+  const createTab = page.getByRole('tab', { name: 'Create', exact: true });
+  await restoreTab.focus();
+  await restoreTab.press('ArrowLeft');
+  await expect(createTab).toBeFocused();
+  await expect(createTab).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tabpanel', { name: 'Create', exact: true })).toBeVisible();
+  await createTab.press('End');
+  await expect(restoreTab).toBeFocused();
+  await expect(restoreTab).toHaveAttribute('aria-selected', 'true');
+  await restoreTab.press('Home');
+  await expect(createTab).toBeFocused();
+
+});
+
+test("empty library upload and clear-search actions work", async ({ page, app }) => {
+  await createLibrary(page, app);
+  await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
+  await expect(page.getByRole('heading', { name: 'Your library is empty', exact: true })).toBeVisible();
+  await shot(page, 'empty-library');
+  const choosing = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Upload files', exact: true }).click();
+  await (await choosing).setFiles({ name: 'dot.png', mimeType: 'image/png', buffer: png });
+  await expect(page.locator('.card')).toHaveCount(1);
+  await expect(page.locator('.card .tags input')).toBeHidden();
+  await page.locator('#tags').fill('missing');
+  await page.locator('#tags').press('Enter');
+  await expect(page.getByRole('heading', { name: 'No matching clips', exact: true })).toBeVisible();
+  await shot(page, 'no-search-results');
+  await page.getByRole('button', { name: 'Clear search', exact: true }).click();
+  await expect(page.locator('#tags')).toHaveValue('');
+  await expect(page.locator('.card strong')).toHaveText('dot.png');
+});
+
+test("mixed media has consistent previews without narrow-screen overflow", async ({ page, app }) => {
+  await createLibrary(page, app);
+  await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
+  const files = [];
+  for (const [width, height, name] of [[960, 640, 'Mountains.png'], [640, 960, 'A long portrait filename that wraps onto a second line.png'], [1600, 360, 'Panorama.png']]) {
+    const encoded = await page.evaluate(({ width, height }) => {
+      const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+      const context = canvas.getContext('2d');
+      const gradient = context.createLinearGradient(0, 0, 0, height);
+      gradient.addColorStop(0, '#8fbdc5'); gradient.addColorStop(1, '#e5d5ab');
+      context.fillStyle = gradient; context.fillRect(0, 0, width, height);
+      context.fillStyle = '#e9c77a'; context.beginPath(); context.arc(width * .72, height * .26, Math.min(width, height) * .09, 0, Math.PI * 2); context.fill();
+      context.fillStyle = '#466957'; context.beginPath(); context.moveTo(0, height); context.lineTo(0, height * .75); context.lineTo(width * .3, height * .38); context.lineTo(width * .6, height * .7); context.lineTo(width * .9, height * .5); context.lineTo(width, height * .65); context.lineTo(width, height); context.fill();
+      return canvas.toDataURL('image/png').split(',')[1];
+    }, { width, height });
+    files.push({ name, mimeType: 'image/png', buffer: Buffer.from(encoded, 'base64') });
+  }
+  files.push({ name: 'Voice memo.wav', mimeType: 'audio/wav', buffer: Buffer.from('audio-preview-fixture') });
+  files.push({ name: 'Notes.bin', mimeType: 'application/octet-stream', buffer: Buffer.from('file') });
+  await page.locator('#files').setInputFiles(files);
+  await expect(page.locator('.card')).toHaveCount(5);
+  const heights = await page.locator('.media').evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
+  expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1);
+  await shot(page, 'mixed-media');
+  for (const width of [360, 320]) {
+    await page.setViewportSize({ width, height: 740 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await shot(page, `mixed-media-${width}`);
+  }
 });
 
 const execFileAsync = promisify(execFile);

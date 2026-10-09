@@ -66,7 +66,7 @@ export function createSession(platform) {
       const created = await generatePrivateKey();
       const wrapped = await wrapPrivateKey(created.privateKey, password);
       try { await registerKey({ serverUrl, publicKey: created.publicKey, otc }); }
-      catch (error) { throw new Error(`Registration failed: ${error.message}. Check your invitation code and try again.`); }
+      catch (error) { throw new Error(`${error.message === 'registration failed' ? 'Registration failed.' : `Registration failed: ${error.message}.`} Check your invitation code and try again.`); }
       await saveIdentity(serverUrl, created.privateKey, wrapped);
     }),
     restore: (file, password) => mutate(async () => {

@@ -1,9 +1,10 @@
 import { get, writable } from 'svelte/store';
+import { splitTags } from '../crypto.js';
 import { list } from '../api.js';
 import { sendUpload } from '../media.js';
 
 export function createLibrary(session, platform, api = { list, sendUpload }) {
-  const state = writable({ items: [], next: null, loading: false, status: '', uploadStatus: '', uploading: false, epoch: 0 });
+  const state = writable({ items: [], next: null, loading: false, empty: null, status: '', uploadStatus: '', uploading: false, epoch: 0 });
   let credentials = null;
   let tags = '';
   let revision = 0;
@@ -15,7 +16,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
     revision++;
     request?.abort();
     uploadRequest?.abort();
-    state.update((value) => ({ ...value, items: [], next: null, loading: false, status: '', uploadStatus: '', uploading: false, epoch: value.epoch + 1 }));
+    state.update((value) => ({ ...value, items: [], next: null, loading: false, empty: null, status: '', uploadStatus: '', uploading: false, epoch: value.epoch + 1 }));
   }
 
   async function load(more = false) {
@@ -26,12 +27,12 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
     const controller = new AbortController();
     request = controller;
     const after = more ? get(state).next : null;
-    state.update((value) => ({ ...value, items: more ? value.items : [], next: more ? value.next : null, loading: true, status: 'Loading…', epoch: value.epoch + (more ? 0 : 1) }));
+    state.update((value) => ({ ...value, items: more ? value.items : [], next: more ? value.next : null, loading: true, empty: null, status: 'Loading…', epoch: value.epoch + (more ? 0 : 1) }));
     try {
       const page = await api.list({ ...captured, tags, after, signal: controller.signal });
       if (disposed || version !== revision || controller.signal.aborted) return;
       state.update((value) => ({ ...value, items: more ? [...value.items, ...page.items] : page.items, next: page.next,
-        status: !more && !page.items.length ? 'Nothing stored for those tags.' : '' }));
+        empty: !more && !page.items.length ? (splitTags(tags).length ? 'search' : 'library') : null, status: '' }));
     } catch (error) {
       if (!disposed && version === revision && !controller.signal.aborted) state.update((value) => ({ ...value, status: error.message }));
     } finally {

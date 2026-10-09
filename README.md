@@ -111,9 +111,11 @@ npm ci --prefix client
 npm run build:extension --prefix client
 ```
 
-In Firefox 128 or newer, open `about:debugging`, choose **Load Temporary Add-on**, and pick `client/dist/extension/manifest.json`. That directory is the complete add-on; it contains no development dependencies. `make extension` builds and packs `client/dist/i2nclip.xpi`.
+In Firefox 128 or newer, open `about:debugging`, choose **Load Temporary Add-on**, and pick `client/dist/extension/manifest.json`. That directory is the complete add-on; it contains no development dependencies. `make extension` builds and packs `client/dist/i2nclip.xpi` using the system `zip` command. You can also run `npm run pack:extension --prefix client`; Python is not needed for packaging.
 
-For development, `npm run dev:extension --prefix client` rebuilds on changes; reload the temporary add-on in Firefox. `npm run dev --prefix client` runs the same UI in a regular browser with a local-storage adapter. Its `/api` proxy points to `http://127.0.0.1:8080` (override with `I2N_API_TARGET`); set the backend's `I2N_ORIGIN` and the UI's server URL to `http://localhost:5173` for this mode. The standalone browser session is separate from the extension.
+For development, `make dev-extension` builds the add-on, launches a development Firefox instance with `web-ext`, and automatically rebuilds and reloads the extension on source changes. `web-ext` is installed by `npm ci` as a development dependency. Ctrl-C stops Firefox and the build watcher. You can also run `make -C client dev-extension`. `npm run dev:extension --prefix client` runs only the build watcher, for manual reloading in an existing Firefox instance.
+
+`npm run dev --prefix client` runs the same UI in a regular browser with a local-storage adapter. Its `/api` proxy points to `http://127.0.0.1:8080` (override with `I2N_API_TARGET`); set the backend's `I2N_ORIGIN` and the UI's server URL to `http://localhost:5173` for this mode. The standalone browser session is separate from the extension.
 
 The source has three boundaries:
 
@@ -123,7 +125,7 @@ The source has three boundaries:
 
 Stores own session mutations, request cancellation, pagination, and upload batches. Media cards own and release their decrypted bytes and object URLs. Settings mutations use a Web Lock across open pages; tag changes and uploads prevent overlapping submissions. The tests cover stale completions, identity changes, retry behavior, and file-size limits as well as the full browser flows.
 
-`client/Makefile` owns the frontend targets and is included by the root Makefile. `make -C client build` and `make -C client test` work independently. `make build` builds the Rust server and both frontend bundles. `make client` builds just the standalone UI and extension (`npm run build --prefix client`). `npm run e2e --prefix client` builds the extension and runs Firefox tests; `make e2e` also installs dependencies and Firefox.
+`client/Makefile` owns the frontend targets; the root Makefile delegates with `make -C client`. `make -C client build` and `make -C client test` work independently. `make build` builds the Rust server and both frontend bundles. `make client` builds just the standalone UI and extension (`npm run build --prefix client`). `npm run e2e --prefix client` builds the extension and runs Firefox tests; `make e2e` also installs dependencies and Firefox.
 
 The manifest's update URL now points to `client/public/updates.json`. Previously installed releases that use the old update URL need a manual update when this layout is published.
 

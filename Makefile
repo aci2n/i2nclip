@@ -7,13 +7,20 @@ HOST ?= deploy@example.com
 
 -include local.mk
 
-include client/Makefile
-
 .DEFAULT_GOAL := build
-.PHONY: build run test audit container push
+.PHONY: build client client-test e2e extension dev-extension run test audit container push
 
 build: client
 	cargo build
+
+client:
+	$(MAKE) -C client build
+
+client-test:
+	$(MAKE) -C client test
+
+e2e extension dev-extension:
+	$(MAKE) -C client $@
 
 run:
 	cargo run
