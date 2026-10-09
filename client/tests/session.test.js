@@ -43,3 +43,22 @@ test("registration finishing after disposal cannot save an identity", async (t) 
 	assert.equal(writes, 0);
 	assert.equal(await session.setServer("https://other.example"), false);
 });
+
+test('refresh locks an unlocked key belonging to a different saved library', async (t) => {
+  const { generatePrivateKey } = await import('../src/lib/identity.js');
+  const { get } = await import('svelte/store');
+  const first = await generatePrivateKey(), second = await generatePrivateKey();
+  let local = { wrappedKey: {}, publicKey: first.publicKey };
+  const session = createSession({
+    local: { get: async () => local },
+    session: { get: async () => ({ privateKey: first.privateKey }) },
+    subscribe: () => () => {},
+  });
+  t.after(session.dispose);
+  await session.ready;
+  assert.equal(get(session).privateKey, first.privateKey);
+  local = { wrappedKey: {}, publicKey: second.publicKey };
+  await session.refresh();
+  assert.equal(get(session).privateKey, '');
+  assert.throws(session.credentials, /Unlock/);
+});

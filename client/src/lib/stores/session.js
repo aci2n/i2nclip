@@ -29,6 +29,13 @@ export function createSession(platform) {
 				platform.local.get(["serverUrl", "wrappedKey", "publicKey"]),
 				platform.session.get("privateKey"),
 			]);
+			let privateKey = "";
+			if (local.wrappedKey && session.privateKey) {
+				try {
+					const loaded = await loadKey(session.privateKey);
+					if (loaded.registrationKey === local.publicKey) privateKey = session.privateKey;
+				} catch { /* A stale or damaged session must stay locked. */ }
+			}
 			if (!disposed && version === revision)
 				state.update((value) => ({
 					...value,
@@ -36,7 +43,7 @@ export function createSession(platform) {
 					ready: true,
 					serverUrl: local.serverUrl || DEFAULT_SERVER_URL,
 					wrappedKey: local.wrappedKey || null,
-					privateKey: local.wrappedKey ? session.privateKey || "" : "",
+					privateKey,
 				}));
 		} catch (error) {
 			if (!disposed && version === revision)
