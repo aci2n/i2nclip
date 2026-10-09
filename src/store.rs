@@ -608,6 +608,13 @@ fn set_mode(path: &Path, mode: u32) -> Result<(), Error> {
 }
 
 fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    write_new_with(path, |file| file.write_all(bytes))
+}
+
+fn write_new_with(
+    path: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> Result<(), Error> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -616,7 +623,16 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Error> {
         options.mode(0o600);
     }
     let mut file = options.open(path)?;
-    file.write_all(bytes)?;
+    let result = write(&mut file).and_then(|()| file.sync_all()).and_then(|()| {
+        #[cfg(unix)]
+        std::fs::File::open(path.parent().expect("blob parent"))?.sync_all()?;
+        Ok(())
+    });
+    if let Err(error) = result {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(error.into());
+    }
     Ok(())
 }
 
@@ -624,6 +640,23 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Error> {
 mod gc_tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn failed_blob_write_removes_partial_file_and_allows_retry() {
+        let dir = std::env::temp_dir().join(format!("i2nclip-write-{}", crypto::fresh_nonce()));
+        prepare(&dir).unwrap();
+        let path = dir.join("blobs").join("partial");
+        assert!(write_new_with(&path, |file| {
+            file.write_all(b"partial")?;
+            Err(std::io::Error::other("injected disk failure"))
+        }).is_err());
+        assert!(!path.exists());
+        write_new(&path, b"complete").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"complete");
+        assert!(write_new(&path, b"overwrite").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"complete");
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn gc_removes_orphans_and_keeps_indexed_blobs() {
