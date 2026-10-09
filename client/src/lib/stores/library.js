@@ -63,6 +63,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 		if (!more) {
 			revision++;
 			request?.abort();
+			clearMediaItems();
 		}
 		const version = revision;
 		const captured = credentials;

@@ -160,3 +160,27 @@ test("server changes clear failed files and ignore late upload completion", asyn
 	await library.upload([{ name: "after-dispose" }]);
 	assert.equal(uploads.length, 1);
 });
+
+test('replacing results disposes media and prevents a stale save dialog', async (t) => {
+  const { generatePrivateKey } = await import('../src/lib/identity.js');
+  const { privateKey } = await generatePrivateKey();
+  const job = deferred();
+  let downloads = 0;
+  const revoked = [];
+  t.mock.method(URL, 'revokeObjectURL', (url) => revoked.push(url));
+  t.mock.method(globalThis, 'fetch', (_url, options) => {
+    options.signal.addEventListener('abort', () => job.reject(new DOMException('cancelled', 'AbortError')), { once: true });
+    return job.promise;
+  });
+  const library = createLibrary(writable({ ...identity, privateKey }), { download: () => { downloads++; } }, { list: async () => ({ items: [], next: null }) });
+  t.after(library.dispose);
+  await tick();
+  const media = library.media({ id: crypto.randomUUID(), metadata: { content_type: 'image/png', tags: [] }, tokens: [], thumb: new Uint8Array([1]) });
+  const preview = get(media).preview;
+  const downloading = media.download();
+  await tick();
+  await library.search('absent');
+  await downloading;
+  assert.ok(revoked.includes(preview));
+  assert.equal(downloads, 0);
+});
