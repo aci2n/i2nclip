@@ -484,6 +484,45 @@ test("clearing the identity invalidates an open library", async ({ page, app }) 
   await expect(page.locator("#setup")).toBeVisible();
 });
 
+test("tag edits preserve the preview and remain searchable", async ({ page, app }) => {
+  await createLibrary(page, app);
+  await page.goto(`${app.web.origin}/extension/library.html`);
+  await page.locator("#files").setInputFiles({ name: "dot.png", mimeType: "image/png", buffer: png });
+  const card = page.locator(".card");
+  await expect(card).toHaveCount(1);
+  await card.locator('.tags input').fill(" Vacation, dog ");
+  await card.locator('.tags input').press("Enter");
+  await expect(card.locator("output")).toHaveText("Updated.");
+  await page.locator("#tags").fill("vacation");
+  await page.locator("#tags").press("Enter");
+  await expect(card.locator("strong")).toHaveText("dot.png");
+  await expect(card.locator(".media img")).toBeVisible();
+  await expect(card.locator('.tags input')).toHaveValue("Vacation, dog");
+  await page.locator("#tags").fill("missing");
+  await page.locator("#tags").press("Enter");
+  await expect(card).toHaveCount(0);
+});
+
+test("a failed content fetch can be retried", async ({ page, app }) => {
+  await createLibrary(page, app);
+  await page.goto(`${app.web.origin}/extension/library.html`);
+  await page.locator("#files").setInputFiles({ name: "dot.png", mimeType: "image/png", buffer: png });
+  const card = page.locator(".card");
+  await expect(card).toHaveCount(1);
+  let requests = 0;
+  await page.route(/\/api\/media\/[^/?]+$/, async (route) => {
+    requests++;
+    if (requests === 1) await route.fulfill({ status: 503, body: "Temporary failure" });
+    else await route.continue();
+  });
+  await card.locator("img").click();
+  await expect(card.locator("output")).toHaveText("Temporary failure");
+  await expect(page.locator("#full")).not.toBeVisible();
+  await card.locator("img").click();
+  await expect(page.locator("#full img")).toBeVisible();
+  expect(requests).toBe(2);
+});
+
 const execFileAsync = promisify(execFile);
 
 async function issueOtc(dataDir) {

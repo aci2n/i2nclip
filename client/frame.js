@@ -14,4 +14,3 @@ export function encodePost({ id, meta, content, tags }) {
 export function encodeMeta({ meta, tags }) {
   return concat([chunk(meta), chunk(utf8(tags))]);
 }
-

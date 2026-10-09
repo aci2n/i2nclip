@@ -42,4 +42,3 @@ function readChunk(bytes, offset) {
   if (bytes.length - offset < len) throw new Error("truncated metadata");
   return bytes.subarray(offset, offset + len);
 }
-
