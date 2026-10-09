@@ -94,7 +94,7 @@ test('a failed file does not stop a batch and retry sends only failed files', as
   calls[1].resolve({ items: [{ id: 'saved' }], next: null });
   await batch;
   assert.deepEqual(get(library).uploadFailures, [{ file: first, error: 'temporary' }]);
-  assert.equal(get(library).uploadStatus, '1 file uploaded.');
+  assert.equal(get(library).uploadStatus, '');
   uploads[0].progress(80);
   assert.equal(get(library).uploadProgress, null);
   const retry = library.retryUploads();

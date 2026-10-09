@@ -28,7 +28,7 @@
 - Place progress, success, and error messages beside the action that produced them. A status at the bottom of settings can fall below the viewport, especially on narrow screens.
 - Use a consistent preview area for images, audio, video, and ordinary files. Mixed aspect ratios otherwise create large gaps in the grid. Preserve the media's aspect ratio within the preview.
 - Optimize cards for browsing: readable tags, short format/size summaries, and a disclosure for detailed metadata.
-- Edit tags inline: a + button opens an input, Enter saves a chip, Escape cancels, and chips have removal controls. Keep failed drafts, restore focus after saving, suggest tags from loaded clips, and deduplicate by protocol normalization while preserving the first spelling.
+- Edit tags inline: a + button opens an input, Enter saves a chip, Escape cancels, and chips have removal controls. Keep failed drafts, restore focus after saving, and deduplicate by protocol normalization while preserving the first spelling.
 - Distinguish an empty library from a search with no matches; provide an upload action or a clear-search action respectively.
 - Make Create/Restore the main setup choices. Keep server configuration in a disclosure.
 - Inspect actual Firefox screenshots after visual changes. Test realistic landscape/portrait/panorama media, audio and files, long names, errors, both themes, and narrow widths such as 320/360 px. A one-pixel fixture does not reveal card-layout problems.

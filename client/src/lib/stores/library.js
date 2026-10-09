@@ -54,7 +54,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
     const controller = new AbortController();
     uploadRequest = controller;
     const current = () => !disposed && credentials === captured && uploadRequest === controller && !controller.signal.aborted;
-    let uploaded = 0;
+    let uploaded = false;
     state.update((value) => ({ ...value, uploading: true, uploadStatus: '' }));
     try {
       for (let index = 0; index < files.length; index++) {
@@ -67,7 +67,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
         try {
           await api.sendUpload({ blob: file, name: file.name }, captured, platform, '', progress, controller.signal);
           controller.signal.throwIfAborted();
-          uploaded++;
+          uploaded = true;
           if (current()) state.update((value) => ({ ...value, uploadFailures: value.uploadFailures.filter((failure) => failure.file !== file) }));
         } catch (error) {
           controller.signal.throwIfAborted();
@@ -75,7 +75,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
         }
       }
       if (current()) {
-        state.update((value) => ({ ...value, uploadStatus: `${uploaded} file${uploaded === 1 ? '' : 's'} uploaded.`, uploadProgress: null }));
+        state.update((value) => ({ ...value, uploadStatus: '', uploadProgress: null }));
         if (uploaded) await load();
       }
     } catch (error) {

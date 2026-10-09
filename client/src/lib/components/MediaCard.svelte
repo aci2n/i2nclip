@@ -3,7 +3,7 @@
   import { createMediaItem } from '../stores/media-item.js';
   import { fileSize, fileType, uploadedAt } from '../format.js';
   import TagEditor from './TagEditor.svelte';
-  let { item, credentials, platform, onopen, onremove, suggestions = [], onretag = () => {} } = $props();
+  let { item, credentials, platform, onopen, onremove, onretag = () => {} } = $props();
   const media = untrack(() => createMediaItem(item, credentials, platform));
   const type = $derived($media.metadata?.content_type || '');
   const name = $derived($media.metadata?.name || item.id);
@@ -47,7 +47,7 @@
   <strong class="card-title" title={name}>{name}</strong>
   <p class="meta">{summary}</p>
   {#if $media.metadata}
-    <TagEditor tags={$media.metadata.tags || []} {suggestions} {name} disabled={$media.busy || $media.deleted} onsave={saveTags} />
+    <TagEditor tags={$media.metadata.tags || []} {name} disabled={$media.busy || $media.deleted} onsave={saveTags} />
   {/if}
   <details class="card-details">
     <summary>File details</summary>

@@ -700,7 +700,7 @@ test("upload batches show filenames, continue after failure, and retry only fail
   ]);
   await expect(page.locator('.card strong')).toHaveText('saved.png');
   await expect(page.getByRole('region', { name: 'Failed uploads' })).toContainText('retry.png');
-  await expect(page.locator('#status')).toContainText('1 file uploaded.');
+  await expect(page.locator('#status')).toBeEmpty();
   await shot(page, 'upload-failure');
   await page.getByRole('button', { name: 'Retry failed files' }).click();
   await expect(page.locator('.card')).toHaveCount(2);
@@ -742,18 +742,18 @@ for (const change of ['server', 'reset']) {
   });
 }
 
-test("tag suggestions work by keyboard, deduplicate tags, and guard a slow save", async ({ page, app }) => {
+test("inline tag saves deduplicate and guard a slow request", async ({ page, app }) => {
   await createLibrary(page, app);
   await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
-  await page.locator('#files').setInputFiles([
-    { name: 'first.png', mimeType: 'image/png', buffer: png },
-    { name: 'second.png', mimeType: 'image/png', buffer: png },
-  ]);
-  await expect(page.locator('.card')).toHaveCount(2);
-  const first = page.locator('.card').filter({ has: page.locator('strong', { hasText: 'first.png' }) });
-  await first.getByRole('button', { name: 'Add tag to first.png' }).focus();
-  await first.getByRole('button', { name: 'Add tag to first.png' }).press('Enter');
-  await first.locator('.tags input').fill('Vacation, vacation, dog, DOG');
+  await page.locator('#files').setInputFiles({ name: 'first.png', mimeType: 'image/png', buffer: png });
+  const card = page.locator('.card');
+  await expect(card).toHaveCount(1);
+  const add = card.getByRole('button', { name: 'Add tag to first.png' });
+  await add.focus();
+  await add.press('Enter');
+  const input = card.locator('.tags input');
+  await expect(input).toBeFocused();
+  await input.fill('Vacation, vacation, dog, DOG');
   let release, started;
   const gate = new Promise((resolve) => { release = resolve; });
   const requestStarted = new Promise((resolve) => { started = resolve; });
@@ -763,30 +763,15 @@ test("tag suggestions work by keyboard, deduplicate tags, and guard a slow save"
     saves++; started(); await gate; await route.continue();
   });
   try {
-    await first.locator('.tags input').press('Enter');
+    await input.press('Enter');
     await requestStarted;
-    await expect(first.getByRole('button', { name: 'Save tag' })).toBeDisabled();
-    await expect(first.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled();
+    await expect(card.getByRole('button', { name: 'Save tag' })).toBeDisabled();
+    await expect(card.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled();
   } finally { release(); }
-  await expect(first.locator('.tag-text')).toHaveText(['Vacation', 'dog']);
-  await expect(first.locator('output')).toBeHidden();
+  await expect(card.locator('.tag-text')).toHaveText(['Vacation', 'dog']);
+  await expect(card.locator('output')).toBeHidden();
+  await expect(add).toBeFocused();
   expect(saves).toBe(1);
-  await expect(first.locator('.tag-text')).toHaveText(['Vacation', 'dog']);
-  await expect(first.getByRole('button', { name: 'Add tag to first.png' })).toBeFocused();
-  await expect(first.locator('.card-details')).not.toHaveAttribute('open');
-  const second = page.locator('.card').filter({ has: page.locator('strong', { hasText: 'second.png' }) });
-  await second.getByRole('button', { name: 'Add tag to second.png' }).click();
-  await second.locator('.tags input').fill('va');
-  await second.locator('.tags input').focus();
-  await second.locator('.tags input').press('Tab');
-  await page.keyboard.press('Tab');
-  await page.keyboard.press('Tab');
-  await expect(second.getByRole('button', { name: 'Vacation', exact: true })).toBeFocused();
-  await shot(page, 'tag-suggestions');
-  await second.getByRole('button', { name: 'Vacation', exact: true }).press('Enter');
-  await expect(second.locator('.tag-text')).toHaveText(['Vacation']);
-  await expect(second.getByRole('button', { name: 'Add tag to second.png' })).toBeFocused();
-  await expect(second.locator('.tags input')).toBeHidden();
 });
 
 test("a slow search cannot clear the newer search results", async ({ page, app }) => {

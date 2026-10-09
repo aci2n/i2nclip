@@ -3,7 +3,6 @@
   import { createLibrary } from '../stores/library.js';
   import Unlock from './Unlock.svelte';
   import MediaCard from './MediaCard.svelte';
-  import { uniqueTags } from '../tags.js';
   let { session, platform, settingsHref } = $props();
   const library = untrack(() => createLibrary(session, platform));
   let tags = $state('');
@@ -11,7 +10,6 @@
   let dialog;
   let filesInput = $state();
   const epoch = $derived($library.epoch);
-  const knownTags = $derived(uniqueTags($library.items.flatMap((item) => item.metadata?.tags || [])));
   $effect(() => { epoch; selected = null; dialog?.close(); });
   function open(url, name) { selected = { url, name }; dialog.showModal(); }
   function close() { dialog.close(); selected = null; }
@@ -62,7 +60,7 @@
 <div id="results">
   {#key $library.epoch}
     {#each $library.items as item (item.id)}
-      <MediaCard {item} credentials={library.credentials()} {platform} onopen={open} onremove={close} suggestions={knownTags} onretag={(metadata) => library.updateTags(item.id, metadata)} />
+      <MediaCard {item} credentials={library.credentials()} {platform} onopen={open} onremove={close} onretag={(metadata) => library.updateTags(item.id, metadata)} />
     {/each}
   {/key}
 </div>

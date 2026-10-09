@@ -1,16 +1,13 @@
 <script>
   import { tick } from 'svelte';
-  import { suggestedTags } from '../tags.js';
   import { splitTags } from '../crypto.js';
-  let { tags = [], suggestions = [], disabled = false, name, onsave } = $props();
+  let { tags = [], disabled = false, name, onsave } = $props();
   let editing = $state(false);
   let value = $state('');
   let saving = $state(false);
   let input = $state();
   let addButton = $state();
   const locked = $derived(disabled || saving);
-  const matches = $derived(suggestedTags(value, suggestions.filter((tag) =>
-    !tags.some((existing) => existing.normalize('NFC').toLowerCase() === tag.normalize('NFC').toLowerCase()))));
 
   async function open() {
     editing = true;
@@ -53,11 +50,6 @@
         <button class="chip" type="submit" aria-label="Save tag" disabled={locked || !splitTags(value).length}>✓</button>
         <button class="chip" type="button" aria-label="Cancel adding tag" disabled={locked} onclick={cancel}>×</button>
       </div>
-      {#if matches.length}
-        <div class="suggestions" aria-label="Suggested tags">
-          {#each matches as tag}<button class="chip" type="button" disabled={locked} onclick={() => persist([...tags, ...value.split(',').slice(0, -1), tag], true)}>{tag}</button>{/each}
-        </div>
-      {/if}
     </form>
   {:else}
     <button bind:this={addButton} class="chip" type="button" aria-label={`Add tag to ${name}`} disabled={locked} onclick={open}>+</button>
@@ -65,7 +57,7 @@
 </div>
 
 <style>
-  .tag-list, .suggestions { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem; }
+  .tag-list { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem; }
   .tag-list { min-height: 2rem; font-size: .85rem; }
   .chip { display: inline-flex; align-items: center; gap: .25rem; max-width: 100%; padding: .125rem .375rem; border: 0; border-radius: .25rem; background: var(--soft); color: var(--accent); font-size: .85rem; }
   .tag-text { overflow-wrap: anywhere; }
