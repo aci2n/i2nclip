@@ -18,9 +18,3 @@ export function suggestedTags(text, known) {
   const selected = new Set(parts.map(key));
   return known.filter((tag) => !selected.has(key(tag)) && key(tag) !== query && key(tag).includes(query)).slice(0, 5);
 }
-
-export function completeTag(text, tag) {
-  const parts = String(text).split(',');
-  parts.pop();
-  return `${uniqueTags([...parts, tag]).join(', ')}, `;
-}

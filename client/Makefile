@@ -23,7 +23,7 @@ extension:
 	npm run pack:extension
 
 # Build once before Firefox starts, then rebuild and reload on source changes.
-# Ctrl-C also stops the build watcher.
+# npx downloads web-ext on first use. Ctrl-C also stops the build watcher.
 dev-extension: export PATH := $(dir $(NODE22)):$(PATH)
 dev-extension:
 	npm run build:extension
@@ -32,4 +32,4 @@ dev-extension:
 	trap 'kill "$$watcher" 2>/dev/null || true; wait "$$watcher" 2>/dev/null || true' EXIT; \
 	trap 'exit 130' INT; \
 	trap 'exit 143' TERM; \
-	./node_modules/.bin/web-ext run --source-dir dist/extension
+	npx --yes web-ext run --source-dir dist/extension

@@ -26,3 +26,14 @@
   {:else if page === 'upload' || page === 'unlock'}<Upload {session} {platform} id={params.get('id')} auto={page === 'unlock' || params.has('auto')} settingsHref={href('options')} />
   {:else}<Library {session} {platform} settingsHref={href('options')} />{/if}
 </main>
+
+<style>
+  main { max-width: 76rem; padding: 1.5rem; margin: auto; }
+  main.compact { max-width: 32rem; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 2rem; }
+  .brand { font-size: 1.35rem; font-weight: 700; text-decoration: none; color: inherit; }
+  nav { display: flex; gap: 1rem; }
+  nav a { color: var(--muted); text-decoration: none; }
+  nav a[aria-current] { color: var(--accent); font-weight: 600; }
+  @media (max-width: 32rem) { main { padding: 1rem; } }
+</style>

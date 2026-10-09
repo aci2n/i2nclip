@@ -118,3 +118,12 @@
   </details>
   {#if $session.error && !feedback.text}<p class="feedback error" role="alert">{$session.error}</p>{/if}
 </div>
+
+<style>
+  .settings { max-width: 42rem; display: grid; gap: 1rem; margin: auto; }
+  .setup-tabs { display: flex; border-bottom: 1px solid var(--line); margin: 1rem 0; }
+  .setup-tabs button { background: transparent; color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: .5rem 1rem; margin-bottom: -1px; }
+  .setup-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  .server-address { overflow-wrap: anywhere; }
+  @media (max-width: 32rem) { .server-bar { flex-wrap: wrap; } .server-bar input { flex-basis: 100%; } }
+</style>

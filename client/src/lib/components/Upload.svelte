@@ -29,3 +29,7 @@
   {/if}
 </section>
 <p id="status" role="status">{$pending.status}</p>
+
+<style>
+  .upload-preview { display: block; max-width: 100%; max-height: 12rem; margin: 1rem auto; }
+</style>

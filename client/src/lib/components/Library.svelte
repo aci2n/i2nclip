@@ -70,3 +70,22 @@
 <dialog id="full" bind:this={dialog} onclick={(event) => { if (event.target === dialog) close(); }} onclose={() => { selected = null; }}>
   {#if selected}<img src={selected.url} alt={selected.name} /><button class="close" aria-label="Close image" onclick={close}>×</button>{/if}
 </dialog>
+
+<style>
+  .file { font: inherit; border: 1px solid transparent; border-radius: .4rem; padding: .5rem .75rem; background: var(--accent); color: var(--paper); cursor: pointer; display: inline-block; flex: none; margin: 0; }
+  .file.disabled { opacity: .5; cursor: default; }
+  .file input { position: absolute; width: 1px; height: 1px; opacity: 0; padding: 0; }
+  .file:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .toolbar { margin-bottom: 1rem; }
+  .empty { max-width: 42rem; margin: 3rem auto; text-align: center; padding: 3rem 1rem; }
+  #results { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(17rem, 100%), 1fr)); gap: 1rem; }
+  .upload-progress, .upload-failures { margin: 1rem 0; overflow-wrap: anywhere; }
+  .upload-progress progress { width: min(24rem, 80%); accent-color: var(--accent); margin-right: .5rem; }
+  .upload-failures ul { padding-left: 1.5rem; }
+  #more { display: block; margin: 1.5rem auto; }
+  #full { padding: 0; border: 0; background: transparent; max-width: 95vw; max-height: 95vh; }
+  #full::backdrop { background: #000b; }
+  #full img { display: block; max-width: 95vw; max-height: 95vh; object-fit: contain; }
+  .close { position: fixed; top: 1rem; right: 1rem; font-size: 1.5rem; background: var(--paper); color: inherit; }
+  @media (max-width: 32rem) { .toolbar { flex-wrap: wrap; } .toolbar input { flex-basis: 100%; } }
+</style>

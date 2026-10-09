@@ -17,3 +17,7 @@
   </div>
   <p id={statusId} role="status">{$session.error}</p>
 </form>
+
+<style>
+  form[id="unlock"] { max-width: 32rem; margin: 2rem auto; }
+</style>

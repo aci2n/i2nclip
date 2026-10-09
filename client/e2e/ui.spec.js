@@ -519,18 +519,20 @@ test("tag edits preserve the preview and remain searchable", async ({ page, app 
   await page.locator("#files").setInputFiles({ name: "dot.png", mimeType: "image/png", buffer: png });
   const card = page.locator(".card");
   await expect(card).toHaveCount(1);
-  await card.locator(".tag-editor > summary").click();
+  await card.getByRole('button', { name: 'Add tag to dot.png' }).click();
   await card.locator('.tags input').fill(" Vacation, dog ");
   await shot(page, 'tag-editor');
   await page.setViewportSize({ width: 360, height: 740 });
   await shot(page, 'tag-editor-narrow');
-  await card.getByRole('button', { name: 'Save tags', exact: true }).click();
-  await expect(card.locator("output")).toHaveText("Updated.");
+  await card.getByRole('button', { name: 'Save tag', exact: true }).click();
+  await expect(card.locator('.tag-text')).toHaveText(['Vacation', 'dog']);
+  await expect(card.locator('output')).toBeHidden();
   await page.locator("#tags").fill("vacation");
   await page.locator("#tags").press("Enter");
   await expect(card.locator("strong")).toHaveText("dot.png");
   await expect(card.locator(".media img")).toBeVisible();
-  await expect(card.locator('.tags input')).toHaveValue("Vacation, dog");
+  await expect(card.locator('.tag-text')).toHaveText(['Vacation', 'dog']);
+  await expect(card.getByRole('button', { name: 'Add tag to dot.png' })).toBeVisible();
   await page.locator("#tags").fill("missing");
   await page.locator("#tags").press("Enter");
   await expect(card).toHaveCount(0);
@@ -581,7 +583,7 @@ test("upload popup keeps its pending source after failure and retries once", asy
   expect(uploads).toBe(2);
   await page.getByRole('link', { name: 'Library', exact: true }).click();
   await expect(page.locator('.card strong')).toHaveText('remote.png');
-  await expect(page.locator('.tags input')).toHaveValue('vacation');
+  await expect(page.locator('.tag-text')).toHaveText('vacation');
 });
 
 test("unlock popup resumes only its own queued upload", async ({ page, app }) => {
@@ -749,8 +751,8 @@ test("tag suggestions work by keyboard, deduplicate tags, and guard a slow save"
   ]);
   await expect(page.locator('.card')).toHaveCount(2);
   const first = page.locator('.card').filter({ has: page.locator('strong', { hasText: 'first.png' }) });
-  await first.locator('.tag-editor > summary').focus();
-  await first.locator('.tag-editor > summary').press('Enter');
+  await first.getByRole('button', { name: 'Add tag to first.png' }).focus();
+  await first.getByRole('button', { name: 'Add tag to first.png' }).press('Enter');
   await first.locator('.tags input').fill('Vacation, vacation, dog, DOG');
   let release, started;
   const gate = new Promise((resolve) => { release = resolve; });
@@ -763,24 +765,28 @@ test("tag suggestions work by keyboard, deduplicate tags, and guard a slow save"
   try {
     await first.locator('.tags input').press('Enter');
     await requestStarted;
-    await expect(first.getByRole('button', { name: 'Save tags' })).toBeDisabled();
+    await expect(first.getByRole('button', { name: 'Save tag' })).toBeDisabled();
     await expect(first.getByRole('button', { name: 'Delete', exact: true })).toBeDisabled();
   } finally { release(); }
-  await expect(first.locator('output')).toHaveText('Updated.');
+  await expect(first.locator('.tag-text')).toHaveText(['Vacation', 'dog']);
+  await expect(first.locator('output')).toBeHidden();
   expect(saves).toBe(1);
-  await expect(first.locator('.tag-list .tag')).toHaveText(['Vacation', 'dog']);
+  await expect(first.locator('.tag-text')).toHaveText(['Vacation', 'dog']);
+  await expect(first.getByRole('button', { name: 'Add tag to first.png' })).toBeFocused();
   await expect(first.locator('.card-details')).not.toHaveAttribute('open');
   const second = page.locator('.card').filter({ has: page.locator('strong', { hasText: 'second.png' }) });
-  await second.locator('.tag-editor > summary').click();
+  await second.getByRole('button', { name: 'Add tag to second.png' }).click();
+  await second.locator('.tags input').fill('va');
   await second.locator('.tags input').focus();
   await second.locator('.tags input').press('Tab');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
   await expect(second.getByRole('button', { name: 'Vacation', exact: true })).toBeFocused();
-  await second.getByRole('button', { name: 'Vacation', exact: true }).press('Enter');
-  await expect(second.locator('.tags input')).toHaveValue('Vacation, ');
-  await expect(second.locator('.tags input')).toBeFocused();
   await shot(page, 'tag-suggestions');
-  await second.getByRole('button', { name: 'Save tags' }).click();
-  await expect(second.locator('.tag-list .tag')).toHaveText(['Vacation']);
+  await second.getByRole('button', { name: 'Vacation', exact: true }).press('Enter');
+  await expect(second.locator('.tag-text')).toHaveText(['Vacation']);
+  await expect(second.getByRole('button', { name: 'Add tag to second.png' })).toBeFocused();
+  await expect(second.locator('.tags input')).toBeHidden();
 });
 
 test("a slow search cannot clear the newer search results", async ({ page, app }) => {
@@ -809,6 +815,51 @@ test("a slow search cannot clear the newer search results", async ({ page, app }
   await requestFinished;
   await expect(page.locator('.card strong')).toHaveText('saved.png');
   await expect(page.getByRole('heading', { name: 'No matching clips' })).toBeHidden();
+});
+
+test("inline tags keep failed drafts, restore the plus button, remove chips, and cancel", async ({ page, app }) => {
+  await createLibrary(page, app);
+  await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.locator('#files').setInputFiles({ name: 'dot.png', mimeType: 'image/png', buffer: png });
+  const card = page.locator('.card');
+  await expect(card).toHaveCount(1);
+  let updates = 0;
+  await page.route(/\/api\/media\/[^/?]+$/, async (route) => {
+    if (route.request().method() !== 'PUT') return route.continue();
+    if (++updates === 1) return route.fulfill({ status: 503, body: 'Try again' });
+    await route.continue();
+  });
+  const add = card.getByRole('button', { name: 'Add tag to dot.png' });
+  await add.click();
+  const input = card.getByRole('textbox', { name: 'New tag for dot.png' });
+  await expect(input).toBeFocused();
+  await input.fill('dog');
+  await input.press('Enter');
+  await expect(card.locator('output')).toHaveText('Try again');
+  await expect(input).toHaveValue('dog');
+  await expect(input).toBeFocused();
+  await expect(card.locator('.tag-text')).toHaveCount(0);
+  await input.press('Enter');
+  await expect(card.locator('.tag-text')).toHaveText(['dog']);
+  await expect(add).toBeFocused();
+  await expect(input).toBeHidden();
+  await add.click();
+  await input.fill('Cat');
+  await card.getByRole('button', { name: 'Save tag', exact: true }).click();
+  await expect(card.locator('.tag-text')).toHaveText(['dog', 'Cat']);
+  await shot(page, 'inline-tag-chips');
+  await card.getByRole('button', { name: 'Remove tag dog', exact: true }).click();
+  await expect(card.locator('.tag-text')).toHaveText(['Cat']);
+  await expect(add).toBeFocused();
+  await add.click();
+  await input.fill('unsaved');
+  await input.press('Escape');
+  await expect(add).toBeFocused();
+  await expect(input).toBeHidden();
+  await expect(card.locator('.tag-text')).toHaveText(['Cat']);
+  expect(updates).toBe(4);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
 const execFileAsync = promisify(execFile);

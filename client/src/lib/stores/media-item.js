@@ -78,7 +78,7 @@ export function createMediaItem(item, credentials, platform, api = { getContent,
       const metadata = { ...value.metadata, tags: uniqueTags(tags) };
       const result = await api.updateMetadata({ ...options, metadata, thumb: item.thumb });
       signal.throwIfAborted();
-      state.update((current) => ({ ...current, metadata, tokens: result.tokens, message: 'Updated.' }));
+      state.update((current) => ({ ...current, metadata, tokens: result.tokens, message: '' }));
       return metadata;
     }),
     remove: () => run(async () => {
