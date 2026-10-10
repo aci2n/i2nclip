@@ -56,6 +56,11 @@ on unmount. Its save action delegates to the library and media stores.
   source ID. A library/server change during preparation disables automatic send
   until explicit submission. Superseded requests cannot update progress or close
   the window.
+- **Context menu:** persist a source with its own ID before uploading or opening
+  a popup. Immediate upload success removes that ID; failure retains it and opens
+  a popup with the error for explicit retry. Library changes cancel the transfer,
+  and reset-cleared sources are not recreated. Notification failure after success
+  does not trigger retry.
 - **Tags:** closed → editing → saving → editing or closed. Failed drafts survive
   blur; newer drafts are not cleared by an older save. Escape cancels. Normalized
   duplicates preserve the first spelling. Unmounted editors cannot steal focus.

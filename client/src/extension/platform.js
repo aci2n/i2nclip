@@ -21,5 +21,12 @@ export const platform = {
 		browser.downloads.download({ url, filename, saveAs: true }),
 	fetchMedia,
 	notify,
+	openUpload: (id, page) =>
+		browser.windows.create({
+			url: browser.runtime.getURL(`${page}.html?id=${id}`),
+			type: "popup",
+			width: 440,
+			height: 640,
+		}),
 	close: () => window.close(),
 };

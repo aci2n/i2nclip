@@ -132,7 +132,7 @@ Stores own session mutations, request cancellation, pagination, and upload batch
 
 The manifest's update URL now points to `client/public/updates.json`. Previously installed releases that use the old update URL need a manual update when this layout is published.
 
-On an image, video, or audio, **Upload to i2nclip** sends it immediately, and **Upload to i2nclip with tags** opens a window for the tag list. The toolbar button opens the library.
+On an image, video, or audio, **Upload to i2nclip** sends it immediately, and **Upload to i2nclip with tags** opens a window for the tag list. Every context-menu upload keeps its own pending source until it succeeds. If an immediate upload fails, a popup shows the error and lets you retry explicitly. Pending sources stay in browser session storage until success, reset, or browser exit. The toolbar button opens the library.
 
 The library lists 24 items at a time. Each card is painted from a small WebP preview stored in the encrypted metadata (JSON fields plus raw thumb bytes), made in the browser before upload. The original is downloaded when you open, play, or save it. A preview that would push the metadata past 64 KB is left off, and the file is still stored.
 

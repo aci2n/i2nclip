@@ -88,7 +88,9 @@ export function createPendingUpload(
 				busy: false,
 				name: source.name,
 				preview,
-				status: contextChanged ? "Library changed. Try again." : "",
+				status: contextChanged
+					? "Library changed. Try again."
+					: source.error || "",
 				available: true,
 			});
 			maybeSend();

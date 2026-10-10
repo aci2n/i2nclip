@@ -7,6 +7,64 @@ import {
 	test,
 } from "./fixtures.js";
 
+test("a failed immediate context-menu upload opens an explicit retry popup", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	const srcUrl = `${app.web.origin}/remote.png`;
+	await page.route("**/remote.png", (route) =>
+		route.fulfill({ contentType: "image/png", body: png }),
+	);
+	let uploads = 0;
+	await page.route("**/api/media", (route) => {
+		if (route.request().method() !== "POST") return route.continue();
+		if (++uploads === 1)
+			return route.fulfill({ status: 503, body: "Temporary failure" });
+		return route.continue();
+	});
+	const popup = await page.evaluate(async (srcUrl) => {
+		browser.contextMenus = {
+			removeAll: async () => {},
+			create() {},
+			onClicked: {
+				addListener(handler) {
+					window.contextUpload = handler;
+				},
+			},
+		};
+		browser.action = { onClicked: { addListener() {} } };
+		browser.windows = {
+			create: async (options) => {
+				window.contextPopup = options;
+			},
+		};
+		await import(new URL("background.js", location.href).href);
+		await window.contextUpload({ menuItemId: "upload", srcUrl }, { id: 7 });
+		return window.contextPopup;
+	}, srcUrl);
+	const id = new URL(popup.url).searchParams.get("id");
+	expect(popup.type).toBe("popup");
+	expect(new URL(popup.url).pathname).toContain("upload.html");
+	expect((await storage(page)).session[`upload:${id}`].error).toBe(
+		"Temporary failure",
+	);
+	await page.addInitScript(() => {
+		window.close = () => {
+			window.uploadClosed = true;
+		};
+	});
+	await page.goto(popup.url);
+	await expect(page.locator("#status")).toHaveText("Temporary failure");
+	await expect(page.locator("#send button")).toBeEnabled();
+	expect(uploads).toBe(1);
+	await page.locator("#send button").click();
+	await expect(page.locator("#status")).toHaveText("Uploaded.");
+	expect(uploads).toBe(2);
+	expect((await storage(page)).session[`upload:${id}`]).toBeUndefined();
+	expect(await page.evaluate(() => window.uploadClosed)).toBe(true);
+});
+
 test("upload popup keeps its pending source after failure and retries once", async ({
 	page,
 	app,
