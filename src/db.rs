@@ -518,7 +518,7 @@ mod tests {
         connections.clear();
         let mut content = vec![1; 100_000];
         content[0] = 1;
-        let body = frame::encode_post(&[1; 29], &content, "");
+        let body = crate::reference_crypto::encode_post(&[1; 29], &content, "");
         let item = db.add([1; 32], &body).await.unwrap();
         let downloaded = db.content([1; 32], &item.id).await.unwrap();
         for _ in 0..8 {

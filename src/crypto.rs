@@ -265,7 +265,7 @@ mod tests {
             "/api/media",
             sign_body.as_bytes(),
         );
-        let frame = crate::frame::encode_post(&meta_ct, &ciphertext, &token);
+        let frame = crate::reference_crypto::encode_post(&meta_ct, &ciphertext, &token);
         let private_key = serde_json::json!({ "v": 1, "seed": URL_SAFE_NO_PAD.encode(seed), "publicKey": id.registration_key() }).to_string();
         let vectors = Vectors {
             private_key,

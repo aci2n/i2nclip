@@ -36,27 +36,6 @@ pub(crate) struct MetaParts<'body> {
     pub tokens: Vec<String>,
 }
 
-pub fn encode_post(meta: &[u8], content: &[u8], tags: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    push_chunk(&mut out, meta);
-    push_chunk(&mut out, content);
-    push_chunk(&mut out, tags.as_bytes());
-    out
-}
-
-pub fn encode_meta(meta: &[u8], tags: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    push_chunk(&mut out, meta);
-    push_chunk(&mut out, tags.as_bytes());
-    out
-}
-
-fn push_chunk(out: &mut Vec<u8>, data: &[u8]) {
-    let len = u32::try_from(data.len()).expect("chunk fits in a u32");
-    out.extend_from_slice(&len.to_be_bytes());
-    out.extend_from_slice(data);
-}
-
 pub(crate) fn decode_post(bytes: &[u8]) -> Result<PostParts<'_>, Error> {
     let mut i = 0;
     let meta = read_chunk(bytes, &mut i, MAX_META)?;
@@ -149,6 +128,7 @@ fn collect_tokens<'a>(values: impl IntoIterator<Item = &'a str>) -> Result<Vec<S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reference_crypto::{encode_meta, encode_post};
 
     #[test]
     fn memory_profile_frame_decoding() {

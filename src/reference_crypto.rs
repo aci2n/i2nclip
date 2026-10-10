@@ -194,9 +194,31 @@ pub fn authorization(
 
 /// 16 random bytes, base64url, no padding. This is the nonce string that goes
 /// both in the header and inside the signed message.
-#[allow(dead_code)]
+#[cfg(feature = "postgres-tests")]
 pub fn fresh_nonce() -> String {
     let mut raw = [0u8; 16];
     getrandom::getrandom(&mut raw).expect("operating system random source");
     URL_SAFE_NO_PAD.encode(raw)
+}
+
+// Reference-client frames use the exact length-prefixed wire format.
+pub fn encode_post(meta: &[u8], content: &[u8], tags: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    push_chunk(&mut out, meta);
+    push_chunk(&mut out, content);
+    push_chunk(&mut out, tags.as_bytes());
+    out
+}
+
+pub fn encode_meta(meta: &[u8], tags: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    push_chunk(&mut out, meta);
+    push_chunk(&mut out, tags.as_bytes());
+    out
+}
+
+fn push_chunk(out: &mut Vec<u8>, data: &[u8]) {
+    let len = u32::try_from(data.len()).expect("chunk fits in a u32");
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(data);
 }

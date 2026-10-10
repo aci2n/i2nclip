@@ -11,7 +11,6 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use http_body_util::BodyExt;
 use i2nclip::crypto;
-use i2nclip::frame;
 use i2nclip::Error;
 use reference_crypto::{self as client_crypto, Identity};
 use tower::ServiceExt;
@@ -323,13 +322,13 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
     let tags = "\n".repeat(4096);
-    let body = frame::encode_post(&meta, &content, &tags);
+    let body = client_crypto::encode_post(&meta, &content, &tags);
     assert_eq!(body.len(), 33_624_140);
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
     );
-    let body = frame::encode_meta(&meta, &tags);
+    let body = client_crypto::encode_meta(&meta, &tags);
     assert_eq!(body.len(), 69_640);
     assert_eq!(
         call(&app, &owner, "PUT", &format!("/api/media/{id}"), body)
@@ -500,7 +499,7 @@ async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
     .unwrap();
 
     let token = client_crypto::tag_token(&key.seed, tag).unwrap();
-    let body = frame::encode_post(&meta, &content, &token);
+    let body = client_crypto::encode_post(&meta, &content, &token);
 
     let (status, bytes) = call(&app, &key, "POST", "/api/media", body).await;
     assert_eq!(
@@ -569,7 +568,7 @@ async fn another_key_cannot_see_or_search() {
     let token = client_crypto::tag_token(&owner.seed, "shared-word").unwrap();
     let other_token = client_crypto::tag_token(&other.seed, "shared-word").unwrap();
     assert_ne!(token, other_token);
-    let body = frame::encode_post(&meta, &content, &token);
+    let body = client_crypto::encode_post(&meta, &content, &token);
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
@@ -645,7 +644,7 @@ async fn rejects_bad_signature_replay_and_raw_jpeg() {
 
     let id = "3333333333333333333333333333333333333333333333333333333333333333";
     let meta = client_crypto::encrypt(&key.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-    let body = frame::encode_post(&meta, b"\xff\xd8\xff\xd8not-encrypted", "not-a-token");
+    let body = client_crypto::encode_post(&meta, b"\xff\xd8\xff\xd8not-encrypted", "not-a-token");
     let (status, _) = call(&app, &key, "POST", "/api/media", body).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
@@ -837,7 +836,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
     let id = hash.as_str();
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
 
-    let body = frame::encode_post(&meta, &content, "");
+    let body = client_crypto::encode_post(&meta, &content, "");
     let first = call(&app, &owner, "POST", "/api/media", body.clone()).await;
     let retry = call(&app, &owner, "POST", "/api/media", body.clone()).await;
     assert_eq!(first.0, StatusCode::CREATED);
@@ -854,7 +853,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
             &owner,
             "POST",
             "/api/media",
-            frame::encode_post(&meta, &changed, "")
+            client_crypto::encode_post(&meta, &changed, "")
         )
         .await
         .0,
@@ -878,7 +877,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
             &owner,
             "POST",
             "/api/media",
-            frame::encode_post(&meta, &content, "")
+            client_crypto::encode_post(&meta, &content, "")
         )
         .await
         .0,
@@ -898,7 +897,7 @@ async fn reopening_database_preserves_media() {
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
 
     let token = client_crypto::tag_token(&owner.seed, "keep").unwrap();
-    let body = frame::encode_post(&meta, &content, &token);
+    let body = client_crypto::encode_post(&meta, &content, &token);
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
@@ -1109,7 +1108,7 @@ async fn upload_admission_is_shared_and_releases_capacity() {
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-    let frame = frame::encode_post(&meta, &content, "");
+    let frame = client_crypto::encode_post(&meta, &content, "");
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", frame.clone())
             .await
@@ -1177,7 +1176,7 @@ async fn concurrent_routers_publish_one_hash() {
     .unwrap();
     let id = crypto::body_hash(&content);
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"{}").unwrap();
-    let body = frame::encode_post(&meta, &content, "");
+    let body = client_crypto::encode_post(&meta, &content, "");
     let (a, b) = tokio::join!(
         call(&first, &owner, "POST", "/api/media", body.clone()),
         call(&second, &other, "POST", "/api/media", body),
@@ -1228,7 +1227,7 @@ async fn downloads_retain_owned_content_after_deletion() {
             &owner,
             "POST",
             "/api/media",
-            frame::encode_post(&meta, &content, "")
+            client_crypto::encode_post(&meta, &content, "")
         )
         .await
         .0,
@@ -1291,7 +1290,7 @@ async fn downloads_retain_owned_content_after_deletion() {
             &other,
             "POST",
             "/api/media",
-            frame::encode_post(&other_meta, &replacement, "")
+            client_crypto::encode_post(&other_meta, &replacement, "")
         )
         .await
         .0,
@@ -1344,7 +1343,7 @@ async fn list_query_validation_is_scoped_to_the_list_endpoint() {
     .unwrap();
     let id = crypto::body_hash(&content);
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"{}").unwrap();
-    let body = frame::encode_post(&meta, &content, "");
+    let body = client_crypto::encode_post(&meta, &content, "");
     assert_eq!(
         call(&app, &owner, "POST", "/api/media?after=invalid", body)
             .await
@@ -1353,9 +1352,15 @@ async fn list_query_validation_is_scoped_to_the_list_endpoint() {
     );
     let path = format!("/api/media/{id}?after=invalid");
     assert_eq!(
-        call(&app, &owner, "PUT", &path, frame::encode_meta(&meta, ""))
-            .await
-            .0,
+        call(
+            &app,
+            &owner,
+            "PUT",
+            &path,
+            client_crypto::encode_meta(&meta, "")
+        )
+        .await
+        .0,
         StatusCode::OK
     );
 }
@@ -1409,7 +1414,7 @@ async fn failed_tag_writes_roll_back_upload_and_metadata() {
             &key,
             "POST",
             "/api/media",
-            frame::encode_post(&meta, &content, &token)
+            client_crypto::encode_post(&meta, &content, &token)
         )
         .await
         .0,
@@ -1432,7 +1437,7 @@ async fn failed_tag_writes_roll_back_upload_and_metadata() {
             &key,
             "POST",
             "/api/media",
-            frame::encode_post(&meta, &content, &token)
+            client_crypto::encode_post(&meta, &content, &token)
         )
         .await
         .0,
@@ -1456,7 +1461,7 @@ async fn failed_tag_writes_roll_back_upload_and_metadata() {
             &key,
             "PUT",
             &format!("/api/media/{id}"),
-            frame::encode_meta(&new_meta, &token)
+            client_crypto::encode_meta(&new_meta, &token)
         )
         .await
         .0,
@@ -1575,14 +1580,14 @@ async fn maximum_size_transfer_profile() {
             &key,
             "POST",
             "/api/media",
-            frame::encode_post(&meta1, &content1, "")
+            client_crypto::encode_post(&meta1, &content1, "")
         ),
         call(
             &app,
             &key,
             "POST",
             "/api/media",
-            frame::encode_post(&meta2, &content2, "")
+            client_crypto::encode_post(&meta2, &content2, "")
         )
     );
     assert_eq!(a.0, StatusCode::CREATED);

@@ -9,7 +9,7 @@
 mod auth;
 mod db;
 mod error;
-pub mod frame;
+mod frame;
 mod maintenance;
 mod media;
 #[cfg(test)]

@@ -3,7 +3,7 @@
 - [x] comments and structure in new postgres code is inconsistent with previous code — aligned imports and spacing with existing Rust modules, expanded persistence SQL, and documented transaction boundaries, owner filtering, pool ownership, and maintenance shutdown/expiration behavior. Database-free Rust tests, three database tests, 23 API tests, Clippy, and formatting pass.
 - [x] review that tests that can use a mocked db do not require a postgresql db — moved health coverage out of PostgreSQL tests; added ordinary unit tests for pre-database request rejection, query validation, and download bytes/permit ownership. Request-policy tests use a closed lazy pool, so unexpected database access fails immediately without network I/O. Kept real PostgreSQL for transactions, nonce/invitation consumption, owner filtering, persistence, and pool recovery; no mock storage interface is needed.
 - [x] review new code for idiomatic rust — borrow request parts during authentication, bind invitation hashes without temporary vectors, and avoid redundant origin/host copies. Metadata updates decode a typed SQL result before committing. Reviewed explicit transaction ownership, shared pool/state, and maintenance cancellation.
-- remove dead code
+- [x] remove dead code — moved upload/metadata frame encoders and their helper into the test-only reference client, made the server frame module private, and replaced the unused nonce helper's dead-code suppression with the PostgreSQL test feature gate. Audited runtime modules, tooling, and dependencies for obsolete SQLite, staging, signal-GC, and blocking-work remnants; none remain.
 - consider if store.rs can be removed
 - make sure test coverage is as thorough as it was with sqlite
 - process memory measurements
