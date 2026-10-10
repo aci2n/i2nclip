@@ -30,14 +30,14 @@ use crate::MAX_META;
 use crate::MAX_TAGS;
 use crate::MAX_TOKEN_TEXT;
 
-pub(crate) struct PostParts {
-    pub meta: Vec<u8>,
-    pub content: Vec<u8>,
+pub(crate) struct PostParts<'body> {
+    pub meta: &'body [u8],
+    pub content: &'body [u8],
     pub tokens: Vec<String>,
 }
 
-pub(crate) struct MetaParts {
-    pub meta: Vec<u8>,
+pub(crate) struct MetaParts<'body> {
+    pub meta: &'body [u8],
     pub tokens: Vec<String>,
 }
 
@@ -62,7 +62,7 @@ fn push_chunk(out: &mut Vec<u8>, data: &[u8]) {
     out.extend_from_slice(data);
 }
 
-pub(crate) fn decode_post(bytes: &[u8]) -> Result<PostParts, Error> {
+pub(crate) fn decode_post(bytes: &[u8]) -> Result<PostParts<'_>, Error> {
     let mut i = 0;
     let meta = read_chunk(bytes, &mut i, MAX_META)?;
     let content = read_chunk(bytes, &mut i, MAX_CONTENT)?;
@@ -73,13 +73,13 @@ pub(crate) fn decode_post(bytes: &[u8]) -> Result<PostParts, Error> {
     let tags =
         std::str::from_utf8(tags).map_err(|_| Error::BadRequest("tags are not utf-8".into()))?;
     Ok(PostParts {
-        meta: meta.to_vec(),
-        content: content.to_vec(),
+        meta,
+        content,
         tokens: parse_tokens(tags)?,
     })
 }
 
-pub(crate) fn decode_meta(bytes: &[u8]) -> Result<MetaParts, Error> {
+pub(crate) fn decode_meta(bytes: &[u8]) -> Result<MetaParts<'_>, Error> {
     let mut i = 0;
     let meta = read_chunk(bytes, &mut i, MAX_META)?;
     let tags = read_chunk(bytes, &mut i, MAX_TOKEN_TEXT)?;
@@ -89,7 +89,7 @@ pub(crate) fn decode_meta(bytes: &[u8]) -> Result<MetaParts, Error> {
     let tags =
         std::str::from_utf8(tags).map_err(|_| Error::BadRequest("tags are not utf-8".into()))?;
     Ok(MetaParts {
-        meta: meta.to_vec(),
+        meta,
         tokens: parse_tokens(tags)?,
     })
 }
@@ -158,6 +158,63 @@ fn collect_tokens<'a>(values: impl IntoIterator<Item = &'a str>) -> Result<Vec<S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_profile_frame_decoding() {
+        use std::hint::black_box;
+
+        // Fixture construction is outside measurement: we are measuring the
+        // extra heap needed to decode an already buffered request.
+        let metadata = vec![1; MAX_META];
+        let content = vec![1; MAX_CONTENT];
+        let post = encode_post(&metadata, &content, "");
+        let put = encode_meta(&metadata, "");
+        let post_info = allocation_counter::measure(|| {
+            let parts = decode_post(black_box(&post)).unwrap();
+            black_box(parts);
+        });
+        let put_info = allocation_counter::measure(|| {
+            let parts = decode_meta(black_box(&put)).unwrap();
+            black_box(parts);
+        });
+        assert_eq!(post_info.count_total, 0, "{post_info:?}");
+        assert_eq!(put_info.count_total, 0, "{put_info:?}");
+
+        // Reproduce the old ciphertext copies as a positive control so the
+        // measurement also demonstrates the allocation we removed.
+        let copied_info = allocation_counter::measure(|| {
+            let parts = decode_post(black_box(&post)).unwrap();
+            let meta = parts.meta.to_vec();
+            let content = parts.content.to_vec();
+            black_box((&meta, &content));
+        });
+        assert_eq!(copied_info.bytes_total, (MAX_META + MAX_CONTENT) as u64);
+        assert_eq!(copied_info.bytes_max, (MAX_META + MAX_CONTENT) as u64);
+        assert_eq!(copied_info.bytes_current, 0);
+
+        let tags = (0..MAX_TAGS)
+            .map(|n| format!("{n:043}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let small = encode_post(&metadata, &content[..1024], &tags);
+        let large = encode_post(&metadata, &content, &tags);
+        let measure = |body: &[u8]| {
+            allocation_counter::measure(|| {
+                black_box(decode_post(black_box(body)).unwrap());
+            })
+        };
+        let small_info = measure(&small);
+        let large_info = measure(&large);
+        assert_eq!(small_info.bytes_total, large_info.bytes_total);
+        assert_eq!(small_info.bytes_max, large_info.bytes_max);
+        assert!(large_info.bytes_total <= 8192, "{large_info:?}");
+        assert_eq!(large_info.bytes_current, 0);
+        println!("POST without tags: {post_info:?}");
+        println!("PUT without tags: {put_info:?}");
+        println!("Old copy pattern: {copied_info:?}");
+        println!("POST with 32 tags, 1 KiB content: {small_info:?}");
+        println!("POST with 32 tags, maximum content: {large_info:?}");
+    }
 
     #[test]
     fn post_roundtrip_and_truncation() {

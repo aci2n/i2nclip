@@ -62,3 +62,27 @@ Content GETs acquire one of two download slots after authenticated empty-body ve
 `media::content_response` streams the opened file with a 64 KiB chunk bound and Tokio file buffer bound. It sends exactly the indexed number of bytes and declares Content-Length. Later growth cannot expand the response; later truncation causes a transport/body error rather than successful short content. The permit travels with blocking file opening and then with stream state until EOF, an error, or response-body disposal. Tokio may finish an already started bounded file read after cancellation; no detached whole-file read is created. Immutable cache headers are retained because content URLs now contain the sealed-content hash.
 
 Tests cover chunk bounds, shared admission, completion and partial/unpolled response disposal, owner isolation, API deletion and a different hash upload with an active stream, invalid indexed sizes, mismatched/missing files, midstream truncation, and growth after opening. Storage quotas remain a deployment/trust-policy decision.
+
+## Decoder allocation regression test
+
+Frame decoding borrows metadata and content from the buffered request. The blocking worker still owns the request and upload permit; returning an `Item` copies only its metadata. This does not change network buffering or the wire format.
+
+Run the test with measurements visible:
+
+```sh
+cargo test memory_profile_frame_decoding -- --nocapture
+```
+
+The test uses [allocation-counter](https://github.com/fornwall/allocation-counter) as a dev dependency. It counts Rust heap allocations on the measured thread; input frames are constructed before measurement. It is part of ordinary `cargo test` / `make test` and is not linked into the production server.
+
+Measured with the maximum content and metadata sizes:
+
+| Decoder scenario | Total bytes allocated | Peak additional live bytes |
+| --- | --- | --- |
+| POST, no tags | 0 | 0 |
+| PUT, no tags | 0 | 0 |
+| Old metadata/content copy pattern (positive control) | 33,620,032 | 33,620,032 |
+| POST, 32 tags, 1 KiB content | 2,816 | 2,144 |
+| POST, 32 tags, maximum content | 2,816 | 2,144 |
+
+Assertions require zero allocations without tags, identical allocations for small and large tagged content, and a bounded tag-allocation budget. The positive control proves the counter observes the removed copies. These measurements cover decoder allocations only: they exclude the original request buffer, response metadata, SQLite's C allocations, filesystem caches, and other threads. They are not process RSS or an end-to-end memory profile.

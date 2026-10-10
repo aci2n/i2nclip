@@ -232,9 +232,9 @@ pub(crate) fn remember_nonce(conn: &Connection, nonce: &str, ts: u64) -> Result<
 
 pub(crate) fn add(state: &AppState, owner: [u8; 32], body: &[u8]) -> Result<Item, Error> {
     let parts = frame::decode_post(body)?;
-    check_blob(&parts.meta, MAX_META)?;
-    check_blob(&parts.content, MAX_CONTENT)?;
-    let id = crypto::body_hash(&parts.content);
+    check_blob(parts.meta, MAX_META)?;
+    check_blob(parts.content, MAX_CONTENT)?;
+    let id = crypto::body_hash(parts.content);
     let created = i64::try_from(crypto::now_secs()).unwrap_or(i64::MAX);
     // Commit the cleanup intent before creating any file. Reserving the hash
     // also makes concurrent identical uploads conflict without filesystem locks.
@@ -254,7 +254,7 @@ pub(crate) fn add(state: &AppState, owner: [u8; 32], body: &[u8]) -> Result<Item
     }
     let bytes = parts.content.len() as i64;
     let temporary = state.data_dir.join("staging").join(&id);
-    write_new(&temporary, &parts.content)?;
+    write_new(&temporary, parts.content)?;
     let mut conn = state.lock()?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     if tx.execute("DELETE FROM staged_files WHERE id = ?1", [&id])? != 1 {
@@ -271,12 +271,12 @@ pub(crate) fn add(state: &AppState, owner: [u8; 32], body: &[u8]) -> Result<Item
     std::fs::rename(&temporary, &path)?;
     sync_dir(&state.data_dir.join("staging"))?;
     sync_dir(&state.data_dir.join("blobs"))?;
-    insert_file(&tx, &id, &owner, &parts.meta, bytes, created, &parts.tokens)?;
+    insert_file(&tx, &id, &owner, parts.meta, bytes, created, &parts.tokens)?;
     // Failure leaves the committed intent to clean either filename later.
     tx.commit()?;
     Ok(Item {
         id,
-        meta: parts.meta,
+        meta: parts.meta.to_vec(),
         bytes,
         created_at: created,
         tokens: parts.tokens,
@@ -417,7 +417,7 @@ pub(crate) fn update_meta(
 ) -> Result<Item, Error> {
     let id = parse_id(id)?;
     let parts = frame::decode_meta(body)?;
-    check_blob(&parts.meta, MAX_META)?;
+    check_blob(parts.meta, MAX_META)?;
     let conn = state.lock()?;
     let tx = conn.unchecked_transaction()?;
     let updated = tx.execute(
@@ -436,7 +436,7 @@ pub(crate) fn update_meta(
     tx.commit()?;
     Ok(Item {
         id,
-        meta: parts.meta,
+        meta: parts.meta.to_vec(),
         bytes,
         created_at,
         tokens: parts.tokens,
