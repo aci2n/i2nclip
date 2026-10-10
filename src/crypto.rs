@@ -170,7 +170,7 @@ pub fn looks_sealed(blob: &[u8], max: usize) -> bool {
 /// person's search does not hit another person's rows.
 ///
 /// Normalization is `trim`, then Unicode NFC, then lowercase. `Vacation` and
-/// `vacation` match. The rules are the same in `client/src/lib/crypto.js`.
+/// `vacation` match. The rules are the same in `client/src/lib/protocol/crypto.js`.
 pub fn tag_token(seed: &[u8; 32], tag: &str) -> Result<String, Error> {
     let normalized = normalize_tag(tag)?;
     let key = derive_key(seed, b"tag");

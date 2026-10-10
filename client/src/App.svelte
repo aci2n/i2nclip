@@ -1,82 +1,38 @@
 <script>
-import { onDestroy, onMount, untrack } from "svelte";
-import Library from "./lib/components/Library.svelte";
-import Settings from "./lib/components/Settings.svelte";
-import Upload from "./lib/components/Upload.svelte";
-import { createLibrary } from "./lib/stores/library.js";
-import { createSession } from "./lib/stores/session.js";
+import { onDestroy, untrack } from "svelte";
+import { createApplication } from "./lib/stores/application.js";
+import Library from "./lib/views/Library.svelte";
+import Settings from "./lib/views/Settings.svelte";
+import Upload from "./lib/views/Upload.svelte";
 import "./app.css";
 
-let {
-	platform,
-	page: initialPage = new URLSearchParams(location.search).get("page") ||
-		"library",
-} = $props();
-let page = $state(untrack(() => initialPage));
-const session = untrack(() => createSession(platform));
-let library = $state.raw(
-	untrack(() =>
-		["library", "options"].includes(initialPage)
-			? createLibrary(session, platform)
-			: null,
-	),
-);
-const standalone = !document.body.dataset.page;
-const href = (name) =>
-	standalone
-		? `?page=${name}`
-		: `${name === "options" ? "options" : "library"}.html`;
-const params = new URLSearchParams(location.search);
-function navigate(event, name) {
-	if (
-		event.button !== 0 ||
-		event.metaKey ||
-		event.ctrlKey ||
-		event.shiftKey ||
-		event.altKey
-	)
-		return;
-	event.preventDefault();
-	library ??= createLibrary(session, platform);
-	history.pushState({}, "", href(name));
-	page = name;
-}
-onMount(() => {
-	const restore = () => {
-		page = standalone
-			? new URLSearchParams(location.search).get("page") || "library"
-			: location.pathname.endsWith("/options.html")
-				? "options"
-				: "library";
-	};
-	addEventListener("popstate", restore);
-	return () => removeEventListener("popstate", restore);
-});
-onDestroy(() => {
-	library?.dispose();
-	session.dispose();
-});
+let { platform, page: initialPage } = $props();
+const app = untrack(() => createApplication(platform, initialPage));
+const session = app.session;
+const page = $derived($app.page);
+const library = $derived($app.library);
+onDestroy(app.dispose);
 </script>
 
 <main class:compact={page === "upload" || page === "unlock"}>
 	<header>
 		<a
 			class="brand"
-			href={href("library")}
-			onclick={(event) => navigate(event, "library")}
+			href={app.href("library")}
+			onclick={(event) => app.navigate(event, "library")}
 			>i2nclip</a
 		>
 		<nav aria-label="Main navigation">
 			<a
-				href={href("library")}
+				href={app.href("library")}
 				aria-current={page === "library" ? "page" : undefined}
-				onclick={(event) => navigate(event, "library")}
+				onclick={(event) => app.navigate(event, "library")}
 				>Library</a
 			>
 			<a
-				href={href("options")}
+				href={app.href("options")}
 				aria-current={page === "options" ? "page" : undefined}
-				onclick={(event) => navigate(event, "options")}
+				onclick={(event) => app.navigate(event, "options")}
 				>Settings</a
 			>
 		</nav>
@@ -84,21 +40,20 @@ onDestroy(() => {
 	{#if !$session.ready}
 		<p role="status">Loading…</p>
 	{:else if page === "options"}
-		<Settings {session} />
+		<Settings {session} settings={app.settings} />
 	{:else if page === "upload" || page === "unlock"}
 		<Upload
 			{session}
-			{platform}
-			id={params.get("id")}
-			auto={page === "unlock" || params.has("auto")}
-			settingsHref={href("options")}
+			pending={$app.pending}
+			auto={$app.auto}
+			settingsHref={app.href("options")}
 		/>
 	{:else}
 		<Library
 			{session}
 			{library}
-			settingsHref={href("options")}
-			onsettings={(event) => navigate(event, "options")}
+			settingsHref={app.href("options")}
+			onsettings={(event) => app.navigate(event, "options")}
 		/>
 	{/if}
 </main>

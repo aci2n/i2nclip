@@ -2,6 +2,7 @@ import { fetchMedia } from "./fetch-media.js";
 import { notify } from "./notify.js";
 
 export const platform = {
+	confirm: (message) => globalThis.confirm(message),
 	local: browser.storage.local,
 	session: browser.storage.session,
 	subscribe(listener) {

@@ -3,15 +3,8 @@ import test from "node:test";
 import { get } from "svelte/store";
 import { createMediaItem } from "../src/lib/stores/media-item.js";
 
-const deferred = () => {
-	let resolve;
-	let reject;
-	const promise = new Promise((yes, no) => {
-		resolve = yes;
-		reject = no;
-	});
-	return { promise, resolve, reject };
-};
+import { deferred } from "./helpers.js";
+
 const item = {
 	id: "sample",
 	metadata: { name: "sample.png", content_type: "image/png", tags: [] },
@@ -107,4 +100,23 @@ test("a download that completes after disposal cannot create a URL or open a sav
 	await download;
 	assert.equal(created, 1); // Only the thumbnail, before disposal.
 	assert.equal(downloads, 0);
+});
+
+test("completed content callbacks cannot restore a progress overlay", async (t) => {
+	let progress;
+	const media = createMediaItem(
+		item,
+		credentials,
+		{},
+		{
+			getContent: async (options) => {
+				progress = options.onProgress;
+				return new Uint8Array([1]);
+			},
+		},
+	);
+	t.after(media.dispose);
+	await media.reveal();
+	progress(99);
+	assert.equal(get(media).progress, null);
 });

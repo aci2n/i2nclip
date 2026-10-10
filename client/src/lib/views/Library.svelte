@@ -1,27 +1,13 @@
 <script>
 import { untrack } from "svelte";
-import MediaCard from "./MediaCard.svelte";
-import Unlock from "./Unlock.svelte";
+import ImageDialog from "../components/ImageDialog.svelte";
+import MediaCard from "../components/MediaCard.svelte";
+import Unlock from "../components/Unlock.svelte";
+import { pickFiles, selectFiles } from "../stores/dom.js";
 
 let { session, library, settingsHref, onsettings } = $props();
 let tags = $state(untrack(() => library.query()));
-let selected = $state(null);
-let dialog;
 let filesInput = $state();
-const epoch = $derived($library.epoch);
-$effect(() => {
-	epoch;
-	selected = null;
-	dialog?.close();
-});
-function open(url, name) {
-	selected = { url, name };
-	dialog.showModal();
-}
-function close() {
-	dialog.close();
-	selected = null;
-}
 </script>
 
 {#if !$session.wrappedKey}
@@ -60,11 +46,7 @@ function close() {
 				type="file"
 				multiple
 				disabled={$library.uploading}
-				onchange={(event) => {
-					const files = [...event.currentTarget.files];
-					event.currentTarget.value = "";
-					if (files.length) library.upload(files);
-				}}
+				onchange={(event) => selectFiles(event, library.upload)}
 			></label
 		>
 	</form>
@@ -118,7 +100,7 @@ function close() {
 			<button
 				type="button"
 				disabled={$library.uploading}
-				onclick={() => filesInput.click()}
+				onclick={() => pickFiles(filesInput)}
 			>
 				Upload files
 			</button>
@@ -139,18 +121,9 @@ function close() {
 	</section>
 {/if}
 <div id="results">
-	{#key $library.epoch}
-		{#each $library.items as item (item.id)}
-			<MediaCard
-				{item}
-				{library}
-				onopen={open}
-				onremove={close}
-				onretag={(metadata, tokens) =>
-					library.updateTags(item.id, metadata, tokens)}
-			/>
-		{/each}
-	{/key}
+	{#each $library.cards as { item, media } (media)}
+		<MediaCard {item} {media} {library} />
+	{/each}
 </div>
 {#if $library.next}
 	<button
@@ -162,31 +135,7 @@ function close() {
 		More
 	</button>
 {/if}
-<dialog
-	id="full"
-	bind:this={dialog}
-	onclick={(event) => {
-		if (event.target === dialog) close();
-	}}
-	onkeydown={(event) => {
-		if (event.key === "Escape") close();
-	}}
-	onclose={() => {
-		selected = null;
-	}}
->
-	{#if selected}
-		<img src={selected.url} alt={selected.name}>
-		<button
-			type="button"
-			class="close"
-			aria-label="Close image"
-			onclick={close}
-		>
-			×
-		</button>
-	{/if}
-</dialog>
+<ImageDialog selected={$library.selected} onclose={library.closePreview} />
 
 <style>
 .file {
@@ -246,30 +195,6 @@ function close() {
 #more {
 	display: block;
 	margin: 1.5rem auto;
-}
-#full {
-	padding: 0;
-	border: 0;
-	background: transparent;
-	max-width: 95vw;
-	max-height: 95vh;
-}
-#full::backdrop {
-	background: #000b;
-}
-#full img {
-	display: block;
-	max-width: 95vw;
-	max-height: 95vh;
-	object-fit: contain;
-}
-.close {
-	position: fixed;
-	top: 1rem;
-	right: 1rem;
-	font-size: 1.5rem;
-	background: var(--paper);
-	color: inherit;
 }
 @media (max-width: 32rem) {
 	.toolbar {

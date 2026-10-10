@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { sniffContentType } from "../src/lib/metadata.js";
+import { sniffContentType } from "../src/lib/media/metadata.js";
 
 test("sniffs jpeg and png when the browser gave no type", () => {
 	const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0x00]);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { bytesToHex, hexToBytes, utf8 } from "../src/lib/bytes.js";
+import { bytesToHex, hexToBytes, utf8 } from "../src/lib/protocol/bytes.js";
 import {
 	authorizationHeader,
 	contentAad,
@@ -12,8 +12,8 @@ import {
 	metaAad,
 	requestMessage,
 	tagToken,
-} from "../src/lib/crypto.js";
-import { encodePost } from "../src/lib/frame.js";
+} from "../src/lib/protocol/crypto.js";
+import { encodePost } from "../src/lib/protocol/frame.js";
 
 const vectors = JSON.parse(
 	readFileSync(new URL("./test-vectors.json", import.meta.url), "utf8"),

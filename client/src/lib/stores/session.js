@@ -1,11 +1,26 @@
 import { get, writable } from "svelte/store";
 import { registerKey } from "../api.js";
-import { loadKey } from "../crypto.js";
-import { generatePrivateKey } from "../identity.js";
-import { parseRecoveryFile, recoveryFile } from "../recovery.js";
-import { unwrapPrivateKey, wrapPrivateKey } from "../vault.js";
+import { loadKey } from "../protocol/crypto.js";
+import { generatePrivateKey } from "../protocol/identity.js";
+import { parseRecoveryFile, recoveryFile } from "../protocol/recovery.js";
+import { unwrapPrivateKey, wrapPrivateKey } from "../protocol/vault.js";
 
 export const DEFAULT_SERVER_URL = "https://clip.i2n.duckdns.org";
+
+function checkServer(serverUrl) {
+	let url;
+	try {
+		url = new URL(serverUrl);
+	} catch {
+		throw new Error("Invalid server URL.");
+	}
+	if (
+		!["http:", "https:"].includes(url.protocol) ||
+		url.username ||
+		url.password
+	)
+		throw new Error("Invalid server URL.");
+}
 
 export function createSession(platform) {
 	const state = writable({
@@ -18,7 +33,6 @@ export function createSession(platform) {
 	});
 	let revision = 0;
 	let disposed = false;
-	let busy = false;
 	const controller = new AbortController();
 	const active = () => controller.signal.throwIfAborted();
 
@@ -33,8 +47,11 @@ export function createSession(platform) {
 			if (local.wrappedKey && session.privateKey) {
 				try {
 					const loaded = await loadKey(session.privateKey);
-					if (loaded.registrationKey === local.publicKey) privateKey = session.privateKey;
-				} catch { /* A stale or damaged session must stay locked. */ }
+					if (loaded.registrationKey === local.publicKey)
+						privateKey = session.privateKey;
+				} catch {
+					/* A stale or damaged session must stay locked. */
+				}
 			}
 			if (!disposed && version === revision)
 				state.update((value) => ({
@@ -44,12 +61,14 @@ export function createSession(platform) {
 					serverUrl: local.serverUrl || DEFAULT_SERVER_URL,
 					wrappedKey: local.wrappedKey || null,
 					privateKey,
+					error: "",
 				}));
 		} catch (error) {
 			if (!disposed && version === revision)
 				state.update((value) => ({
 					...value,
 					ready: true,
+					privateKey: "",
 					error: error.message,
 				}));
 		}
@@ -58,13 +77,13 @@ export function createSession(platform) {
 	const ready = refresh();
 
 	async function mutate(action) {
-		if (busy || disposed) return false;
-		busy = true;
+		if (get(state).busy || disposed) return false;
 		state.update((value) => ({ ...value, busy: true, error: "" }));
 		try {
 			// One settings mutation across all open pages, including password derivation.
 			const lock = globalThis.navigator?.locks;
 			const guarded = async () => {
+				await ready;
 				active();
 				await action();
 				active();
@@ -83,7 +102,6 @@ export function createSession(platform) {
 				state.update((value) => ({ ...value, error: error.message }));
 			return false;
 		} finally {
-			busy = false;
 			if (!disposed) state.update((value) => ({ ...value, busy: false }));
 		}
 	}
@@ -106,6 +124,7 @@ export function createSession(platform) {
 		refresh,
 		create: ({ serverUrl, password, otc }) =>
 			mutate(async () => {
+				checkServer(serverUrl);
 				if ((await platform.local.get("wrappedKey")).wrappedKey)
 					throw new Error("A library is already configured.");
 				if (password.length < 8)
@@ -156,10 +175,15 @@ export function createSession(platform) {
 				active();
 				await platform.session.set({ privateKey });
 			}),
-		setServer: (serverUrl) => mutate(() => platform.local.set({ serverUrl })),
+		setServer: (serverUrl) =>
+			mutate(() => {
+				checkServer(serverUrl);
+				return platform.local.set({ serverUrl });
+			}),
 		reset: () =>
 			mutate(async () => {
 				await platform.session.clear();
+				active();
 				await platform.local.clear();
 			}),
 		backup: () =>
@@ -178,6 +202,7 @@ export function createSession(platform) {
 				}
 			}),
 		credentials() {
+			active();
 			const { serverUrl, privateKey } = get(state);
 			if (!privateKey) throw new Error("Unlock before uploading.");
 			return { serverUrl, privateKey };

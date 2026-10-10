@@ -7,24 +7,25 @@ import { audioArt } from "./audio-art.js";
 
 const EDGE = 320;
 
-export async function thumbnail(blob) {
+export async function thumbnail(blob, signal) {
 	const type = blob.type || "";
 	try {
 		if (type.startsWith("audio/")) {
 			const art = audioArt(await blob.bytes());
 			if (!art) return null;
-			return await fromBitmap(new Blob([art]));
+			return await fromBitmap(new Blob([art]), signal);
 		}
-		if (type.startsWith("video/")) return await fromVideo(blob);
-		return await fromBitmap(blob);
+		if (type.startsWith("video/")) return await fromVideo(blob, signal);
+		return await fromBitmap(blob, signal);
 	} catch {
 		return null;
 	}
 }
 
-async function fromBitmap(blob) {
+async function fromBitmap(blob, signal) {
 	const bitmap = await createImageBitmap(blob);
 	try {
+		signal?.throwIfAborted();
 		const thumb = await webp(bitmap);
 		if (!thumb) return null;
 		return { thumb, image: { width: bitmap.width, height: bitmap.height } };
@@ -48,7 +49,7 @@ async function webp(source) {
 	return file ? file.bytes() : null;
 }
 
-function fromVideo(blob) {
+function fromVideo(blob, signal) {
 	return new Promise((resolve) => {
 		const url = URL.createObjectURL(blob);
 		const video = document.createElement("video");
@@ -60,12 +61,19 @@ function fromVideo(blob) {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			signal?.removeEventListener("abort", abort);
 			URL.revokeObjectURL(url);
 			video.removeAttribute("src");
 			video.load();
 			resolve(value);
 		};
+		const abort = () => finish(null);
 		const timer = setTimeout(() => finish(null), 8000);
+		signal?.addEventListener("abort", abort, { once: true });
+		if (signal?.aborted) {
+			finish(null);
+			return;
+		}
 		video.addEventListener("error", () => finish(null));
 		video.addEventListener("loadeddata", async () => {
 			try {

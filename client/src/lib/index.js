@@ -11,6 +11,7 @@ export {
 	updateMetadata,
 	upload,
 } from "./api.js";
+export { sniffContentType } from "./media/metadata.js";
 export {
 	authorizationHeader,
 	bodyHash,
@@ -26,7 +27,6 @@ export {
 	splitTags,
 	tagToken,
 	tagTokens,
-} from "./crypto.js";
-export { encodeMeta, encodePost } from "./frame.js";
-export { generatePrivateKey, parsePrivateKey } from "./identity.js";
-export { sniffContentType } from "./metadata.js";
+} from "./protocol/crypto.js";
+export { encodeMeta, encodePost } from "./protocol/frame.js";
+export { generatePrivateKey, parsePrivateKey } from "./protocol/identity.js";

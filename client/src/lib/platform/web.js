@@ -40,6 +40,7 @@ window.addEventListener("storage", () =>
 	}),
 );
 export const webPlatform = {
+	confirm: (message) => globalThis.confirm(message),
 	local: storage(localStorage),
 	session: storage(sessionStorage),
 	subscribe(fn) {

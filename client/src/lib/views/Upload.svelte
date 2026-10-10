@@ -1,17 +1,8 @@
 <script>
-import { onDestroy, onMount, untrack } from "svelte";
-import { createPendingUpload } from "../stores/pending-upload.js";
-import Unlock from "./Unlock.svelte";
+import Unlock from "../components/Unlock.svelte";
 
-let { session, platform, id, auto = false, settingsHref } = $props();
-const pending = untrack(() => createPendingUpload(session, platform, id));
+let { session, pending, auto = false, settingsHref } = $props();
 let tags = $state("");
-onMount(() => {
-	Promise.all([session.ready, pending.ready]).then(() => {
-		if (auto && $session.privateKey) pending.send("");
-	});
-});
-onDestroy(pending.dispose);
 </script>
 
 <section class="panel">
@@ -31,14 +22,7 @@ onDestroy(pending.dispose);
 			before uploading.
 		</p>
 	{:else if !$session.privateKey}
-		<Unlock
-			{session}
-			id={auto ? "form" : "unlock"}
-			ondone={async () => {
-				await pending.ready;
-				if ($session.privateKey) await pending.send(tags);
-			}}
-		/>
+		<Unlock {session} id={auto ? "form" : "unlock"} />
 	{:else}
 		<form
 			id="send"

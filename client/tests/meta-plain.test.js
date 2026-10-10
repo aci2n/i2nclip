@@ -5,7 +5,7 @@ import {
 	decodeMetaPlain,
 	encodeMetaPlain,
 	MAX_META_PLAINTEXT,
-} from "../src/lib/meta-plain.js";
+} from "../src/lib/protocol/meta-plain.js";
 
 test("meta plain roundtrips with and without a thumb", () => {
 	const meta = {

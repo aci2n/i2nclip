@@ -1,5 +1,5 @@
 import { get } from "svelte/store";
-import { sendUpload } from "../lib/media.js";
+import { sendUpload } from "../lib/media/upload.js";
 import { createSession } from "../lib/stores/session.js";
 import { platform } from "./platform.js";
 

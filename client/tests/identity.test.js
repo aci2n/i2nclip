@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadKey } from "../src/lib/crypto.js";
-import { generatePrivateKey, parsePrivateKey } from "../src/lib/identity.js";
+import { loadKey } from "../src/lib/protocol/crypto.js";
+import {
+	generatePrivateKey,
+	parsePrivateKey,
+} from "../src/lib/protocol/identity.js";
 
 test("generated identities load and mismatched public keys are rejected", async () => {
 	const first = await generatePrivateKey();

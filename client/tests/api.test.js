@@ -9,7 +9,7 @@ import {
 	remove,
 	upload,
 } from "../src/lib/api.js";
-import { generatePrivateKey } from "../src/lib/identity.js";
+import { generatePrivateKey } from "../src/lib/protocol/identity.js";
 
 for (const [body, contentType, message] of [
 	['{"error":"permission denied"}', "application/json", "permission denied"],
@@ -114,16 +114,26 @@ test("downloaded encrypted content is capped before buffering", async (t) => {
 	assert.equal(cancelled, true);
 });
 
-test('retry reuses the exact encrypted request after a lost response', async (t) => {
-  const { privateKey } = await generatePrivateKey();
-  const bodies = [];
-  t.mock.method(globalThis, 'fetch', async (_url, options) => {
-    bodies.push(options.body);
-    if (bodies.length === 1) throw new Error('lost response');
-    return new Response('{"id":"saved"}', { status: 201 });
-  });
-  const options = { serverUrl: 'https://clip.example', privateKey, bytes: new Uint8Array([1]), name: 'file', tags: [], attempt: {} };
-  await assert.rejects(upload(options), /lost response/);
-  await upload(options);
-  assert.deepEqual(bodies[0], bodies[1]);
+test("retry surfaces a duplicate conflict after a lost response", async (t) => {
+	const { privateKey } = await generatePrivateKey();
+	const bodies = [];
+	t.mock.method(globalThis, "fetch", async (_url, options) => {
+		bodies.push(options.body);
+		if (bodies.length === 1) throw new Error("lost response");
+		return new Response('{"error":"already exists"}', { status: 409 });
+	});
+	const options = {
+		serverUrl: "https://clip.example",
+		privateKey,
+		bytes: new Uint8Array([1]),
+		name: "file",
+		tags: [],
+		id: "44444444-4444-4444-8444-444444444444",
+	};
+	await assert.rejects(upload(options), /lost response/);
+	await assert.rejects(upload(options), /already exists/);
+	assert.equal(bodies.length, 2);
+	for (const body of bodies) {
+		assert.equal(new TextDecoder().decode(body.subarray(4, 40)), options.id);
+	}
 });

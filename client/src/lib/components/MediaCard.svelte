@@ -1,45 +1,23 @@
 <script>
-import { untrack } from "svelte";
-import { fileSize, fileType, uploadedAt } from "../format.js";
+import { fileSize, fileType, uploadedAt } from "../media/format.js";
 import TagEditor from "./TagEditor.svelte";
 
-let { item, library, onopen, onremove, onretag = () => {} } = $props();
-const media = untrack(() => library.media(item));
+let { item, media, library } = $props();
 const type = $derived($media.metadata?.content_type || "");
 const name = $derived($media.metadata?.name || item.id);
 const summary = $derived(
 	[fileType(type), fileSize($media.metadata?.size)].filter(Boolean).join(" · "),
 );
-async function reveal() {
-	const url = await media.reveal();
-	if (url && type.startsWith("image/")) onopen(url, name);
-}
-async function remove() {
-	if (
-		confirm(`Delete ${name}? This cannot be undone.`) &&
-		(await media.remove())
-	)
-		onremove();
-}
-async function saveTags(tags) {
-	const result = await media.retag(tags);
-	if (result) onretag(result.metadata, result.tokens);
-	return result?.metadata;
-}
 </script>
 
-<article
-	class="panel card"
-	class:busy={$media.busy}
-	class:deleted={$media.deleted}
->
+<article class="panel card" class:deleted={$media.deleted}>
 	<div class="media">
 		{#if type.startsWith("image/") && ($media.preview || $media.url)}
 			<button
 				type="button"
 				class="image-button"
 				aria-label={`Open ${name}`}
-				onclick={reveal}
+				onclick={(event) => library.reveal(item.id, event.currentTarget)}
 				disabled={$media.busy || $media.deleted}
 			>
 				<img src={$media.shown ? $media.url : $media.preview} alt={name}>
@@ -69,7 +47,7 @@ async function saveTags(tags) {
 					class="play"
 					data-act="play"
 					aria-label={`Play ${name}`}
-					onclick={reveal}
+					onclick={(event) => library.reveal(item.id, event.currentTarget)}
 					disabled={$media.busy || $media.deleted}
 				>
 					▶
@@ -79,7 +57,7 @@ async function saveTags(tags) {
 			<button
 				type="button"
 				class="image-button file-type"
-				onclick={reveal}
+				onclick={(event) => library.reveal(item.id, event.currentTarget)}
 				disabled={$media.busy}
 			>
 				Open image
@@ -100,7 +78,7 @@ async function saveTags(tags) {
 			tags={$media.metadata.tags || []}
 			{name}
 			disabled={$media.busy || $media.deleted}
-			onsave={saveTags}
+			onsave={(tags) => library.retag(item.id, tags)}
 		/>
 	{/if}
 	<details class="card-details">
@@ -135,7 +113,7 @@ async function saveTags(tags) {
 			type="button"
 			class="secondary danger"
 			data-act="delete"
-			onclick={remove}
+			onclick={() => library.remove(item.id)}
 			disabled={$media.busy || $media.deleted}
 		>
 			Delete
@@ -160,7 +138,7 @@ async function saveTags(tags) {
 	line-height: 1.4;
 	margin-top: 0.75rem;
 }
-.card .meta {
+.meta {
 	font-size: 0.85rem;
 	margin: 0.5rem 0;
 }
@@ -170,6 +148,7 @@ async function saveTags(tags) {
 .media {
 	position: relative;
 	aspect-ratio: 16 / 10;
+	grid-template: minmax(0, 1fr) / minmax(0, 1fr);
 	display: grid;
 	place-items: center;
 	overflow: hidden;
@@ -247,7 +226,7 @@ dd {
 }
 .actions button {
 	font-size: 0.85rem;
-	padding: 0.3rem 0.5rem;
+	padding: 0.25rem 0.5rem;
 }
 .actions {
 	padding-top: 0.5rem;

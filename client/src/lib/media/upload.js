@@ -1,4 +1,4 @@
-import { MAX_FILE_BYTES, upload } from "./api.js";
+import { MAX_FILE_BYTES, upload } from "../api.js";
 import { thumbnail } from "./thumbnail.js";
 
 export function fileName(url) {
@@ -71,10 +71,10 @@ export async function sendUpload(
 	onProgress,
 	signal,
 ) {
-	if (source.attempt?.prepared) return upload({ ...credentials, tags, attempt: source.attempt, onProgress, signal });
 	const prepared = await prepareMedia(source, platform, signal);
 	const bytes = new Uint8Array(await prepared.blob.arrayBuffer());
-	const preview = await thumbnail(prepared.blob);
+	signal?.throwIfAborted();
+	const preview = await thumbnail(prepared.blob, signal);
 	signal?.throwIfAborted();
 	return upload({
 		...credentials,
@@ -88,6 +88,5 @@ export async function sendUpload(
 		onProgress,
 		signal,
 		id: source.id,
-		attempt: source.attempt,
 	});
 }

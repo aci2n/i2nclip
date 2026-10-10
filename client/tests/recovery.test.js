@@ -1,16 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { utf8 } from "../src/lib/bytes.js";
+import { utf8 } from "../src/lib/protocol/bytes.js";
 import {
 	contentAad,
 	decrypt,
 	encrypt,
 	loadKey,
 	tagToken,
-} from "../src/lib/crypto.js";
-import { generatePrivateKey } from "../src/lib/identity.js";
-import { parseRecoveryFile, recoveryFile } from "../src/lib/recovery.js";
-import { unwrapPrivateKey, wrapPrivateKey } from "../src/lib/vault.js";
+} from "../src/lib/protocol/crypto.js";
+import { generatePrivateKey } from "../src/lib/protocol/identity.js";
+import {
+	parseRecoveryFile,
+	recoveryFile,
+} from "../src/lib/protocol/recovery.js";
+import { unwrapPrivateKey, wrapPrivateKey } from "../src/lib/protocol/vault.js";
 
 test("encrypted recovery preserves decryption, tags and identity", async () => {
 	const created = await generatePrivateKey();

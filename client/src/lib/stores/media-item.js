@@ -1,10 +1,10 @@
 import { get, writable } from "svelte/store";
 import { getContent, remove, updateMetadata } from "../api.js";
-import { audioArt } from "../audio-art.js";
-import { tagTokens } from "../crypto.js";
-import { downloadName } from "../format.js";
-import { sniffContentType } from "../metadata.js";
-import { uniqueTags } from "../tags.js";
+import { audioArt } from "../media/audio-art.js";
+import { downloadName } from "../media/format.js";
+import { sniffContentType } from "../media/metadata.js";
+import { tagTokens } from "../protocol/crypto.js";
+import { uniqueTags } from "../protocol/tags.js";
 
 export function createMediaItem(
 	initialItem,
@@ -17,7 +17,6 @@ export function createMediaItem(
 	const controller = new AbortController();
 	const signal = controller.signal;
 	let disposed = false;
-	let pending;
 	let bytes;
 	const makeUrl = (data, type) => {
 		const url = URL.createObjectURL(new Blob([data], { type }));
@@ -38,15 +37,17 @@ export function createMediaItem(
 	const options = { ...credentials, id: item.id, signal };
 
 	// This advisory check never replaces an action's result.
-	if (item.metadata)
-		tagTokens(credentials.privateKey, item.metadata.tags || [])
+	const checkedMetadata = item.metadata;
+	const checkedTokens = item.tokens || [];
+	if (checkedMetadata)
+		tagTokens(credentials.privateKey, checkedMetadata.tags || [])
 			.then((expected) => {
 				if (
 					!disposed &&
-					get(state).metadata === item.metadata &&
+					get(state).metadata === checkedMetadata &&
 					!get(state).message &&
-					(expected.length !== (item.tokens || []).length ||
-						expected.some((token) => !item.tokens.includes(token)))
+					(expected.length !== checkedTokens.length ||
+						expected.some((token) => !checkedTokens.includes(token)))
 				) {
 					state.update((value) => ({
 						...value,
@@ -82,32 +83,31 @@ export function createMediaItem(
 
 	async function content() {
 		if (get(state).url) return get(state).url;
-		pending ??= api
-			.getContent({
+		let receiving = true;
+		try {
+			const result = await api.getContent({
 				...options,
 				onProgress: (progress) => {
-					if (!disposed) state.update((value) => ({ ...value, progress }));
+					if (receiving && !disposed)
+						state.update((value) => ({ ...value, progress }));
 				},
-			})
-			.then((result) => {
-				signal.throwIfAborted();
-				bytes = result;
-				const type =
-					get(state).metadata?.content_type || "application/octet-stream";
-				const url = makeUrl(bytes, type);
-				state.update((value) => ({ ...value, url }));
-				return url;
-			})
-			.catch((error) => {
-				pending = null;
-				throw error;
 			});
-		return pending;
+			signal.throwIfAborted();
+			bytes = result;
+			const type =
+				get(state).metadata?.content_type || "application/octet-stream";
+			const url = makeUrl(bytes, type);
+			state.update((value) => ({ ...value, url }));
+			return url;
+		} finally {
+			receiving = false;
+		}
 	}
 
 	return {
 		subscribe: state.subscribe,
 		updateItem(nextItem) {
+			if (disposed) return;
 			item = nextItem;
 			state.update((value) => ({
 				...value,

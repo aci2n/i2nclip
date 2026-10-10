@@ -3,22 +3,14 @@ import test from "node:test";
 import { get, writable } from "svelte/store";
 import { createLibrary } from "../src/lib/stores/library.js";
 
+import { deferred, tick } from "./helpers.js";
+
 const identity = {
 	ready: true,
 	wrappedKey: {},
 	serverUrl: "https://clip.example",
 	privateKey: "first",
 };
-const deferred = () => {
-	let resolve;
-	let reject;
-	const promise = new Promise((yes, no) => {
-		resolve = yes;
-		reject = no;
-	});
-	return { promise, resolve, reject };
-};
-const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 function setup(t) {
 	const session = writable(identity);
@@ -135,6 +127,8 @@ test("a failed file does not stop a batch and retry sends only failed files", as
 	uploads[1].progress(90);
 	assert.equal(get(library).uploadProgress.name, "failed");
 	assert.equal(uploads[2].source.blob, first);
+	assert.equal(uploads[2].source.id, uploads[0].source.id);
+	assert.notEqual(uploads[0].source.id, uploads[1].source.id);
 	uploads[2].resolve();
 	await tick();
 	calls[2].resolve({ items: [{ id: "saved" }, { id: "retried" }], next: null });
@@ -161,26 +155,103 @@ test("server changes clear failed files and ignore late upload completion", asyn
 	assert.equal(uploads.length, 1);
 });
 
-test('replacing results disposes media and prevents a stale save dialog', async (t) => {
-  const { generatePrivateKey } = await import('../src/lib/identity.js');
-  const { privateKey } = await generatePrivateKey();
-  const job = deferred();
-  let downloads = 0;
-  const revoked = [];
-  t.mock.method(URL, 'revokeObjectURL', (url) => revoked.push(url));
-  t.mock.method(globalThis, 'fetch', (_url, options) => {
-    options.signal.addEventListener('abort', () => job.reject(new DOMException('cancelled', 'AbortError')), { once: true });
-    return job.promise;
-  });
-  const library = createLibrary(writable({ ...identity, privateKey }), { download: () => { downloads++; } }, { list: async () => ({ items: [], next: null }) });
-  t.after(library.dispose);
-  await tick();
-  const media = library.media({ id: crypto.randomUUID(), metadata: { content_type: 'image/png', tags: [] }, tokens: [], thumb: new Uint8Array([1]) });
-  const preview = get(media).preview;
-  const downloading = media.download();
-  await tick();
-  await library.search('absent');
-  await downloading;
-  assert.ok(revoked.includes(preview));
-  assert.equal(downloads, 0);
+test("replacing results disposes media and prevents a stale save dialog", async (t) => {
+	const { generatePrivateKey } = await import(
+		"../src/lib/protocol/identity.js"
+	);
+	const { privateKey } = await generatePrivateKey();
+	const job = deferred();
+	let downloads = 0;
+	const revoked = [];
+	t.mock.method(URL, "revokeObjectURL", (url) => revoked.push(url));
+	t.mock.method(globalThis, "fetch", (_url, options) => {
+		options.signal.addEventListener(
+			"abort",
+			() => job.reject(new DOMException("cancelled", "AbortError")),
+			{ once: true },
+		);
+		return job.promise;
+	});
+	const library = createLibrary(
+		writable({ ...identity, privateKey }),
+		{
+			download: () => {
+				downloads++;
+			},
+		},
+		{ list: async () => ({ items: [], next: null }) },
+	);
+	t.after(library.dispose);
+	await tick();
+	const media = library.media({
+		id: crypto.randomUUID(),
+		metadata: { content_type: "image/png", tags: [] },
+		tokens: [],
+		thumb: new Uint8Array([1]),
+	});
+	const preview = get(media).preview;
+	const downloading = media.download();
+	await tick();
+	await library.search("absent");
+	await downloading;
+	assert.ok(revoked.includes(preview));
+	assert.equal(downloads, 0);
+});
+
+test("progress from a finished file cannot overwrite the next file in the same batch", async (t) => {
+	const { library, calls, uploads } = setup(t);
+	calls[0].resolve({ items: [], next: null });
+	await tick();
+	const batch = library.upload([{ name: "first" }, { name: "second" }]);
+	uploads[0].resolve();
+	await tick();
+	uploads[1].progress(25);
+	uploads[0].progress(99);
+	assert.equal(get(library).uploadProgress.name, "second");
+	assert.equal(get(library).uploadProgress.percent, 25);
+	uploads[1].resolve();
+	await tick();
+	calls[1].resolve({ items: [], next: null });
+	await batch;
+});
+
+test("overlapping pagination entries produce only one card per media ID", async (t) => {
+	const { library, calls } = setup(t);
+	calls[0].resolve({ items: [{ id: "one" }], next: "cursor" });
+	await tick();
+	const more = library.more();
+	calls[1].resolve({ items: [{ id: "one" }, { id: "two" }], next: null });
+	await more;
+	assert.deepEqual(
+		get(library).items.map((item) => item.id),
+		["one", "two"],
+	);
+	assert.equal(get(library).cards.length, 2);
+});
+
+test("leaving the library prevents a late image reveal from opening its preview", async (t) => {
+	const { library, calls } = setup(t);
+	const item = { id: "one", metadata: { content_type: "image/png" } };
+	calls[0].resolve({ items: [item], next: null });
+	await tick();
+	const job = deferred();
+	t.mock.method(library.media(item), "reveal", () => job.promise);
+	const revealing = library.reveal("one");
+	library.closePreview();
+	job.resolve("blob:stale");
+	await revealing;
+	assert.equal(get(library).selected, null);
+});
+
+test("overlapping cursor pages cannot overwrite tags saved while pagination was pending", async (t) => {
+	const { library, calls } = setup(t);
+	const item = { id: "one", metadata: { tags: ["old"] } };
+	calls[0].resolve({ items: [item], next: "cursor" });
+	await tick();
+	const more = library.more();
+	library.updateTags("one", { tags: ["new"] }, ["new-token"]);
+	calls[1].resolve({ items: [item], next: null });
+	await more;
+	assert.deepEqual(get(library).items[0].metadata.tags, ["new"]);
+	assert.deepEqual(get(get(library).cards[0].media).metadata.tags, ["new"]);
 });

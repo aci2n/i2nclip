@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { MAX_FILE_BYTES } from "../src/lib/api.js";
-import { prepareMedia, readMedia } from "../src/lib/media.js";
+import { prepareMedia, readMedia } from "../src/lib/media/upload.js";
 
 test("oversized local files are rejected before reading or fetching", async () => {
 	const source = {

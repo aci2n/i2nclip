@@ -8,6 +8,8 @@ use std::sync::atomic::Ordering;
 use axum::body::Body;
 use axum::http::Request;
 use axum::http::StatusCode;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use http_body_util::BodyExt;
 use i2nclip::crypto;
 use i2nclip::crypto::Identity;
@@ -382,10 +384,10 @@ fn walk(dir: &std::path::Path) -> Vec<PathBuf> {
 }
 
 #[tokio::test]
-async fn upload_retries_require_the_same_owner_and_payload() {
+async fn duplicate_uploads_conflict_without_replacing_content() {
     let owner = new_identity();
     let other = new_identity();
-    let (_dir, app) = app(&[&owner, &other]);
+    let (dir, app) = app(&[&owner, &other]);
     let id = "44444444-4444-4444-8444-444444444444";
     let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
     let content = crypto::encrypt(&owner.seed, &crypto::content_aad(id), b"original").unwrap();
@@ -393,10 +395,105 @@ async fn upload_retries_require_the_same_owner_and_payload() {
     let first = call(&app, &owner, "POST", "/api/media", body.clone()).await;
     let retry = call(&app, &owner, "POST", "/api/media", body.clone()).await;
     assert_eq!(first.0, StatusCode::CREATED);
-    assert_eq!(first, retry);
-    assert_eq!(call(&app, &other, "POST", "/api/media", body).await.0, StatusCode::CONFLICT);
+    assert_eq!(retry.0, StatusCode::CONFLICT);
+    assert_eq!(
+        call(&app, &other, "POST", "/api/media", body).await.0,
+        StatusCode::CONFLICT
+    );
     let changed = crypto::encrypt(&owner.seed, &crypto::content_aad(id), b"changed").unwrap();
-    assert_eq!(call(&app, &owner, "POST", "/api/media", frame::encode_post(id, &meta, &changed, "")).await.0, StatusCode::CONFLICT);
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "POST",
+            "/api/media",
+            frame::encode_post(id, &meta, &changed, "")
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
     let (_, listed) = call(&app, &owner, "GET", "/api/media", vec![]).await;
-    assert_eq!(serde_json::from_slice::<serde_json::Value>(&listed).unwrap()["media"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&listed).unwrap()["media"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let (status, downloaded) = call(&app, &owner, "GET", &format!("/api/media/{id}"), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(downloaded, content);
+    // A missing blob must not allow an existing database row to be replaced.
+    std::fs::remove_file(dir.0.join("blobs").join(id)).unwrap();
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "POST",
+            "/api/media",
+            frame::encode_post(id, &meta, &content, "")
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert!(!dir.0.join("blobs").join(id).exists());
+}
+
+#[tokio::test]
+async fn startup_removes_legacy_receipts_and_preserves_media() {
+    let owner = new_identity();
+    let (dir, app) = app(&[&owner]);
+    let id = "55555555-5555-4555-8555-555555555555";
+    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(id), b"original").unwrap();
+    let token = crypto::tag_token(&owner.seed, "keep").unwrap();
+    let body = frame::encode_post(id, &meta, &content, &token);
+    assert_eq!(
+        call(&app, &owner, "POST", "/api/media", body).await.0,
+        StatusCode::CREATED
+    );
+    drop(app);
+
+    let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
+    let receipt_count = || {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'upload_receipts'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(receipt_count(), 0);
+    conn.execute_batch(
+        "CREATE TABLE upload_receipts (
+            file_id TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+            body_hash TEXT NOT NULL
+        );",
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO upload_receipts VALUES (?1, ?2)",
+        rusqlite::params![id, "legacy-hash"],
+    )
+    .unwrap();
+
+    let app = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
+    assert_eq!(receipt_count(), 0);
+    let (status, downloaded) = call(&app, &owner, "GET", &format!("/api/media/{id}"), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(downloaded, content);
+    let (_, listed) = call(&app, &owner, "GET", "/api/media", vec![]).await;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&listed).unwrap()["media"][0]["meta"],
+        STANDARD.encode(meta)
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&listed).unwrap()["media"][0]["tokens"],
+        serde_json::json!([token])
+    );
+    drop(app);
+    let _reopened = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
+    assert_eq!(receipt_count(), 0);
 }

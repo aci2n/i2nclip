@@ -102,6 +102,8 @@ This does not repair the opposite problem (a row with a missing blob). Download 
 
 One Ed25519 signature covers the origin, time, a one-time nonce, the method, the path, and the SHA-256 of the body. The hash is in the `Authorization` header, so the server checks the signature before it reads the body, then checks that the bytes match. A signature is good for five minutes and cannot be replayed. Each file is at most 32 MB.
 
+Duplicate upload UUIDs return `409`, even for identical files. If an upload response is lost, refresh the library before uploading again: a retry cannot confirm whether the original upload succeeded. The extension keeps the UUID across retries to avoid creating another copy.
+
 ## Extension
 
 All frontend code lives in `client/`, a Svelte 5 + Vite project. Build the Firefox add-on before loading it:
@@ -117,13 +119,15 @@ For development, `make dev-extension` builds the add-on, launches a development 
 
 `npm run dev --prefix client` runs the same UI in a regular browser with a local-storage adapter. Its `/api` proxy points to `http://127.0.0.1:8080` (override with `I2N_API_TARGET`); set the backend's `I2N_ORIGIN` and the UI's server URL to `http://localhost:5173` for this mode. The standalone browser session is separate from the extension.
 
+See the [frontend audit guide](client/README.md) for the source map, store transitions, resource ownership, and verification coverage.
+
 The source has three boundaries:
 
 - `client/src/lib/`: encryption, API calls, media preparation, stores, and Svelte components. No Firefox APIs.
 - `client/src/extension/`: Firefox storage, tab media fetching, downloads, notifications, and context menus.
 - `client/public/`: manifest, extension page shells, icons, and update metadata.
 
-Stores own session mutations, request cancellation, pagination, and upload batches. Media cards own and release their decrypted bytes and object URLs. Settings mutations use a Web Lock across open pages; tag changes and uploads prevent overlapping submissions. The tests cover stale completions, identity changes, retry behavior, and file-size limits as well as the full browser flows.
+Stores own session mutations, request cancellation, pagination, and upload batches. Media stores own and release their decrypted bytes and object URLs. Settings mutations use a Web Lock across open pages; tag changes and uploads prevent overlapping submissions. The tests cover stale completions, identity changes, retry behavior, and file-size limits as well as the full browser flows.
 
 `client/Makefile` owns the frontend targets; the root Makefile delegates with `make -C client`. `make -C client build` and `make -C client test` work independently. `make build` builds the Rust server and both frontend bundles. `make client` builds just the standalone UI and extension (`npm run build --prefix client`). `npm run e2e --prefix client` builds the extension and runs Firefox tests; `make e2e` also installs dependencies and Firefox.
 

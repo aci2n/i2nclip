@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { unwrapPrivateKey, wrapPrivateKey } from "../src/lib/vault.js";
+import { unwrapPrivateKey, wrapPrivateKey } from "../src/lib/protocol/vault.js";
 
 test("passphrase wrap roundtrips and rejects the wrong passphrase", async () => {
 	const secret = "library identity document";

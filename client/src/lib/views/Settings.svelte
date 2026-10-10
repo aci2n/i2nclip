@@ -1,15 +1,12 @@
 <script>
-let { session } = $props();
-let mode = $state("create");
-let server = $state("");
-let serverInput;
-let serverDetails;
-let password = $state("");
-let otc = $state("");
-let restorePassword = $state("");
-let recoveryFiles = $state();
-let feedback = $state({ scope: "setup", text: "", error: false });
+import { selectTab, validateInput } from "../stores/dom.js";
+
+let { session, settings } = $props();
+let serverInput = $state();
+let serverDetails = $state();
 const savedServer = $derived($session.serverUrl);
+const mode = $derived($settings.mode);
+const feedback = $derived($settings.feedback);
 const feedbackAt = $derived(
 	$session.wrappedKey && ["create", "restore"].includes(feedback.scope)
 		? "library"
@@ -17,88 +14,14 @@ const feedbackAt = $derived(
 			? "setup"
 			: feedback.scope,
 );
-$effect(() => {
-	server = savedServer;
-});
-
 function navigateTabs(event) {
-	if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+	if (!$session.busy)
+		selectTab(event, mode, (next) => settings.edit("mode", next));
+}
+function create(event) {
 	event.preventDefault();
-	mode =
-		event.key === "Home"
-			? "create"
-			: event.key === "End"
-				? "restore"
-				: mode === "create"
-					? "restore"
-					: "create";
-	event.currentTarget.querySelector(`#${mode}-tab`).focus();
-}
-
-async function action(scope, task, message, pending = "Working…") {
-	if ($session.busy) return false;
-	feedback = { scope, text: pending, error: false };
-	const success = await task();
-	feedback = {
-		scope,
-		text: success ? message : $session.error,
-		error: !success,
-	};
-	return success;
-}
-async function create(event) {
-	event.preventDefault();
-	if (!serverInput.checkValidity()) {
-		serverDetails.open = true;
-		serverInput.reportValidity();
-		return;
-	}
-	if (
-		await action(
-			"create",
-			() => session.create({ serverUrl: server.trim(), password, otc }),
-			"Library created. Download your recovery file before uploading.",
-			"Creating library…",
-		)
-	) {
-		password = "";
-		otc = "";
-	}
-}
-async function restore(event) {
-	event.preventDefault();
-	if (
-		await action(
-			"restore",
-			() => session.restore(recoveryFiles?.[0], restorePassword),
-			"Library restored and unlocked.",
-			"Restoring library…",
-		)
-	) {
-		restorePassword = "";
-		recoveryFiles = undefined;
-	}
-}
-async function reset() {
-	if (
-		!confirm(
-			"Reset everything in this browser? Keep a recovery file first. Uploads on the server will stay saved.",
-		)
-	)
-		return;
-	if (
-		await action(
-			"reset",
-			session.reset,
-			"Browser settings reset. Create a library or restore from a recovery file.",
-		)
-	) {
-		mode = "create";
-		password = "";
-		otc = "";
-		restorePassword = "";
-		recoveryFiles = undefined;
-	}
+	if (!validateInput(serverInput, serverDetails)) return;
+	settings.create();
 }
 </script>
 
@@ -139,7 +62,7 @@ async function reset() {
 					aria-controls="create-panel"
 					disabled={$session.busy}
 					onclick={() => {
-						mode = "create";
+						settings.edit("mode", "create");
 					}}
 				>
 					Create
@@ -153,7 +76,7 @@ async function reset() {
 					aria-controls="restore-panel"
 					disabled={$session.busy}
 					onclick={() => {
-						mode = "restore";
+						settings.edit("mode", "restore");
 					}}
 				>
 					Restore
@@ -173,7 +96,10 @@ async function reset() {
 						required
 						autocomplete="off"
 						spellcheck="false"
-						bind:value={otc}
+						bind:value={
+							() => $settings.otc,
+							(value) => settings.edit("otc", value)
+						}
 						disabled={$session.busy}
 					>
 					<label for="pass">Unlock password</label>
@@ -183,7 +109,10 @@ async function reset() {
 						required
 						minlength="8"
 						autocomplete="new-password"
-						bind:value={password}
+						bind:value={
+							() => $settings.password,
+							(value) => settings.edit("password", value)
+						}
 						disabled={$session.busy}
 					>
 					<p>
@@ -202,7 +131,13 @@ async function reset() {
 				aria-labelledby="restore-tab"
 				hidden={mode !== "restore"}
 			>
-				<form id="restore-settings" onsubmit={restore}>
+				<form
+					id="restore-settings"
+					onsubmit={(event) => {
+						event.preventDefault();
+						settings.restore();
+					}}
+				>
 					<p>Choose your recovery file and enter its password.</p>
 					<label for="file">Recovery file</label>
 					<input
@@ -210,7 +145,10 @@ async function reset() {
 						type="file"
 						required
 						accept=".json,application/json"
-						bind:files={recoveryFiles}
+						bind:files={
+							() => $settings.recoveryFiles,
+							(value) => settings.edit("recoveryFiles", value)
+						}
 						disabled={$session.busy}
 					>
 					<label for="restore-pass">Recovery password</label>
@@ -219,7 +157,10 @@ async function reset() {
 						type="password"
 						required
 						autocomplete="current-password"
-						bind:value={restorePassword}
+						bind:value={
+							() => $settings.restorePassword,
+							(value) => settings.edit("restorePassword", value)
+						}
 						disabled={$session.busy}
 					>
 					<button id="restore" type="submit" disabled={$session.busy}>
@@ -240,12 +181,7 @@ async function reset() {
 				id="backup"
 				type="button"
 				disabled={$session.busy}
-				onclick={() =>
-					action(
-						"backup",
-						session.backup,
-						"Recovery download started. Keep the file and your password somewhere safe.",
-					)}
+				onclick={settings.backup}
 			>
 				Download recovery file
 			</button>
@@ -260,7 +196,7 @@ async function reset() {
 				type="button"
 				class="secondary danger"
 				disabled={$session.busy}
-				onclick={reset}
+				onclick={settings.reset}
 			>
 				Reset everything
 			</button>
@@ -275,11 +211,7 @@ async function reset() {
 			id="server-settings"
 			onsubmit={(event) => {
 				event.preventDefault();
-				action(
-					"server",
-					() => session.setServer(server.trim()),
-					"Server URL updated.",
-				);
+				settings.setServer();
 			}}
 		>
 			<label for="server">Server URL</label>
@@ -289,7 +221,10 @@ async function reset() {
 					bind:this={serverInput}
 					type="url"
 					required
-					bind:value={server}
+					bind:value={
+						() => $settings.server,
+						(value) => settings.edit("server", value)
+					}
 					disabled={$session.busy}
 				>
 				<button id="save-server" type="submit" disabled={$session.busy}>

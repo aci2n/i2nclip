@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { audioArt } from "../src/lib/audio-art.js";
+import { audioArt } from "../src/lib/media/audio-art.js";
 
 test("reads an ID3 cover and ignores a file with none", () => {
 	const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);

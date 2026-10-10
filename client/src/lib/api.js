@@ -1,7 +1,8 @@
 // HTTP calls. `fetch` exists in Firefox extension pages, browsers, and Node.
 // HTTP requests contain signatures and ciphertext, never the private key.
 
-import { b64ToBytes } from "./bytes.js";
+import { sniffContentType } from "./media/metadata.js";
+import { b64ToBytes } from "./protocol/bytes.js";
 import {
 	authorizationHeader,
 	contentAad,
@@ -11,15 +12,14 @@ import {
 	loadKey,
 	metaAad,
 	tagTokens,
-} from "./crypto.js";
-import { encodeMeta, encodePost } from "./frame.js";
+} from "./protocol/crypto.js";
+import { encodeMeta, encodePost } from "./protocol/frame.js";
 import {
 	decodeMetaPlain,
 	encodeMetaPlain,
 	MAX_META_PLAINTEXT,
-} from "./meta-plain.js";
-import { sniffContentType } from "./metadata.js";
-import { uniqueTags } from "./tags.js";
+} from "./protocol/meta-plain.js";
+import { uniqueTags } from "./protocol/tags.js";
 
 // Plaintext limit. The server allows this plus a small encryption header.
 export const MAX_FILE_BYTES = 32 * 1024 * 1024;
@@ -37,18 +37,7 @@ export async function upload({
 	thumb,
 	onProgress,
 	signal,
-	attempt,
 }) {
-	if (attempt?.prepared) {
-		if (attempt.serverUrl !== serverUrl || attempt.privateKey !== privateKey) {
-			throw new Error("The upload belongs to a different library.");
-		}
-		const key = await loadKey(privateKey);
-		const saved = await send(serverUrl, key, "POST", "/api/media", attempt.prepared.body, onProgress, signal);
-		const metadata = { ...attempt.prepared.metadata, tags: uniqueTags(tags) };
-		const result = JSON.stringify(metadata.tags) === attempt.tags ? saved : await updateMetadata({ serverUrl, privateKey, id: saved.id, metadata, thumb: attempt.prepared.thumb, signal, expectedVersion: saved.version });
-		return { ...result, metadata };
-	}
 	if (bytes.length > MAX_FILE_BYTES) {
 		throw new Error("File is larger than 32 MB.");
 	}
@@ -72,7 +61,6 @@ export async function upload({
 		content,
 		tags: tokens.join("\n"),
 	});
-	if (attempt) Object.assign(attempt, { serverUrl, privateKey, tags: JSON.stringify(plainTags), prepared: { body, metadata, thumb } });
 	const saved = await send(
 		serverUrl,
 		key,

@@ -1,65 +1,21 @@
 <script>
-import { tick } from "svelte";
-import { splitTags } from "../crypto.js";
+import { onDestroy, untrack } from "svelte";
+import { splitTags } from "../protocol/crypto.js";
+import { focus } from "../stores/dom.js";
+import { createTagEditor } from "../stores/tag-editor.js";
 
 let { tags = [], disabled = false, name, onsave } = $props();
-let editing = $state(false);
-let value = $state("");
-let saving = $state(false);
-let input = $state();
-let addButton = $state();
-let blurWhileSaving = false;
-const locked = $derived(disabled || saving);
-
-async function open() {
-	editing = true;
-	await tick();
-	input?.focus();
-}
-async function cancel() {
-	if (locked) return;
-	editing = false;
-	value = "";
-	await tick();
-	addButton?.focus();
-}
-function focusOut(event) {
-	if (!editing || event.currentTarget.contains(event.relatedTarget)) return;
-	if (saving) {
-		blurWhileSaving = true;
-	} else {
-		editing = false;
-		value = "";
-	}
-}
-async function persist(next, clearDraft = false) {
-	if (locked) return;
-	const submitted = value;
-	blurWhileSaving = false;
-	if (editing) input?.focus();
-	saving = true;
-	try {
-		if ((await onsave(next)) && clearDraft && value === submitted) value = "";
-	} finally {
-		saving = false;
-		if (blurWhileSaving) {
-			editing = false;
-			value = "";
-		}
-		await tick();
-		if (editing) input?.focus();
-	}
-}
-function save(event) {
-	event.preventDefault();
-	if (splitTags(value).length) persist([...tags, value], true);
-}
+const editor = untrack(() => createTagEditor((next) => onsave(next)));
+const locked = $derived(disabled || $editor.saving);
+onDestroy(editor.dispose);
 </script>
 
 <fieldset
 	class="tag-list"
 	aria-label={`Tags for ${name}`}
-	onfocusout={focusOut}
+	onfocusout={(event) => {
+		if (!event.currentTarget.contains(event.relatedTarget)) editor.blur();
+	}}
 >
 	{#each tags as tag}
 		<span class="chip tag"
@@ -68,27 +24,34 @@ function save(event) {
 				type="button"
 				aria-label={`Remove tag ${tag}`}
 				disabled={locked}
-				onclick={() => persist(tags.filter((existing) => existing !== tag))}
+				onclick={() =>
+					editor.remove(tags.filter((existing) => existing !== tag))}
 			>
 				×
 			</button></span
 		>
 	{/each}
-	{#if editing}
-		<form class="tags" onsubmit={save}>
+	{#if $editor.editing}
+		<form
+			class="tags"
+			onsubmit={(event) => {
+				event.preventDefault();
+				if (!locked) editor.add(tags);
+			}}
+		>
 			<div class="entry">
 				<input
 					class="chip"
-					bind:this={input}
-					bind:value
-					disabled={disabled && !saving}
+					use:focus={$editor.inputFocus}
+					bind:value={() => $editor.value, editor.edit}
+					disabled={disabled && !$editor.saving}
 					aria-label={`New tag for ${name}`}
 					placeholder="New tag"
 					autocomplete="on"
 					onkeydown={(event) => {
 						if (event.key === "Escape") {
 							event.preventDefault();
-							cancel();
+							if (!locked) editor.cancel();
 						}
 					}}
 				>
@@ -96,7 +59,7 @@ function save(event) {
 					class="chip"
 					type="submit"
 					aria-label="Save tag"
-					disabled={locked || !splitTags(value).length}
+					disabled={locked || !splitTags($editor.value).length}
 				>
 					✓
 				</button>
@@ -105,7 +68,7 @@ function save(event) {
 					type="button"
 					aria-label="Cancel adding tag"
 					disabled={locked}
-					onclick={cancel}
+					onclick={editor.cancel}
 				>
 					×
 				</button>
@@ -113,12 +76,12 @@ function save(event) {
 		</form>
 	{:else}
 		<button
-			bind:this={addButton}
+			use:focus={$editor.buttonFocus}
 			class="chip"
 			type="button"
 			aria-label={`Add tag to ${name}`}
 			disabled={locked}
-			onclick={open}
+			onclick={editor.open}
 		>
 			+
 		</button>
@@ -135,8 +98,6 @@ function save(event) {
 	border: 0;
 	padding: 0;
 	margin: 0;
-}
-.tag-list {
 	min-height: 2rem;
 	font-size: 0.85rem;
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { uniqueTags } from "../src/lib/tags.js";
+import { uniqueTags } from "../src/lib/protocol/tags.js";
 
 test("tags preserve first spelling and deduplicate case and Unicode equivalents", () => {
 	assert.deepEqual(

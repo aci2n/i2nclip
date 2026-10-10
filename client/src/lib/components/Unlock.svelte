@@ -1,17 +1,9 @@
 <script>
-let {
-	session,
-	ondone = () => {},
-	id = "unlock",
-	statusId = "unlock-status",
-} = $props();
+let { session, id = "unlock", statusId = "unlock-status" } = $props();
 let password = $state("");
-async function submit(event) {
+function submit(event) {
 	event.preventDefault();
-	if (await session.unlock(password)) {
-		password = "";
-		await ondone();
-	}
+	session.unlock(password);
 }
 </script>
 
