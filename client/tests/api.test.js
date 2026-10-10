@@ -9,6 +9,12 @@ import {
 	remove,
 	upload,
 } from "../src/lib/api.js";
+import {
+	bodyHash,
+	contentAad,
+	encrypt,
+	loadKey,
+} from "../src/lib/protocol/crypto.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
 
 for (const [body, contentType, message] of [
@@ -114,13 +120,22 @@ test("downloaded encrypted content is capped before buffering", async (t) => {
 	assert.equal(cancelled, true);
 });
 
-test("retry surfaces a duplicate conflict after a lost response", async (t) => {
+test("reencrypting an upload uses fresh sealed content after a lost response", async (t) => {
 	const { privateKey } = await generatePrivateKey();
 	const bodies = [];
+	const contentOf = (body) => {
+		const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
+		const offset = 4 + view.getUint32(0);
+		return body.subarray(offset + 4, offset + 4 + view.getUint32(offset));
+	};
+
 	t.mock.method(globalThis, "fetch", async (_url, options) => {
 		bodies.push(options.body);
 		if (bodies.length === 1) throw new Error("lost response");
-		return new Response('{"error":"already exists"}', { status: 409 });
+		return new Response(
+			JSON.stringify({ id: await bodyHash(contentOf(options.body)) }),
+			{ status: 201 },
+		);
 	});
 	const options = {
 		serverUrl: "https://clip.example",
@@ -128,12 +143,27 @@ test("retry surfaces a duplicate conflict after a lost response", async (t) => {
 		bytes: new Uint8Array([1]),
 		name: "file",
 		tags: [],
-		id: "44444444-4444-4444-8444-444444444444",
 	};
 	await assert.rejects(upload(options), /lost response/);
-	await assert.rejects(upload(options), /already exists/);
+	const saved = await upload(options);
+	assert.equal(saved.id, await bodyHash(contentOf(bodies[1])));
 	assert.equal(bodies.length, 2);
-	for (const body of bodies) {
-		assert.equal(new TextDecoder().decode(body.subarray(4, 40)), options.id);
-	}
+	assert.notDeepEqual(contentOf(bodies[0]), contentOf(bodies[1]));
+});
+
+test("content hashes are checked before decryption", async (t) => {
+	const { privateKey } = await generatePrivateKey();
+	const key = await loadKey(privateKey);
+	const plain = new Uint8Array([1, 2, 3]);
+	const content = await encrypt(key, contentAad(), plain);
+	t.mock.method(globalThis, "fetch", async () => new Response(content));
+	const options = { serverUrl: "https://clip.example", privateKey };
+	await assert.rejects(
+		getContent({ ...options, id: "0".repeat(64) }),
+		/Content hash mismatch/,
+	);
+	assert.deepEqual(
+		await getContent({ ...options, id: await bodyHash(content) }),
+		plain,
+	);
 });

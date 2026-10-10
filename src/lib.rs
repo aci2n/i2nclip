@@ -9,6 +9,7 @@
 mod auth;
 mod error;
 pub mod frame;
+mod gc;
 mod media;
 mod routes;
 mod store;
@@ -21,10 +22,7 @@ use std::path::PathBuf;
 use tokio::net::TcpListener;
 
 pub use error::Error;
-pub use store::gc_orphan_blobs;
-pub use store::GcBlobsReport;
 pub use store::DEFAULT_REGISTRATION_TTL_SECS;
-pub use store::GC_BLOB_MIN_AGE;
 
 /// Persistent state. One volume mount covers the database (including public keys) and blobs.
 pub const DATA_DIR: &str = "/var/lib/i2nclip";
@@ -40,7 +38,7 @@ pub(crate) const MAX_TAGS: usize = 32;
 pub(crate) const MAX_TOKEN_TEXT: usize = 4096;
 /// One page of the library list. The next page starts after the last row.
 pub(crate) const PAGE: usize = 24;
-pub(crate) const MAX_BODY: usize = 4 + 36 + 4 + MAX_META + 4 + MAX_CONTENT + 4 + MAX_TOKEN_TEXT;
+pub(crate) const MAX_BODY: usize = 4 + MAX_META + 4 + MAX_CONTENT + 4 + MAX_TOKEN_TEXT;
 pub(crate) const MAX_META_BODY: usize = 4 + MAX_META + 4 + MAX_TOKEN_TEXT;
 /// `POST /api/register-key` accepts a small JSON object only.
 pub(crate) const MAX_REGISTER_BODY: usize = 4096;
@@ -56,7 +54,19 @@ pub fn issue_registration_otc(data_dir: &Path, ttl_secs: u64) -> Result<String, 
 /// Router over `data_dir`. `origin` is the public scheme and host signatures
 /// must name. Tests pass both. The binary reads `I2N_ORIGIN`.
 pub fn router(data_dir: &Path, origin: &str) -> Result<axum::Router, Error> {
-    routes::router(data_dir, normalize_origin(origin)?)
+    Ok(routes::router(open_state(
+        data_dir,
+        normalize_origin(origin)?,
+    )?))
+}
+
+fn open_state(data_dir: &Path, origin: String) -> Result<store::AppState, Error> {
+    store::prepare(data_dir)?;
+    Ok(store::AppState::new(
+        data_dir.to_path_buf(),
+        store::open(data_dir)?,
+        origin,
+    ))
 }
 
 /// An HTTP(S) origin with an optional root slash, serialized like the browser's
@@ -136,12 +146,21 @@ pub async fn run() -> Result<(), Error> {
     init_tracing();
     let origin = origin_from_env()?;
     let data_dir = PathBuf::from(DATA_DIR);
-    let app = router(&data_dir, &origin)?;
+    let state = open_state(&data_dir, origin.clone())?;
+    let app = routes::router(state.clone());
+    let gc_signal = gc::signal()?;
     let listener = TcpListener::bind(LISTEN).await?;
     tracing::info!(listen = LISTEN, data = DATA_DIR, %origin, "listening");
-    axum::serve(listener, app)
+    let (stop, receiver) = tokio::sync::watch::channel(false);
+    let gc_task = tokio::spawn(gc::listen(state, gc_signal, receiver));
+    let served = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        .await;
+    let _ = stop.send(true);
+    if let Err(err) = gc_task.await {
+        tracing::error!(%err, "GC task failed");
+    }
+    served?;
     Ok(())
 }
 

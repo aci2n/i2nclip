@@ -7,8 +7,6 @@
 //!
 //! ```text
 //! POST /api/media
-//!   uint32be  length of id (UTF-8)
-//!   bytes     id, a lowercase UUID
 //!   uint32be  length of encrypted metadata
 //!   bytes     metadata blob
 //!   uint32be  length of encrypted content
@@ -33,7 +31,6 @@ use crate::MAX_TAGS;
 use crate::MAX_TOKEN_TEXT;
 
 pub(crate) struct PostParts {
-    pub id: String,
     pub meta: Vec<u8>,
     pub content: Vec<u8>,
     pub tokens: Vec<String>,
@@ -44,9 +41,8 @@ pub(crate) struct MetaParts {
     pub tokens: Vec<String>,
 }
 
-pub fn encode_post(id: &str, meta: &[u8], content: &[u8], tags: &str) -> Vec<u8> {
+pub fn encode_post(meta: &[u8], content: &[u8], tags: &str) -> Vec<u8> {
     let mut out = Vec::new();
-    push_chunk(&mut out, id.as_bytes());
     push_chunk(&mut out, meta);
     push_chunk(&mut out, content);
     push_chunk(&mut out, tags.as_bytes());
@@ -68,19 +64,15 @@ fn push_chunk(out: &mut Vec<u8>, data: &[u8]) {
 
 pub(crate) fn decode_post(bytes: &[u8]) -> Result<PostParts, Error> {
     let mut i = 0;
-    // The id is short. 36 is the length of `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`.
-    let id = read_chunk(bytes, &mut i, 36)?;
     let meta = read_chunk(bytes, &mut i, MAX_META)?;
     let content = read_chunk(bytes, &mut i, MAX_CONTENT)?;
     let tags = read_chunk(bytes, &mut i, MAX_TOKEN_TEXT)?;
     if i != bytes.len() {
         return Err(Error::BadRequest("trailing bytes in body".into()));
     }
-    let id = std::str::from_utf8(id).map_err(|_| Error::BadRequest("id is not utf-8".into()))?;
     let tags =
         std::str::from_utf8(tags).map_err(|_| Error::BadRequest("tags are not utf-8".into()))?;
     Ok(PostParts {
-        id: id.to_string(),
         meta: meta.to_vec(),
         content: content.to_vec(),
         tokens: parse_tokens(tags)?,
@@ -169,23 +161,12 @@ mod tests {
 
     #[test]
     fn post_roundtrip_and_truncation() {
-        let body = encode_post(
-            "11111111-1111-4111-8111-111111111111",
-            b"meta",
-            b"content",
-            "aaaa",
-        );
+        let body = encode_post(b"meta", b"content", "aaaa");
         // "aaaa" is not a 43-char token, so decode must reject it.
         assert!(decode_post(&body).is_err());
         let token = "A".repeat(43);
-        let body = encode_post(
-            "11111111-1111-4111-8111-111111111111",
-            b"meta",
-            b"content",
-            &token,
-        );
+        let body = encode_post(b"meta", b"content", &token);
         let parts = decode_post(&body).unwrap();
-        assert_eq!(parts.id, "11111111-1111-4111-8111-111111111111");
         assert_eq!(parts.meta, b"meta");
         assert_eq!(parts.content, b"content");
         assert_eq!(parts.tokens, vec![token.clone()]);

@@ -162,7 +162,7 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
     let (dir, app) = app(&[&owner]);
     let new_key = new_identity();
     let otc = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();
-    let id = "66666666-6666-4666-8666-666666666666";
+    let id = "6666666666666666666666666666666666666666666666666666666666666666";
     for (method, path, seconds) in [
         ("POST", "/api/media".to_string(), 120),
         ("PUT", format!("/api/media/{id}"), 30),
@@ -244,7 +244,7 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
 async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     let owner = new_identity();
     let (dir, app) = app(&[&owner]);
-    let id = "77777777-7777-4777-8777-777777777777";
+    let id = "7777777777777777777777777777777777777777777777777777777777777777";
     assert_eq!(
         call(&app, &owner, "PUT", &format!("/api/media/{id}"), vec![])
             .await
@@ -269,9 +269,11 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     meta[0] = 1;
     let mut content = vec![0u8; 33_554_496];
     content[0] = 1;
+    let hash = crypto::body_hash(&content);
+    let id = hash.as_str();
     let tags = "\n".repeat(4096);
-    let body = frame::encode_post(id, &meta, &content, &tags);
-    assert_eq!(body.len(), 33_624_180);
+    let body = frame::encode_post(&meta, &content, &tags);
+    assert_eq!(body.len(), 33_624_140);
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
@@ -318,9 +320,9 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
 async fn media_body_caps_reject_declared_sizes_before_polling() {
     let owner = new_identity();
     let (_dir, app) = app(&[&owner]);
-    let id = "88888888-8888-4888-8888-888888888888";
+    let id = "8888888888888888888888888888888888888888888888888888888888888888";
     for (method, path, cap) in [
-        ("POST", "/api/media".to_string(), 33_624_180),
+        ("POST", "/api/media".to_string(), 33_624_140),
         ("PUT", format!("/api/media/{id}"), 69_640),
         ("GET", "/api/media".to_string(), 0),
         ("DELETE", format!("/api/media/{id}"), 0),
@@ -376,9 +378,9 @@ async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
 
     let owner = new_identity();
     let (_dir, app) = app(&[&owner]);
-    let id = "99999999-9999-4999-8999-999999999999";
+    let id = "9999999999999999999999999999999999999999999999999999999999999999";
     for (method, path, cap) in [
-        ("POST", "/api/media".to_string(), 33_624_180),
+        ("POST", "/api/media".to_string(), 33_624_140),
         ("PUT", format!("/api/media/{id}"), 69_640),
         ("GET", "/api/media".to_string(), 0),
         ("DELETE", format!("/api/media/{id}"), 0),
@@ -445,16 +447,19 @@ async fn health_needs_no_key() {
 async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
     let key = new_identity();
     let (dir, app) = app(&[&key]);
-    let id = "11111111-1111-4111-8111-111111111111";
+
     let marker = b"PLAINTEXT-MARKER-i2nclip-upload";
     let filename = "vacation-photo.jpg";
     let tag = "secret-tag-zebra";
     let meta_json =
         format!(r#"{{"name":"{filename}","content_type":"image/jpeg","size":1,"tags":["{tag}"]}}"#);
+    let content = crypto::encrypt(&key.seed, &crypto::content_aad(), marker).unwrap();
+    let hash = crypto::body_hash(&content);
+    let id = hash.as_str();
     let meta = crypto::encrypt(&key.seed, &crypto::meta_aad(id), meta_json.as_bytes()).unwrap();
-    let content = crypto::encrypt(&key.seed, &crypto::content_aad(id), marker).unwrap();
+
     let token = crypto::tag_token(&key.seed, tag).unwrap();
-    let body = frame::encode_post(id, &meta, &content, &token);
+    let body = frame::encode_post(&meta, &content, &token);
 
     let (status, bytes) = call(&app, &key, "POST", "/api/media", body).await;
     assert_eq!(
@@ -479,7 +484,7 @@ async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
     let (status, stored) = call(&app, &key, "GET", &format!("/api/media/{id}"), Vec::new()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        crypto::decrypt(&key.seed, &crypto::content_aad(id), &stored).unwrap(),
+        crypto::decrypt(&key.seed, &crypto::content_aad(), &stored).unwrap(),
         marker
     );
 
@@ -513,13 +518,16 @@ async fn another_key_cannot_see_or_search() {
     let owner = new_identity();
     let other = new_identity();
     let (_dir, app) = app(&[&owner, &other]);
-    let id = "22222222-2222-4222-8222-222222222222";
+
+    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), b"pic").unwrap();
+    let hash = crypto::body_hash(&content);
+    let id = hash.as_str();
     let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
-    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(id), b"pic").unwrap();
+
     let token = crypto::tag_token(&owner.seed, "shared-word").unwrap();
     let other_token = crypto::tag_token(&other.seed, "shared-word").unwrap();
     assert_ne!(token, other_token);
-    let body = frame::encode_post(id, &meta, &content, &token);
+    let body = frame::encode_post(&meta, &content, &token);
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
@@ -593,9 +601,9 @@ async fn rejects_bad_signature_replay_and_raw_jpeg() {
         StatusCode::UNAUTHORIZED
     );
 
-    let id = "33333333-3333-4333-8333-333333333333";
+    let id = "3333333333333333333333333333333333333333333333333333333333333333";
     let meta = crypto::encrypt(&key.seed, &crypto::meta_aad(id), b"{}").unwrap();
-    let body = frame::encode_post(id, &meta, b"\xff\xd8\xff\xd8not-encrypted", "not-a-token");
+    let body = frame::encode_post(&meta, b"\xff\xd8\xff\xd8not-encrypted", "not-a-token");
     let (status, _) = call(&app, &key, "POST", "/api/media", body).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
@@ -789,10 +797,13 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
     let owner = new_identity();
     let other = new_identity();
     let (dir, app) = app(&[&owner, &other]);
-    let id = "44444444-4444-4444-8444-444444444444";
+
+    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), b"original").unwrap();
+    let hash = crypto::body_hash(&content);
+    let id = hash.as_str();
     let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
-    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(id), b"original").unwrap();
-    let body = frame::encode_post(id, &meta, &content, "");
+
+    let body = frame::encode_post(&meta, &content, "");
     let first = call(&app, &owner, "POST", "/api/media", body.clone()).await;
     let retry = call(&app, &owner, "POST", "/api/media", body.clone()).await;
     assert_eq!(first.0, StatusCode::CREATED);
@@ -801,18 +812,18 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
         call(&app, &other, "POST", "/api/media", body).await.0,
         StatusCode::CONFLICT
     );
-    let changed = crypto::encrypt(&owner.seed, &crypto::content_aad(id), b"changed").unwrap();
+    let changed = crypto::encrypt(&owner.seed, &crypto::content_aad(), b"changed").unwrap();
     assert_eq!(
         call(
             &app,
             &owner,
             "POST",
             "/api/media",
-            frame::encode_post(id, &meta, &changed, "")
+            frame::encode_post(&meta, &changed, "")
         )
         .await
         .0,
-        StatusCode::CONFLICT
+        StatusCode::CREATED
     );
     let (_, listed) = call(&app, &owner, "GET", "/api/media", vec![]).await;
     assert_eq!(
@@ -820,7 +831,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
             .as_array()
             .unwrap()
             .len(),
-        1
+        2
     );
     let (status, downloaded) = call(&app, &owner, "GET", &format!("/api/media/{id}"), vec![]).await;
     assert_eq!(status, StatusCode::OK);
@@ -833,7 +844,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
             &owner,
             "POST",
             "/api/media",
-            frame::encode_post(id, &meta, &content, "")
+            frame::encode_post(&meta, &content, "")
         )
         .await
         .0,
@@ -846,11 +857,14 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
 async fn reopening_database_preserves_media() {
     let owner = new_identity();
     let (dir, app) = app(&[&owner]);
-    let id = "55555555-5555-4555-8555-555555555555";
+
+    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), b"original").unwrap();
+    let hash = crypto::body_hash(&content);
+    let id = hash.as_str();
     let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
-    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(id), b"original").unwrap();
+
     let token = crypto::tag_token(&owner.seed, "keep").unwrap();
-    let body = frame::encode_post(id, &meta, &content, &token);
+    let body = frame::encode_post(&meta, &content, &token);
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
@@ -990,7 +1004,7 @@ async fn upload_admission_is_shared_and_releases_capacity() {
         call(&app, &owner, "GET", "/api/media", vec![]).await.0,
         StatusCode::OK
     );
-    let id = "77777777-7777-4777-8777-777777777777";
+    let id = "7777777777777777777777777777777777777777777777777777777777777777";
     assert_eq!(
         call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
             .await
@@ -1007,7 +1021,7 @@ async fn upload_admission_is_shared_and_releases_capacity() {
     for (body, expected) in [
         (Body::new(broken), StatusCode::BAD_REQUEST),
         (
-            Body::from(vec![0; 33_624_181]),
+            Body::from(vec![0; 33_624_141]),
             StatusCode::PAYLOAD_TOO_LARGE,
         ),
         (Body::from("wrong signed bytes"), StatusCode::UNAUTHORIZED),
@@ -1050,9 +1064,12 @@ async fn upload_admission_is_shared_and_releases_capacity() {
             StatusCode::BAD_REQUEST
         );
     }
-    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(id), b"file").unwrap();
+
+    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), b"file").unwrap();
+    let hash = crypto::body_hash(&content);
+    let id = hash.as_str();
     let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
-    let frame = frame::encode_post(id, &meta, &content, "");
+    let frame = frame::encode_post(&meta, &content, "");
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", frame.clone())
             .await
@@ -1105,13 +1122,53 @@ async fn download_response(
 }
 
 #[tokio::test]
+async fn concurrent_routers_publish_one_hash() {
+    let owner = new_identity();
+    let other = new_identity();
+    let (dir, first) = app(&[&owner, &other]);
+    let second = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
+    let content =
+        crypto::encrypt(&owner.seed, &crypto::content_aad(), b"same sealed bytes").unwrap();
+    let id = crypto::body_hash(&content);
+    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(&id), b"{}").unwrap();
+    let body = frame::encode_post(&meta, &content, "");
+    let (a, b) = tokio::join!(
+        call(&first, &owner, "POST", "/api/media", body.clone()),
+        call(&second, &other, "POST", "/api/media", body),
+    );
+    assert!(matches!(
+        (a.0, b.0),
+        (StatusCode::CREATED, StatusCode::CONFLICT) | (StatusCode::CONFLICT, StatusCode::CREATED)
+    ));
+    let winner = if a.0 == StatusCode::CREATED {
+        &owner
+    } else {
+        &other
+    };
+    assert_eq!(
+        call(&first, winner, "GET", &format!("/api/media/{id}"), vec![])
+            .await
+            .1,
+        content
+    );
+    let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(std::fs::read_dir(dir.0.join("blobs")).unwrap().count(), 1);
+}
+
+#[tokio::test]
 async fn downloads_stream_with_admission_and_pin_authorized_files() {
     let owner = new_identity();
     let other = new_identity();
     let (_dir, app) = app(&[&owner, &other]);
-    let id = "88888888-8888-4888-8888-888888888888";
-    let content =
-        crypto::encrypt(&owner.seed, &crypto::content_aad(id), &vec![7; 180_000]).unwrap();
+
+    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), &vec![7; 180_000]).unwrap();
+    let hash = crypto::body_hash(&content);
+    let id = hash.as_str();
     let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
     assert_eq!(
         call(
@@ -1119,7 +1176,7 @@ async fn downloads_stream_with_admission_and_pin_authorized_files() {
             &owner,
             "POST",
             "/api/media",
-            frame::encode_post(id, &meta, &content, "")
+            frame::encode_post(&meta, &content, "")
         )
         .await
         .0,
@@ -1163,15 +1220,16 @@ async fn downloads_stream_with_admission_and_pin_authorized_files() {
     let mut partial = second.into_body();
     assert!(partial.frame().await.unwrap().is_ok());
     drop(partial); // Cancelling after a chunk also returns its slot.
-                   // Authorization is tied to the opened file, even after another owner reuses its UUID.
+                   // An opened stream survives deletion. Different ciphertext has a different URL.
     assert_eq!(
         call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
             .await
             .0,
         StatusCode::NO_CONTENT
     );
-    let replacement =
-        crypto::encrypt(&other.seed, &crypto::content_aad(id), b"replacement").unwrap();
+    let replacement = crypto::encrypt(&other.seed, &crypto::content_aad(), b"replacement").unwrap();
+    let replacement_hash = crypto::body_hash(&replacement);
+    let id = replacement_hash.as_str();
     let other_meta = crypto::encrypt(&other.seed, &crypto::meta_aad(id), b"{}").unwrap();
     assert_eq!(
         call(
@@ -1179,7 +1237,7 @@ async fn downloads_stream_with_admission_and_pin_authorized_files() {
             &other,
             "POST",
             "/api/media",
-            frame::encode_post(id, &other_meta, &replacement, "")
+            frame::encode_post(&other_meta, &replacement, "")
         )
         .await
         .0,
@@ -1209,9 +1267,10 @@ async fn downloads_stream_with_admission_and_pin_authorized_files() {
 async fn downloads_validate_lengths_and_fail_on_midstream_truncation() {
     let owner = new_identity();
     let (dir, app) = app(&[&owner]);
-    let id = "99999999-9999-4999-8999-999999999999";
-    let content =
-        crypto::encrypt(&owner.seed, &crypto::content_aad(id), &vec![9; 180_000]).unwrap();
+
+    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), &vec![9; 180_000]).unwrap();
+    let hash = crypto::body_hash(&content);
+    let id = hash.as_str();
     let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
     assert_eq!(
         call(
@@ -1219,7 +1278,7 @@ async fn downloads_validate_lengths_and_fail_on_midstream_truncation() {
             &owner,
             "POST",
             "/api/media",
-            frame::encode_post(id, &meta, &content, "")
+            frame::encode_post(&meta, &content, "")
         )
         .await
         .0,

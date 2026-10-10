@@ -5,6 +5,7 @@ import test from "node:test";
 import { bytesToHex, hexToBytes, utf8 } from "../src/lib/protocol/bytes.js";
 import {
 	authorizationHeader,
+	bodyHash,
 	contentAad,
 	decrypt,
 	encrypt,
@@ -30,21 +31,17 @@ test("library identity matches the rust vectors", async () => {
 	const nonce = hexToBytes(vectors.nonce_hex);
 	const content = await encrypt(
 		key,
-		contentAad(vectors.media_id),
+		contentAad(),
 		utf8(vectors.plaintext_utf8),
 		nonce,
 	);
 	assert.equal(bytesToHex(content), vectors.ciphertext_hex);
+	assert.equal(await bodyHash(content), vectors.media_id);
 	assert.equal(
-		new TextDecoder().decode(
-			await decrypt(key, contentAad(vectors.media_id), content),
-		),
+		new TextDecoder().decode(await decrypt(key, contentAad(), content)),
 		vectors.plaintext_utf8,
 	);
-	assert.equal(
-		new TextDecoder().decode(contentAad(vectors.media_id)),
-		vectors.aad,
-	);
+	assert.equal(new TextDecoder().decode(contentAad()), vectors.aad);
 
 	const meta = await encrypt(
 		key,
@@ -54,7 +51,6 @@ test("library identity matches the rust vectors", async () => {
 	);
 	assert.equal(bytesToHex(meta), vectors.meta_ciphertext_hex);
 	const frame = encodePost({
-		id: vectors.media_id,
 		meta,
 		content,
 		tags: vectors.token,
@@ -82,5 +78,17 @@ test("library identity matches the rust vectors", async () => {
 			body,
 		}),
 		vectors.authorization,
+	);
+});
+
+test("metadata is authenticated against the sealed-content hash", async () => {
+	const key = await loadKey(vectors.private_key);
+	const meta = hexToBytes(vectors.meta_ciphertext_hex);
+	await assert.rejects(decrypt(key, metaAad("0".repeat(64)), meta));
+	assert.equal(
+		new TextDecoder().decode(
+			await decrypt(key, metaAad(vectors.media_id), meta),
+		),
+		vectors.meta_json,
 	);
 });

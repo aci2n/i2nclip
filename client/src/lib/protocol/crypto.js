@@ -20,8 +20,8 @@ import { parsePrivateKey } from "./identity.js";
 
 const PKCS8_PREFIX = hexToBytes("302e020100300506032b657004220420");
 
-export function contentAad(id) {
-	return utf8(`i2nclip/v1 content ${id}`);
+export function contentAad() {
+	return utf8("i2nclip/v1 content");
 }
 
 export function metaAad(id) {

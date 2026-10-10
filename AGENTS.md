@@ -26,7 +26,7 @@
 - Serialize session mutations across pages with the session Web Lock. Prevent overlapping mutations on a media item.
 - Media items own decrypted bytes and object URLs. Abort requests and revoke URLs on disposal; stale downloads must not create URLs or open save dialogs.
 - Check local file size before reading bytes. Cap remote reads while streaming; do not trust Content-Length alone.
-- Preserve the encryption protocol when reorganizing code. Rust and JavaScript share `client/tests/test-vectors.json`; file IDs are part of AES-GCM associated data.
+- Preserve the encryption protocol when reorganizing code. Rust and JavaScript share `client/tests/test-vectors.json`; content uses fixed purpose AAD, metadata includes the sealed-content hash in its AAD, and downloads verify that hash before decryption.
 
 ## UI conventions and visual review
 

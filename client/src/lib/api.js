@@ -5,6 +5,7 @@ import { sniffContentType } from "./media/metadata.js";
 import { b64ToBytes } from "./protocol/bytes.js";
 import {
 	authorizationHeader,
+	bodyHash,
 	contentAad,
 	decrypt,
 	encrypt,
@@ -32,7 +33,6 @@ export async function upload({
 	name,
 	contentType,
 	tags,
-	id,
 	image,
 	thumb,
 	onProgress,
@@ -42,7 +42,6 @@ export async function upload({
 		throw new Error("File is larger than 32 MB.");
 	}
 	const key = await loadKey(privateKey);
-	const mediaId = id ?? crypto.randomUUID();
 	const plainTags = uniqueTags(tags);
 	const storedType = sniffContentType(bytes, contentType);
 	const metadata = {
@@ -52,11 +51,11 @@ export async function upload({
 		tags: plainTags,
 	};
 	if (image && Object.keys(image).length > 0) metadata.image = image;
+	const content = await encrypt(key, contentAad(), bytes);
+	const mediaId = await bodyHash(content);
 	const meta = await sealedMetadata(key, mediaId, metadata, thumb);
-	const content = await encrypt(key, contentAad(mediaId), bytes);
 	const tokens = await tagTokens(key, plainTags);
 	const body = encodePost({
-		id: mediaId,
 		meta,
 		content,
 		tags: tokens.join("\n"),
@@ -114,7 +113,8 @@ export async function getContent({
 		onProgress,
 		signal,
 	);
-	return decrypt(key, contentAad(id), blob);
+	if ((await bodyHash(blob)) !== id) throw new Error("Content hash mismatch.");
+	return decrypt(key, contentAad(), blob);
 }
 
 export async function updateMetadata({

@@ -39,9 +39,10 @@ on unmount. Its save action delegates to the library and media stores.
   permits one request, and deduplicates overlapping IDs. Replacing results or
   changing credentials disposes media stores and clears the preview.
 - **Upload batch:** idle → uploading one file at a time → idle with failed files.
-  Failed files keep their source and UUID for retry. Duplicate UUIDs return a
-  conflict, including retries after a saved upload's response is lost; refresh
-  the library to check whether it was saved. Credentials changes abort
+  Failed files keep their source for retry. Each attempt encrypts with a fresh
+  nonce, so retrying normally creates a new content hash. An exact sealed
+  payload duplicate returns a conflict; after a lost successful response,
+  refresh the library before retrying to avoid creating another copy. Credentials changes abort
   the batch, clear retry sources, and prevent late completions from refreshing
   another library. Progress is accepted only for the active batch and file.
 - **Media:** idle → one of reveal/download/retag/delete → idle or deleted.

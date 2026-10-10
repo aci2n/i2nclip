@@ -127,8 +127,8 @@ test("a failed file does not stop a batch and retry sends only failed files", as
 	uploads[1].progress(90);
 	assert.equal(get(library).uploadProgress.name, "failed");
 	assert.equal(uploads[2].source.blob, first);
-	assert.equal(uploads[2].source.id, uploads[0].source.id);
-	assert.notEqual(uploads[0].source.id, uploads[1].source.id);
+	assert.equal(uploads[2].source, uploads[0].source);
+	assert.notEqual(uploads[0].source, uploads[1].source);
 	uploads[2].resolve();
 	await tick();
 	calls[2].resolve({ items: [{ id: "saved" }, { id: "retried" }], next: null });

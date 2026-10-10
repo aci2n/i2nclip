@@ -87,6 +87,5 @@ export async function sendUpload(
 		thumb: preview?.thumb,
 		onProgress,
 		signal,
-		id: source.id,
 	});
 }

@@ -16,9 +16,9 @@
 //! AES-GCM is an authenticating cipher: decrypt fails if a single bit flips,
 //! if the nonce is wrong, or if the "associated data" does not match. The
 //! associated data is not encrypted and is not stored in the blob. We set it
-//! to `i2nclip/v1 content <id>` or `i2nclip/v1 meta <id>`. Swapping two files
-//! on disk, or storing a metadata blob where the content should be, makes
-//! decrypt fail instead of returning someone else's picture under this name.
+//! to `i2nclip/v1 content` or `i2nclip/v1 meta <ciphertext_sha256>`. Clients
+//! check the sealed-content hash before decryption; metadata authentication
+//! binds the file description to that content. The domains are distinct.
 //!
 //! The version byte is how the server rejects a raw JPEG (`FF D8 ...`) without
 //! being able to decrypt. It is a tripwire for accidental plaintext, not a
@@ -81,14 +81,12 @@ pub fn from_seed(seed: [u8; 32]) -> Identity {
     Identity { seed, public }
 }
 
-/// Associated data for file bytes. `id` must be the exact lowercase UUID
-/// string the client sends, because it is mixed into the auth tag.
-pub fn content_aad(id: &str) -> Vec<u8> {
-    format!("i2nclip/v1 content {id}").into_bytes()
+/// Content AAD is fixed: its ciphertext hash is computed after encryption.
+pub fn content_aad() -> Vec<u8> {
+    b"i2nclip/v1 content".to_vec()
 }
 
-/// Associated data for the encrypted metadata blob. Different text from
-/// [`content_aad`] so the two ciphertexts are not interchangeable.
+/// Bind metadata to the complete sealed-content hash, with domain separation.
 pub fn meta_aad(id: &str) -> Vec<u8> {
     format!("i2nclip/v1 meta {id}").into_bytes()
 }
@@ -363,7 +361,7 @@ mod tests {
     fn roundtrip_rejects_wrong_key_aad_and_tamper() {
         let id = from_seed([9u8; 32]);
         let plain = b"i2nclip-plaintext-marker-9f3c";
-        let aad = content_aad("11111111-1111-4111-8111-111111111111");
+        let aad = content_aad();
         let mut blob = encrypt(&id.seed, &aad, plain).unwrap();
         // The plaintext bytes must not appear as a contiguous slice. This is
         // the property the HTTP tests also check on disk.
@@ -446,12 +444,12 @@ mod tests {
         let seed = [0x11u8; 32];
         let id = from_seed(seed);
         let nonce = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-        let media_id = "11111111-1111-4111-8111-111111111111";
-        let aad = content_aad(media_id);
+        let aad = content_aad();
         let plain = b"PLAINTEXT-MARKER-i2nclip";
         let ciphertext = encrypt_with_nonce(&seed, &aad, plain, &nonce).unwrap();
+        let media_id = body_hash(&ciphertext);
         let meta_json = r#"{"name":"vacation-photo.jpg","content_type":"image/jpeg","size":12,"tags":["vacation","dog"],"image":{"width":32,"height":16,"taken_at":"2020:01:02 03:04:05","make":"Canon"}}"#;
-        let meta_aad = meta_aad(media_id);
+        let meta_aad = meta_aad(&media_id);
         let meta_ct = encrypt_with_nonce(&seed, &meta_aad, meta_json.as_bytes(), &nonce).unwrap();
         let token = tag_token(&seed, "Vacation").unwrap();
         let cafe = tag_token(&seed, "Café").unwrap();
@@ -477,7 +475,7 @@ mod tests {
             "/api/media",
             sign_body.as_bytes(),
         );
-        let frame = crate::frame::encode_post(media_id, &meta_ct, &ciphertext, &token);
+        let frame = crate::frame::encode_post(&meta_ct, &ciphertext, &token);
         let private_key = serde_json::json!({ "v": 1, "seed": URL_SAFE_NO_PAD.encode(seed), "publicKey": id.registration_key() }).to_string();
         let vectors = Vectors {
             private_key,

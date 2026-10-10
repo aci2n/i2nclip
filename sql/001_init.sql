@@ -9,9 +9,16 @@ CREATE TABLE IF NOT EXISTS registration_codes (
 
 CREATE INDEX IF NOT EXISTS registration_codes_expires ON registration_codes (expires_at);
 
+CREATE TABLE IF NOT EXISTS staged_files (
+    id TEXT PRIMARY KEY NOT NULL CHECK (length(id) = 64),
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS staged_files_created ON staged_files (created_at);
+
 CREATE TABLE IF NOT EXISTS files (
-    id TEXT PRIMARY KEY,
-    owner BLOB NOT NULL,
+    id TEXT PRIMARY KEY NOT NULL CHECK (length(id) = 64),
+    owner BLOB NOT NULL CHECK (length(owner) = 32),
     meta BLOB NOT NULL,
     bytes INTEGER NOT NULL,
     created_at INTEGER NOT NULL

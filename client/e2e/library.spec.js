@@ -663,7 +663,7 @@ test("damaged metadata leaves a browsable card with working download and delete 
 	await expect(card).toHaveClass(/deleted/);
 });
 
-test("retry after a lost upload response surfaces the conflict without creating a duplicate", async ({
+test("reencryption after a lost upload response creates a separate content hash", async ({
 	page,
 	app,
 }) => {
@@ -686,9 +686,12 @@ test("retry after a lost upload response surfaces the conflict without creating 
 	const failed = page.getByRole("region", { name: "Failed uploads" });
 	await expect(failed).toContainText("Upload failed.");
 	await page.getByRole("button", { name: "Retry failed files" }).click();
-	await expect(failed).toContainText("already exists");
+	await expect(failed).toBeHidden();
 	await page.locator("#find button[type=submit]").click();
-	await expect(page.locator(".card-title")).toHaveText("saved-once.png");
-	await expect(page.locator(".card")).toHaveCount(1);
+	await expect(page.locator(".card-title")).toHaveText([
+		"saved-once.png",
+		"saved-once.png",
+	]);
+	await expect(page.locator(".card")).toHaveCount(2);
 	expect(posts).toBe(2);
 });

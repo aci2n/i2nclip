@@ -157,7 +157,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 				const file = files[index];
 				let source = uploadSources.get(file);
 				if (!source) {
-					source = { blob: file, name: file.name, id: crypto.randomUUID() };
+					source = { blob: file, name: file.name };
 					uploadSources.set(file, source);
 				}
 				let fileActive = true;

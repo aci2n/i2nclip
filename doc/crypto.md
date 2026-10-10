@@ -25,11 +25,13 @@ Both use AES-256-GCM with `K_enc`, independently sampled 12-byte CSPRNG nonces, 
 The overhead is exactly 29 bytes, including empty plaintext. Rust uses `aes-gcm`; the browser uses WebCrypto. The associated data is exactly:
 
 ```text
-content:  UTF8("i2nclip/v1 content " + canonical_uuid)
-metadata: UTF8("i2nclip/v1 meta " + canonical_uuid)
+content:  UTF8("i2nclip/v1 content")
+metadata: UTF8("i2nclip/v1 meta " + ciphertext_sha256)
 ```
 
-No newline or NUL is appended. Associated data is authenticated but not stored in the blob. It binds ciphertext to a UUID and purpose, preventing content/metadata substitution and swapping between different IDs. The version byte is checked by the decoder; the version/purpose are also represented in the AAD. Decryption authenticates before returning plaintext.
+No newline or NUL is appended. Associated data is authenticated but not stored in the blob. Content uses fixed purpose AAD to avoid a circular dependency between its ciphertext and its hash. Its AAD does not include the owner public key: content encryption already uses `K_enc` derived from that owner's secret seed, so another identity has a different key. The server cannot verify the GCM tag and therefore cannot use this AAD to enforce ownership at upload time.
+
+The complete sealed content (version, nonce, ciphertext, tag) is hashed using SHA-256 to form its 64-character lowercase hexadecimal identifier. Clients compare this hash against the requested URL before decrypting. Metadata AAD includes that hash, binding metadata to the exact content and preventing metadata swaps between hashes. Distinct purpose labels prevent content/metadata substitution. The version byte is checked by the decoder; the version/purpose are also represented in the AAD. Decryption authenticates before returning plaintext.
 
 Every encryption under this library key shares one nonce collision domain, including metadata edits, content uploads, and all browsers restoring the same identity. AAD does **not** make nonce reuse safe. Random 96-bit nonces have approximate collision probability `q(q-1)/2^97` after `q` encryptions. NIST SP 800-38D §8.3 caps invocations at `2^32` per key for this random-IV construction across devices; this is an outer limit, not a recommended application target. The project has no tracked key-use budget or rotation procedure. See [NIST SP 800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf).
 
@@ -69,8 +71,8 @@ A recovery file wraps that object in `{ "format": "i2nclip-recovery", "v": 1, "s
 
 ## Guarantees and exclusions
 
-The server cannot decrypt content, filenames, readable tags, or thumbnails using its stored public keys. It observes owners, UUIDs, ciphertext lengths, upload times, tag equality and access patterns. There is no size padding. Server-side `looks_sealed` only checks framing; it cannot prove that a submitted blob is encrypted.
+The server cannot decrypt content, filenames, readable tags, or thumbnails using its stored public keys. It observes owners, ciphertext hashes, ciphertext lengths, upload times, tag equality and access patterns. There is no size padding. Server-side `looks_sealed` only checks framing; it cannot prove that a submitted blob is encrypted.
 
-GCM detects modified ciphertext and wrong IDs/purposes, but an old valid blob for the same UUID/purpose still authenticates. The protocol has no authenticated revision counter, rollback detection, list completeness proof, or binding of server `created_at`/`bytes` fields and search tokens to the current encrypted metadata. TLS authenticates the transport endpoint and protects registration codes, metadata traffic patterns on the wire, and responses from network attackers. Encryption and request signatures do not replace TLS or make a malicious server honest.
+GCM detects modified ciphertext and wrong keys/purposes; the content hash check additionally ties bytes to the requested URL. An old valid metadata blob for the same content hash still authenticates, so metadata rollback remains possible. The protocol has no authenticated revision counter, rollback detection, list completeness proof, or binding of server `created_at`/`bytes` fields and search tokens to the current encrypted metadata. TLS authenticates the transport endpoint and protects registration codes, metadata traffic patterns on the wire, and responses from network attackers. Encryption and request signatures do not replace TLS or make a malicious server honest.
 
 This review did not identify a practical seed-recovery or ciphertext-forgery attack against normally generated keys and fresh nonces. It is a source review with focused tests, not a formal cryptographic audit or dependency vulnerability scan.

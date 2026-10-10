@@ -59,6 +59,8 @@ struct BufferedBody {
 impl FromRequest<AppState> for MediaRequest {
     type Rejection = Response;
 
+    // FIXME: refactor this, move method-specific behavior to the methods
+    // example: upload permit should be handled by the upload method
     async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
         // The signature is checked here, before any body byte. It already
         // covers the body hash from the Authorization header. Knowing a

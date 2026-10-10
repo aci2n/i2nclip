@@ -4,7 +4,7 @@ The API uses HTTP, JSON responses, two small binary request frames, and an appli
 
 ## Encodings and identity
 
-`b64url` means URL-safe base64 without padding. Public keys are raw 32-byte Ed25519 keys (43 encoded characters); signatures are 64 bytes (86 characters). Body digests are 64 lowercase hexadecimal characters. Item IDs are canonical lowercase hyphenated UUID strings, 36 UTF-8 bytes. The server checks UUID syntax, but does not require UUID version 4. IDs are globally unique across owners while their rows exist.
+`b64url` means URL-safe base64 without padding. Public keys are raw 32-byte Ed25519 keys (43 encoded characters); signatures are 64 bytes (86 characters). Body digests are 64 lowercase hexadecimal characters. Item identifiers (`id`) are the SHA-256 of the complete sealed content blob, encoded as 64 lowercase hexadecimal characters. The server computes them independently. Hashes are globally unique across owners while rows or blob files exist; an existing hash returns `409`. There are no UUIDs or caller-chosen content identifiers.
 
 The client generates its identity locally. The server registers only the public key. Registration requires canonical base64url encoding, a point accepted by dalek's `VerifyingKey::from_bytes`, and a key that is not weak (`is_weak()` is false). Invalid or weak keys return `400` before consuming an invitation. An administrator issues a one-time registration code using `i2nclip otc issue`. The code contains 16 random bytes encoded as b64url and defaults to a 24-hour lifetime. SQLite stores SHA-256 of the trimmed code. Registration consumes an unexpired code and inserts the public key in one immediate transaction. An already registered key still requires a fresh valid code; `INSERT OR IGNORE` prevents a duplicate key error. Registration does not prove possession of the private key.
 
@@ -22,9 +22,9 @@ The client generates its identity locally. The server registers only the public 
 
 A media object contains `id`, `created_at` (server Unix seconds), `bytes` (encrypted content length), `tokens` (search fingerprints), and `meta` (encrypted metadata encoded using **standard padded base64**, not b64url).
 
-List queries accept repeated `tag=TOKEN` parameters and optional `after=CREATED_AT.ID`. All distinct requested tags must match. Pages contain at most 24 items, ordered by creation time descending and UUID ascending. `next` is the last returned item's cursor only when another row exists. Pagination is not a snapshot: intervening mutations may change results. Unknown query keys are ignored, empty token values are ignored, and the last repeated `after` wins. The hand-written parser does not percent-decode values; use the literal token/cursor alphabet.
+List queries accept repeated `tag=TOKEN` parameters and optional `after=CREATED_AT.ID`. All distinct requested tags must match. Pages contain at most 24 items, ordered by creation time descending and hash ascending. `next` is the last returned item's cursor only when another row exists. Pagination is not a snapshot: intervening mutations may change results. Unknown query keys are ignored, empty token values are ignored, and the last repeated `after` wins. The hand-written parser does not percent-decode values; use the literal token/cursor alphabet.
 
-Errors are JSON `{"error":"…"}`. Statuses include `400` for malformed data, `401` for failed authentication or replay, `403` for invalid/expired/spent registration codes, `404` for missing or unowned items, `408` for body-read timeouts, `409` for conflicting IDs/payloads, `413` for oversized HTTP bodies, `503` when upload or download slots are occupied, and `500` for internal failures. Some field-size violations become `400` during frame validation. JSON and empty responses use `Cache-Control: no-store`. Content responses use `application/octet-stream` and `private, max-age=31536000, immutable`; UUID reuse can invalidate that assumption (see review).
+Errors are JSON `{"error":"…"}`. Statuses include `400` for malformed data, `401` for failed authentication or replay, `403` for invalid/expired/spent registration codes, `404` for missing or unowned items, `408` for body-read timeouts, `409` for an existing sealed-content hash, `413` for oversized HTTP bodies, `503` when upload or download slots are occupied, and `500` for internal failures. Some field-size violations become `400` during frame validation. JSON and empty responses use `Cache-Control: no-store`. Content responses use `application/octet-stream` and `private, max-age=31536000, immutable`; a URL identifies immutable ciphertext. Cached copies may remain readable after deletion or authorization changes.
 
 ## Request authentication
 
@@ -58,7 +58,6 @@ Nonces are globally unique in SQLite, rather than scoped by public key. A nonce 
 
 ```text
 POST /api/media:
-    chunk(UTF8(id))
     chunk(encrypted_metadata)
     chunk(encrypted_content)
     chunk(UTF8(tokens joined by LF))
@@ -76,28 +75,29 @@ Token parsing trims lines, ignores empty lines, and removes duplicates. Each tok
 | Server encrypted content | 33,554,496 (32 MiB + 64) |
 | Encrypted metadata | 65,536 |
 | Token text field | 4,096 |
-| POST UUID field | 36 |
-| Total authenticated request body | 33,624,180 |
+| Total authenticated request body | 33,624,140 |
 | Metadata PUT request body | 69,640 |
 | Media GET/DELETE request body | 0 |
 | Registration HTTP body | 4,096 |
 | Registration code text | 512 |
 
-The authenticated extractor selects byte caps by method: POST allows 33,624,180 bytes, PUT allows 69,640 bytes (two prefixes, encrypted metadata, and token text), and GET/DELETE require an empty body. Both the early Content-Length check and the streaming reader use that cap; missing or dishonest length headers cannot bypass the byte count. Nonempty GET/DELETE bodies return `413`. Authentication still happens before body reads and early size rejection, so authenticated oversized requests spend their nonce. Registration retains its separate 4,096-byte streaming cap. The server does not enforce request Content-Type. Limits are per request, with no aggregate concurrency, storage, or account quota.
+The authenticated extractor selects byte caps by method: POST allows 33,624,140 bytes, PUT allows 69,640 bytes (two prefixes, encrypted metadata, and token text), and GET/DELETE require an empty body. Both the early Content-Length check and the streaming reader use that cap; missing or dishonest length headers cannot bypass the byte count. Nonempty GET/DELETE bodies return `413`. Authentication still happens before body reads and early size rejection, so authenticated oversized requests spend their nonce. Registration retains its separate 4,096-byte streaming cap. The server does not enforce request Content-Type. Upload and download admission each have two slots per router. There is no storage or account quota.
 
 Complete body reads have total deadlines: 120 seconds for media POST, 30 seconds for PUT, and 10 seconds for media GET/DELETE and registration. The clock starts when body reading begins, after media authentication and early Content-Length checks, and never resets on chunks. Timeout drops the body and partial buffer and returns `408`, `{"error":"request body timed out"}`, with `Cache-Control: no-store`. Authentication nonces are already spent; timed-out registrations do not consume invitation codes. The deadline does not cover headers, authentication, subsequent hashing, or storage operations.
 
 ## Storage and retry semantics
 
-SQLite holds registered keys, hashed registration codes, spent nonces, media rows, encrypted metadata, and tag tokens. Content lives in `blobs/<id>`. Every media operation derives its owner from verified authentication and filters by that owner; another owner's UUID does not authorize access.
+SQLite holds registered keys, hashed registration codes, spent nonces, media rows, encrypted metadata, and tag tokens. Committed content lives in a flat `blobs/<ciphertext_sha256>` directory; incomplete uploads are staged separately in `staging/<ciphertext_sha256>`. Every media operation filters by the authenticated owner; knowing another owner's hash does not authorize a network download.
 
-Uploads create the content file exclusively, write and synchronize it and its parent directory, then insert the media row and tokens in one transaction. A duplicate UUID returns `409`, even with the same owner and identical payload. There is no upload receipt or idempotent replay. Existing databases drop the obsolete `upload_receipts` table on startup without removing media or tags.
+The client encrypts content with `UTF8("i2nclip/v1 content")` as AAD. This purpose label is fixed and contains no owner key; each owner's encryption key is already derived from that owner's secret seed. The server cannot verify the GCM tag and cannot enforce such a client-side binding. The client hashes the complete sealed blob (`0x01 || nonce[12] || ciphertext || tag[16]`) with SHA-256 and encodes the result as 64 lowercase hexadecimal characters. It then encrypts metadata using `UTF8("i2nclip/v1 meta " + hash)` as AAD. The POST frame contains only metadata, content, and token text. The server computes the content hash; it does not accept a client identifier. Content GETs check that the received sealed bytes hash to the requested identifier before decryption.
 
-Client upload flows retain the source UUID across retries but prepare fresh ciphertext. If an upload succeeded and its response was lost, retrying returns a conflict rather than confirming success. Refresh the library to check whether the item was saved. Generating a new UUID can create a duplicate; the server does not deduplicate content. API callers who omit an explicit ID receive a newly generated UUID on each upload call.
+Storage uses `staged_files(id, created_at)` as a durable cleanup journal. Uploads reserve their hash before creating `staging/<hash>`, fsync the complete file, then rename it to `blobs/<hash>` under an immediate SQLite transaction. Both directories are synced before that transaction replaces the intent with the media row and tags. Existing live or pending hashes return `409`; existing destination files are never overwritten. No receipt replays success.
 
-PUT atomically replaces encrypted metadata and search tokens. DELETE removes the row (cascading tokens and receipt), then unlinks the file. Files and SQLite do not share a transaction: crashes can leave orphan files, including files from interrupted deletion. `gc-blobs` removes unreferenced canonical UUID files after an age guard (default one hour). It uses a database snapshot and an age heuristic, not synchronization with active uploads. It does not repair missing content files.
+DELETE atomically replaces the media row with a cleanup intent before unlinking. The shared database mutex coordinates authorized download opening with deletion; an opened descriptor pins its bytes. SIGUSR1 requests GC in the running server. It waits for uploads, pauses upload admission, and removes expired intents and their files after seven days. Per-candidate immediate transactions recheck state, and directory syncs precede forgetting intents. There are no filesystem locks or separate GC process. Run one server per volume. See [gc.md](gc.md) for complete ordering, crash analysis, and the limits of the eventual-cleanup guarantee.
 
-Wire compatibility is checked by `client/tests/test-vectors.json`, including a POST frame, encrypted content and metadata, tag fingerprints, and a signed request. The metadata vector contains legacy JSON plaintext; current metadata plaintext includes JSON and thumbnail framing, described in [crypto.md](crypto.md).
+An exact sealed-payload retry gets `409` after success. The application prepares fresh ciphertext when a failed upload is retried, so re-encryption normally creates a new hash and another item. After a lost successful response, refresh the library before retrying to avoid creating another copy. No nonce reuse or cached replay body is introduced.
+
+PUT atomically replaces encrypted metadata and search tokens; content and its hash do not change. DELETE removes the row and cascading tags, then unlinks/synchronizes the blob directory while retaining the exclusive lock. A deletion crash may leave an orphan; already opened downloads retain their original file. Different sealed content always uses a different URL, subject to SHA-256 collision resistance. This is a greenfield format: the initial schema and shared vectors are updated directly, with no migration or version bump.
 
 Upload POSTs share two slots across owners in one server router. After authentication and early size checks, admission either succeeds immediately or returns `503`, `{"error":"uploads busy; try again"}`, `Retry-After: 1`, and `Cache-Control: no-store`, without reading the body. The nonce is spent, so retries require a new signature and nonce. Slots cover body reading, hashing, frame decoding, and storage, including blocking workers that outlive a cancelled request. Other endpoints do not consume upload slots.
 

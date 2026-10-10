@@ -1,6 +1,5 @@
 //! Router assembly, health and registration endpoints, and shared HTTP helpers.
 
-use std::path::Path;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -18,18 +17,15 @@ use crate::{auth, media, store, Error, MAX_REGISTER_BODY};
 
 pub(crate) const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
 
-pub(crate) fn router(data_dir: &Path, origin: String) -> Result<Router, Error> {
-    store::prepare(data_dir)?;
-    let conn = store::open(data_dir)?;
-    let state = AppState::new(data_dir.to_path_buf(), conn, origin);
+pub(crate) fn router(state: AppState) -> Router {
     // `Router::new()` is the route table. `.with_state` is how every handler
     // receives the same `AppState` (like a singleton injected into servlets).
-    Ok(Router::new()
+    Router::new()
         .route("/api/health", get(health))
         .route("/api/register-key", post(register_key))
         .merge(media::router())
         .layer(tower_http::trace::TraceLayer::new_for_http())
-        .with_state(state))
+        .with_state(state)
 }
 
 /// One deadline for the complete body read; chunks do not reset the timer.

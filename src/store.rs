@@ -2,7 +2,8 @@
 //!
 //! ```text
 //! /var/lib/i2nclip/i2nclip.db
-//! /var/lib/i2nclip/blobs/<uuid>
+//! /var/lib/i2nclip/blobs/<ciphertext_sha256>
+//! /var/lib/i2nclip/staging/<ciphertext_sha256>
 //! ```
 //!
 //! `rusqlite` is a blocking SQLite API, closer to JDBC than to an async
@@ -13,10 +14,9 @@
 //! `?N` placeholder numbers themselves.
 //!
 //! The owner column is the 32-byte public key taken from the signature.
-//! Every read and write includes `owner = ?`, so knowing a UUID is not enough
+//! Every read and write includes `owner = ?`, so knowing a content hash is not enough
 //! to fetch someone else's file.
 
-use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
@@ -34,7 +34,6 @@ use rusqlite::Transaction;
 use rusqlite::TransactionBehavior;
 use sha2::Digest;
 use sha2::Sha256;
-use uuid::Uuid;
 
 use crate::crypto;
 use crate::frame;
@@ -44,7 +43,7 @@ use crate::MAX_META;
 use crate::PAGE;
 
 const SCHEMA: &str = include_str!("../sql/001_init.sql");
-const UPLOAD_SLOTS: usize = 2;
+pub(crate) const UPLOAD_SLOTS: usize = 2;
 const DOWNLOAD_SLOTS: usize = 2;
 
 /// One stored object, still encrypted. `meta` is the ciphertext blob.
@@ -57,21 +56,15 @@ pub(crate) struct Item {
     pub tokens: Vec<String>,
 }
 
-/// Default for [`gc_orphan_blobs`]: skip orphan blobs newer than this (upload
-/// writes the file before the row exists).
-pub const GC_BLOB_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(3600);
+pub(crate) const GC_MIN_AGE_SECS: i64 = 7 * 24 * 60 * 60;
 
 /// Default lifetime for [`issue_registration_code`].
 pub const DEFAULT_REGISTRATION_TTL_SECS: u64 = 86400;
 
-/// Result of [`gc_orphan_blobs`]. `removed` lists lowercase ids. `ignored` counts
-/// directory entries that are not a regular file named like a stored id.
-/// `retained_young` counts uuid orphans left because their mtime is within `min_age`.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct GcBlobsReport {
-    pub removed: Vec<String>,
-    pub ignored: usize,
-    pub retained_young: usize,
+#[derive(Debug, Default)]
+pub(crate) struct GcReport {
+    pub removed: usize,
+    pub failed: usize,
 }
 
 /// Shared state for the process. `Clone` is cheap: it clones the `Arc`
@@ -110,7 +103,7 @@ impl AppState {
     }
 
     fn blob_path(&self, id: &str) -> PathBuf {
-        // `id` has already been checked to be a UUID with no slashes, so this
+        // `id` has already been checked to be a content hash with no slashes, so this
         // join cannot escape `blobs/`.
         self.data_dir.join("blobs").join(id)
     }
@@ -121,6 +114,8 @@ impl AppState {
 pub(crate) fn prepare(data_dir: &Path) -> Result<(), Error> {
     ensure_dir(data_dir, 0o700)?;
     ensure_dir(&data_dir.join("blobs"), 0o700)?;
+    ensure_dir(&data_dir.join("staging"), 0o700)?;
+    sync_dir(data_dir)?;
     Ok(())
 }
 
@@ -198,8 +193,8 @@ pub(crate) fn open(data_dir: &Path) -> Result<Connection, Error> {
     let path = data_dir.join("i2nclip.db");
     let conn = Connection::open(&path)?;
     set_mode(&path, 0o600)?;
-    // GC opens a second connection for a full-table read; WAL lets that overlap writes.
     conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "synchronous", "FULL")?;
     // Unlike Postgres, SQLite leaves foreign keys off until each connection
     // asks. Without this, `ON DELETE CASCADE` would not remove tag rows.
     conn.pragma_update(None, "foreign_keys", "ON")?;
@@ -237,12 +232,16 @@ pub(crate) fn remember_nonce(conn: &Connection, nonce: &str, ts: u64) -> Result<
 
 pub(crate) fn add(state: &AppState, owner: [u8; 32], body: &[u8]) -> Result<Item, Error> {
     let parts = frame::decode_post(body)?;
-    let id = parse_id(&parts.id)?;
     check_blob(&parts.meta, MAX_META)?;
     check_blob(&parts.content, MAX_CONTENT)?;
+    let id = crypto::body_hash(&parts.content);
+    let created = i64::try_from(crypto::now_secs()).unwrap_or(i64::MAX);
+    // Commit the cleanup intent before creating any file. Reserving the hash
+    // also makes concurrent identical uploads conflict without filesystem locks.
     {
-        let conn = state.lock()?;
-        let exists: bool = conn.query_row(
+        let mut conn = state.lock()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let exists: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM files WHERE id = ?1)",
             [&id],
             |row| row.get(0),
@@ -250,33 +249,31 @@ pub(crate) fn add(state: &AppState, owner: [u8; 32], body: &[u8]) -> Result<Item
         if exists {
             return Err(Error::Conflict);
         }
+        insert_staged_file(&tx, &id, created)?;
+        tx.commit()?;
+    }
+    let bytes = parts.content.len() as i64;
+    let temporary = state.data_dir.join("staging").join(&id);
+    write_new(&temporary, &parts.content)?;
+    let mut conn = state.lock()?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if tx.execute("DELETE FROM staged_files WHERE id = ?1", [&id])? != 1 {
+        return Err(Error::Conflict);
     }
     let path = state.blob_path(&id);
-    // Write the ciphertext first. If we crash before the INSERT, the blob is
-    // an orphan and is not listed. The other order would list a file that has
-    // no bytes.
-    if let Err(err) = write_new(&path, &parts.content) {
-        if err.to_string().contains("File exists") || matches_already_exists(&err) {
-            return Err(Error::Conflict);
-        }
-        return Err(err);
+    // All publishers reserve their hash in SQLite; trusted storage directories
+    // have no other writers. Never overwrite a pre-existing destination.
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => return Err(Error::Conflict),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
     }
-    let created = i64::try_from(crypto::now_secs()).unwrap_or(i64::MAX);
-    let bytes = i64::try_from(parts.content.len()).unwrap_or(i64::MAX);
-    let conn = state.lock()?;
-    let result = insert_file(
-        &conn,
-        &id,
-        &owner,
-        &parts.meta,
-        bytes,
-        created,
-        &parts.tokens,
-    );
-    if let Err(err) = result {
-        let _ = std::fs::remove_file(&path);
-        return Err(err);
-    }
+    std::fs::rename(&temporary, &path)?;
+    sync_dir(&state.data_dir.join("staging"))?;
+    sync_dir(&state.data_dir.join("blobs"))?;
+    insert_file(&tx, &id, &owner, &parts.meta, bytes, created, &parts.tokens)?;
+    // Failure leaves the committed intent to clean either filename later.
+    tx.commit()?;
     Ok(Item {
         id,
         meta: parts.meta,
@@ -284,6 +281,12 @@ pub(crate) fn add(state: &AppState, owner: [u8; 32], body: &[u8]) -> Result<Item
         created_at: created,
         tokens: parts.tokens,
     })
+}
+
+fn sync_dir(path: &Path) -> Result<(), Error> {
+    #[cfg(unix)]
+    std::fs::File::open(path)?.sync_all()?;
+    Ok(())
 }
 
 /// `after` is `(created_at, id)` of the last row already shown. Order is
@@ -375,7 +378,7 @@ pub(crate) fn parse_cursor(text: &str) -> Result<(i64, String), Error> {
 }
 
 /// Open the authorized blob while holding the database lock used by deletion.
-/// The returned handle pins this file even if its UUID is deleted and reused.
+/// The returned handle pins this file even if its hash is deleted and reused.
 pub(crate) fn open_content(
     state: &AppState,
     owner: [u8; 32],
@@ -440,104 +443,94 @@ pub(crate) fn update_meta(
     })
 }
 
-/// Delete files under `blobs/` whose names are valid ids with no `files` row.
-/// Upload writes the blob before the INSERT; a crash in between leaves orphans.
-/// Orphans whose modification time is newer than `min_age` are skipped so a slow
-/// upload cannot lose its blob to a concurrent GC. Names that are not a lowercase
-/// uuid are left alone. With `dry_run`, nothing is deleted but `removed` still
-/// lists what would go.
-pub fn gc_orphan_blobs(
-    data_dir: &Path,
-    dry_run: bool,
-    min_age: std::time::Duration,
-) -> Result<GcBlobsReport, Error> {
-    let conn = open(data_dir)?;
-    let mut ids = HashSet::new();
-    let mut stmt = conn.prepare("SELECT id FROM files")?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-    for row in rows {
-        ids.insert(row?);
-    }
-    drop(stmt);
-    drop(conn);
-
-    let blobs = data_dir.join("blobs");
-    let read = match std::fs::read_dir(&blobs) {
-        Ok(read) => read,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(GcBlobsReport::default())
-        }
-        Err(err) => return Err(err.into()),
+/// The caller holds every upload permit until this blocking sweep returns.
+pub(crate) fn gc_staged_files(state: &AppState, cutoff: i64) -> Result<GcReport, Error> {
+    let candidates = {
+        let conn = state.lock()?;
+        let mut stmt = conn.prepare("SELECT id FROM staged_files WHERE created_at < ?1")?;
+        let rows = stmt.query_map([cutoff], |row| row.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
     };
-
-    let mut report = GcBlobsReport::default();
-    for entry in read {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        if !file_type.is_file() {
-            report.ignored += 1;
-            continue;
-        }
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            report.ignored += 1;
-            continue;
-        };
-        let Ok(id) = parse_id(name) else {
-            report.ignored += 1;
-            continue;
-        };
-        if ids.contains(&id) {
-            continue;
-        }
-        let meta = entry.metadata()?;
-        let modified = match meta.modified() {
-            Ok(t) => t,
-            Err(_) => {
-                report.retained_young += 1;
-                continue;
+    let mut report = GcReport::default();
+    for id in candidates {
+        let result = state
+            .lock()
+            .and_then(|mut conn| clean_staged_file(&mut conn, &state.data_dir, &id, cutoff));
+        match result {
+            Ok(true) => report.removed += 1,
+            Ok(false) => {}
+            Err(err) => {
+                report.failed += 1;
+                tracing::error!(%id, %err, "GC cleanup failed; intent retained");
             }
-        };
-        let Ok(age) = std::time::SystemTime::now().duration_since(modified) else {
-            report.retained_young += 1;
-            continue;
-        };
-        if age < min_age {
-            report.retained_young += 1;
-            continue;
         }
-        if !dry_run {
-            std::fs::remove_file(entry.path())?;
-        }
-        report.removed.push(id);
     }
-    report.removed.sort();
     Ok(report)
+}
+
+fn clean_staged_file(
+    conn: &mut Connection,
+    data_dir: &Path,
+    id: &str,
+    cutoff: i64,
+) -> Result<bool, Error> {
+    let id = parse_id(id)?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let eligible: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM staged_files WHERE id = ?1 AND created_at < ?2)",
+        params![id, cutoff],
+        |row| row.get(0),
+    )?;
+    if !eligible {
+        return Ok(false);
+    }
+    let live: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM files WHERE id = ?1)",
+        [&id],
+        |row| row.get(0),
+    )?;
+    if live {
+        return Err(std::io::Error::other("staged hash also has a live file row").into());
+    }
+    for directory in ["staging", "blobs"] {
+        match std::fs::remove_file(data_dir.join(directory).join(&id)) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
+        // Persist removals before forgetting their cleanup intent.
+        sync_dir(&data_dir.join(directory))?;
+    }
+    tx.execute("DELETE FROM staged_files WHERE id = ?1", [&id])?;
+    tx.commit()?;
+    Ok(true)
 }
 
 pub(crate) fn remove(state: &AppState, owner: [u8; 32], id: &str) -> Result<(), Error> {
     let id = parse_id(id)?;
-    let path = state.blob_path(&id);
+    // Keep the process mutex across both transactions and unlinking so another
+    // request cannot reserve this hash between cleanup and its final commit.
+    let mut conn = state.lock()?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if tx.execute(
+        "DELETE FROM files WHERE id = ?1 AND owner = ?2",
+        params![id, owner.as_slice()],
+    )? == 0
     {
-        let conn = state.lock()?;
-        let deleted = conn.execute(
-            "DELETE FROM files WHERE id = ?1 AND owner = ?2",
-            params![id, owner.as_slice()],
-        )?;
-        if deleted == 0 {
-            return Err(Error::NotFound);
-        }
+        return Err(Error::NotFound);
     }
-    // The row is already gone, so a missing blob is not a failed delete.
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err.into()),
-    }
+    insert_staged_file(
+        &tx,
+        &id,
+        i64::try_from(crypto::now_secs()).unwrap_or(i64::MAX),
+    )?;
+    tx.commit()?;
+    clean_staged_file(&mut conn, &state.data_dir, &id, i64::MAX)?;
+    Ok(())
 }
 
 fn insert_file(
-    conn: &Connection,
+    tx: &Transaction<'_>,
     id: &str,
     owner: &[u8; 32],
     meta: &[u8],
@@ -545,13 +538,22 @@ fn insert_file(
     created: i64,
     tokens: &[String],
 ) -> Result<(), Error> {
-    let tx = conn.unchecked_transaction()?;
     tx.execute(
         "INSERT INTO files (id, owner, meta, bytes, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![id, owner.as_slice(), meta, bytes, created],
     )?;
-    replace_tokens(&tx, id, tokens)?;
-    tx.commit()?;
+    replace_tokens(tx, id, tokens)?;
+    Ok(())
+}
+
+fn insert_staged_file(tx: &Transaction<'_>, id: &str, created: i64) -> Result<(), Error> {
+    let inserted = tx.execute(
+        "INSERT INTO staged_files (id, created_at) VALUES (?1, ?2) ON CONFLICT (id) DO NOTHING",
+        params![id, created],
+    )?;
+    if inserted != 1 {
+        return Err(Error::Conflict);
+    }
     Ok(())
 }
 
@@ -566,20 +568,14 @@ fn replace_tokens(tx: &Transaction<'_>, id: &str, tokens: &[String]) -> Result<(
     Ok(())
 }
 
-/// `Uuid::parse_str` accepts uppercase hex. We refuse it. The exact string is
-/// mixed into the AES-GCM associated data, so rewriting the id would make the
-/// owner's own file fail to decrypt.
+/// Canonical SHA-256 of the complete sealed content.
 fn parse_id(id: &str) -> Result<String, Error> {
-    let Ok(uuid) = Uuid::parse_str(id) else {
-        return Err(Error::BadRequest("id must be a uuid".into()));
-    };
-    let canonical = uuid.as_hyphenated().to_string();
-    if canonical != id {
+    if id.len() != 64 || !id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
         return Err(Error::BadRequest(
-            "id must be a lowercase uuid, the same string used when encrypting".into(),
+            "id must be a lowercase SHA-256 hash".into(),
         ));
     }
-    Ok(canonical)
+    Ok(id.to_string())
 }
 
 fn check_blob(bytes: &[u8], max: usize) -> Result<(), Error> {
@@ -589,13 +585,6 @@ fn check_blob(bytes: &[u8], max: usize) -> Result<(), Error> {
         Err(Error::BadRequest(
             "encrypted blob required (version byte, not a raw file)".into(),
         ))
-    }
-}
-
-fn matches_already_exists(err: &Error) -> bool {
-    match err {
-        Error::Io(err) => err.kind() == std::io::ErrorKind::AlreadyExists,
-        _ => false,
     }
 }
 
@@ -633,106 +622,196 @@ fn write_new_with(
         options.mode(0o600);
     }
     let mut file = options.open(path)?;
-    let result = write(&mut file)
-        .and_then(|()| file.sync_all())
-        .and_then(|()| {
-            #[cfg(unix)]
-            std::fs::File::open(path.parent().expect("blob parent"))?.sync_all()?;
-            Ok(())
-        });
-    if let Err(error) = result {
-        drop(file);
-        let _ = std::fs::remove_file(path);
-        return Err(error.into());
-    }
+    write(&mut file)?;
+    file.sync_all()?;
+    sync_dir(path.parent().expect("file parent"))?;
     Ok(())
 }
 
 #[cfg(test)]
-mod gc_tests {
+mod journal_tests {
     use super::*;
-    use std::fs;
-
+    struct Fixture(AppState, PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("i2nclip-journal-{}", crypto::fresh_nonce()));
+            prepare(&dir).unwrap();
+            Self(
+                AppState::new(
+                    dir.clone(),
+                    open(&dir).unwrap(),
+                    "http://i2nclip.test".into(),
+                ),
+                dir,
+            )
+        }
+        fn intent(&self, id: &str, created: i64) {
+            self.0
+                .lock()
+                .unwrap()
+                .execute(
+                    "INSERT INTO staged_files VALUES (?1, ?2)",
+                    params![id, created],
+                )
+                .unwrap();
+        }
+        fn count(&self, table: &str) -> i64 {
+            self.0
+                .lock()
+                .unwrap()
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap()
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.1);
+        }
+    }
+    fn body() -> (String, Vec<u8>) {
+        let content = crypto::encrypt(&[7; 32], &crypto::content_aad(), b"content").unwrap();
+        let id = crypto::body_hash(&content);
+        let meta = crypto::encrypt(&[7; 32], &crypto::meta_aad(&id), b"{}").unwrap();
+        (id, frame::encode_post(&meta, &content, ""))
+    }
     #[test]
-    fn failed_blob_write_removes_partial_file_and_allows_retry() {
-        let dir = std::env::temp_dir().join(format!("i2nclip-write-{}", crypto::fresh_nonce()));
-        prepare(&dir).unwrap();
-        let path = dir.join("blobs").join("partial");
+    fn successful_publication_conflict_and_journaled_deletion() {
+        let f = Fixture::new();
+        let (id, body) = body();
+        add(&f.0, [7; 32], &body).unwrap();
+        assert_eq!(f.count("staged_files"), 0);
+        assert_eq!(std::fs::read_dir(f.1.join("staging")).unwrap().count(), 0);
+        assert!(!f.1.join("locks").exists());
+        assert!(matches!(add(&f.0, [8; 32], &body), Err(Error::Conflict)));
+        let (mut file, _) = open_content(&f.0, [7; 32], &id).unwrap();
+        remove(&f.0, [7; 32], &id).unwrap();
+        assert_eq!(f.count("files"), 0);
+        assert_eq!(f.count("staged_files"), 0);
+        assert!(!f.1.join("blobs").join(id).exists());
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        assert!(!bytes.is_empty());
+    }
+    #[test]
+    fn failed_publication_commit_preserves_cleanup_intent() {
+        let f = Fixture::new();
+        let (id, body) = body();
+        f.0.lock().unwrap().execute_batch("CREATE TABLE guard_keys (id INTEGER PRIMARY KEY);
+        CREATE TABLE commit_guard (id INTEGER REFERENCES guard_keys(id) DEFERRABLE INITIALLY DEFERRED);
+        CREATE TRIGGER fail_commit AFTER INSERT ON files BEGIN INSERT INTO commit_guard VALUES (1); END;").unwrap();
+        assert!(add(&f.0, [7; 32], &body).is_err());
+        assert_eq!(f.count("files"), 0);
+        assert_eq!(f.count("staged_files"), 1);
+        assert!(f.1.join("blobs").join(&id).exists());
+        assert!(matches!(add(&f.0, [7; 32], &body), Err(Error::Conflict)));
+        assert_eq!(gc_staged_files(&f.0, i64::MAX).unwrap().removed, 1);
+        assert!(!f.1.join("blobs").join(&id).exists());
+        f.0.lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER fail_commit")
+            .unwrap();
+        add(&f.0, [7; 32], &body).unwrap();
+    }
+    #[test]
+    fn gc_handles_every_interrupted_upload_state_and_keeps_fresh_intents() {
+        let f = Fixture::new();
+        for (index, dirs) in [
+            vec![],
+            vec!["staging"],
+            vec!["blobs"],
+            vec!["staging", "blobs"],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let id = format!("{index:064x}");
+            f.intent(&id, 1);
+            for dir in dirs {
+                std::fs::write(f.1.join(dir).join(&id), b"partial").unwrap();
+            }
+        }
+        let fresh = "f".repeat(64);
+        f.intent(&fresh, 10);
+        assert_eq!(gc_staged_files(&f.0, 10).unwrap().removed, 4);
+        assert_eq!(f.count("staged_files"), 1);
+        assert_eq!(std::fs::read_dir(f.1.join("blobs")).unwrap().count(), 0);
+        assert_eq!(std::fs::read_dir(f.1.join("staging")).unwrap().count(), 0);
+    }
+    #[test]
+    fn cleanup_errors_retain_intents_and_do_not_stop_other_candidates() {
+        let f = Fixture::new();
+        let bad = "a".repeat(64);
+        let good = "b".repeat(64);
+        f.intent(&bad, 1);
+        f.intent(&good, 1);
+        std::fs::create_dir(f.1.join("staging").join(&bad)).unwrap();
+        let report = gc_staged_files(&f.0, 2).unwrap();
+        assert_eq!(report.failed, 1);
+        assert_eq!(report.removed, 1);
+        assert_eq!(f.count("staged_files"), 1);
+        std::fs::remove_dir(f.1.join("staging").join(&bad)).unwrap();
+        assert_eq!(gc_staged_files(&f.0, 2).unwrap().removed, 1);
+    }
+    #[test]
+    fn failed_cleanup_commit_is_retryable_after_unlink() {
+        let f = Fixture::new();
+        let id = "a".repeat(64);
+        f.intent(&id, 1);
+        std::fs::write(f.1.join("blobs").join(&id), b"abandoned").unwrap();
+        f.0.lock().unwrap().execute_batch("CREATE TABLE guard_keys(id INTEGER PRIMARY KEY);
+        CREATE TABLE commit_guard(id INTEGER REFERENCES guard_keys(id) DEFERRABLE INITIALLY DEFERRED);
+        CREATE TRIGGER fail_cleanup AFTER DELETE ON staged_files BEGIN INSERT INTO commit_guard VALUES(1); END;").unwrap();
+        assert_eq!(gc_staged_files(&f.0, 2).unwrap().failed, 1);
+        assert_eq!(f.count("staged_files"), 1);
+        assert!(!f.1.join("blobs").join(&id).exists());
+        f.0.lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER fail_cleanup")
+            .unwrap();
+        assert_eq!(gc_staged_files(&f.0, 2).unwrap().removed, 1);
+    }
+    #[test]
+    fn partial_write_and_interrupted_delete_stay_tracked() {
+        let f = Fixture::new();
+        let partial = "c".repeat(64);
+        f.intent(&partial, 1);
+        let path = f.1.join("staging").join(&partial);
         assert!(write_new_with(&path, |file| {
             file.write_all(b"partial")?;
-            Err(std::io::Error::other("injected disk failure"))
+            Err(std::io::Error::other("injected write failure"))
         })
         .is_err());
+        assert!(path.exists());
+        let (id, body) = body();
+        add(&f.0, [7; 32], &body).unwrap();
+        {
+            let mut conn = f.0.lock().unwrap();
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .unwrap();
+            tx.execute("DELETE FROM files WHERE id = ?1", [&id])
+                .unwrap();
+            insert_staged_file(&tx, &id, 1).unwrap();
+            tx.commit().unwrap();
+        }
+        assert!(f.1.join("blobs").join(&id).exists());
+        assert_eq!(gc_staged_files(&f.0, 2).unwrap().removed, 2);
         assert!(!path.exists());
-        write_new(&path, b"complete").unwrap();
-        assert_eq!(fs::read(&path).unwrap(), b"complete");
-        assert!(write_new(&path, b"overwrite").is_err());
-        assert_eq!(fs::read(&path).unwrap(), b"complete");
-        fs::remove_dir_all(dir).unwrap();
+        assert!(!f.1.join("blobs").join(&id).exists());
+        assert_eq!(f.count("staged_files"), 0);
     }
 
     #[test]
-    fn gc_removes_orphans_and_keeps_indexed_blobs() {
-        let dir = std::env::temp_dir().join(format!(
-            "i2nclip-gc-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        prepare(&dir).unwrap();
-        let conn = open(&dir).unwrap();
-        let kept = "11111111-1111-4111-8111-111111111111";
-        let orphan = "22222222-2222-4222-8222-222222222222";
-        insert_file(
-            &conn,
-            kept,
-            &[7u8; 32],
-            b"\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
-            16,
-            1,
-            &[],
-        )
-        .unwrap();
-        drop(conn);
-        fs::write(dir.join("blobs").join(kept), b"kept").unwrap();
-        fs::write(dir.join("blobs").join(orphan), b"orphan").unwrap();
-        fs::write(dir.join("blobs").join("not-a-uuid"), b"x").unwrap();
-
-        let no_min = std::time::Duration::ZERO;
-        let dry = gc_orphan_blobs(&dir, true, no_min).unwrap();
-        assert_eq!(dry.removed, vec![orphan.to_string()]);
-        assert!(dir.join("blobs").join(orphan).exists());
-
-        let live = gc_orphan_blobs(&dir, false, no_min).unwrap();
-        assert_eq!(live.removed, vec![orphan.to_string()]);
-        assert!(!dir.join("blobs").join(orphan).exists());
-        assert!(dir.join("blobs").join(kept).exists());
-        assert_eq!(live.ignored, 1);
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn gc_skips_young_orphans() {
-        let dir = std::env::temp_dir().join(format!(
-            "i2nclip-gc-young-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        prepare(&dir).unwrap();
-        let orphan = "33333333-3333-4333-8333-333333333333";
-        fs::write(dir.join("blobs").join(orphan), b"orphan").unwrap();
-
-        let report = gc_orphan_blobs(&dir, false, GC_BLOB_MIN_AGE).unwrap();
-        assert!(report.removed.is_empty());
-        assert_eq!(report.retained_young, 1);
-        assert!(dir.join("blobs").join(orphan).exists());
-
-        let _ = fs::remove_dir_all(&dir);
+    fn stale_gc_candidate_cannot_delete_a_live_blob() {
+        let f = Fixture::new();
+        let (id, body) = body();
+        add(&f.0, [7; 32], &body).unwrap();
+        assert!(!clean_staged_file(&mut f.0.lock().unwrap(), &f.1, &id, i64::MAX).unwrap());
+        assert!(f.1.join("blobs").join(&id).exists());
+        f.intent(&id, 1);
+        assert_eq!(gc_staged_files(&f.0, 2).unwrap().failed, 1);
+        assert!(f.1.join("blobs").join(&id).exists());
     }
 }

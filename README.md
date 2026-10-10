@@ -78,26 +78,17 @@ Typical setup:
 2. Point the proxy at `http://127.0.0.1:8080` (or the container on an internal network) and do not expose 8080 on the public internet unless you intend to.
 3. Issue a one-time code for each new user (`i2nclip otc issue`) and send it to them over a trusted channel.
 
-Data lives in the volume: `i2nclip.db`, `blobs/`, and registered public keys. Back up the whole directory.
+Data lives in the volume: `i2nclip.db`, `blobs/`, `staging/`, and registered public keys. Back up the whole directory. Run one server process per data volume.
 
-### Orphan blob cleanup
+Uploads commit a `staged_files(id, created_at)` cleanup intent before writing `staging/<hash>`. After syncing the file, publication renames it to `blobs/<hash>`, syncs both directories, and atomically replaces the intent with the media row and tags. DELETE journals its cleanup too. Both directories must be on the same filesystem. There are no file locks.
 
-Upload writes `blobs/<id>` before the SQLite row exists. A crash in between leaves a file that nothing lists. The server does not remove these automatically.
-
-```sh
-i2nclip gc-blobs --dry-run   # list eligible orphans
-i2nclip gc-blobs             # delete them (default: blob mtime at least 1 hour old)
-i2nclip gc-blobs --min-age 0 # no age guard (tests / manual only)
-```
-
-Schedule `gc-blobs` periodically (cron or a systemd timer), for example weekly:
+Request GC in the running container from the host:
 
 ```sh
-podman exec i2nclip i2nclip gc-blobs --dry-run
-podman exec i2nclip i2nclip gc-blobs
+podman kill --signal USR1 i2nclip
 ```
 
-Only files named like a lowercase uuid with no matching `files.id` are candidates. Orphans newer than the minimum age (one hour by default) are left in place so GC cannot delete a blob while an upload is still inserting its row. Anything else under `blobs/` is counted as ignored and left in place.
+A systemd timer can send this signal periodically. GC waits for active uploads, pauses upload admission during its sweep, and removes pending files older than seven days. Failed cleanup retains the intent for retry. See [doc/gc.md](doc/gc.md) for crash guarantees and operational assumptions.
 
 The SQLite database uses WAL mode so a GC read can overlap normal writes. Back up or copy `i2nclip.db` together with `i2nclip.db-wal` and `i2nclip.db-shm`, or checkpoint first.
 
@@ -107,7 +98,7 @@ This does not repair the opposite problem (a row with a missing blob). Download 
 
 One Ed25519 signature covers the origin, time, a one-time nonce, the method, the path, and the SHA-256 of the body. The hash is in the `Authorization` header, so the server checks the signature before it reads the body, then checks that the bytes match. A signature is good for five minutes and cannot be replayed. Each file is at most 32 MB.
 
-Duplicate upload UUIDs return `409`, even for identical files. If an upload response is lost, refresh the library before uploading again: a retry cannot confirm whether the original upload succeeded. The extension keeps the UUID across retries to avoid creating another copy.
+Item identifiers are hashes of complete sealed content. An existing hash returns `409`, globally across owners. Different encryptions normally produce different hashes because of fresh AES-GCM nonces. A retry that re-encrypts can create another item; refresh the library after a lost response before retrying. Content URLs are immutable, while metadata and lists use `no-store`.
 
 ## Extension
 

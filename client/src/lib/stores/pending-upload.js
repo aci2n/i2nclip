@@ -63,7 +63,6 @@ export function createPendingUpload(
 			request?.abort();
 			request = null;
 			credentials = null;
-			if (source) source = { ...source, id: crypto.randomUUID() };
 			state.update((value) => ({
 				...value,
 				busy: false,
@@ -81,7 +80,6 @@ export function createPendingUpload(
 				platform,
 				preparation.signal,
 			);
-			source = { ...source, id: source.id || crypto.randomUUID() };
 			preparation.signal.throwIfAborted();
 			if (source.blob.type.startsWith("image/"))
 				preview = URL.createObjectURL(source.blob);

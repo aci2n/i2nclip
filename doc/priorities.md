@@ -1,81 +1,44 @@
 # Backend improvement priorities
 
-Status: upload receipt removal, strict Ed25519 validation, browser-compatible origin normalization, body-read deadlines, endpoint-specific byte caps, two-upload admission, and bounded download streaming implemented with user approval; remaining changes are proposals. Updated 2026-10-10. The detailed findings and security boundaries are in [backend-review.md](backend-review.md).
+Current storage supersedes the historical file-lock verification below: uploads and deletions use a durable staged-file journal, and SIGUSR1 runs GC in the single server process. See [gc.md](gc.md).
+
+
+Status: strict Ed25519 validation, browser-compatible origins, endpoint body caps/deadlines, upload/download admission, bounded download streaming, content-hash identifiers, and coordinated blob publication implemented. The project is greenfield: update the initial schema and protocol directly, retaining current version labels. No legacy migration is required.
 
 ## Completed
 
-- Removed upload receipts, their redundant body hashing, and the client's cached-request replay path.
-- Duplicate UUID uploads return `409`, including identical payloads. Existing databases drop the obsolete table on startup while preserving media and tags.
-- Client upload flows retain source UUIDs across retries. After a lost successful response, users must check the library; retries cannot confirm success.
-- Verification passed: `make test` (54 client tests, 18 Rust tests, Svelte checker), `make extension`, and checks on changed-file formatting.
-- Strict Ed25519 validation: registration rejects invalid/weak points before spending invitations, and strict request verification rejects legacy weak-key forgeries before reading bodies or persisting nonces. Valid-client headers, signatures, and encrypted formats are preserved; existing key rows remain stored.
-- Strict-validation verification passed: `make test` with Node v22.23.3 (54 client tests, 22 Rust tests, and Svelte checks with zero errors/warnings), touched-file Rust formatting, and `git diff --check`.
-- Browser-compatible origin normalization: replaced manual host/port normalization with `url::Url` origin serialization and explicit origin-only configuration checks. Shared fixtures compare Rust output with JavaScript URL origins, and API tests verify canonical-origin signatures against every accepted configured origin.
-- Origin-normalization verification passed: `make test` with Node v22.23.3 (55 client tests, 24 Rust tests, Svelte checks with zero errors/warnings), `make extension` without warnings, Rust/JavaScript/fixture formatting checks, and `git diff --check`.
-- Total body-read deadlines: 120 seconds for uploads, 30 seconds for metadata PUTs, and 10 seconds for media GET/DELETE and registration. Timed-out reads release bodies/partial buffers and return `408`. Paused-clock tests cover trickling, cleanup, per-endpoint deadlines, spent nonces, and preserved invitations. Byte caps and upload admission remain unchanged.
-- Deadline verification passed: `make test` with Node v22.23.3 (55 client tests, 27 Rust tests, Svelte checks with zero errors/warnings), `make extension` without warnings, touched-file Rust formatting, and `git diff --check`.
-- Endpoint-specific byte caps: GET/DELETE require empty bodies, PUT allows 69,640 bytes, POST retains 33,624,180 bytes, and registration retains 4,096 bytes. Early declared-length checks and streaming reads enforce the same media cap after authentication. Frame decoding and cap calculations share one token-text bound.
-- Byte-cap verification passed: `make test` with Node v22.23.3 (55 client tests, 30 Rust tests, Svelte checks with zero errors/warnings), `make extension` without warnings, touched-file Rust formatting, and `git diff --check`. API tests cover exact boundaries, rejection before body polling, and streamed overflow with missing or dishonest Content-Length.
-- Two-upload admission: authenticated uploads acquire a shared slot without waiting before reading; saturation returns `503` with `Retry-After: 1`. Permits remain with buffered bytes through hashing and blocking storage, including cancelled HTTP tasks.
+- Upload receipts and cached-request replay were removed. Exact duplicate sealed-content hashes now return `409` globally, including across owners.
+- Registration rejects invalid/weak Ed25519 points before spending invitations; strict verification rejects forged requests before body reading or nonce insertion.
+- Origin parsing matches browser URL origins, with shared fixtures and authenticated API coverage.
+- Total body-read deadlines: POST 120 seconds, PUT 30 seconds, media GET/DELETE and registration 10 seconds. GET/DELETE have empty bodies; POST is capped at 33,624,140 bytes, PUT at 69,640, registration at 4,096.
+- Uploads and downloads each have two admission slots per router. Permits survive blocking work and response lifetime as appropriate.
+- Download files are size-validated and streamed in at most 64 KiB chunks. Cancellation, completion, and errors release response capacity.
+- Flat `src/`: `media.rs` owns media routes and `MediaRequest`; `routes.rs` assembles the router and provides health/registration and shared helpers.
+- UUIDs are removed. SHA-256 of complete sealed content is the identifier, blob filename, and content URL. Metadata AAD binds its ciphertext to this hash; clients verify downloaded hashes before decrypting. Immutable content caching remains valid; metadata/list responses stay `no-store`.
+- Publication and deletion use the durable `staged_files(id, created_at)` journal, without file locks. SIGUSR1 triggers GC in the running server; it pauses uploads and cleans intents older than seven days. See [gc.md](gc.md).
+- The initial schema includes `nonces(expires)` and the pagination index `(owner, created_at DESC, id ASC)`. Typed file-exists handling replaces error-string matching.
 
-- Admission verification passed: `make test` with Node v22.23.3 (55 client tests, 32 Rust tests, Svelte checks with zero errors/warnings), `make extension` without warnings, touched-file Rust formatting, and `git diff --check`. Tests cover shared admission, no body polling on saturation, nonce consumption, error cleanup, cancellation, and blocking-worker permit retention.
+## Remaining order
 
-- Flat HTTP module split: `src/media.rs` owns media routes and private `MediaRequest` policy; `src/routes.rs` owns assembly, health/registration, and shared HTTP helpers. Request order and upload permit ownership are preserved. Verification passed: 55 client tests, 32 Rust tests, Svelte checker, extension build, formatting, and `git diff --check`.
-
-- Download admission and streaming: two separate download slots, 64 KiB chunks, stored-size/file-length validation, and opened-file ownership preserved across API deletion and UUID reuse. Response completion, errors, and disposal release capacity. Cross-process GC coordination remains priority 7.
-
-- Download verification: 55 client tests and the Svelte checker passed; the extension build and Rust formatting/diff checks passed without warnings. The full Rust run passed 33 tests and failed only `startup_removes_legacy_receipts_and_preserves_media`: a concurrent edit to `sql/001_init.sql` removed the legacy receipt-table drop. That separate SQL edit was preserved. All 33 remaining Rust tests, including both new download tests and partial-response disposal, passed with that test explicitly filtered out.
-
-## Proposed order
-
-Priority indicates urgency; order separates changes into independently reviewable steps. P1 findings are medium-severity issues, not demonstrated compromise of normally generated library keys.
-
-| Order | Priority | Change | Result and acceptance criteria |
+| Order | Priority | Change | Acceptance criteria |
 | --- | --- | --- | --- |
-| 1 | P1 — complete | Validate registered Ed25519 points, reject weak keys, and use strict request verification | Invalid/weak registrations return `400` without consuming an invitation; forged requests under legacy weak keys return `401`; valid clients and vectors remain compatible. Implementation scope below. |
-| 2 | P1 — complete | Replace manual origin normalization with browser-compatible URL parsing | Uppercase hosts, IDNA, IPv6, and default/nondefault ports serialize consistently with the browser. Invalid ports, credentials, paths beyond an optional root slash, queries, and fragments fail configuration validation. Parser-repaired inputs and collapsed raw paths are also rejected. |
-| 3 | P1 — complete | Set endpoint-specific body caps, body-read deadlines, and a bound on concurrent large transfers | Byte caps and total body-read deadlines are implemented. Uploads now have two slots before buffering, held through blocking storage. Downloads have two separate slots and stream bounded chunks from validated opened files. See the request-limit document for concrete limits. |
-| 4 | P2 | Replace year-long immutable content caching with `no-store` | Delete/recreate of an ID returns current content, and client content fetches bypass previously cached responses. Verify response headers, delete/recreate behavior, and actual browser caching. This avoids permanent UUID tombstones or a new versioned URL format. |
-| 5 | P2 | Borrow content and metadata slices during upload frame decoding | Remove large frame-to-content copies while retaining bounds, UTF-8 checks, trailing-byte rejection, and identical wire bytes. Preserve vector and malformed-frame tests. |
-| 6 | P2 | Add an index on nonce expiry | Existing databases gain `nonces(expires)` through idempotent schema setup. Keep atomic replay rejection and the same timestamp/expiry rules. Defer scheduled cleanup until measurements justify it. |
-| 7 | P2 | Coordinate GC, upload publication, deletion, and download opening | Protect active blobs and avoid ownership-check/read races when IDs are reused. Because GC runs in another process, an in-process mutex alone is insufficient. Propose a small cross-process locking strategy with an explicit lock order, reference rechecks, and deterministic race tests before implementing. |
-| 8 | P3 | Separate server verification from reference-client crypto helpers | Make the production server's public-key-only responsibilities clear. Keep shared Rust/JS vectors and avoid creating a framework or changing cryptographic inputs. |
-| 9 | P3 | Simplify database parameters and request parsing | Use `rusqlite::types::Value` and `params_from_iter`, reuse the tag query statement, and parse list parameters only on list requests. Preserve ownership filtering, AND search, pagination order, and exact signed request targets. |
-| 10 | P3 | Remove redundant error-string matching and trim tutorial comments | Use typed `AlreadyExists` checks. Retain comments about AAD, ownership, replay, limits, and crash ordering. Correct the multipart/signature explanation. |
+| 5 | P2 | Borrow content/metadata slices during frame decoding | Eliminate large frame-to-content copies while retaining bounds, UTF-8/trailing-byte checks, permit ownership, and identical frame bytes. |
+| 8 | P3 | Separate server verification from reference-client crypto helpers | Make public-key-only server responsibilities clear. Preserve shared Rust/JS vectors without adding a framework. |
+| 9 | P3 | Simplify database parameters and request parsing | Use `rusqlite::types::Value` and `params_from_iter`, reuse tag statements, and parse list parameters only on list requests. Preserve ownership, AND search, pagination, and signed targets. |
+| 10 | P3 | Trim tutorial comments | Retain explanations of AAD, ownership, replay, limits, lock order, and crash ordering. |
 
-Storage quotas become P1 before expanding registration to less-trusted users. Propose account limits and total-disk policy then; current per-request limits do not bound persistent storage. Bounded/streamed downloads fit with steps 3 and 7 and require ensuring transfer permits live until the response body completes.
+Storage quotas become P1 before expanding registration to less-trusted users. Current transfer limits do not cap persistent storage. Rollback detection for metadata, collection completeness, key rotation, and per-file keys remain separate threat-model decisions.
 
-Keep client-generated UUIDs, existing encrypted blob/frame formats, and the signed-request envelope. Defer per-file keys, key rotation, authenticated revisions, a new protocol version, and a database pool until scale or threat requirements justify them. Rollback detection and collection completeness remain explicit security boundaries.
+## Next approval boundary
 
-## Implemented change: strict Ed25519 authentication
+Next proposed change: return borrowed slices from `frame::decode_post` and `decode_meta`, with the request buffer remaining owned by the blocking workflow. Do not implement additional priorities without approval.
 
-### Problem and expected behavior
+Re-encrypting a failed client upload creates fresh ciphertext and normally a new hash. An exact sealed-byte retry returns `409`; after a lost successful response, refresh the library before retrying to avoid creating another entry. No cached replay body or nonce reuse is introduced.
 
-Before this change, registration checked only that the public key was 32 bytes in canonical base64url. Request verification used dalek's ordinary `verify`. A confirmed probe used the encoded Edwards identity point (`01` followed by 31 zero bytes) and signature `R = identity, S = 0` to pass verification for an arbitrary message without a signing secret.
+## Verification
 
-The attack requires that weak key to have been registered using a valid invitation or inserted by an administrator. It does not let an attacker forge signatures for normally generated users. Nevertheless, the server's possession-of-secret requirement should apply to every registered namespace.
+The content-hash implementation passed under Node v22.23.3: `make test` (57 client tests, 38 Rust tests, Svelte checker with zero errors/warnings), all 69 Firefox E2E tests, `make extension`, touched-file Biome checks, Rust formatting, and `git diff --check`. Storage fault tests were also rerun after final staging-ownership cleanup.
 
-Invalid or low-order public keys now cannot be registered, and requests under previously stored weak keys fail strict verification. Normally generated identities continue working with the same headers and signatures. This uses the existing `ed25519-dalek` dependency; see its [weak-key and strict-verification documentation](https://docs.rs/ed25519-dalek/2.2.0/ed25519_dalek/struct.VerifyingKey.html#method.is_weak).
+The subsequent per-hash lock change passed `make test` (57 client tests, 39 Rust tests, Svelte checker with zero errors/warnings), `make extension`, Rust formatting, and `git diff --check`. Lock tests cover independent hashes, contention between separately opened descriptors, persistent lock files, and GC waiting for publication before checking current references. Firefox E2E was not rerun for this backend locking change.
 
-### Implementation scope
-
-1. In `src/auth.rs::parse_public_key`, retain canonical base64url and length checks, construct `ed25519_dalek::VerifyingKey::from_bytes`, and reject `is_weak()`. Map either failure to a fixed `Error::BadRequest("invalid public_key")`. Keep this check before `consume_registration_code`, so rejected registrations do not spend the invitation.
-2. In `src/crypto.rs::verify`, replace ordinary verification with `verify_strict`. Continue mapping point parsing, signature parsing, and verification failures to `Unauthorized`. Remove the now-unused `Verifier` trait import if no other call needs it.
-3. Keep existing database rows. Strict verification rejects legacy weak keys at request time; no automatic deletion, owner migration, or ciphertext rewrite is needed. If a manually provisioned weak key exists, it will stop authenticating; ordinary generated keys are unaffected.
-4. Update [protocol.md](protocol.md), [crypto.md](crypto.md), and the review/roadmap status to describe the implemented checks and compatibility boundary.
-
-No new crate, new endpoint, challenge flow, schema migration, client crypto change, or wire-format version is proposed. This step does not add a registration proof-of-possession exchange or claim full prime-order subgroup validation beyond dalek's documented parsing and strict checks.
-
-### Regression tests
-
-- Public-key parsing rejects the identity point, another known low-order point, and a fixed encoding verified to fail dalek point parsing. Keep malformed/noncanonical base64 coverage.
-- Crypto verification rejects `R = identity, S = 0` for a weak key and arbitrary message. Valid generated-key signatures still verify; tampered messages/signatures still fail.
-- API registration of a weak/invalid key returns `400`; the same invitation can subsequently register a valid key with `204`.
-- Insert a weak key directly into `registered_keys` to represent a legacy database. Submit its forged authenticated request and expect `401`. Use a body that fails if read to verify rejection occurs before payload processing; ensure its nonce was not persisted.
-- Retain the existing allow-list, replay, body-hash, origin, ownership, and shared Rust/JavaScript vector tests.
-
-Verification completed: focused library/API tests and `make test` using Node v22.23.3 passed, including all 22 Rust tests, 54 client tests, and shared Rust/JavaScript vectors. The Svelte checker reported zero errors and warnings. Touched-file Rust formatting and `git diff --check` passed. Client runtime and visual behavior did not change in this step, so Firefox visual review was unnecessary.
-
-### Next approval boundary
-
-Strict Ed25519 validation, origin normalization, total body-read deadlines, and endpoint-specific byte caps were approved and implemented. Two-upload admission is now implemented as described in [request limits](request-limits.md). Bounded download streaming is also implemented. Next: priority 4, content cache correctness; await approval before implementing it.
+The staged-journal rewrite passed 57 client tests, the Svelte checker with zero errors/warnings, and 40 Rust tests (including SIGUSR1 delivery, upload coordination, interrupted writes/deletes, and commit-failure cleanup). `make extension`, Rust formatting, and `git diff --check` passed. Clippy was unavailable in the installed Rust toolchain. Crash tests inject transaction failures and model interruption states; they do not simulate hardware power loss.

@@ -1,6 +1,6 @@
 # Request deadlines, body limits, and transfer admission
 
-Status: total body-read deadlines and endpoint-specific byte caps implemented with user approval. Two-upload and two-download admission are implemented. This completes priority 3 in [priorities.md](priorities.md). Storage quotas and cross-process garbage-collection coordination remain separate work.
+Status: body-read deadlines, byte caps, two-upload and two-download admission, and bounded streaming implemented. Cross-process blob coordination is also implemented; see [protocol.md](protocol.md). Storage quotas remain separate work.
 
 ## Implemented deadlines
 
@@ -10,7 +10,7 @@ Timeout returns `408` with `{"error":"request body timed out"}` and `Cache-Contr
 
 Byte caps now follow the table below: GET/DELETE require empty bodies, PUT allows its complete metadata frame, POST retains its existing full frame limit, and registration retains 4,096 bytes. Media limits apply to both early Content-Length checks and streamed bytes; authentication precedes both. The token-text bound is shared between frame validation and cap calculations. Test-only features enable controlled channel bodies and Tokio's paused clock, without adding production features or new crates.
 
-Verification passed: `make test` under Node v22.23.3 (55 client tests, 32 Rust tests, Svelte checker with zero errors/warnings), `make extension` without warnings, touched-file Rust formatting, and `git diff --check`.
+Current verification is recorded in [priorities.md](priorities.md).
 
 ## Implemented byte limits and admission
 
@@ -18,7 +18,7 @@ Verification passed: `make test` under Node v22.23.3 (55 client tests, 32 Rust t
 | --- | --- | --- |
 | Media GET and DELETE | 0 | 10 seconds |
 | Metadata PUT | 69,640 (two prefixes + 65,536 metadata + 4,096 token text) | 30 seconds |
-| Upload POST | 33,624,180 (existing limit) | 120 seconds |
+| Upload POST | 33,624,140 (three prefixes plus metadata, content, and token text) | 120 seconds |
 | Registration POST | 4,096 (existing limit) | 10 seconds |
 
 The implemented deadlines cover the entire body read, not just the interval between chunks. They apply even if a client keeps trickling bytes. A missing or dishonest Content-Length cannot bypass streaming byte counts. A nonempty GET/DELETE body returns `413`; an unfinished empty-body request times out. Oversized requests return `413`, expired body reads return `408`, and body transport failures retain the existing `400` response.
@@ -50,7 +50,7 @@ Completed: the selected limit applies to both Content-Length early rejection and
 
 **Permit ownership is the critical detail.** `BufferedBody` keeps the permit with the buffered body through hashing, frame decoding, and the blocking storage operation. Moving only the byte vector into `spawn_blocking` and dropping the permit when the HTTP task is cancelled would release capacity while the worker still retains the large buffer. Both move together into each blocking closure and return together from the hash stage. The storage stage drops its buffered body and permit after producing the storage result. Dropping a request while reading its body releases its permit normally.
 
-No dependency, database schema, signed-message layout, encrypted format, plaintext-file cap, or client retry semantics changes are introduced.
+Transfer limits do not alter signatures or plaintext caps. The current hash-identifier format removes the POST identifier field and uses content-hash metadata AAD. The staged-file journal and upload admission coordinate GC as described in [gc.md](gc.md).
 
 ## Tests and acceptance criteria
 
@@ -64,12 +64,10 @@ No dependency, database schema, signed-message layout, encrypted format, plainte
 
 ## Implemented download streaming
 
-Content GETs acquire one of two download slots after authenticated empty-body verification, without waiting. These slots are separate from upload slots. Saturation returns `503`, `{"error":"downloads busy; try again"}`, `Retry-After: 1`, and `Cache-Control: no-store`. The nonce has been spent. Capacity is checked before ownership lookup, so an authenticated saturated request returns `503` even for a missing/unowned UUID; without saturation those requests return `404`.
+Content GETs acquire one of two download slots after authenticated empty-body verification, without waiting. These slots are separate from upload slots. Saturation returns `503`, `{"error":"downloads busy; try again"}`, `Retry-After: 1`, and `Cache-Control: no-store`. The nonce has been spent. Capacity is checked before ownership lookup, so an authenticated saturated request returns `503` even for a missing/unowned hash; without saturation those requests return `404`.
 
-`store::open_content` queries the owner's stored ciphertext length and opens the file while holding the database mutex used by API deletion. Lengths must be between 29 bytes (minimum sealed blob) and 33,554,496 bytes (content cap), and the opened regular file's length must equal the indexed length. Invalid lengths/mismatches return `500` before response headers; missing files return `404`. The opened handle pins the original file across API deletion and UUID reuse. This coordinates one router's API operations; it does not solve separate-process GC races or arbitrary external file mutation.
+`store::open_content` queries the owner's stored ciphertext length and opens the file while holding the database mutex used by API deletion. Lengths must be between 29 bytes (minimum sealed blob) and 33,554,496 bytes (content cap), and the opened regular file's length must equal the indexed length. Invalid lengths/mismatches return `500` before response headers; missing files return `404`. The opened handle pins the original file across API deletion. Run one server per data volume; GC uses the same database mutex. Arbitrary external mutation remains outside the trusted-directory model.
 
-`media::content_response` streams the opened file with a 64 KiB chunk bound and Tokio file buffer bound. It sends exactly the indexed number of bytes and declares Content-Length. Later growth cannot expand the response; later truncation causes a transport/body error rather than successful short content. The permit travels with blocking file opening and then with stream state until EOF, an error, or response-body disposal. Tokio may finish an already started bounded file read after cancellation; no detached whole-file read is created. Existing content cache headers remain unchanged pending priority 4.
+`media::content_response` streams the opened file with a 64 KiB chunk bound and Tokio file buffer bound. It sends exactly the indexed number of bytes and declares Content-Length. Later growth cannot expand the response; later truncation causes a transport/body error rather than successful short content. The permit travels with blocking file opening and then with stream state until EOF, an error, or response-body disposal. Tokio may finish an already started bounded file read after cancellation; no detached whole-file read is created. Immutable cache headers are retained because content URLs now contain the sealed-content hash.
 
-Tests cover chunk bounds, shared admission, completion and partial/unpolled response disposal, owner isolation, API deletion/reuse with an active stream, invalid indexed sizes, mismatched/missing files, midstream truncation, and growth after opening. Storage quotas remain a deployment/trust-policy decision.
-
-Verification: 55 client tests and the Svelte checker passed; the extension build and Rust formatting/diff checks passed without warnings. The full Rust run passed 33 tests and failed only `startup_removes_legacy_receipts_and_preserves_media`: a concurrent edit to `sql/001_init.sql` removed the legacy receipt-table drop. That separate SQL edit was preserved. All 33 remaining Rust tests, including both new download tests and partial-response disposal, passed with that test explicitly filtered out.
+Tests cover chunk bounds, shared admission, completion and partial/unpolled response disposal, owner isolation, API deletion and a different hash upload with an active stream, invalid indexed sizes, mismatched/missing files, midstream truncation, and growth after opening. Storage quotas remain a deployment/trust-policy decision.
