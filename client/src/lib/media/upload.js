@@ -63,14 +63,14 @@ export async function prepareMedia(source, platform, signal) {
 	return { ...source, blob, name: source.name || fileName(source.srcUrl) };
 }
 
-export async function sendUpload(
+export async function sendUpload({
 	source,
 	credentials,
 	platform,
 	tags = "",
 	onProgress,
 	signal,
-) {
+}) {
 	const prepared = await prepareMedia(source, platform, signal);
 	const bytes = new Uint8Array(await prepared.blob.arrayBuffer());
 	signal?.throwIfAborted();

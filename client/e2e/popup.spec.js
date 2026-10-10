@@ -185,3 +185,78 @@ test("a locked tags popup waits for tags after unlocking", async ({
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await expect(page.locator(".tag-text")).toHaveText("chosen-tag");
 });
+
+test("preparation and transfer failures retry in the same popup and preserve tag drafts", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	const srcUrl =
+		"https://media.example/landscape-with-a-long-descriptive-file-name.svg";
+	let reads = 0,
+		uploads = 0;
+	await page.route(srcUrl, async (route) => {
+		reads++;
+		if (reads === 1) return route.fulfill({ status: 503, body: "offline" });
+		await route.fulfill({
+			contentType: "image/svg+xml",
+			body: '<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect width="960" height="540" fill="#328878"/><circle cx="480" cy="270" r="160" fill="#dcebbd"/></svg>',
+		});
+	});
+	await page.route("**/api/media", async (route) => {
+		if (route.request().method() === "POST" && ++uploads === 1)
+			return route.fulfill({
+				status: 503,
+				body: '{"error":"temporary transfer failure"}',
+			});
+		await route.continue();
+	});
+	await page.evaluate(async (srcUrl) => {
+		await browser.storage.session.set({
+			"upload:preparation-retry": { id: "preparation-retry", srcUrl },
+		});
+	}, srcUrl);
+	await page.goto(
+		`${app.web.origin}/client/dist/extension/upload.html?id=preparation-retry`,
+	);
+	await expect(page.locator("#status")).toContainText(
+		"Could not fetch the file (503)",
+	);
+	const button = page.locator('#send button[type="submit"]');
+	await expect(button).toBeEnabled();
+	await page.locator("#tags").fill("landscape, retry draft");
+	await button.click();
+	await expect(page.locator("#status")).toContainText(
+		"temporary transfer failure",
+	);
+	await expect(page.locator("#tags")).toHaveValue("landscape, retry draft");
+	expect(reads).toBe(2);
+	expect(uploads).toBe(1);
+	expect(
+		(await storage(page)).session["upload:preparation-retry"],
+	).toBeTruthy();
+	for (const theme of ["light", "dark"]) {
+		await page.emulateMedia({ colorScheme: theme });
+		for (const width of [320, 360]) {
+			await page.setViewportSize({ width, height: 800 });
+			await page.screenshot({
+				path: `e2e/shots/preparation-retry-${width}-${theme}.png`,
+				fullPage: true,
+			});
+			expect(
+				await page.evaluate(
+					() => document.documentElement.scrollWidth <= innerWidth,
+				),
+			).toBe(true);
+		}
+	}
+	await page.waitForTimeout(100);
+	expect(uploads).toBe(1);
+	await button.click();
+	await expect(page.locator("#status")).toHaveText("Uploaded.");
+	await expect
+		.poll(async () => (await storage(page)).session["upload:preparation-retry"])
+		.toBeUndefined();
+	expect(reads).toBe(2);
+	expect(uploads).toBe(2);
+});

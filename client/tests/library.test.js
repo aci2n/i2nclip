@@ -25,7 +25,7 @@ function setup(t) {
 				calls.push({ ...job, options });
 				return job.promise;
 			},
-			sendUpload(source, credentials, _platform, _tags, progress, signal) {
+			sendUpload({ source, credentials, onProgress: progress, signal }) {
 				const job = deferred();
 				uploads.push({ ...job, source, credentials, signal, progress });
 				return job.promise;
@@ -127,7 +127,7 @@ test("a failed file does not stop a batch and retry sends only failed files", as
 	uploads[1].progress(90);
 	assert.equal(get(library).uploadProgress.name, "failed");
 	assert.equal(uploads[2].source.blob, first);
-	assert.equal(uploads[2].source, uploads[0].source);
+	assert.equal(uploads[2].source.name, uploads[0].source.name);
 	assert.notEqual(uploads[0].source, uploads[1].source);
 	uploads[2].resolve();
 	await tick();

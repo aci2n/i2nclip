@@ -30,7 +30,7 @@ test("pending uploads keep independent IDs, prevent duplicate sends, and survive
 	const requests = [];
 	const api = {
 		prepareMedia: async (source) => ({ ...source, blob: new Blob(["file"]) }),
-		sendUpload: (source) => {
+		sendUpload: ({ source }) => {
 			const job = deferred();
 			requests.push({ ...job, name: source.name });
 			return job.promise;
@@ -88,6 +88,11 @@ test("changing sessions during notification cannot close the upload page", async
 	await pending.ready;
 	const send = pending.send("");
 	await tick();
+	assert.equal(
+		get(pending).available,
+		false,
+		"a saved upload cannot be retried while notification is pending",
+	);
 	state.set({ ...credentials, serverUrl: "https://other.example" });
 	notice.resolve();
 	await send;
@@ -164,7 +169,7 @@ test("old popup completion cannot clear the busy state of a new-library retry", 
 		"one",
 		{
 			prepareMedia: async (source) => ({ ...source, blob: new Blob(["file"]) }),
-			sendUpload: (_source, _credentials, _platform, _tags, progress) => {
+			sendUpload: ({ onProgress: progress }) => {
 				const job = deferred();
 				requests.push({ ...job, progress });
 				return job.promise;
@@ -279,4 +284,152 @@ test("changing the library during popup preparation requires explicit submission
 	assert.equal(get(pending).status, "Library changed. Try again.");
 	await pending.send("");
 	assert.equal(sends, 1);
+});
+
+test("preparation failure retries in the same popup, preserves its source, and rejects duplicate clicks", async (t) => {
+	const state = writable(credentials);
+	const preparation = deferred();
+	let prepares = 0,
+		sends = 0,
+		removed = 0;
+	const pending = createPendingUpload(
+		{ subscribe: state.subscribe, credentials: () => credentials },
+		{
+			session: {
+				get: async () => ({ "upload:one": { name: "one" } }),
+				remove: async () => {
+					removed++;
+				},
+			},
+			notify: async () => {},
+			close() {},
+		},
+		"one",
+		{
+			prepareMedia: async (source) => {
+				prepares++;
+				if (prepares === 1) throw new Error("offline");
+				assert.equal(source.name, "one");
+				return preparation.promise;
+			},
+			sendUpload: async ({ source, tags }) => {
+				sends++;
+				assert.equal(source.name, "one");
+				assert.equal(tags, "saved draft");
+			},
+		},
+	);
+	t.after(pending.dispose);
+	await pending.ready;
+	assert.equal(get(pending).status, "offline");
+	assert.equal(get(pending).available, true);
+	const retry = pending.send("saved draft");
+	await pending.send("duplicate");
+	assert.equal(prepares, 2);
+	assert.equal(get(pending).status, "Preparing file…");
+	assert.equal(removed, 0);
+	preparation.resolve({ name: "one", blob: new Blob(["file"]) });
+	await retry;
+	assert.equal(sends, 1);
+	assert.equal(removed, 1);
+	assert.equal(get(pending).available, false);
+});
+
+test("failed preparation never automatically retries, including after a manual transfer failure", async (t) => {
+	const state = writable({ ...credentials, privateKey: "" });
+	let prepares = 0,
+		sends = 0;
+	const pending = createPendingUpload(
+		{ subscribe: state.subscribe, credentials: () => get(state) },
+		{ session: { get: async () => ({ "upload:one": { name: "one" } }) } },
+		"one",
+		{
+			prepareMedia: async (source) => {
+				prepares++;
+				if (prepares === 1) throw new Error("offline");
+				return { ...source, blob: new Blob(["file"]) };
+			},
+			sendUpload: async () => {
+				sends++;
+				throw new Error("transfer failed");
+			},
+		},
+		{ auto: true },
+	);
+	t.after(pending.dispose);
+	await pending.ready;
+	state.set(credentials);
+	await tick();
+	assert.equal(prepares, 1);
+	assert.equal(sends, 0);
+	await pending.send("");
+	state.set({ ...credentials });
+	await tick();
+	assert.equal(sends, 1);
+	assert.equal(get(pending).status, "transfer failed");
+});
+
+test("disposing a preparation retry prevents preview allocation and upload", async (t) => {
+	const state = writable(credentials);
+	const preparation = deferred();
+	let prepares = 0,
+		created = 0;
+	t.mock.method(URL, "createObjectURL", () => {
+		created++;
+		return "blob:preview";
+	});
+	const pending = createPendingUpload(
+		{ subscribe: state.subscribe, credentials: () => credentials },
+		{ session: { get: async () => ({ "upload:one": { name: "one" } }) } },
+		"one",
+		{
+			prepareMedia: async () => {
+				if (++prepares === 1) throw new Error("offline");
+				return preparation.promise;
+			},
+			sendUpload: async () => assert.fail("disposed upload must not send"),
+		},
+	);
+	await pending.ready;
+	const retry = pending.send("");
+	pending.dispose();
+	preparation.resolve({
+		name: "one",
+		blob: new Blob(["file"], { type: "image/png" }),
+	});
+	await retry;
+	assert.equal(created, 0);
+});
+
+test("a server change aborts preparation retry before any upload can start", async (t) => {
+	const state = writable(credentials);
+	const preparation = deferred();
+	let prepares = 0,
+		signal,
+		sends = 0;
+	const pending = createPendingUpload(
+		{ subscribe: state.subscribe, credentials: () => get(state) },
+		{ session: { get: async () => ({ "upload:one": { name: "one" } }) } },
+		"one",
+		{
+			prepareMedia: async (_source, _platform, current) => {
+				if (++prepares === 1) throw new Error("offline");
+				signal = current;
+				return preparation.promise;
+			},
+			sendUpload: async () => {
+				sends++;
+			},
+		},
+	);
+	t.after(pending.dispose);
+	await pending.ready;
+	const retry = pending.send("");
+	state.set({ ...credentials, serverUrl: "https://other.example" });
+	assert.equal(signal.aborted, true);
+	preparation.resolve({ name: "one", blob: new Blob(["file"]) });
+	await retry;
+	assert.equal(sends, 0);
+	assert.equal(get(pending).status, "Library changed. Try again.");
+	assert.equal(get(pending).busy, false);
 });

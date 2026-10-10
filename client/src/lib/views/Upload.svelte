@@ -40,8 +40,8 @@ let tags = $state("");
 			</button>
 		</form>
 	{/if}
+	<p id="status" role="status">{$pending.status}</p>
 </section>
-<p id="status" role="status">{$pending.status}</p>
 
 <style>
 .upload-preview {

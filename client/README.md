@@ -81,11 +81,37 @@ Tab-injected media fetches register a separate abort controller per request in
 the extension's isolated frame context. Caller cancellation aborts the remote
 fetch; completion and failure release the stream reader and remove frame state.
 
-Upload retries reuse a media ID within the same library. The current server
-returns 409 for an existing ID, including a retry after a successful upload whose
-response was lost. The frontend surfaces that conflict and retains the failed
-source; check the library before retrying further. It does not assume the existing
-file is identical or silently generate another ID and duplicate the upload.
+The upload path is:
+
+```mermaid
+flowchart LR
+    Menu[Context menu] --> Queue[submitContextUpload: save source]
+    Queue -->|unlocked| Transfer[sendPendingUpload]
+    Queue -->|tags or locked| Popup[createPendingUpload: preview and retry]
+    Popup --> Transfer
+    Transfer --> Send[sendUpload: prepare, encrypt, POST]
+    Library[Library file batch] --> Send
+```
+
+- `context-upload.js` saves a source under its own ID and chooses immediate
+  transfer or a popup. It records a failure and opens explicit retry.
+- `pending-upload.js` owns popup preparation, preview URLs, tags submission,
+  and retry. Its `sendPendingUpload` function is shared with immediate uploads:
+  capture credentials, abort if they change, send, clear only this pending ID,
+  and notify. The popup alone decides when to close.
+- `media/upload.js` accepts named options, reads bounded bytes, generates a
+  thumbnail, and calls the encryption/API layer. A prepared source reuses its
+  blob, so upload retries do not fetch it again.
+- Library uploads keep sequential batch progress and failed files in the
+  library store, and call the same `sendUpload` function.
+
+Pending sources are retained after both preparation and transfer failures.
+Preparation failures retry only on explicit submission, including unlock popups.
+Retries encrypt again with fresh randomness, creating a new content hash. A lost
+successful upload response can therefore lead to a duplicate item on retry;
+check the library before retrying an ambiguous failure. The server returns 409
+only when the same sealed-content hash is posted again.
+
 
 ## Verification
 

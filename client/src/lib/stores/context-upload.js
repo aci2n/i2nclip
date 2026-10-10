@@ -1,5 +1,6 @@
 import { get } from "svelte/store";
 import { sendUpload } from "../media/upload.js";
+import { sendPendingUpload } from "./pending-upload.js";
 import { createSession } from "./session.js";
 
 export async function submitContextUpload(
@@ -15,8 +16,6 @@ export async function submitContextUpload(
 	const pending = { ...source, id: crypto.randomUUID() };
 	const storageKey = `upload:${pending.id}`;
 	const session = services.createSession(platform);
-	const controller = new AbortController();
-	let unsubscribe = () => {};
 	try {
 		await platform.session.set({ [storageKey]: pending });
 		await session.ready;
@@ -24,32 +23,15 @@ export async function submitContextUpload(
 			await platform.openUpload(pending.id, withTags ? "upload" : "unlock");
 			return;
 		}
-		const credentials = session.credentials();
-		unsubscribe = session.subscribe((value) => {
-			if (
-				value.privateKey !== credentials.privateKey ||
-				value.serverUrl !== credentials.serverUrl
-			)
-				controller.abort();
-		});
-		await services.sendUpload(
-			pending,
-			credentials,
-			platform,
-			"",
-			undefined,
-			controller.signal,
+		await sendPendingUpload(
+			{ id: pending.id, source: pending, session, platform },
+			services.sendUpload,
 		);
-		controller.signal.throwIfAborted();
-		await platform.session.remove(storageKey);
-		// Notification failure cannot turn a saved upload into a retry.
-		await Promise.resolve()
-			.then(() => platform.notify("Uploaded."))
-			.catch(() => {});
 	} catch (error) {
-		const message = controller.signal.aborted
-			? "Library changed. Upload cancelled."
-			: error.message || "Upload failed.";
+		const message =
+			error.name === "AbortError"
+				? "Library changed. Upload cancelled."
+				: error.message || "Upload failed.";
 		// Reset may have cleared this entry; do not recreate discarded work.
 		const stored = await platform.session.get(storageKey);
 		if (stored[storageKey]) {
@@ -60,7 +42,6 @@ export async function submitContextUpload(
 		}
 		await platform.notify(message);
 	} finally {
-		unsubscribe();
 		session.dispose();
 	}
 }

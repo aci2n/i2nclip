@@ -48,7 +48,7 @@ function fixture(sendUpload) {
 
 test("failed immediate uploads retain independent sources and retry explicitly", async (t) => {
 	let sends = 0;
-	const setup = fixture(async (pending) => {
+	const setup = fixture(async ({ source: pending }) => {
 		sends++;
 		assert.equal(setup.entries[`upload:${pending.id}`].srcUrl, pending.srcUrl);
 		throw new Error("Temporary failure");
@@ -107,12 +107,10 @@ test("notification failure after immediate success does not retain or retry an u
 test("changing libraries cancels an immediate upload and retains it for explicit retry", async () => {
 	const job = deferred();
 	let signal;
-	const setup = fixture(
-		async (_source, _credentials, _platform, _tags, _progress, current) => {
-			signal = current;
-			await job.promise;
-		},
-	);
+	const setup = fixture(async ({ signal: current }) => {
+		signal = current;
+		await job.promise;
+	});
 	const sending = submitContextUpload(
 		source,
 		false,
