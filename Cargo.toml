@@ -42,6 +42,9 @@ url = "2"
 uuid = "1"
 
 [dev-dependencies]
+# Controlled request streams and paused-clock deadline tests.
+http-body-util = { version = "0.1", features = ["channel"] }
+tokio = { version = "1", features = ["test-util"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde_json = "1"
 # Lets tests call the router in-process, without binding a port.

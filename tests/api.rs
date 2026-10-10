@@ -151,6 +151,93 @@ async fn configured_origins_authenticate_browser_canonical_signatures() {
     }
 }
 
+#[tokio::test(start_paused = true)]
+async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
+    use axum::body::Bytes;
+    use http_body_util::Channel;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let owner = new_identity();
+    let (dir, app) = app(&[&owner]);
+    let new_key = new_identity();
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();
+    let id = "66666666-6666-4666-8666-666666666666";
+    for (method, path, seconds) in [
+        ("POST", "/api/media".to_string(), 120),
+        ("PUT", format!("/api/media/{id}"), 30),
+        ("GET", "/api/media".to_string(), 10),
+        ("DELETE", format!("/api/media/{id}"), 10),
+        ("POST", "/api/register-key".to_string(), 10),
+    ] {
+        let registration = path == "/api/register-key";
+        let payload = if registration {
+            serde_json::json!({ "otc": otc, "public_key": new_key.registration_key() })
+                .to_string()
+                .into_bytes()
+        } else {
+            b"partial".to_vec()
+        };
+        let mut request = Request::builder().method(method).uri(&path);
+        let authorization = crypto::authorization(
+            &owner,
+            "http://i2nclip.test",
+            crypto::now_secs(),
+            &crypto::fresh_nonce(),
+            method,
+            &path,
+            &payload,
+        );
+        if !registration {
+            request = request.header("authorization", &authorization);
+        }
+        let (mut sender, body) = Channel::<Bytes>::new(1);
+        sender.send_data(Bytes::from(payload)).await.unwrap();
+        // Wait for the first body poll so authentication has completed and
+        // the read deadline has started before advancing the paused clock.
+        let polled = Arc::new(tokio::sync::Notify::new());
+        let observed = polled.clone();
+        let body = Body::new(body.map_frame(move |frame| {
+            observed.notify_one();
+            frame
+        }));
+        let response = tokio::spawn(app.clone().oneshot(request.body(body).unwrap()));
+        polled.notified().await;
+        tokio::time::advance(Duration::from_secs(seconds - 1)).await;
+        assert!(!response.is_finished(), "{method} {path} timed out early");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let response = response.await.unwrap().unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::REQUEST_TIMEOUT,
+            "{method} {path}"
+        );
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert!(sender.send_data(Bytes::from_static(b"late")).await.is_err());
+        if !registration {
+            let replay = Request::builder()
+                .method(method)
+                .uri(&path)
+                .header("authorization", authorization)
+                .body(Body::empty())
+                .unwrap();
+            assert_eq!(
+                app.clone().oneshot(replay).await.unwrap().status(),
+                StatusCode::UNAUTHORIZED
+            );
+        }
+    }
+    // Even a complete registration JSON cannot consume an invitation until
+    // the body stream ends; timing out leaves it available for a fresh request.
+    enroll_key(&app, &new_key, &otc).await;
+    let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
 #[tokio::test]
 async fn health_needs_no_key() {
     let (_dir, app) = app(&[]);

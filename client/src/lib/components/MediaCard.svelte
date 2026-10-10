@@ -153,7 +153,7 @@ const summary = $derived(
 	place-items: center;
 	overflow: hidden;
 	border-radius: 0.3rem;
-	background: var(--soft);
+	background: var(--line);
 }
 .media img,
 .media video {

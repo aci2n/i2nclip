@@ -41,6 +41,11 @@ podman run --rm -p 8080:8080 \
   localhost/i2nclip
 ```
 
+Image builds use host networking so they also work where rootless Podman's
+`pasta` cannot access `/dev/net/tun`. Build steps share the host network;
+override with `make container CONTAINER_NETWORK=private` to use Podman's
+isolated build networking on hosts that support it.
+
 The image runs as uid 10001. For a bind mount:
 
 ```sh

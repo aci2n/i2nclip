@@ -24,7 +24,7 @@ A media object contains `id`, `created_at` (server Unix seconds), `bytes` (encry
 
 List queries accept repeated `tag=TOKEN` parameters and optional `after=CREATED_AT.ID`. All distinct requested tags must match. Pages contain at most 24 items, ordered by creation time descending and UUID ascending. `next` is the last returned item's cursor only when another row exists. Pagination is not a snapshot: intervening mutations may change results. Unknown query keys are ignored, empty token values are ignored, and the last repeated `after` wins. The hand-written parser does not percent-decode values; use the literal token/cursor alphabet.
 
-Errors are JSON `{"error":"…"}`. Statuses include `400` for malformed data, `401` for failed authentication or replay, `403` for invalid/expired/spent registration codes, `404` for missing or unowned items, `409` for conflicting IDs/payloads, `413` for oversized HTTP bodies, and `500` for internal failures. Some field-size violations become `400` during frame validation. JSON and empty responses use `Cache-Control: no-store`. Content responses use `application/octet-stream` and `private, max-age=31536000, immutable`; UUID reuse can invalidate that assumption (see review).
+Errors are JSON `{"error":"…"}`. Statuses include `400` for malformed data, `401` for failed authentication or replay, `403` for invalid/expired/spent registration codes, `404` for missing or unowned items, `408` for body-read timeouts, `409` for conflicting IDs/payloads, `413` for oversized HTTP bodies, and `500` for internal failures. Some field-size violations become `400` during frame validation. JSON and empty responses use `Cache-Control: no-store`. Content responses use `application/octet-stream` and `private, max-age=31536000, immutable`; UUID reuse can invalidate that assumption (see review).
 
 ## Request authentication
 
@@ -82,6 +82,8 @@ Token parsing trims lines, ignores empty lines, and removes duplicates. Each tok
 | Registration code text | 512 |
 
 The shared authenticated extractor applies the full POST body limit to every media method, including GET, DELETE, and PUT. GET/DELETE bodies are hashed but otherwise ignored. The server does not enforce request Content-Type. Limits are per request, with no aggregate concurrency, storage, or account quota.
+
+Complete body reads have total deadlines: 120 seconds for media POST, 30 seconds for PUT, and 10 seconds for media GET/DELETE and registration. The clock starts when body reading begins, after media authentication and early Content-Length checks, and never resets on chunks. Timeout drops the body and partial buffer and returns `408`, `{"error":"request body timed out"}`, with `Cache-Control: no-store`. Authentication nonces are already spent; timed-out registrations do not consume invitation codes. The deadline does not cover headers, authentication, subsequent hashing, or storage operations.
 
 ## Storage and retry semantics
 

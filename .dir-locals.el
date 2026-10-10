@@ -1,5 +1,6 @@
 ((nil . ((indent-tabs-mode . nil)
-        (tab-width . 2)))
+         (tab-width . 2)))
+ (makefile-mode . ((indent-tabs-mode . t)))
  (rust-mode . ((rust-indent-offset . 2)))
  (rust-ts-mode . ((rust-indent-offset . 2)))
  (js-mode . ((js-indent-level . 2)))

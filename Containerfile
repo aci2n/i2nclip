@@ -1,4 +1,4 @@
-# Build:  podman build -t i2nclip -f Containerfile .
+# Build:  podman build --network=host -t i2nclip -f Containerfile .
 # Run:    podman run --rm -p 8080:8080 -e I2N_ORIGIN=https://clip.example.com -v i2nclip-data:/var/lib/i2nclip:Z localhost/i2nclip
 
 FROM docker.io/library/rust:1-bookworm AS build

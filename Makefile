@@ -4,6 +4,8 @@ IMAGE ?= i2nclip
 TAG ?= latest
 PORT ?= 8080
 HOST ?= deploy@example.com
+# Avoid rootless pasta's /dev/net/tun requirement during image builds.
+CONTAINER_NETWORK ?= host
 
 -include local.mk
 
@@ -42,7 +44,7 @@ audit:
 	cargo audit
 
 container:
-	podman build -t $(IMAGE):$(TAG) -f Containerfile .
+	podman build --network=$(CONTAINER_NETWORK) -t $(IMAGE):$(TAG) -f Containerfile .
 	@echo "podman run --rm -p $(PORT):8080 -e I2N_ORIGIN=https://clip.example.com -v $(IMAGE)-data:/var/lib/i2nclip:Z localhost/$(IMAGE):$(TAG)"
 
 # Build the image and load it on the remote Podman host over SSH (set HOST).

@@ -10,6 +10,7 @@
 //! sealed with the library identity.
 
 use std::path::Path;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::FromRequest;
@@ -18,6 +19,7 @@ use axum::extract::Request;
 use axum::extract::State;
 use axum::http::header;
 use axum::http::HeaderValue;
+use axum::http::Method;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::Response;
@@ -40,6 +42,18 @@ use crate::store::Item;
 use crate::Error;
 use crate::MAX_BODY;
 use crate::MAX_REGISTER_BODY;
+
+const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
+const META_BODY_DEADLINE: Duration = Duration::from_secs(30);
+const UPLOAD_BODY_DEADLINE: Duration = Duration::from_secs(120);
+
+fn media_body_deadline(method: &Method) -> Duration {
+    match *method {
+        Method::POST => UPLOAD_BODY_DEADLINE,
+        Method::PUT => META_BODY_DEADLINE,
+        _ => SHORT_BODY_DEADLINE,
+    }
+}
 
 pub(crate) fn router(data_dir: &Path, origin: String) -> Result<Router, Error> {
     store::prepare(data_dir)?;
@@ -96,10 +110,12 @@ impl FromRequest<AppState> for Authed {
                 }
             }
         }
-        let bytes = match read_body(body).await {
-            Ok(bytes) => bytes,
-            Err(response) => return Err(*response),
-        };
+        let bytes =
+            match read_body_with_deadline(body, MAX_BODY, media_body_deadline(&parts.method)).await
+            {
+                Ok(bytes) => bytes,
+                Err(response) => return Err(*response),
+            };
         // SHA-256 of the body is CPU, not disk, but a 32 MB digest would still
         // hold an async worker for the whole hash. Same pool as the file IO.
         let (owner, bytes) = match blocking(move || {
@@ -120,8 +136,20 @@ impl FromRequest<AppState> for Authed {
     }
 }
 
-async fn read_body(body: Body) -> Result<Vec<u8>, Box<Response>> {
-    read_body_with_limit(body, MAX_BODY).await
+/// One deadline for the complete body read; chunks do not reset the timer.
+/// Timeout drops the reader, its partial buffer, and the request body.
+async fn read_body_with_deadline(
+    body: Body,
+    max: usize,
+    deadline: Duration,
+) -> Result<Vec<u8>, Box<Response>> {
+    match tokio::time::timeout(deadline, read_body_with_limit(body, max)).await {
+        Ok(result) => result,
+        Err(_) => Err(Box::new(json_response(
+            StatusCode::REQUEST_TIMEOUT,
+            json!({ "error": "request body timed out" }),
+        ))),
+    }
 }
 
 async fn read_body_with_limit(mut body: Body, max: usize) -> Result<Vec<u8>, Box<Response>> {
@@ -179,7 +207,7 @@ struct RegisterKeyJson {
 
 async fn register_key(State(state): State<AppState>, request: Request) -> Response {
     let (_parts, body) = request.into_parts();
-    let bytes = match read_body_with_limit(body, MAX_REGISTER_BODY).await {
+    let bytes = match read_body_with_deadline(body, MAX_REGISTER_BODY, SHORT_BODY_DEADLINE).await {
         Ok(bytes) => bytes,
         Err(response) => return *response,
     };
@@ -364,4 +392,64 @@ fn fail(err: Error) -> Response {
         }
     };
     json_response(status, json!({ "error": message }))
+}
+
+#[cfg(test)]
+mod deadline_tests {
+    use super::*;
+    use axum::body::Bytes;
+    use http_body_util::Channel;
+
+    #[tokio::test(start_paused = true)]
+    async fn trickling_body_does_not_extend_deadline_and_is_dropped() {
+        let (mut sender, body) = Channel::<Bytes>::new(1);
+        sender
+            .send_data(Bytes::from_static(b"first"))
+            .await
+            .unwrap();
+        let read = tokio::spawn(read_body_with_deadline(
+            Body::new(body),
+            100,
+            Duration::from_secs(10),
+        ));
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(9)).await;
+        assert!(!read.is_finished());
+        sender
+            .send_data(Bytes::from_static(b"second"))
+            .await
+            .unwrap();
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let response = read.await.unwrap().unwrap_err();
+        assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            json!({ "error": "request body timed out" })
+        );
+        assert!(sender.send_data(Bytes::from_static(b"late")).await.is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn completed_oversized_and_broken_bodies_keep_existing_results() {
+        let deadline = Duration::from_secs(10);
+        assert_eq!(
+            read_body_with_deadline(Body::from("abc"), 3, deadline)
+                .await
+                .unwrap(),
+            b"abc"
+        );
+        let oversized = read_body_with_deadline(Body::from("abc"), 2, deadline)
+            .await
+            .unwrap_err();
+        assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let (sender, body) = Channel::<Bytes, std::io::Error>::new(1);
+        sender.abort(std::io::Error::other("broken body"));
+        let broken = read_body_with_deadline(Body::new(body), 3, deadline)
+            .await
+            .unwrap_err();
+        assert_eq!(broken.status(), StatusCode::BAD_REQUEST);
+    }
 }
