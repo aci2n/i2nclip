@@ -1,6 +1,9 @@
 import { get } from "svelte/store";
 import { sendUpload } from "../media/upload.js";
-import { sendPendingUpload } from "./pending-upload.js";
+import {
+	createUploadTask,
+	sendPendingUpload,
+} from "../media/upload-workflow.js";
 import { createSession } from "./session.js";
 
 export async function submitContextUpload(
@@ -16,6 +19,7 @@ export async function submitContextUpload(
 	const pending = { ...source, id: crypto.randomUUID() };
 	const storageKey = `upload:${pending.id}`;
 	const session = services.createSession(platform);
+	let task;
 	try {
 		await platform.session.set({ [storageKey]: pending });
 		await session.ready;
@@ -23,8 +27,9 @@ export async function submitContextUpload(
 			await platform.openUpload(pending.id, withTags ? "upload" : "unlock");
 			return;
 		}
+		task = createUploadTask({ session });
 		await sendPendingUpload(
-			{ id: pending.id, source: pending, session, platform },
+			{ id: pending.id, source: pending, task, platform },
 			services.sendUpload,
 		);
 	} catch (error) {
@@ -42,6 +47,7 @@ export async function submitContextUpload(
 		}
 		await platform.notify(message);
 	} finally {
+		task?.dispose();
 		session.dispose();
 	}
 }

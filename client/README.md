@@ -90,21 +90,26 @@ flowchart LR
     Queue -->|unlocked| Transfer[sendPendingUpload]
     Queue -->|tags or locked| Popup[createPendingUpload: preview and retry]
     Popup --> Transfer
-    Transfer --> Send[sendUpload: prepare, encrypt, POST]
-    Library[Library file batch] --> Send
+    Transfer --> Task[createUploadTask: credentials and cancellation]
+    Library[upload-batch: sequential files and retries] --> Task
+    Task --> Send[sendUpload: prepare, encrypt, POST]
 ```
 
 - `context-upload.js` saves a source under its own ID and chooses immediate
   transfer or a popup. It records a failure and opens explicit retry.
 - `pending-upload.js` owns popup preparation, preview URLs, tags submission,
-  and retry. Its `sendPendingUpload` function is shared with immediate uploads:
-  capture credentials, abort if they change, send, clear only this pending ID,
-  and notify. The popup alone decides when to close.
+  and retry. Its session observer controls automatic-send policy; the shared
+  task cancels active submissions. The popup alone decides when to close.
+- `media/upload-workflow.js` owns credential-bound tasks, cancellation, and
+  late-progress suppression. Its `sendPendingUpload` completes background and
+  popup transfers, clears only their pending ID, and sends a notification.
+  Callers retain the task through completion and dispose it in `finally`.
 - `media/upload.js` accepts named options, reads bounded bytes, generates a
   thumbnail, and calls the encryption/API layer. A prepared source reuses its
   blob, so upload retries do not fetch it again.
-- Library uploads keep sequential batch progress and failed files in the
-  library store, and call the same `sendUpload` function.
+- `upload-batch.js` owns sequential batch progress and failed files, using one
+  shared task per batch. The library delegates upload actions, merges batch
+  state into its existing interface, and refreshes results after successes.
 
 Pending sources are retained after both preparation and transfer failures.
 Preparation failures retry only on explicit submission, including unlock popups.

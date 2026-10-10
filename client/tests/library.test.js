@@ -14,6 +14,10 @@ const identity = {
 
 function setup(t) {
 	const session = writable(identity);
+	session.credentials = () => {
+		const { serverUrl, privateKey } = get(session);
+		return { serverUrl, privateKey };
+	};
 	const calls = [];
 	const uploads = [];
 	const library = createLibrary(

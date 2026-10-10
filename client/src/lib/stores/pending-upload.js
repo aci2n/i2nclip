@@ -1,54 +1,9 @@
 import { get, writable } from "svelte/store";
 import { prepareMedia, sendUpload } from "../media/upload.js";
-
-// Shared by immediate context-menu uploads and popup submissions. The caller
-// owns UI state; this function owns one credential-bound transfer and cleanup.
-export async function sendPendingUpload(
-	{ id, source, session, platform, tags = "", onProgress, onUploaded, signal },
-	upload = sendUpload,
-) {
-	const credentials = session.credentials();
-	const controller = new AbortController();
-	const current = signal
-		? AbortSignal.any([signal, controller.signal])
-		: controller.signal;
-	const unsubscribe = session.subscribe((value) => {
-		if (
-			value.privateKey !== credentials.privateKey ||
-			value.serverUrl !== credentials.serverUrl
-		)
-			controller.abort(
-				new DOMException("Library changed. Try again.", "AbortError"),
-			);
-	});
-	let transferring = true;
-	try {
-		current.throwIfAborted();
-		await upload({
-			source,
-			credentials,
-			platform,
-			tags,
-			signal: current,
-			onProgress: (percent) => {
-				if (transferring && !current.aborted) onProgress?.(percent);
-			},
-		});
-		transferring = false;
-		current.throwIfAborted();
-		await platform.session.remove(`upload:${id}`);
-		current.throwIfAborted();
-		onUploaded?.();
-		// A failed notification cannot undo a successful upload.
-		await Promise.resolve()
-			.then(() => platform.notify("Uploaded."))
-			.catch(() => {});
-		current.throwIfAborted();
-	} finally {
-		transferring = false;
-		unsubscribe();
-	}
-}
+import {
+	createUploadTask,
+	sendPendingUpload,
+} from "../media/upload-workflow.js";
 
 export function createPendingUpload(
 	session,
@@ -65,10 +20,11 @@ export function createPendingUpload(
 		status: "Loading…",
 		available: false,
 	});
+	const update = (patch) => state.update((value) => ({ ...value, ...patch }));
 	const preparation = new AbortController();
 	let source;
 	let prepared;
-	let request;
+	let activeTask;
 	let disposed = false;
 	let preview = "";
 	let sessionState;
@@ -92,8 +48,8 @@ export function createPendingUpload(
 			if (!contextChanged) send("");
 		});
 	}
+	// This observer controls automatic-send policy, not active transfer cancellation.
 	const unsubscribe = session.subscribe((value) => {
-		const previous = sessionState;
 		sessionState = value;
 		const nextContext = value.ready
 			? { serverUrl: value.serverUrl, publicKey: value.publicKey }
@@ -104,21 +60,9 @@ export function createPendingUpload(
 			(context.serverUrl !== nextContext.serverUrl ||
 				context.publicKey !== nextContext.publicKey);
 		if (nextContext) context = nextContext;
-		if (
-			changed ||
-			(request &&
-				previous &&
-				(previous.privateKey !== value.privateKey ||
-					previous.serverUrl !== value.serverUrl))
-		) {
+		if (changed) {
 			contextChanged = true;
-			request?.abort();
-			request = null;
-			state.update((value) => ({
-				...value,
-				busy: false,
-				status: "Library changed. Try again.",
-			}));
+			update({ status: "Library changed. Try again." });
 		}
 		maybeSend();
 	});
@@ -134,79 +78,77 @@ export function createPendingUpload(
 		prepared = result;
 		if (!preview && prepared.blob.type.startsWith("image/"))
 			preview = URL.createObjectURL(prepared.blob);
-		state.update((value) => ({ ...value, name: prepared.name, preview }));
+		update({ name: prepared.name, preview });
 		return prepared;
 	}
 	const ready = (async () => {
 		try {
 			await prepare(preparation.signal);
-			state.update((value) => ({
-				...value,
+			update({
 				ready: true,
 				available: true,
 				status: contextChanged
 					? "Library changed. Try again."
 					: source.error || "",
-			}));
+			});
 			maybeSend();
 		} catch (error) {
 			if (!disposed)
-				state.update((value) => ({
-					...value,
+				update({
 					ready: true,
 					available: Boolean(source),
 					status: error.message,
-				}));
+				});
 		}
 	})();
 
 	async function send(tags) {
 		if (disposed || !source || !get(state).available || get(state).busy) return;
 		autoStarted = true;
-		const controller = new AbortController();
-		request = controller;
-		state.update((value) => ({
-			...value,
-			busy: true,
-			status: prepared ? "Uploading…" : "Preparing file…",
-		}));
+		let task;
 		try {
-			const source = prepared || (await prepare(controller.signal));
-			controller.signal.throwIfAborted();
-			state.update((value) => ({ ...value, status: "Uploading…" }));
+			task = createUploadTask({
+				session,
+				onInvalidated: () => {
+					contextChanged = true;
+					activeTask = null;
+					update({ busy: false, status: "Library changed. Try again." });
+				},
+			});
+		} catch (error) {
+			update({ status: error.message });
+			return;
+		}
+		activeTask = task;
+		update({ busy: true, status: prepared ? "Uploading…" : "Preparing file…" });
+		try {
+			const source = prepared || (await prepare(task.signal));
+			task.assertCurrent();
+			update({ status: "Uploading…" });
 			await sendPendingUpload(
 				{
 					id,
 					source,
-					session,
+					task,
 					platform,
 					tags,
-					signal: controller.signal,
-					onUploaded: () =>
-						state.update((value) => ({
-							...value,
-							available: false,
-							status: "Uploaded.",
-						})),
+					onUploaded: () => update({ available: false, status: "Uploaded." }),
 					onProgress: (percent) => {
-						if (!disposed && request === controller)
-							state.update((value) => ({
-								...value,
-								status: `Uploading… ${percent}%`,
-							}));
+						if (!disposed && activeTask === task)
+							update({ status: `Uploading… ${percent}%` });
 					},
 				},
 				media.sendUpload,
 			);
-			controller.signal.throwIfAborted();
+			task.assertCurrent();
 			platform.close();
 		} catch (error) {
-			if (!disposed && !controller.signal.aborted)
-				state.update((value) => ({ ...value, status: error.message }));
+			if (!disposed && !task.signal.aborted) update({ status: error.message });
 		} finally {
-			if (!disposed && request === controller) {
-				request = null;
-				state.update((value) => ({ ...value, busy: false }));
+			task.dispose();
+			if (!disposed && activeTask === task) {
+				activeTask = null;
+				update({ busy: false });
 			}
 		}
 	}
@@ -218,7 +160,7 @@ export function createPendingUpload(
 		dispose() {
 			disposed = true;
 			preparation.abort();
-			request?.abort();
+			activeTask?.dispose();
 			unsubscribe();
 			if (preview) URL.revokeObjectURL(preview);
 		},

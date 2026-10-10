@@ -3,6 +3,7 @@ import { list } from "../api.js";
 import { sendUpload } from "../media/upload.js";
 import { splitTags } from "../protocol/crypto.js";
 import { createMediaItem } from "./media-item.js";
+import { createUploadBatch } from "./upload-batch.js";
 
 export function createLibrary(session, platform, api = { list, sendUpload }) {
 	const state = writable({
@@ -14,18 +15,20 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 		loading: false,
 		empty: null,
 		status: "",
-		uploadStatus: "",
-		uploading: false,
-		uploadProgress: null,
-		uploadFailures: [],
 	});
 	let credentials = null;
 	let revision = 0;
 	let request;
-	let uploadRequest;
 	let disposed = false;
 	let previewRevision = 0;
 	const mediaItems = new Map();
+
+	const batch = createUploadBatch(session, platform, api.sendUpload, () =>
+		load(),
+	);
+	const unsubscribeBatch = batch.subscribe((uploads) =>
+		state.update((value) => ({ ...value, ...uploads })),
+	);
 
 	function clearMediaItems() {
 		previewRevision++;
@@ -36,7 +39,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 	function invalidate() {
 		revision++;
 		request?.abort();
-		uploadRequest?.abort();
+		batch.reset();
 		clearMediaItems();
 		state.update((value) => ({
 			...value,
@@ -47,10 +50,6 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 			loading: false,
 			empty: null,
 			status: "",
-			uploadStatus: "",
-			uploading: false,
-			uploadProgress: null,
-			uploadFailures: [],
 		}));
 	}
 
@@ -136,94 +135,6 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 		if (credentials) load();
 	});
 
-	async function upload(files) {
-		if (disposed || !credentials || get(state).uploading || !files.length)
-			return;
-		const captured = credentials;
-		const controller = new AbortController();
-		uploadRequest = controller;
-		const current = () =>
-			!disposed &&
-			credentials === captured &&
-			uploadRequest === controller &&
-			!controller.signal.aborted;
-		let uploaded = false;
-		state.update((value) => ({ ...value, uploading: true, uploadStatus: "" }));
-		try {
-			for (let index = 0; index < files.length; index++) {
-				controller.signal.throwIfAborted();
-				const file = files[index];
-				const source = { blob: file, name: file.name };
-				let fileActive = true;
-				const progress = (percent) => {
-					if (fileActive && current())
-						state.update((value) => ({
-							...value,
-							uploadProgress: {
-								name: file.name,
-								index: index + 1,
-								total: files.length,
-								percent,
-							},
-						}));
-				};
-				progress(0);
-				try {
-					await api.sendUpload({
-						source,
-						credentials: captured,
-						platform,
-						onProgress: progress,
-						signal: controller.signal,
-					});
-					controller.signal.throwIfAborted();
-					uploaded = true;
-					if (current())
-						state.update((value) => ({
-							...value,
-							uploadFailures: value.uploadFailures.filter(
-								(failure) => failure.file !== file,
-							),
-						}));
-				} catch (error) {
-					controller.signal.throwIfAborted();
-					if (current())
-						state.update((value) => ({
-							...value,
-							uploadFailures: [
-								...value.uploadFailures.filter(
-									(failure) => failure.file !== file,
-								),
-								{ file, error: error.message },
-							],
-						}));
-				} finally {
-					fileActive = false;
-				}
-			}
-			if (current()) {
-				state.update((value) => ({
-					...value,
-					uploadStatus: "",
-					uploadProgress: null,
-				}));
-				if (uploaded) await load();
-			}
-		} catch (error) {
-			if (current())
-				state.update((value) => ({ ...value, uploadStatus: error.message }));
-		} finally {
-			if (current()) {
-				state.update((value) => ({
-					...value,
-					uploading: false,
-					uploadProgress: null,
-				}));
-				uploadRequest = null;
-			}
-		}
-	}
-
 	function media(item) {
 		if (disposed || !credentials) return null;
 		let media = mediaItems.get(item.id);
@@ -300,13 +211,14 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 			updateTags(id, result.metadata, result.tokens);
 			return true;
 		},
-		upload,
-		retryUploads: () =>
-			upload(get(state).uploadFailures.map(({ file }) => file)),
+		upload: batch.upload,
+		retryUploads: batch.retryUploads,
 		dispose() {
 			disposed = true;
 			invalidate();
 			unsubscribe();
+			batch.dispose();
+			unsubscribeBatch();
 		},
 	};
 }
