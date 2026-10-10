@@ -843,7 +843,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
 }
 
 #[tokio::test]
-async fn startup_removes_legacy_receipts_and_preserves_media() {
+async fn reopening_database_preserves_media() {
     let owner = new_identity();
     let (dir, app) = app(&[&owner]);
     let id = "55555555-5555-4555-8555-555555555555";
@@ -857,31 +857,7 @@ async fn startup_removes_legacy_receipts_and_preserves_media() {
     );
     drop(app);
 
-    let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
-    let receipt_count = || {
-        conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'upload_receipts'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap()
-    };
-    assert_eq!(receipt_count(), 0);
-    conn.execute_batch(
-        "CREATE TABLE upload_receipts (
-            file_id TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
-            body_hash TEXT NOT NULL
-        );",
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO upload_receipts VALUES (?1, ?2)",
-        rusqlite::params![id, "legacy-hash"],
-    )
-    .unwrap();
-
     let app = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
-    assert_eq!(receipt_count(), 0);
     let (status, downloaded) = call(&app, &owner, "GET", &format!("/api/media/{id}"), vec![]).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(downloaded, content);
@@ -896,7 +872,6 @@ async fn startup_removes_legacy_receipts_and_preserves_media() {
     );
     drop(app);
     let _reopened = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
-    assert_eq!(receipt_count(), 0);
 }
 
 #[tokio::test(start_paused = true)]
@@ -1100,4 +1075,217 @@ async fn upload_admission_is_shared_and_releases_capacity() {
     second.abort();
     let _ = first.await;
     let _ = second.await;
+}
+
+async fn download_response(
+    app: &axum::Router,
+    owner: &Identity,
+    id: &str,
+) -> axum::response::Response {
+    let path = format!("/api/media/{id}");
+    let authorization = crypto::authorization(
+        owner,
+        "http://i2nclip.test",
+        crypto::now_secs(),
+        &crypto::fresh_nonce(),
+        "GET",
+        &path,
+        b"",
+    );
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .uri(path)
+                .header("authorization", authorization)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn downloads_stream_with_admission_and_pin_authorized_files() {
+    let owner = new_identity();
+    let other = new_identity();
+    let (_dir, app) = app(&[&owner, &other]);
+    let id = "88888888-8888-4888-8888-888888888888";
+    let content =
+        crypto::encrypt(&owner.seed, &crypto::content_aad(id), &vec![7; 180_000]).unwrap();
+    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "POST",
+            "/api/media",
+            frame::encode_post(id, &meta, &content, "")
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        download_response(&app, &other, id).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    let first = download_response(&app, &owner, id).await;
+    let second = download_response(&app, &owner, id).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(first.headers()["content-length"], content.len().to_string());
+    assert_eq!(first.headers()["content-type"], "application/octet-stream");
+    let busy = download_response(&app, &owner, id).await;
+    assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(busy.headers()["retry-after"], "1");
+    assert_eq!(busy.headers()["cache-control"], "no-store");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(
+            &busy.into_body().collect().await.unwrap().to_bytes()
+        )
+        .unwrap(),
+        serde_json::json!({"error": "downloads busy; try again"})
+    );
+    assert_eq!(
+        call(&app, &owner, "GET", "/api/media", vec![]).await.0,
+        StatusCode::OK
+    );
+    drop(second); // An unpolled response also returns its slot.
+    let mut body = first.into_body();
+    let first_chunk = body.frame().await.unwrap().unwrap().into_data().unwrap();
+    assert!(first_chunk.len() <= 64 * 1024);
+    assert!(first_chunk.len() < content.len());
+    let second = download_response(&app, &owner, id).await;
+    assert_eq!(second.status(), StatusCode::OK);
+    assert_eq!(
+        download_response(&app, &owner, id).await.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    let mut partial = second.into_body();
+    assert!(partial.frame().await.unwrap().is_ok());
+    drop(partial); // Cancelling after a chunk also returns its slot.
+                   // Authorization is tied to the opened file, even after another owner reuses its UUID.
+    assert_eq!(
+        call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    let replacement =
+        crypto::encrypt(&other.seed, &crypto::content_aad(id), b"replacement").unwrap();
+    let other_meta = crypto::encrypt(&other.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    assert_eq!(
+        call(
+            &app,
+            &other,
+            "POST",
+            "/api/media",
+            frame::encode_post(id, &other_meta, &replacement, "")
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    let mut received = first_chunk.to_vec();
+    while let Some(chunk) = body.frame().await {
+        let chunk = chunk.unwrap().into_data().unwrap();
+        assert!(chunk.len() <= 64 * 1024);
+        received.extend_from_slice(&chunk);
+    }
+    assert_eq!(received, content);
+    // Completion releases the permit even while the empty body remains alive.
+    let first = download_response(&app, &other, id).await;
+    let second = download_response(&app, &other, id).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(second.status(), StatusCode::OK);
+    drop(first);
+    drop(second);
+    assert_eq!(
+        download_response(&app, &owner, id).await.status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn downloads_validate_lengths_and_fail_on_midstream_truncation() {
+    let owner = new_identity();
+    let (dir, app) = app(&[&owner]);
+    let id = "99999999-9999-4999-8999-999999999999";
+    let content =
+        crypto::encrypt(&owner.seed, &crypto::content_aad(id), &vec![9; 180_000]).unwrap();
+    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "POST",
+            "/api/media",
+            frame::encode_post(id, &meta, &content, "")
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    let path = dir.0.join("blobs").join(id);
+    let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
+    for size in [-1, 0, 28, 33_554_497] {
+        conn.execute(
+            "UPDATE files SET bytes = ?1 WHERE id = ?2",
+            rusqlite::params![size, id],
+        )
+        .unwrap();
+        assert_eq!(
+            download_response(&app, &owner, id).await.status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+    conn.execute(
+        "UPDATE files SET bytes = ?1 WHERE id = ?2",
+        rusqlite::params![content.len() as i64, id],
+    )
+    .unwrap();
+    for length in [content.len() - 1, content.len() + 1] {
+        std::fs::write(&path, vec![0; length]).unwrap();
+        assert_eq!(
+            download_response(&app, &owner, id).await.status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+    std::fs::write(&path, &content).unwrap();
+    let response = download_response(&app, &owner, id).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+    assert!(body.frame().await.unwrap().is_ok());
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(0)
+        .unwrap();
+    assert!(body.collect().await.is_err());
+    // Growing after headers cannot cause more than the indexed length to be sent.
+    std::fs::write(&path, &content).unwrap();
+    let response = download_response(&app, &owner, id).await;
+    let mut extended = content.clone();
+    extended.extend_from_slice(b"extra bytes");
+    std::fs::write(&path, extended).unwrap();
+    assert_eq!(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .as_ref(),
+        content
+    );
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(
+        download_response(&app, &owner, id).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    std::fs::write(&path, &content).unwrap();
+    let first = download_response(&app, &owner, id).await;
+    let second = download_response(&app, &owner, id).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(second.status(), StatusCode::OK);
 }

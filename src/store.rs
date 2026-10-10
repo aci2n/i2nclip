@@ -45,6 +45,7 @@ use crate::PAGE;
 
 const SCHEMA: &str = include_str!("../sql/001_init.sql");
 const UPLOAD_SLOTS: usize = 2;
+const DOWNLOAD_SLOTS: usize = 2;
 
 /// One stored object, still encrypted. `meta` is the ciphertext blob.
 #[derive(Debug)]
@@ -80,6 +81,7 @@ pub struct GcBlobsReport {
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) upload_slots: Arc<tokio::sync::Semaphore>,
+    pub(crate) download_slots: Arc<tokio::sync::Semaphore>,
     data_dir: Arc<PathBuf>,
     db: Arc<Mutex<Connection>>,
     /// Public origin the signatures must name, such as `https://clip.example.com`.
@@ -90,6 +92,7 @@ impl AppState {
     pub(crate) fn new(data_dir: PathBuf, conn: Connection, origin: String) -> Self {
         Self {
             upload_slots: Arc::new(tokio::sync::Semaphore::new(UPLOAD_SLOTS)),
+            download_slots: Arc::new(tokio::sync::Semaphore::new(DOWNLOAD_SLOTS)),
             data_dir: Arc::new(data_dir),
             db: Arc::new(Mutex::new(conn)),
             origin,
@@ -203,7 +206,14 @@ pub(crate) fn open(data_dir: &Path) -> Result<Connection, Error> {
     // Overwrite deleted pages so a removed tag token does not linger in the file.
     conn.pragma_update(None, "secure_delete", "ON")?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    conn.execute_batch(SCHEMA)?;
+    // Greenfield schema: initialize once, with no legacy migrations.
+    let tx = conn.unchecked_transaction()?;
+    let version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version == 0 {
+        tx.execute_batch(SCHEMA)?;
+        tx.pragma_update(None, "user_version", 1)?;
+    }
+    tx.commit()?;
     Ok(conn)
 }
 
@@ -371,19 +381,36 @@ pub(crate) fn parse_cursor(text: &str) -> Result<(i64, String), Error> {
     Ok((created_at, parse_id(id)?))
 }
 
-pub(crate) fn read_content(state: &AppState, owner: [u8; 32], id: &str) -> Result<Vec<u8>, Error> {
+/// Open the authorized blob while holding the database lock used by deletion.
+/// The returned handle pins this file even if its UUID is deleted and reused.
+pub(crate) fn open_content(
+    state: &AppState,
+    owner: [u8; 32],
+    id: &str,
+) -> Result<(std::fs::File, u64), Error> {
     let id = parse_id(id)?;
-    {
-        let conn = state.lock()?;
-        if !owned(&conn, &id, &owner)? {
-            return Err(Error::NotFound);
-        }
+    let conn = state.lock()?;
+    let bytes: i64 = conn
+        .query_row(
+            "SELECT bytes FROM files WHERE id = ?1 AND owner = ?2",
+            params![id, owner.as_slice()],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or(Error::NotFound)?;
+    if !(29..=MAX_CONTENT as i64).contains(&bytes) {
+        return Err(std::io::Error::other("invalid stored content size").into());
     }
-    match std::fs::read(state.blob_path(&id)) {
-        Ok(bytes) => Ok(bytes),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(Error::NotFound),
-        Err(err) => Err(err.into()),
+    let file = match std::fs::File::open(state.blob_path(&id)) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Err(Error::NotFound),
+        Err(err) => return Err(err.into()),
+    };
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() != bytes as u64 {
+        return Err(std::io::Error::other("stored content length mismatch").into());
     }
+    Ok((file, bytes as u64))
 }
 
 pub(crate) fn update_meta(
@@ -544,17 +571,6 @@ fn replace_tokens(tx: &Transaction<'_>, id: &str, tokens: &[String]) -> Result<(
         )?;
     }
     Ok(())
-}
-
-fn owned(conn: &Connection, id: &str, owner: &[u8; 32]) -> Result<bool, Error> {
-    let found = conn
-        .query_row(
-            "SELECT 1 FROM files WHERE id = ?1 AND owner = ?2",
-            params![id, owner.as_slice()],
-            |_| Ok(()),
-        )
-        .optional()?;
-    Ok(found.is_some())
 }
 
 /// `Uuid::parse_str` accepts uppercase hex. We refuse it. The exact string is

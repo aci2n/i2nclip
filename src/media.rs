@@ -5,6 +5,9 @@
 
 use std::time::Duration;
 
+use axum::body::{Body, Bytes};
+use tokio::io::AsyncReadExt;
+
 use axum::extract::{FromRequest, Path as UrlPath, Request, State};
 use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -187,8 +190,18 @@ async fn download(
     media: MediaRequest,
 ) -> Response {
     let owner = media.owner;
-    match blocking(move || store::read_content(&state, owner, &id)).await {
-        Ok(bytes) => bytes_response(bytes),
+    let permit = match state.download_slots.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => return transfers_busy("downloads busy; try again"),
+    };
+    // Opening owns the permit as well, including if this HTTP task is cancelled.
+    match blocking(move || {
+        let (file, bytes) = store::open_content(&state, owner, &id)?;
+        Ok((file, bytes, permit))
+    })
+    .await
+    {
+        Ok((file, bytes, permit)) => content_response(file, bytes, permit),
         Err(err) => fail(err),
     }
 }
@@ -242,31 +255,57 @@ struct MediaJson {
     meta: String,
 }
 
-/// Ciphertext for one id. The bytes never change, so the browser may keep
-/// them. `private` keeps that copy out of any shared cache.
-fn bytes_response(body: Vec<u8>) -> Response {
-    (
-        StatusCode::OK,
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("application/octet-stream"),
-            ),
-            (
-                header::CACHE_CONTROL,
-                HeaderValue::from_static("private, max-age=31536000, immutable"),
-            ),
-        ],
-        body,
-    )
-        .into_response()
+const DOWNLOAD_CHUNK: usize = 64 * 1024;
+
+struct Download {
+    file: tokio::fs::File,
+    remaining: u64,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+
+fn content_response(
+    file: std::fs::File,
+    bytes: u64,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> Response {
+    let mut file = tokio::fs::File::from_std(file);
+    file.set_max_buf_size(DOWNLOAD_CHUNK);
+    let download = Download {
+        file,
+        remaining: bytes,
+        _permit: permit,
+    };
+    let stream = futures_util::stream::try_unfold(download, |mut download| async move {
+        if download.remaining == 0 {
+            return Ok::<_, std::io::Error>(None);
+        }
+        let mut chunk = vec![0; download.remaining.min(DOWNLOAD_CHUNK as u64) as usize];
+        // A truncation after headers becomes a body error, never a clean short response.
+        download.file.read_exact(&mut chunk).await?;
+        download.remaining -= chunk.len() as u64;
+        Ok(Some((Bytes::from(chunk), download)))
+    });
+    let mut response = Body::from_stream(stream).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CONTENT_LENGTH, HeaderValue::from(bytes));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=31536000, immutable"),
+    );
+    response
 }
 
 fn uploads_busy() -> Response {
-    let mut response = json_response(
-        StatusCode::SERVICE_UNAVAILABLE,
-        json!({ "error": "uploads busy; try again" }),
-    );
+    transfers_busy("uploads busy; try again")
+}
+
+fn transfers_busy(message: &'static str) -> Response {
+    let mut response = json_response(StatusCode::SERVICE_UNAVAILABLE, json!({ "error": message }));
     response
         .headers_mut()
         .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));

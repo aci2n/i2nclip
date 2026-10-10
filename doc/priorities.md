@@ -1,6 +1,6 @@
 # Backend improvement priorities
 
-Status: upload receipt removal, strict Ed25519 validation, browser-compatible origin normalization, body-read deadlines, endpoint-specific byte caps, and two-upload admission implemented with user approval; remaining changes are proposals. Updated 2026-10-10. The detailed findings and security boundaries are in [backend-review.md](backend-review.md).
+Status: upload receipt removal, strict Ed25519 validation, browser-compatible origin normalization, body-read deadlines, endpoint-specific byte caps, two-upload admission, and bounded download streaming implemented with user approval; remaining changes are proposals. Updated 2026-10-10. The detailed findings and security boundaries are in [backend-review.md](backend-review.md).
 
 ## Completed
 
@@ -22,6 +22,10 @@ Status: upload receipt removal, strict Ed25519 validation, browser-compatible or
 
 - Flat HTTP module split: `src/media.rs` owns media routes and private `MediaRequest` policy; `src/routes.rs` owns assembly, health/registration, and shared HTTP helpers. Request order and upload permit ownership are preserved. Verification passed: 55 client tests, 32 Rust tests, Svelte checker, extension build, formatting, and `git diff --check`.
 
+- Download admission and streaming: two separate download slots, 64 KiB chunks, stored-size/file-length validation, and opened-file ownership preserved across API deletion and UUID reuse. Response completion, errors, and disposal release capacity. Cross-process GC coordination remains priority 7.
+
+- Download verification: 55 client tests and the Svelte checker passed; the extension build and Rust formatting/diff checks passed without warnings. The full Rust run passed 33 tests and failed only `startup_removes_legacy_receipts_and_preserves_media`: a concurrent edit to `sql/001_init.sql` removed the legacy receipt-table drop. That separate SQL edit was preserved. All 33 remaining Rust tests, including both new download tests and partial-response disposal, passed with that test explicitly filtered out.
+
 ## Proposed order
 
 Priority indicates urgency; order separates changes into independently reviewable steps. P1 findings are medium-severity issues, not demonstrated compromise of normally generated library keys.
@@ -30,7 +34,7 @@ Priority indicates urgency; order separates changes into independently reviewabl
 | --- | --- | --- | --- |
 | 1 | P1 — complete | Validate registered Ed25519 points, reject weak keys, and use strict request verification | Invalid/weak registrations return `400` without consuming an invitation; forged requests under legacy weak keys return `401`; valid clients and vectors remain compatible. Implementation scope below. |
 | 2 | P1 — complete | Replace manual origin normalization with browser-compatible URL parsing | Uppercase hosts, IDNA, IPv6, and default/nondefault ports serialize consistently with the browser. Invalid ports, credentials, paths beyond an optional root slash, queries, and fragments fail configuration validation. Parser-repaired inputs and collapsed raw paths are also rejected. |
-| 3 | P1 — partial | Set endpoint-specific body caps, body-read deadlines, and a bound on concurrent large transfers | Byte caps and total body-read deadlines are implemented. Uploads now have two slots before buffering, held through blocking storage. Pending: bounded download reads and streaming. See the request-limit document for concrete limits. |
+| 3 | P1 — complete | Set endpoint-specific body caps, body-read deadlines, and a bound on concurrent large transfers | Byte caps and total body-read deadlines are implemented. Uploads now have two slots before buffering, held through blocking storage. Downloads have two separate slots and stream bounded chunks from validated opened files. See the request-limit document for concrete limits. |
 | 4 | P2 | Replace year-long immutable content caching with `no-store` | Delete/recreate of an ID returns current content, and client content fetches bypass previously cached responses. Verify response headers, delete/recreate behavior, and actual browser caching. This avoids permanent UUID tombstones or a new versioned URL format. |
 | 5 | P2 | Borrow content and metadata slices during upload frame decoding | Remove large frame-to-content copies while retaining bounds, UTF-8 checks, trailing-byte rejection, and identical wire bytes. Preserve vector and malformed-frame tests. |
 | 6 | P2 | Add an index on nonce expiry | Existing databases gain `nonces(expires)` through idempotent schema setup. Keep atomic replay rejection and the same timestamp/expiry rules. Defer scheduled cleanup until measurements justify it. |
@@ -74,4 +78,4 @@ Verification completed: focused library/API tests and `make test` using Node v22
 
 ### Next approval boundary
 
-Strict Ed25519 validation, origin normalization, total body-read deadlines, and endpoint-specific byte caps were approved and implemented. Two-upload admission is now implemented as described in [request limits](request-limits.md). Remaining within order 3: download admission and streaming, to be proposed separately. Await approval before implementing those remaining changes.
+Strict Ed25519 validation, origin normalization, total body-read deadlines, and endpoint-specific byte caps were approved and implemented. Two-upload admission is now implemented as described in [request limits](request-limits.md). Bounded download streaming is also implemented. Next: priority 4, content cache correctness; await approval before implementing it.

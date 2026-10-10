@@ -22,6 +22,8 @@ hkdf = "0.12"
 hmac = "0.12"
 # Helpers for reading an HTTP body with a size cap.
 http-body-util = "0.1"
+# Stream bounded file chunks into HTTP response bodies.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # SQLite, bundled so the container does not need a system libsqlite.
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

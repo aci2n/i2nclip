@@ -1,6 +1,6 @@
-# Request deadlines, body limits, and upload admission
+# Request deadlines, body limits, and transfer admission
 
-Status: total body-read deadlines and endpoint-specific byte caps implemented with user approval. Two-upload admission is implemented. This is the first part of priority 3 in [priorities.md](priorities.md). Download streaming and storage quotas remain separate work.
+Status: total body-read deadlines and endpoint-specific byte caps implemented with user approval. Two-upload and two-download admission are implemented. This completes priority 3 in [priorities.md](priorities.md). Storage quotas and cross-process garbage-collection coordination remain separate work.
 
 ## Implemented deadlines
 
@@ -27,7 +27,7 @@ The server allows **two concurrent upload POSTs per router instance (one in the 
 
 A valid authenticated header spends its nonce before admission/body processing, as it does today. A retry after `503`, `408`, or `413` must be newly signed with a new nonce. Bad signatures remain `401` and must neither read the body nor use upload capacity. Health, listing, metadata edits, deletion, and registration do not acquire upload permits.
 
-The two-upload limit bounds the number of retained large upload workflows, not exact RSS. Frame decoding still copies content and `Vec` allocation may overreserve; removing those copies is a separate planned change. This step does not bound download memory, the number of small requests, total disk usage, or storage per owner.
+The two-upload limit bounds the number of retained large upload workflows, not exact RSS. Frame decoding still copies content and `Vec` allocation may overreserve; removing those copies is a separate planned change. Download streaming separately bounds active download reads. These limits do not bound the number of small requests, total disk usage, or storage per owner.
 
 ## Code changes
 
@@ -62,6 +62,14 @@ No dependency, database schema, signed-message layout, encrypted format, plainte
 - Existing signature-before-body, replay, ownership, duplicate-upload, registration, and shared Rust/JavaScript vector tests still pass.
 - Completed: `make test` under Node 22, touched-file formatting checks, and `make extension`; the limits/statuses are documented in `protocol.md`.
 
-## Follow-up within priority 3
+## Implemented download streaming
 
-Downloads need their own admission/ownership design: cap file reads using stored lengths, then stream responses while holding a permit until the response body is dropped or completes. Confirm cancellation releases file handles and capacity. Propose that separately; it is not covered by the two-upload limit above. Storage quotas remain a deployment/trust-policy decision.
+Content GETs acquire one of two download slots after authenticated empty-body verification, without waiting. These slots are separate from upload slots. Saturation returns `503`, `{"error":"downloads busy; try again"}`, `Retry-After: 1`, and `Cache-Control: no-store`. The nonce has been spent. Capacity is checked before ownership lookup, so an authenticated saturated request returns `503` even for a missing/unowned UUID; without saturation those requests return `404`.
+
+`store::open_content` queries the owner's stored ciphertext length and opens the file while holding the database mutex used by API deletion. Lengths must be between 29 bytes (minimum sealed blob) and 33,554,496 bytes (content cap), and the opened regular file's length must equal the indexed length. Invalid lengths/mismatches return `500` before response headers; missing files return `404`. The opened handle pins the original file across API deletion and UUID reuse. This coordinates one router's API operations; it does not solve separate-process GC races or arbitrary external file mutation.
+
+`media::content_response` streams the opened file with a 64 KiB chunk bound and Tokio file buffer bound. It sends exactly the indexed number of bytes and declares Content-Length. Later growth cannot expand the response; later truncation causes a transport/body error rather than successful short content. The permit travels with blocking file opening and then with stream state until EOF, an error, or response-body disposal. Tokio may finish an already started bounded file read after cancellation; no detached whole-file read is created. Existing content cache headers remain unchanged pending priority 4.
+
+Tests cover chunk bounds, shared admission, completion and partial/unpolled response disposal, owner isolation, API deletion/reuse with an active stream, invalid indexed sizes, mismatched/missing files, midstream truncation, and growth after opening. Storage quotas remain a deployment/trust-policy decision.
+
+Verification: 55 client tests and the Svelte checker passed; the extension build and Rust formatting/diff checks passed without warnings. The full Rust run passed 33 tests and failed only `startup_removes_legacy_receipts_and_preserves_media`: a concurrent edit to `sql/001_init.sql` removed the legacy receipt-table drop. That separate SQL edit was preserved. All 33 remaining Rust tests, including both new download tests and partial-response disposal, passed with that test explicitly filtered out.
