@@ -55,14 +55,9 @@ impl FromRequest<AppState> for MediaRequest {
         // public key is not enough to reach `read_body`. The allow-list lives
         // in PostgreSQL.
         let (parts, body) = req.into_parts();
-        let shared = state.clone();
-        let method = parts.method.clone();
-        let uri = parts.uri.clone();
-        let headers = parts.headers.clone();
-        let verified = match auth::verify_request(&shared, &method, &uri, &headers).await {
-            Ok(verified) => verified,
-            Err(err) => return Err(fail(err)),
-        };
+        let verified = auth::verify_request(state, &parts.method, &parts.uri, &parts.headers)
+            .await
+            .map_err(fail)?;
         Ok(Self {
             verified,
             parts,

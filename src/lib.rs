@@ -117,10 +117,10 @@ fn origin_from_env() -> Result<String, Error> {
 pub async fn run() -> Result<(), Error> {
     init_tracing();
     let origin = origin_from_env()?;
-    let state = open_state(&database_url_from_env()?, origin.clone()).await?;
+    let state = open_state(&database_url_from_env()?, origin).await?;
     let app = routes::router(state.clone());
     let listener = TcpListener::bind(LISTEN).await?;
-    tracing::info!(listen = LISTEN, %origin, "listening");
+    tracing::info!(listen = LISTEN, origin = state.origin(), "listening");
     let (stop, receiver) = tokio::sync::watch::channel(false);
     let stop_shutdown = stop.clone();
     let maintenance = tokio::spawn(maintenance::run(state.db.clone(), receiver));

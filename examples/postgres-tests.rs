@@ -88,7 +88,7 @@ async fn run() -> Result<()> {
         };
         // URL parsing handles IPv6 hosts; generated passwords are lowercase hex.
         let mut url = url::Url::parse("postgresql://postgres@localhost/postgres?sslmode=disable")?;
-        url.set_host(Some(&host.to_string()))?;
+        url.set_host(Some(&host))?;
         url.set_port(Some(port))
             .map_err(|_| "invalid PostgreSQL port")?;
         url.set_password(Some(&password))

@@ -153,6 +153,7 @@ impl Database {
 
     /// Consume a valid invitation and register the key in one transaction.
     pub(crate) async fn consume_code(&self, code: &str, public: &[u8; 32]) -> Result<(), Error> {
+        let hash = crypto::body_hash_bytes(code.trim().as_bytes());
         let mut tx = self.pool.begin().await?;
         let result = sqlx::query(
             r#"
@@ -160,7 +161,7 @@ impl Database {
             WHERE code_hash = $1 AND expires_at > $2
             "#,
         )
-        .bind(crypto::body_hash_bytes(code.trim().as_bytes()).to_vec())
+        .bind(hash.as_slice())
         .bind(crypto::now_secs() as i64)
         .execute(&mut *tx)
         .await?;
@@ -311,7 +312,7 @@ impl Database {
         let mut tx = self.pool.begin().await?;
         // UPDATE locks the authorized row until the tag replacement commits.
         // Concurrent metadata changes cannot mix one update's metadata with another's tags.
-        let row = sqlx::query(
+        let (bytes, created_at) = sqlx::query_as::<_, (i64, i64)>(
             r#"
             UPDATE files SET meta = $1
             WHERE id = $2 AND owner = $3
@@ -329,8 +330,8 @@ impl Database {
         Ok(Item {
             id,
             meta: parts.meta.to_vec(),
-            bytes: row.try_get("bytes")?,
-            created_at: row.try_get("created_at")?,
+            bytes,
+            created_at,
             tokens: parts.tokens,
         })
     }
