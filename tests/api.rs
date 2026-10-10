@@ -9,6 +9,7 @@ use axum::body::Body;
 use axum::http::Request;
 use axum::http::StatusCode;
 use base64::engine::general_purpose::STANDARD;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use http_body_util::BodyExt;
 use i2nclip::crypto;
@@ -367,6 +368,97 @@ async fn register_otc_is_single_use_and_idempotent_for_key() {
     let otc2 = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();
     let (status, _) = register(&app, &key, &otc2).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn rejected_public_keys_do_not_consume_registration_code() {
+    let (dir, app) = app(&[]);
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();
+    let mut identity = [0u8; 32];
+    identity[0] = 1;
+    for public in [identity, [0u8; 32], [2u8; 32]] {
+        let invalid = Identity {
+            seed: [0u8; 32],
+            public,
+        };
+        let (status, body) = register(&app, &invalid, &otc).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({ "error": "invalid public_key" })
+        );
+    }
+    let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM registered_keys", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    let valid = new_identity();
+    enroll_key(&app, &valid, &otc).await;
+    assert_eq!(
+        call(&app, &valid, "GET", "/api/media", vec![]).await.0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn legacy_weak_key_forgery_is_rejected_before_body_and_nonce() {
+    let mut public = [0u8; 32];
+    public[0] = 1;
+    let weak = Identity {
+        seed: [0u8; 32],
+        public,
+    };
+    // Direct insertion simulates a key registered before strict validation.
+    let (dir, app) = app(&[&weak]);
+    let mut signature = [0u8; 64];
+    signature[0] = 1;
+    let nonce = crypto::fresh_nonce();
+    let ts = crypto::now_secs();
+    let body = b"this payload must not be read";
+    let hash = crypto::body_hash(body);
+    let header = format!(
+        "Bearer {}.{ts}.{nonce}.{hash}.{}",
+        URL_SAFE_NO_PAD.encode(public),
+        URL_SAFE_NO_PAD.encode(signature)
+    );
+    let unreadable = Body::new(Body::from(body.as_slice()).map_frame(|frame| {
+        assert!(frame.data_ref().is_none(), "unauthenticated body was read");
+        frame
+    }));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/media")
+                .header("authorization", header)
+                .body(unreadable)
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM nonces WHERE nonce = ?1",
+            [&nonce],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM registered_keys WHERE public_key = ?1",
+            [public.as_slice()],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
 }
 
 fn walk(dir: &std::path::Path) -> Vec<PathBuf> {

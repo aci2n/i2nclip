@@ -21,13 +21,15 @@ use axum::http::Method;
 use axum::http::Uri;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use ed25519_dalek::VerifyingKey;
 
 use crate::crypto;
 use crate::store::AppState;
 use crate::Error;
 use crate::SKEW_SECS;
 
-/// Registration uses a canonical base64url encoding of a raw Ed25519 public key.
+/// Registration requires a canonical base64url key encoding and a valid,
+/// non-weak Ed25519 point. Reject it before consuming the invitation.
 pub(crate) fn parse_public_key(text: &str) -> Result<[u8; 32], Error> {
     let bytes =
         crypto::b64url_decode(text).map_err(|_| Error::BadRequest("invalid public_key".into()))?;
@@ -35,6 +37,11 @@ pub(crate) fn parse_public_key(text: &str) -> Result<[u8; 32], Error> {
         .try_into()
         .map_err(|_| Error::BadRequest("public_key must contain 32 bytes".into()))?;
     if URL_SAFE_NO_PAD.encode(public) != text {
+        return Err(Error::BadRequest("invalid public_key".into()));
+    }
+    let key = VerifyingKey::from_bytes(&public)
+        .map_err(|_| Error::BadRequest("invalid public_key".into()))?;
+    if key.is_weak() {
         return Err(Error::BadRequest("invalid public_key".into()));
     }
     Ok(public)
@@ -189,5 +196,25 @@ mod tests {
             assert!(parse_public_key(text).is_err());
         }
         assert!(parse_public_key(&(id.registration_key() + "=")).is_err());
+    }
+
+    #[test]
+    fn registration_rejects_weak_and_invalid_points() {
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        // y = 0 is another low-order point.
+        for public in [identity, [0u8; 32]] {
+            assert!(VerifyingKey::from_bytes(&public).unwrap().is_weak());
+            assert!(matches!(
+                parse_public_key(&URL_SAFE_NO_PAD.encode(public)),
+                Err(Error::BadRequest(message)) if message == "invalid public_key"
+            ));
+        }
+        let invalid = [2u8; 32];
+        assert!(VerifyingKey::from_bytes(&invalid).is_err());
+        assert!(matches!(
+            parse_public_key(&URL_SAFE_NO_PAD.encode(invalid)),
+            Err(Error::BadRequest(message)) if message == "invalid public_key"
+        ));
     }
 }

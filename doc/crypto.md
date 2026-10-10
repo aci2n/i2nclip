@@ -57,7 +57,7 @@ The server stores tokens for equality matching and AND queries. Without `K_tag`,
 
 ## Signed requests
 
-Requests use ordinary Ed25519, not Ed25519ph. SHA-256 hashes the body as a field of the signed envelope; the signature authenticates the complete textual envelope specified in [protocol.md](protocol.md). Method, exact target, configured origin, timestamp, nonce, and body digest are covered. Nonces plus the clock window prevent normal repeated execution of captured headers. The server uses dalek's ordinary `verify`, not `verify_strict`; weak-key acceptance is a confirmed review finding.
+Requests use ordinary Ed25519, not Ed25519ph. SHA-256 hashes the body as a field of the signed envelope; the signature authenticates the complete textual envelope specified in [protocol.md](protocol.md). Method, exact target, configured origin, timestamp, nonce, and body digest are covered. Nonces plus the clock window prevent normal repeated execution of captured headers. The server uses dalek's `verify_strict` to reject weak public keys and low-order signature points. Registration also parses the point and rejects `is_weak()` before consuming an invitation. Existing weak-key database rows remain stored but cannot authenticate. These checks preserve normal generated-key signatures and the existing wire format; they do not assert full prime-order subgroup validation beyond dalek's documented rules.
 
 The digest comparison need not hide the digest: body hashes and signatures are transmitted public values. This is not a secret password/HMAC comparison. Signature verification itself is delegated to the cryptographic library.
 

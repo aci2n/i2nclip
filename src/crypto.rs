@@ -32,7 +32,6 @@ use base64::Engine;
 use ed25519_dalek::Signature;
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey;
-use ed25519_dalek::Verifier;
 use ed25519_dalek::VerifyingKey;
 use hkdf::Hkdf;
 use hmac::Hmac;
@@ -253,14 +252,15 @@ pub fn sign(seed: &[u8; 32], message: &[u8]) -> [u8; 64] {
     signing.sign(message).to_bytes()
 }
 
-/// Check an Ed25519 signature. Any failure is [`Error::Unauthorized`], so the
+/// Strictly check an Ed25519 signature, including rejecting weak keys and
+/// low-order signature points. Any failure is [`Error::Unauthorized`], so the
 /// HTTP layer does not reveal whether the key was unknown or the signature was
 /// merely wrong. Callers still check the allow-list themselves before this,
 /// and map a missing key to the same error.
 pub fn verify(public: &[u8; 32], message: &[u8], signature: &[u8]) -> Result<(), Error> {
     let key = VerifyingKey::from_bytes(public).map_err(|_| Error::Unauthorized)?;
     let signature = Signature::from_slice(signature).map_err(|_| Error::Unauthorized)?;
-    key.verify(message, &signature)
+    key.verify_strict(message, &signature)
         .map_err(|_| Error::Unauthorized)
 }
 
@@ -330,6 +330,34 @@ fn hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use serde::Serialize;
+
+    #[test]
+    fn signature_verification_rejects_weak_key_forgery() {
+        let mut public = [0u8; 32];
+        public[0] = 1; // Edwards identity point.
+        let mut signature = [0u8; 64];
+        signature[0] = 1; // R = identity, S = zero.
+        let message = b"arbitrary request";
+        // Ordinary verification accepts this without a signing secret.
+        assert!(ed25519_dalek::Verifier::verify(
+            &VerifyingKey::from_bytes(&public).unwrap(),
+            message,
+            &Signature::from_bytes(&signature),
+        )
+        .is_ok());
+        assert!(matches!(
+            verify(&public, message, &signature),
+            Err(Error::Unauthorized)
+        ));
+
+        let id = from_seed([4u8; 32]);
+        let mut valid = sign(&id.seed, message);
+        assert!(verify(&id.public, message, &valid).is_ok());
+        assert!(verify(&id.public, b"changed request", &valid).is_err());
+        valid[0] ^= 1;
+        assert!(verify(&id.public, message, &valid).is_err());
+        assert!(verify(&id.public, message, &signature).is_err());
+    }
 
     #[test]
     fn roundtrip_rejects_wrong_key_aad_and_tamper() {

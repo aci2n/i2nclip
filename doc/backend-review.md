@@ -1,16 +1,16 @@
 # Backend review — 2026-10-10
 
-Scope: all eight `src/*.rs` files, `sql/001_init.sql`, backend integration tests, and the matching current client protocol/API implementation. The initial review made no runtime changes. Upload receipts and their client replay path were subsequently removed at the user's request; related recommendations below reflect that change. Other priorities distinguish confirmed defects from hardening recommendations and intentional security boundaries. Source line references reflect the initial review and may shift as code changes.
+Scope: all eight `src/*.rs` files, `sql/001_init.sql`, backend integration tests, and the matching current client protocol/API implementation. The initial review made no runtime changes. Upload receipts and their client replay path were subsequently removed, and strict Ed25519 validation was implemented with user approval. Related recommendations below reflect those changes. Other priorities distinguish confirmed defects from hardening recommendations and intentional security boundaries. Source line references reflect the initial review and may shift as code changes.
 
 ## Findings
 
-### 1. Medium: weak registered Ed25519 keys allow signatures without a secret
+### 1. Fixed: weak registered Ed25519 keys allowed signatures without a secret
 
-Locations: `src/auth.rs:31` (`parse_public_key`), `src/crypto.rs:260` (`verify`). Registration validates canonical base64 and length, but does not validate the curve point or reject low-order keys. Request verification uses `Verifier::verify`.
+Locations: `src/auth.rs` (`parse_public_key`), `src/crypto.rs` (`verify`). At review time, registration validated canonical base64 and length, but did not validate the curve point or reject low-order keys. Request verification used `Verifier::verify`.
 
 A temporary Rust probe confirmed the encoded Edwards identity point (`01` followed by 31 zero bytes), with signature `R = identity, S = 0`, passes the exported verifier for an arbitrary message; `verify_strict` rejects it. If such a key is registered using a valid invitation, possession of a signing secret is no longer required to access that namespace. This does not forge requests for normally generated user keys and does not bypass the invitation requirement.
 
-Recommendation: parse a `VerifyingKey` during registration, reject `is_weak()`, and use `verify_strict` for requests. Add regression tests for weak keys and invalid points while retaining valid client vectors. The distinction is documented by [ed25519-dalek 2.2.0](https://docs.rs/ed25519-dalek/2.2.0/ed25519_dalek/struct.VerifyingKey.html#method.is_weak).
+Implemented: registration parses a `VerifyingKey` and rejects `is_weak()` before consuming an invitation; requests use `verify_strict`. Regression tests cover weak/invalid points, preserved invitations, and forged requests under legacy stored weak keys rejected before reading the body or persisting a nonce. Existing rows and the wire format remain unchanged. The distinction is documented by [ed25519-dalek 2.2.0](https://docs.rs/ed25519-dalek/2.2.0/ed25519_dalek/struct.VerifyingKey.html#method.is_weak).
 
 ### 2. Medium: origin normalization disagrees with the browser
 
@@ -77,6 +77,7 @@ The single SQLite connection and explicit blocking pool are reasonable for this 
 - Initial review: `cargo test` passed 9 unit tests and 8 API integration tests, including shared Rust/JS vector equality. After receipt removal, the first backend run passed 9 unit tests and 9 API integration tests.
 - Initial review: 11 focused Node tests passed under Node v26.11.1. Receipt-removal verification uses the specified Node v22.23.3 after `npm ci --prefix client`: all 54 client tests pass and the Svelte checker reports zero errors and warnings.
 - Final receipt-removal verification: `make test` passed all 54 client tests, Svelte checks, and 18 Rust tests. `make extension` built and packaged successfully without warnings. Formatting/lint checks passed for the six changed JavaScript files, and `git diff --check` passed.
+- Strict Ed25519 validation verification: `make test` under Node v22.23.3 passed 54 client tests and 22 Rust tests, including the new regression tests and shared vectors. The Svelte checker reported zero errors/warnings; touched-file Rust formatting and `git diff --check` passed.
 - A temporary Rust probe confirmed weak-key signature acceptance, strict-verifier rejection, uppercase-host preservation, and invalid-port acceptance. The probe was removed after execution.
 - Storage/cache concurrency findings are source-derived; no live Firefox cache, load, crash, or race reproduction was performed. Existing tests cover ordinary ownership, replay, body tampering, encryption/AAD tampering, registration, and GC basics, but do not cover the findings above. Receipt-removal tests additionally cover duplicate conflicts, unchanged content, and migration from a legacy receipt table.
-- This was not a dependency advisory audit, penetration test, or formal proof. Changes following the review are limited to receipt removal, associated client retry behavior, tests, and documentation; unrelated existing frontend work is preserved.
+- This was not a dependency advisory audit, penetration test, or formal proof. Changes following the review cover receipt removal, associated client retry behavior, strict Ed25519 validation, tests, and documentation; unrelated existing frontend work is preserved.
