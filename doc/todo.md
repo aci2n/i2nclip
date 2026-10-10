@@ -1,5 +1,5 @@
 - [x] db quadlet config in i2nfra (make sure network is only shared between i2nclip and i2nclip-db). Verified only app and PostgreSQL join the internal database network, with no published database port. Added TCP health readiness and app restart propagation. Obsolete GC templates are deleted; deployment removes the old units before starting the new services. Strict template rendering, Quadlet generation, Python checks, and shell syntax pass; live deployment validation remains below.
-- why db_tests next to production code
+- [x] why db_tests next to production code — tests need private pool access for saturation, reconnect, and maintenance rollback checks. Moved them into db.rs's guarded mod tests, matching existing modules, and removed db_tests.rs. Database-free Rust tests, all three database tests, and Clippy pass.
 - comments and structure in new postgres code is inconsistent with previous code
 - review that tests that can use a mocked db do not require a postgresql db
 - review new code for idiomatic rust
