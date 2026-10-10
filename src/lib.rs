@@ -55,33 +55,67 @@ pub fn router(data_dir: &Path, origin: &str) -> Result<axum::Router, Error> {
     routes::router(data_dir, normalize_origin(origin)?)
 }
 
-/// `https://host` or `http://host`, no path. A default port (`:443`, `:80`) is removed
-/// so this matches `new URL(serverUrl).origin` in the extension.
+/// An HTTP(S) origin with an optional root slash, serialized like the browser's
+/// `new URL(serverUrl).origin`. Reject credentials and non-origin components.
 pub fn normalize_origin(raw: &str) -> Result<String, Error> {
-    let trimmed = raw.trim().trim_end_matches('/');
-    let (scheme, rest) = if let Some(rest) = trimmed.strip_prefix("https://") {
-        ("https", rest)
-    } else if let Some(rest) = trimmed.strip_prefix("http://") {
-        ("http", rest)
-    } else {
-        return Err(Error::Config(
-            "I2N_ORIGIN must start with https:// or http://".into(),
-        ));
+    let invalid = || {
+        Error::Config(
+            "I2N_ORIGIN must be an HTTP(S) origin without credentials, path, query, or fragment"
+                .into(),
+        )
     };
-    if rest.is_empty() || rest.contains(['/', '?', '#', ' ']) {
-        return Err(Error::Config(
-            "I2N_ORIGIN must be scheme and host only, such as https://clip.example.com".into(),
-        ));
+    let raw = raw.trim();
+    // URL parsers repair slashes, remove controls, and collapse dot segments.
+    // Configuration must be an explicit origin, not a repaired full URL.
+    let (_, authority) = raw.split_once("://").ok_or_else(invalid)?;
+    if raw.contains('\\')
+        || raw.chars().any(char::is_whitespace)
+        || raw.chars().any(char::is_control)
+        || authority.contains('@')
+        || authority
+            .split_once('/')
+            .is_some_and(|(_, path)| !path.is_empty())
+    {
+        return Err(invalid());
     }
-    let host = match (scheme, rest.rsplit_once(':')) {
-        ("https", Some((host, "443"))) => host,
-        ("http", Some((host, "80"))) => host,
-        _ => rest,
-    };
-    if host.is_empty() {
-        return Err(Error::Config("I2N_ORIGIN is missing a host".into()));
+    let url = url::Url::parse(raw).map_err(|_| invalid())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.has_host()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(invalid());
     }
-    Ok(format!("{scheme}://{host}"))
+    Ok(url.origin().ascii_serialization())
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+
+    #[test]
+    fn origins_match_browser_vectors_and_reject_non_origins() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../client/tests/origin-vectors.json")).unwrap();
+        for case in vectors["accepted"].as_array().unwrap() {
+            let input = case["input"].as_str().unwrap();
+            assert_eq!(
+                normalize_origin(input).unwrap(),
+                case["origin"].as_str().unwrap(),
+                "{input}"
+            );
+        }
+        for case in vectors["rejected"].as_array().unwrap() {
+            let input = case.as_str().unwrap();
+            assert!(
+                matches!(normalize_origin(input), Err(Error::Config(_))),
+                "{input}"
+            );
+        }
+    }
 }
 
 fn origin_from_env() -> Result<String, Error> {

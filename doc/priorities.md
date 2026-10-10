@@ -1,6 +1,6 @@
 # Backend improvement priorities
 
-Status: upload receipt removal and strict Ed25519 validation implemented with user approval; remaining changes are proposals. Updated 2026-10-10. The detailed findings and security boundaries are in [backend-review.md](backend-review.md).
+Status: upload receipt removal, strict Ed25519 validation, and browser-compatible origin normalization implemented with user approval; remaining changes are proposals. Updated 2026-10-10. The detailed findings and security boundaries are in [backend-review.md](backend-review.md).
 
 ## Completed
 
@@ -10,6 +10,8 @@ Status: upload receipt removal and strict Ed25519 validation implemented with us
 - Verification passed: `make test` (54 client tests, 18 Rust tests, Svelte checker), `make extension`, and checks on changed-file formatting.
 - Strict Ed25519 validation: registration rejects invalid/weak points before spending invitations, and strict request verification rejects legacy weak-key forgeries before reading bodies or persisting nonces. Valid-client headers, signatures, and encrypted formats are preserved; existing key rows remain stored.
 - Strict-validation verification passed: `make test` with Node v22.23.3 (54 client tests, 22 Rust tests, and Svelte checks with zero errors/warnings), touched-file Rust formatting, and `git diff --check`.
+- Browser-compatible origin normalization: replaced manual host/port normalization with `url::Url` origin serialization and explicit origin-only configuration checks. Shared fixtures compare Rust output with JavaScript URL origins, and API tests verify canonical-origin signatures against every accepted configured origin.
+- Origin-normalization verification passed: `make test` with Node v22.23.3 (55 client tests, 24 Rust tests, Svelte checks with zero errors/warnings), `make extension` without warnings, Rust/JavaScript/fixture formatting checks, and `git diff --check`.
 
 ## Proposed order
 
@@ -18,7 +20,7 @@ Priority indicates urgency; order separates changes into independently reviewabl
 | Order | Priority | Change | Result and acceptance criteria |
 | --- | --- | --- | --- |
 | 1 | P1 — complete | Validate registered Ed25519 points, reject weak keys, and use strict request verification | Invalid/weak registrations return `400` without consuming an invitation; forged requests under legacy weak keys return `401`; valid clients and vectors remain compatible. Implementation scope below. |
-| 2 | P1 | Replace manual origin normalization with browser-compatible URL parsing | Uppercase hosts, IDNA, IPv6, and default/nondefault ports serialize consistently with the browser. Invalid ports, credentials, paths beyond an optional root slash, queries, and fragments fail configuration validation. |
+| 2 | P1 — complete | Replace manual origin normalization with browser-compatible URL parsing | Uppercase hosts, IDNA, IPv6, and default/nondefault ports serialize consistently with the browser. Invalid ports, credentials, paths beyond an optional root slash, queries, and fragments fail configuration validation. Parser-repaired inputs and collapsed raw paths are also rejected. |
 | 3 | P1 | Set endpoint-specific body caps, body-read deadlines, and a bound on concurrent large transfers | GET/DELETE accept no body, PUT accepts only its metadata frame limit, POST retains its existing upload limit, and registration retains its small limit. Admission control happens before large buffers are allocated; permits cover the full lifetime of retained upload buffers. Slow or oversized requests fail predictably. Select concrete timeout/concurrency values in that step's proposal. |
 | 4 | P2 | Replace year-long immutable content caching with `no-store` | Delete/recreate of an ID returns current content, and client content fetches bypass previously cached responses. Verify response headers, delete/recreate behavior, and actual browser caching. This avoids permanent UUID tombstones or a new versioned URL format. |
 | 5 | P2 | Borrow content and metadata slices during upload frame decoding | Remove large frame-to-content copies while retaining bounds, UTF-8 checks, trailing-byte rejection, and identical wire bytes. Preserve vector and malformed-frame tests. |
@@ -63,4 +65,4 @@ Verification completed: focused library/API tests and `make test` using Node v22
 
 ### Next approval boundary
 
-Strict Ed25519 validation was approved and implemented. The next proposed step is browser-compatible origin normalization (order 2). Prepare its concrete implementation and test proposal for approval before starting that work; it is outside the approved strict-verification scope.
+Strict Ed25519 validation and origin normalization were approved and implemented. The next proposed step is endpoint-specific body caps, body-read deadlines, and bounded concurrent large transfers (order 3). Prepare concrete limits, admission-control behavior, and a test proposal for approval before starting that work.

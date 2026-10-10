@@ -118,6 +118,40 @@ async fn call(
 }
 
 #[tokio::test]
+async fn configured_origins_authenticate_browser_canonical_signatures() {
+    let key = new_identity();
+    let (dir, initial) = app(&[&key]);
+    drop(initial);
+    let vectors: serde_json::Value =
+        serde_json::from_str(include_str!("../client/tests/origin-vectors.json")).unwrap();
+    for case in vectors["accepted"].as_array().unwrap() {
+        let input = case["input"].as_str().unwrap();
+        let origin = case["origin"].as_str().unwrap();
+        let app = i2nclip::router(&dir.0, input).unwrap();
+        let authorization = crypto::authorization(
+            &key,
+            origin,
+            crypto::now_secs(),
+            &crypto::fresh_nonce(),
+            "GET",
+            "/api/media",
+            b"",
+        );
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/media")
+                    .header("authorization", authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{input}");
+    }
+}
+
+#[tokio::test]
 async fn health_needs_no_key() {
     let (_dir, app) = app(&[]);
     let response = app

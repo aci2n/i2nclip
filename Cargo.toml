@@ -36,6 +36,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # NFC normalization so "é" and its decomposed form hash as the same tag.
 unicode-normalization = "0.1"
+# WHATWG URL parsing and origin serialization, matching browser request signatures.
+url = "2"
 # Parses UUIDs. Does not generate them; the client picks the id.
 uuid = "1"
 

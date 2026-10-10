@@ -1,0 +1,55 @@
+{
+	"accepted": [
+		{
+			"input": "https://clip.example.com",
+			"origin": "https://clip.example.com"
+		},
+		{
+			"input": "  HTTPS://EXAMPLE.COM:443/  ",
+			"origin": "https://example.com"
+		},
+		{ "input": "http://EXAMPLE.COM:80", "origin": "http://example.com" },
+		{
+			"input": "https://EXAMPLE.COM:8443/",
+			"origin": "https://example.com:8443"
+		},
+		{ "input": "http://localhost:8080/", "origin": "http://localhost:8080" },
+		{ "input": "http://127.0.0.1:8080", "origin": "http://127.0.0.1:8080" },
+		{
+			"input": "https://[2001:0DB8:0:0:0:0:0:1]:443/",
+			"origin": "https://[2001:db8::1]"
+		},
+		{ "input": "http://[::1]:8080", "origin": "http://[::1]:8080" },
+		{
+			"input": "https://BÜCHER.example/",
+			"origin": "https://xn--bcher-kva.example"
+		},
+		{ "input": "https://example.com:0443", "origin": "https://example.com" }
+	],
+	"rejected": [
+		"",
+		"example.com",
+		"ftp://example.com",
+		"https://",
+		"https:///example.com",
+		"https:example.com",
+		"https://example.com:invalid",
+		"https://example.com:65536",
+		"https://user@example.com",
+		"https://user:secret@example.com",
+		"https://@example.com",
+		"https://example.com/api",
+		"https://example.com//",
+		"https://example.com/./",
+		"https://example.com/api/..",
+		"https://example.com?",
+		"https://example.com/?q=1",
+		"https://example.com#",
+		"https://example.com/#fragment",
+		"https://exa mple.com",
+		"https://exam\tple.com",
+		"https://exam\nple.com",
+		"https://example.com\\",
+		"http://[not-an-ipv6]"
+	]
+}
