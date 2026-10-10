@@ -5,7 +5,7 @@
 - [x] review new code for idiomatic rust — borrow request parts during authentication, bind invitation hashes without temporary vectors, and avoid redundant origin/host copies. Metadata updates decode a typed SQL result before committing. Reviewed explicit transaction ownership, shared pool/state, and maintenance cancellation.
 - [x] remove dead code — moved upload/metadata frame encoders and their helper into the test-only reference client, made the server frame module private, and replaced the unused nonce helper's dead-code suppression with the PostgreSQL test feature gate. Audited runtime modules, tooling, and dependencies for obsolete SQLite, staging, signal-GC, and blocking-work remnants; none remain.
 - [x] consider if store.rs can be removed — removed it. Shared app state lives at the crate root, cursor parsing stays with media queries, and identifier/sealed-blob checks live in frame/crypto. Persistence remains in db.rs; behavior and protocol are unchanged.
-- make sure test coverage is as thorough as it was with sqlite
+- [x] make sure test coverage is as thorough as it was with sqlite — compared pre-migration API/storage/GC tests and recorded the mapping in backend-review.md. Restored pagination ties/owner/AND-tag coverage; added schema bounds/immutable content, deferred commit rollback, invitation rollback, nonce races, and active maintenance shutdown checks. Nine database tests, 22 API tests, database-free Rust tests, Clippy, and formatting pass. Filesystem-only failures are superseded by PostgreSQL transactions.
 - process memory measurements
 - deployment validations
 - for atomic inserts, check conflicts consistently: either check insert err (preferred) or check insert count

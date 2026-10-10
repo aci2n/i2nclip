@@ -552,4 +552,284 @@ mod tests {
         assert!(recovered);
         dispose(db, admin, name).await;
     }
+    #[tokio::test]
+    async fn list_preserves_owner_and_tag_filters_across_cursor_ties() {
+        let (db, admin, name) = fixture().await;
+        let owner = [7_u8; 32];
+        let other = [8_u8; 32];
+        let tags = vec!["A".repeat(43), "B".repeat(43)];
+        let ids: Vec<_> = (0..28).map(|n| format!("{n:064x}")).collect();
+        let mut tx = db.pool.begin().await.unwrap();
+        let mut records: Vec<_> = ids
+            .iter()
+            .enumerate()
+            .map(|(n, id)| {
+                (
+                    id.clone(),
+                    owner,
+                    if n < 26 { 100_i64 } else { 99 },
+                    tags.clone(),
+                )
+            })
+            .collect();
+        records.extend([
+            ("c".repeat(64), owner, 98, tags[..1].to_vec()),
+            ("d".repeat(64), owner, 98, tags[1..].to_vec()),
+            ("e".repeat(64), other, 101, tags.clone()),
+        ]);
+        for (id, owner, created_at, tokens) in records {
+            sqlx::query(
+                r#"
+                                INSERT INTO files (id, owner, meta, content, created_at)
+                                VALUES ($1, $2, $3, $4, $5)
+                                "#,
+            )
+            .bind(&id)
+            .bind(owner.as_slice())
+            .bind(&[1_u8; 29][..])
+            .bind(&[1_u8; 29][..])
+            .bind(created_at)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+            replace_tokens(&mut tx, &id, &tokens).await.unwrap();
+        }
+        tx.commit().await.unwrap();
+        let (first, cursor) = db.list(owner, &tags, None).await.unwrap();
+        assert_eq!(
+            first.iter().map(|item| &item.id).collect::<Vec<_>>(),
+            ids[..PAGE].iter().collect::<Vec<_>>()
+        );
+        assert!(first
+            .iter()
+            .all(|item| item.tokens == tags && item.bytes == 29));
+        assert_eq!(cursor, Some(format!("100.{}", ids[PAGE - 1])));
+        let after = Some((
+            first.last().unwrap().created_at,
+            first.last().unwrap().id.clone(),
+        ));
+        let (last, next) = db.list(owner, &tags, after).await.unwrap();
+        assert_eq!(
+            last.iter().map(|item| &item.id).collect::<Vec<_>>(),
+            ids[PAGE..].iter().collect::<Vec<_>>()
+        );
+        assert!(last.iter().all(|item| item.tokens == tags));
+        assert!(next.is_none());
+        let (first, _) = db.list(owner, &[], None).await.unwrap();
+        let after = Some((
+            first.last().unwrap().created_at,
+            first.last().unwrap().id.clone(),
+        ));
+        let (last, next) = db.list(owner, &[], after).await.unwrap();
+        assert_eq!(last.len(), 6);
+        assert!(next.is_none());
+        let (foreign, next) = db.list(other, &tags, None).await.unwrap();
+        assert_eq!(foreign.len(), 1);
+        assert_eq!(foreign[0].id, "e".repeat(64));
+        assert!(next.is_none());
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn schema_bounds_and_immutable_content_protect_downloads() {
+        let (db, admin, name) = fixture().await;
+        for (meta_size, content_size) in [(28_i32, 29_i32), (65537, 29), (29, 28), (29, 33554497)] {
+            let error = sqlx::query(
+                r#"
+                                INSERT INTO files (id, owner, meta, content, created_at)
+                                VALUES ($1, $2, repeat('x', $3)::bytea, repeat('x', $4)::bytea, 100)
+                                "#,
+            )
+            .bind("a".repeat(64))
+            .bind(&[1_u8; 32][..])
+            .bind(meta_size)
+            .bind(content_size)
+            .execute(&db.pool)
+            .await
+            .unwrap_err();
+            assert_eq!(
+                error.as_database_error().unwrap().code().as_deref(),
+                Some("23514")
+            );
+        }
+        let content = vec![1_u8; 100_000];
+        let body = crate::reference_crypto::encode_post(&[1; 29], &content, "");
+        let item = db.add([1; 32], &body).await.unwrap();
+        let error = sqlx::query("UPDATE files SET content = $1 WHERE id = $2")
+            .bind(&[2_u8; 29][..])
+            .bind(&item.id)
+            .execute(&db.pool)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.as_database_error().unwrap().code().as_deref(),
+            Some("23514")
+        );
+        assert_eq!(db.content([1; 32], &item.id).await.unwrap(), content);
+        let (items, _) = db.list([1; 32], &[], None).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].bytes, content.len() as i64);
+        db.remove([1; 32], &item.id).await.unwrap();
+        assert!(matches!(
+            db.content([1; 32], &item.id).await,
+            Err(Error::NotFound)
+        ));
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn failed_upload_commit_rolls_back_content_metadata_and_tags() {
+        let (db, admin, name) = fixture().await;
+        sqlx::raw_sql(
+            r#"
+                            CREATE FUNCTION reject_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+                            BEGIN
+                                RAISE EXCEPTION 'test commit failure';
+                            END;
+                            $$;
+                            CREATE CONSTRAINT TRIGGER reject_commit
+                                AFTER INSERT ON files DEFERRABLE INITIALLY DEFERRED
+                                FOR EACH ROW EXECUTE FUNCTION reject_commit();
+                "#,
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let token = "A".repeat(43);
+        let body = crate::reference_crypto::encode_post(&[1; 29], &[1; 29], &token);
+        assert!(matches!(db.add([1; 32], &body).await, Err(Error::Db(_))));
+        let counts: (i64, i64) =
+            sqlx::query_as("SELECT (SELECT count(*) FROM files), (SELECT count(*) FROM tags)")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(counts, (0, 0));
+        sqlx::query("DROP TRIGGER reject_commit ON files")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let item = db.add([1; 32], &body).await.unwrap();
+        assert_eq!(db.content([1; 32], &item.id).await.unwrap(), vec![1; 29]);
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn failed_registration_keeps_invitation_available() {
+        let (db, admin, name) = fixture().await;
+        let code = db.issue_code(3600).await.unwrap();
+        sqlx::raw_sql(
+            r#"
+            CREATE FUNCTION reject_registration() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                RAISE EXCEPTION 'test registration failure';
+            END;
+            $$;
+            CREATE TRIGGER reject_registration BEFORE INSERT ON registered_keys
+                FOR EACH ROW EXECUTE FUNCTION reject_registration();
+            "#,
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert!(matches!(
+            db.consume_code(&code, &[1; 32]).await,
+            Err(Error::Db(_))
+        ));
+        assert!(!db.allowed(&[1; 32]).await.unwrap());
+        sqlx::query("DROP TRIGGER reject_registration ON registered_keys")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        db.consume_code(&code, &[1; 32]).await.unwrap();
+        assert!(db.allowed(&[1; 32]).await.unwrap());
+        assert!(matches!(
+            db.consume_code(&code, &[2; 32]).await,
+            Err(Error::RegistrationFailed)
+        ));
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_nonce_reservation_has_one_winner() {
+        let (db, admin, name) = fixture().await;
+        let (a, b) = tokio::join!(
+            db.remember_nonce("same-nonce", 100),
+            db.remember_nonce("same-nonce", 100)
+        );
+        assert!(matches!(
+            (a, b),
+            (Ok(()), Err(Error::Unauthorized)) | (Err(Error::Unauthorized), Ok(()))
+        ));
+        assert!(matches!(
+            db.remember_nonce("same-nonce", 100).await,
+            Err(Error::Unauthorized)
+        ));
+        assert_eq!(
+            db.maintain(100 + crate::SKEW_SECS as i64).await.unwrap(),
+            (0, 0)
+        );
+        assert_eq!(
+            db.maintain(101 + crate::SKEW_SECS as i64).await.unwrap(),
+            (1, 0)
+        );
+        dispose(db, admin, name).await;
+    }
+    #[tokio::test]
+    async fn maintenance_shutdown_waits_for_active_sweep_without_upload_permits() {
+        let (db, admin, name) = fixture().await;
+        sqlx::query("INSERT INTO nonces (nonce, expires) VALUES ('expired', 0)")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let state = crate::AppState::new(db.clone(), "http://i2nclip.test".into());
+        let mut permits = Vec::new();
+        for _ in 0..crate::UPLOAD_SLOTS {
+            permits.push(state.upload_slots.clone().acquire_owned().await.unwrap());
+        }
+        let mut blocked = db.pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE nonces IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *blocked)
+            .await
+            .unwrap();
+        let (stop, receiver) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(crate::maintenance::run(db.clone(), receiver));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let waiting: bool = sqlx::query_scalar(
+                    r#"
+                    SELECT EXISTS(
+                        SELECT 1 FROM pg_stat_activity
+                        WHERE datname = current_database()
+                          AND wait_event_type = 'Lock'
+                          AND query LIKE '%DELETE FROM nonces%'
+                    )
+                    "#,
+                )
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+                if waiting {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("startup sweep must reach the database despite busy upload slots");
+        stop.send(true).unwrap();
+        assert!(!task.is_finished(), "shutdown must await the blocked sweep");
+        blocked.commit().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM nonces")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(remaining, 0, "the active sweep finishes before shutdown");
+        drop(permits);
+        drop(state);
+        dispose(db, admin, name).await;
+    }
 }

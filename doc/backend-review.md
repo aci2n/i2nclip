@@ -9,3 +9,18 @@ Registration consumes invitations and registers keys atomically. Authentication 
 Body sizes and read deadlines remain bounded. Two uploads and two downloads are admitted per application instance. Async hashes yield every 64 KiB; SQLx encoding/decoding can still copy complete content values. Full-buffer downloads are intentional. Slow response readers can delay shutdown and occupy download slots indefinitely; timeout work remains in [priorities.md](priorities.md). Storage quotas and proxy rate limiting remain deployment concerns.
 
 Crypto framing and client/server vectors are unchanged. Content hashes bind metadata AAD and are checked before client decryption. Encryption detects corruption but does not provide metadata rollback detection or library completeness proofs.
+
+## Storage test coverage after PostgreSQL migration
+
+Compared with the SQLite tests immediately before commit `e1e91eb`, applicable HTTP coverage remains in `tests/postgres_api.rs`; health coverage now runs without a database in `routes.rs`. Private storage checks live in `db.rs`.
+
+| Former coverage | PostgreSQL coverage |
+| --- | --- |
+| Owner and AND-tag filters across timestamp ties and page boundaries | Restored `list_preserves_owner_and_tag_filters_across_cursor_ties`, including unfiltered and other-owner pages |
+| Nonce expiration boundaries and replay | Maintenance boundary test, HTTP replay tests, and concurrent nonce reservation with exactly one winner; caller-transaction rollback is superseded by independently reserved nonces |
+| Publication conflict, deletion, and failed publication commit | Duplicate/independent-router conflict tests, owned downloads after deletion, immediate tag-write rollback, and deferred commit-failure rollback |
+| File length mismatch and midstream truncation | SQL size constraints and immutable content checks; reported sizes derive from stored bytes, and fetched response bytes survive concurrent deletion |
+| Interrupted writes, cleanup journals, unlink failures, and stale GC candidates | Filesystem-specific states no longer exist; transactional upload rollback and maintenance rollback/recovery cover the applicable failure guarantees |
+| Signal cleanup waiting for uploads and shutting down | Internal startup maintenance runs with all upload permits occupied; shutdown waits for a database-blocked active sweep to finish |
+
+Additional migration checks cover invitation rollback and races, pool saturation/reconnection, and timestamp rechecks after awaited nonce insertion. The suite passes nine private database tests and 22 API tests, plus database-free Rust tests. The optional maximum-transfer profile remains separately invoked.
