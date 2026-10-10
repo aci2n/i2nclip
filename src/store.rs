@@ -631,11 +631,12 @@ fn write_new_with(
 #[cfg(test)]
 mod journal_tests {
     use super::*;
+    use crate::reference_crypto as client_crypto;
     struct Fixture(AppState, PathBuf);
     impl Fixture {
         fn new() -> Self {
-            let dir =
-                std::env::temp_dir().join(format!("i2nclip-journal-{}", crypto::fresh_nonce()));
+            let dir = std::env::temp_dir()
+                .join(format!("i2nclip-journal-{}", client_crypto::fresh_nonce()));
             prepare(&dir).unwrap();
             Self(
                 AppState::new(
@@ -670,9 +671,10 @@ mod journal_tests {
         }
     }
     fn body() -> (String, Vec<u8>) {
-        let content = crypto::encrypt(&[7; 32], &crypto::content_aad(), b"content").unwrap();
+        let content =
+            client_crypto::encrypt(&[7; 32], &client_crypto::content_aad(), b"content").unwrap();
         let id = crypto::body_hash(&content);
-        let meta = crypto::encrypt(&[7; 32], &crypto::meta_aad(&id), b"{}").unwrap();
+        let meta = client_crypto::encrypt(&[7; 32], &client_crypto::meta_aad(&id), b"{}").unwrap();
         (id, frame::encode_post(&meta, &content, ""))
     }
     #[test]

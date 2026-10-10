@@ -54,10 +54,11 @@ pub(crate) async fn listen(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use crate::reference_crypto as client_crypto;
     #[tokio::test]
     async fn signal_waits_for_uploads_then_cleans_and_shuts_down() {
         let dir =
-            std::env::temp_dir().join(format!("i2nclip-signal-{}", crate::crypto::fresh_nonce()));
+            std::env::temp_dir().join(format!("i2nclip-signal-{}", client_crypto::fresh_nonce()));
         store::prepare(&dir).unwrap();
         let conn = store::open(&dir).unwrap();
         let id = "a".repeat(64);

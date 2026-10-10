@@ -13,3 +13,5 @@ HTTP modules use the flat `src/` directory: `routes.rs` assembles the router, se
 The current content hash policy, exact storage ordering, crash limits, and retry behavior are described in [protocol.md](protocol.md); metadata/content AAD and hash checks are in [crypto.md](crypto.md). Current formats retain their version labels and require no compatibility layer.
 
 - [gc.md](gc.md): staged-file journal, SIGUSR1 administration, and crash consistency.
+
+`src/crypto.rs` contains server-used cryptography. `src/reference_crypto.rs` is a test-only reference client, shared by unit and API tests; encryption and key-derivation dependencies stay out of the production dependency graph.

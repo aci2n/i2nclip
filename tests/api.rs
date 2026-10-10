@@ -13,9 +13,13 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use http_body_util::BodyExt;
 use i2nclip::crypto;
-use i2nclip::crypto::Identity;
 use i2nclip::frame;
+use i2nclip::Error;
+use reference_crypto::{self as client_crypto, Identity};
 use tower::ServiceExt;
+
+#[path = "../src/reference_crypto.rs"]
+mod reference_crypto;
 
 static N: AtomicU64 = AtomicU64::new(0);
 
@@ -39,7 +43,7 @@ impl Drop for TempDir {
 fn new_identity() -> Identity {
     let mut seed = [0u8; 32];
     getrandom::getrandom(&mut seed).unwrap();
-    crypto::from_seed(seed)
+    client_crypto::from_seed(seed)
 }
 
 fn app(keys: &[&Identity]) -> (TempDir, axum::Router) {
@@ -103,8 +107,9 @@ async fn call(
     body: Vec<u8>,
 ) -> (StatusCode, Vec<u8>) {
     let ts = crypto::now_secs();
-    let nonce = crypto::fresh_nonce();
-    let header = crypto::authorization(key, "http://i2nclip.test", ts, &nonce, method, path, &body);
+    let nonce = client_crypto::fresh_nonce();
+    let header =
+        client_crypto::authorization(key, "http://i2nclip.test", ts, &nonce, method, path, &body);
     let request = Request::builder()
         .method(method)
         .uri(path)
@@ -128,11 +133,11 @@ async fn configured_origins_authenticate_browser_canonical_signatures() {
         let input = case["input"].as_str().unwrap();
         let origin = case["origin"].as_str().unwrap();
         let app = i2nclip::router(&dir.0, input).unwrap();
-        let authorization = crypto::authorization(
+        let authorization = client_crypto::authorization(
             &key,
             origin,
             crypto::now_secs(),
-            &crypto::fresh_nonce(),
+            &client_crypto::fresh_nonce(),
             "GET",
             "/api/media",
             b"",
@@ -181,11 +186,11 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
             b"partial".to_vec()
         };
         let mut request = Request::builder().method(method).uri(&path);
-        let authorization = crypto::authorization(
+        let authorization = client_crypto::authorization(
             &owner,
             "http://i2nclip.test",
             crypto::now_secs(),
-            &crypto::fresh_nonce(),
+            &client_crypto::fresh_nonce(),
             method,
             &path,
             &payload,
@@ -327,11 +332,11 @@ async fn media_body_caps_reject_declared_sizes_before_polling() {
         ("GET", "/api/media".to_string(), 0),
         ("DELETE", format!("/api/media/{id}"), 0),
     ] {
-        let authorization = crypto::authorization(
+        let authorization = client_crypto::authorization(
             &owner,
             "http://i2nclip.test",
             crypto::now_secs(),
-            &crypto::fresh_nonce(),
+            &client_crypto::fresh_nonce(),
             method,
             &path,
             b"",
@@ -388,11 +393,11 @@ async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
     ] {
         for declared in [None, Some(0)] {
             let bytes = Bytes::from(vec![0u8; cap + 1]);
-            let authorization = crypto::authorization(
+            let authorization = client_crypto::authorization(
                 &owner,
                 "http://i2nclip.test",
                 crypto::now_secs(),
-                &crypto::fresh_nonce(),
+                &client_crypto::fresh_nonce(),
                 method,
                 &path,
                 &bytes,
@@ -453,12 +458,17 @@ async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
     let tag = "secret-tag-zebra";
     let meta_json =
         format!(r#"{{"name":"{filename}","content_type":"image/jpeg","size":1,"tags":["{tag}"]}}"#);
-    let content = crypto::encrypt(&key.seed, &crypto::content_aad(), marker).unwrap();
+    let content = client_crypto::encrypt(&key.seed, &client_crypto::content_aad(), marker).unwrap();
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
-    let meta = crypto::encrypt(&key.seed, &crypto::meta_aad(id), meta_json.as_bytes()).unwrap();
+    let meta = client_crypto::encrypt(
+        &key.seed,
+        &client_crypto::meta_aad(id),
+        meta_json.as_bytes(),
+    )
+    .unwrap();
 
-    let token = crypto::tag_token(&key.seed, tag).unwrap();
+    let token = client_crypto::tag_token(&key.seed, tag).unwrap();
     let body = frame::encode_post(&meta, &content, &token);
 
     let (status, bytes) = call(&app, &key, "POST", "/api/media", body).await;
@@ -484,7 +494,7 @@ async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
     let (status, stored) = call(&app, &key, "GET", &format!("/api/media/{id}"), Vec::new()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        crypto::decrypt(&key.seed, &crypto::content_aad(), &stored).unwrap(),
+        client_crypto::decrypt(&key.seed, &client_crypto::content_aad(), &stored).unwrap(),
         marker
     );
 
@@ -519,13 +529,14 @@ async fn another_key_cannot_see_or_search() {
     let other = new_identity();
     let (_dir, app) = app(&[&owner, &other]);
 
-    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), b"pic").unwrap();
+    let content =
+        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"pic").unwrap();
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
-    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
 
-    let token = crypto::tag_token(&owner.seed, "shared-word").unwrap();
-    let other_token = crypto::tag_token(&other.seed, "shared-word").unwrap();
+    let token = client_crypto::tag_token(&owner.seed, "shared-word").unwrap();
+    let other_token = client_crypto::tag_token(&other.seed, "shared-word").unwrap();
     assert_ne!(token, other_token);
     let body = frame::encode_post(&meta, &content, &token);
     assert_eq!(
@@ -570,8 +581,8 @@ async fn rejects_bad_signature_replay_and_raw_jpeg() {
     assert_eq!(status, StatusCode::OK);
     // The first call already stored its nonce. Sign a fresh one and send it twice.
     let ts = crypto::now_secs();
-    let nonce = crypto::fresh_nonce();
-    let header = crypto::authorization(
+    let nonce = client_crypto::fresh_nonce();
+    let header = client_crypto::authorization(
         &key,
         "http://i2nclip.test",
         ts,
@@ -602,7 +613,7 @@ async fn rejects_bad_signature_replay_and_raw_jpeg() {
     );
 
     let id = "3333333333333333333333333333333333333333333333333333333333333333";
-    let meta = crypto::encrypt(&key.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    let meta = client_crypto::encrypt(&key.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
     let body = frame::encode_post(&meta, b"\xff\xd8\xff\xd8not-encrypted", "not-a-token");
     let (status, _) = call(&app, &key, "POST", "/api/media", body).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -615,11 +626,11 @@ async fn rejects_wrong_origin_and_a_body_other_than_the_signed_one() {
     let ts = crypto::now_secs();
     let body = b"signed-body".to_vec();
 
-    let other_origin = crypto::authorization(
+    let other_origin = client_crypto::authorization(
         &key,
         "https://other.example",
         ts,
-        &crypto::fresh_nonce(),
+        &client_crypto::fresh_nonce(),
         "POST",
         "/api/media",
         &body,
@@ -635,11 +646,11 @@ async fn rejects_wrong_origin_and_a_body_other_than_the_signed_one() {
         StatusCode::UNAUTHORIZED
     );
 
-    let swapped = crypto::authorization(
+    let swapped = client_crypto::authorization(
         &key,
         "http://i2nclip.test",
         ts,
-        &crypto::fresh_nonce(),
+        &client_crypto::fresh_nonce(),
         "POST",
         "/api/media",
         &body,
@@ -732,7 +743,7 @@ async fn legacy_weak_key_forgery_is_rejected_before_body_and_nonce() {
     let (dir, app) = app(&[&weak]);
     let mut signature = [0u8; 64];
     signature[0] = 1;
-    let nonce = crypto::fresh_nonce();
+    let nonce = client_crypto::fresh_nonce();
     let ts = crypto::now_secs();
     let body = b"this payload must not be read";
     let hash = crypto::body_hash(body);
@@ -798,10 +809,11 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
     let other = new_identity();
     let (dir, app) = app(&[&owner, &other]);
 
-    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), b"original").unwrap();
+    let content =
+        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"original").unwrap();
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
-    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
 
     let body = frame::encode_post(&meta, &content, "");
     let first = call(&app, &owner, "POST", "/api/media", body.clone()).await;
@@ -812,7 +824,8 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
         call(&app, &other, "POST", "/api/media", body).await.0,
         StatusCode::CONFLICT
     );
-    let changed = crypto::encrypt(&owner.seed, &crypto::content_aad(), b"changed").unwrap();
+    let changed =
+        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"changed").unwrap();
     assert_eq!(
         call(
             &app,
@@ -858,12 +871,13 @@ async fn reopening_database_preserves_media() {
     let owner = new_identity();
     let (dir, app) = app(&[&owner]);
 
-    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), b"original").unwrap();
+    let content =
+        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"original").unwrap();
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
-    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
 
-    let token = crypto::tag_token(&owner.seed, "keep").unwrap();
+    let token = client_crypto::tag_token(&owner.seed, "keep").unwrap();
     let body = frame::encode_post(&meta, &content, &token);
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
@@ -907,11 +921,11 @@ async fn upload_admission_is_shared_and_releases_capacity() {
             observed.notify_one();
             frame
         }));
-        let authorization = crypto::authorization(
+        let authorization = client_crypto::authorization(
             owner,
             "http://i2nclip.test",
             crypto::now_secs(),
-            &crypto::fresh_nonce(),
+            &client_crypto::fresh_nonce(),
             "POST",
             "/api/media",
             b"",
@@ -941,11 +955,11 @@ async fn upload_admission_is_shared_and_releases_capacity() {
     let (dir, app) = app(&[&owner, &other]);
     let first = stall(&app, &owner).await;
     let second = stall(&app, &other).await;
-    let authorization = crypto::authorization(
+    let authorization = client_crypto::authorization(
         &owner,
         "http://i2nclip.test",
         crypto::now_secs(),
-        &crypto::fresh_nonce(),
+        &client_crypto::fresh_nonce(),
         "POST",
         "/api/media",
         b"",
@@ -1026,11 +1040,11 @@ async fn upload_admission_is_shared_and_releases_capacity() {
         ),
         (Body::from("wrong signed bytes"), StatusCode::UNAUTHORIZED),
     ] {
-        let authorization = crypto::authorization(
+        let authorization = client_crypto::authorization(
             &owner,
             "http://i2nclip.test",
             crypto::now_secs(),
-            &crypto::fresh_nonce(),
+            &client_crypto::fresh_nonce(),
             "POST",
             "/api/media",
             b"",
@@ -1065,10 +1079,11 @@ async fn upload_admission_is_shared_and_releases_capacity() {
         );
     }
 
-    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), b"file").unwrap();
+    let content =
+        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"file").unwrap();
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
-    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
     let frame = frame::encode_post(&meta, &content, "");
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", frame.clone())
@@ -1100,11 +1115,11 @@ async fn download_response(
     id: &str,
 ) -> axum::response::Response {
     let path = format!("/api/media/{id}");
-    let authorization = crypto::authorization(
+    let authorization = client_crypto::authorization(
         owner,
         "http://i2nclip.test",
         crypto::now_secs(),
-        &crypto::fresh_nonce(),
+        &client_crypto::fresh_nonce(),
         "GET",
         &path,
         b"",
@@ -1127,10 +1142,14 @@ async fn concurrent_routers_publish_one_hash() {
     let other = new_identity();
     let (dir, first) = app(&[&owner, &other]);
     let second = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
-    let content =
-        crypto::encrypt(&owner.seed, &crypto::content_aad(), b"same sealed bytes").unwrap();
+    let content = client_crypto::encrypt(
+        &owner.seed,
+        &client_crypto::content_aad(),
+        b"same sealed bytes",
+    )
+    .unwrap();
     let id = crypto::body_hash(&content);
-    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(&id), b"{}").unwrap();
+    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"{}").unwrap();
     let body = frame::encode_post(&meta, &content, "");
     let (a, b) = tokio::join!(
         call(&first, &owner, "POST", "/api/media", body.clone()),
@@ -1166,10 +1185,15 @@ async fn downloads_stream_with_admission_and_pin_authorized_files() {
     let other = new_identity();
     let (_dir, app) = app(&[&owner, &other]);
 
-    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), &vec![7; 180_000]).unwrap();
+    let content = client_crypto::encrypt(
+        &owner.seed,
+        &client_crypto::content_aad(),
+        &vec![7; 180_000],
+    )
+    .unwrap();
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
-    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
     assert_eq!(
         call(
             &app,
@@ -1227,10 +1251,12 @@ async fn downloads_stream_with_admission_and_pin_authorized_files() {
             .0,
         StatusCode::NO_CONTENT
     );
-    let replacement = crypto::encrypt(&other.seed, &crypto::content_aad(), b"replacement").unwrap();
+    let replacement =
+        client_crypto::encrypt(&other.seed, &client_crypto::content_aad(), b"replacement").unwrap();
     let replacement_hash = crypto::body_hash(&replacement);
     let id = replacement_hash.as_str();
-    let other_meta = crypto::encrypt(&other.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    let other_meta =
+        client_crypto::encrypt(&other.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
     assert_eq!(
         call(
             &app,
@@ -1268,10 +1294,15 @@ async fn downloads_validate_lengths_and_fail_on_midstream_truncation() {
     let owner = new_identity();
     let (dir, app) = app(&[&owner]);
 
-    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), &vec![9; 180_000]).unwrap();
+    let content = client_crypto::encrypt(
+        &owner.seed,
+        &client_crypto::content_aad(),
+        &vec![9; 180_000],
+    )
+    .unwrap();
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
-    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
     assert_eq!(
         call(
             &app,
@@ -1368,9 +1399,14 @@ async fn list_query_validation_is_scoped_to_the_list_endpoint() {
         call(&app, &owner, "DELETE", &path, vec![]).await.0,
         StatusCode::NOT_FOUND
     );
-    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), b"query isolation").unwrap();
+    let content = client_crypto::encrypt(
+        &owner.seed,
+        &client_crypto::content_aad(),
+        b"query isolation",
+    )
+    .unwrap();
     let id = crypto::body_hash(&content);
-    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(&id), b"{}").unwrap();
+    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"{}").unwrap();
     let body = frame::encode_post(&meta, &content, "");
     assert_eq!(
         call(&app, &owner, "POST", "/api/media?after=invalid", body)

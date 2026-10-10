@@ -62,7 +62,7 @@ The comment in `src/frame.rs` overstates multipart's difficulty: multipart can c
 
 ## Simplifications without changing the wire format
 
-1. Separate server-used verification/hash/blob checks from reference-client encryption, tag derivation, identity generation, and encoders. The production server never needs a seed or decryption key, yet `pub mod crypto` exposes all of them and brings client-reference dependencies into the server crate. A small verification module plus a reference/test helper library would make that boundary clearer. Preserve shared vectors.
+1. Completed for crypto: `src/crypto.rs` now holds server-used verification, hashing, and blob checks. Reference-client encryption, tag derivation, identity generation, and signing live in test-only `src/reference_crypto.rs`, with client-only dependencies moved to dev dependencies. Shared vectors are preserved. Frame encoders remain in `frame.rs` for fixtures.
 2. Return borrowed metadata/content slices from frame decoding. This removes a large copy and simplifies ownership; let the storage workflow own the original body buffer.
 3. Completed by receipt removal: storage no longer hashes upload bodies again for receipt insertion or retry lookup. Authentication still verifies the signed body hash.
 4. Replace `Vec<Box<dyn ToSql>>` plus the derived reference vector in listing with `Vec<rusqlite::types::Value>` and `params_from_iter`. Dynamic placeholders remain necessary for variable tag counts; boxing does not.

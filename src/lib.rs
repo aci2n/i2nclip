@@ -11,6 +11,8 @@ mod error;
 pub mod frame;
 mod gc;
 mod media;
+#[cfg(test)]
+mod reference_crypto;
 mod routes;
 mod store;
 

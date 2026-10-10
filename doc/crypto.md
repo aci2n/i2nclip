@@ -1,5 +1,7 @@
 # Cryptography and security boundaries
 
+The browser implements client cryptography in `client/src/lib/protocol/crypto.js`. Rust `src/crypto.rs` contains only server verification, hashing, sealed-blob shape checks, and supporting encoding/time helpers. Test-only `src/reference_crypto.rs` implements identities, encryption/decryption, tag derivation, and request signing for protocol fixtures and integration tests. Its AES-GCM, HKDF, HMAC, and Unicode normalization dependencies are dev dependencies. Shared vectors in `client/tests/test-vectors.json` check byte-for-byte agreement; the production server does not compile the reference helpers.
+
 ## Identity and keys
 
 A library identity is JSON `{ "v": 1, "seed": "…", "publicKey": "…" }`. The seed and public key are each 32 bytes encoded as canonical unpadded base64url. The seed is a randomly generated Ed25519 secret seed, not a password. The public key is derived from it. The browser checks their correspondence by signing and verifying a fixed probe message when loading the identity.

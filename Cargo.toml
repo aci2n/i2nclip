@@ -6,8 +6,6 @@ publish = false
 description = "Encrypted media store. The server keeps ciphertext and public keys."
 
 [dependencies]
-# AES-256-GCM: the cipher the client uses for file bytes and metadata.
-aes-gcm = "0.10"
 # HTTP framework. Handlers look a bit like small servlet methods.
 axum = "0.8"
 # Base64 for ciphertext and base64url for public keys, bearer tokens, and tags.
@@ -16,10 +14,6 @@ base64 = "0.22"
 ed25519-dalek = "2"
 # Operating-system random bytes for nonces and new keys.
 getrandom = "0.2"
-# Turns the 32-byte API-key seed into separate AES and HMAC keys.
-hkdf = "0.12"
-# HMAC-SHA256, used for the searchable tag fingerprint.
-hmac = "0.12"
 # Helpers for reading an HTTP body with a size cap.
 http-body-util = "0.1"
 # Stream bounded file chunks into HTTP response bodies.
@@ -36,12 +30,15 @@ tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# NFC normalization so "é" and its decomposed form hash as the same tag.
-unicode-normalization = "0.1"
 # WHATWG URL parsing and origin serialization, matching browser request signatures.
 url = "2"
 
 [dev-dependencies]
+# Reference-client encryption, key derivation, and searchable tag tokens.
+aes-gcm = "0.10"
+hkdf = "0.12"
+hmac = "0.12"
+unicode-normalization = "0.1"
 # Controlled request streams and paused-clock deadline tests.
 http-body-util = { version = "0.1", features = ["channel"] }
 tokio = { version = "1", features = ["test-util"] }

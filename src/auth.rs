@@ -187,10 +187,11 @@ fn decode_sig(text: &str) -> Option<[u8; 64]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reference_crypto as client_crypto;
 
     #[test]
     fn registration_requires_a_raw_canonical_public_key() {
-        let id = crypto::from_seed([1u8; 32]);
+        let id = client_crypto::from_seed([1u8; 32]);
         assert_eq!(parse_public_key(&id.registration_key()).unwrap(), id.public);
         for text in ["", "AAAA", "not a key"] {
             assert!(parse_public_key(text).is_err());
