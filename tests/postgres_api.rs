@@ -1036,7 +1036,9 @@ async fn upload_admission_is_shared_and_releases_capacity() {
     enroll_key(&app, &new_identity(), &otc).await;
     first.abort();
     assert!(first.await.unwrap_err().is_cancelled());
-    assert_eq!(queued.await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    // Admission resumes the authenticated request. Its signed empty body
+    // matches the hash, but is not a valid upload frame.
+    assert_eq!(queued.await.unwrap().status(), StatusCode::BAD_REQUEST);
     let replay = app
         .clone()
         .oneshot(
@@ -1205,112 +1207,128 @@ async fn concurrent_routers_publish_one_hash() {
 
 #[tokio::test]
 async fn downloads_retain_owned_content_after_deletion() {
-    let owner = new_identity();
-    let other = new_identity();
-    let (_dir, app) = app(&[&owner, &other]).await;
+    use std::time::Duration;
 
-    let content = client_crypto::encrypt(
-        &owner.seed,
-        &client_crypto::content_aad(),
-        &vec![7; 180_000],
-    )
-    .unwrap();
-    let hash = crypto::body_hash(&content);
-    let id = hash.as_str();
-    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-    assert_eq!(
-        call(
-            &app,
-            &owner,
-            "POST",
-            "/api/media",
-            client_crypto::encode_post(&meta, &content, "")
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let owner = new_identity();
+        let other = new_identity();
+        let (_dir, app) = app(&[&owner, &other]).await;
+
+        let content = client_crypto::encrypt(
+            &owner.seed,
+            &client_crypto::content_aad(),
+            &vec![7; 180_000],
         )
-        .await
-        .0,
-        StatusCode::CREATED
-    );
-    assert_eq!(
-        download_response(&app, &other, id).await.status(),
-        StatusCode::NOT_FOUND
-    );
-    let first = download_response(&app, &owner, id).await;
-    let second = download_response(&app, &owner, id).await;
-    assert_eq!(first.status(), StatusCode::OK);
-    assert_eq!(first.headers()["content-length"], content.len().to_string());
-    assert_eq!(first.headers()["content-type"], "application/octet-stream");
-    let busy = download_response(&app, &owner, id).await;
-    assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(busy.headers()["retry-after"], "1");
-    assert_eq!(busy.headers()["cache-control"], "no-store");
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(
-            &busy.into_body().collect().await.unwrap().to_bytes()
-        )
-        .unwrap(),
-        serde_json::json!({"error": "downloads busy; try again"})
-    );
-    assert_eq!(
-        call(&app, &owner, "GET", "/api/media", vec![]).await.0,
-        StatusCode::OK
-    );
-    drop(second); // An unpolled response also returns its slot.
-    let mut body = first.into_body();
-    let first_chunk = body.frame().await.unwrap().unwrap().into_data().unwrap();
-    assert!(first_chunk.len() <= 64 * 1024);
-    assert!(first_chunk.len() < content.len());
-    let second = download_response(&app, &owner, id).await;
-    assert_eq!(second.status(), StatusCode::OK);
-    assert_eq!(
-        download_response(&app, &owner, id).await.status(),
-        StatusCode::SERVICE_UNAVAILABLE
-    );
-    let mut partial = second.into_body();
-    assert!(partial.frame().await.unwrap().is_ok());
-    drop(partial); // Cancelling after a chunk also returns its slot.
-                   // An opened stream survives deletion. Different ciphertext has a different URL.
-    assert_eq!(
-        call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
+        .unwrap();
+        let hash = crypto::body_hash(&content);
+        let id = hash.as_str();
+        let meta =
+            client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
+        assert_eq!(
+            call(
+                &app,
+                &owner,
+                "POST",
+                "/api/media",
+                client_crypto::encode_post(&meta, &content, "")
+            )
             .await
             .0,
-        StatusCode::NO_CONTENT
-    );
-    let replacement =
-        client_crypto::encrypt(&other.seed, &client_crypto::content_aad(), b"replacement").unwrap();
-    let replacement_hash = crypto::body_hash(&replacement);
-    let id = replacement_hash.as_str();
-    let other_meta =
-        client_crypto::encrypt(&other.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-    assert_eq!(
-        call(
-            &app,
-            &other,
-            "POST",
-            "/api/media",
-            client_crypto::encode_post(&other_meta, &replacement, "")
-        )
-        .await
-        .0,
-        StatusCode::CREATED
-    );
-    let mut received = first_chunk.to_vec();
-    while let Some(chunk) = body.frame().await {
-        let chunk = chunk.unwrap().into_data().unwrap();
-        assert!(chunk.len() <= 64 * 1024);
-        received.extend_from_slice(&chunk);
-    }
-    assert_eq!(received, content);
-    // Completion releases the permit even while the empty body remains alive.
-    let first = download_response(&app, &other, id).await;
-    let second = download_response(&app, &other, id).await;
-    assert_eq!(first.status(), StatusCode::OK);
-    assert_eq!(second.status(), StatusCode::OK);
-    drop(first);
-    drop(second);
-    assert_eq!(
-        download_response(&app, &owner, id).await.status(),
-        StatusCode::NOT_FOUND
-    );
+            StatusCode::CREATED
+        );
+        assert_eq!(
+            download_response(&app, &other, id).await.status(),
+            StatusCode::NOT_FOUND
+        );
+        let first = download_response(&app, &owner, id).await;
+        let second = download_response(&app, &owner, id).await;
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(first.headers()["content-length"], content.len().to_string());
+        assert_eq!(first.headers()["content-type"], "application/octet-stream");
+        let queued = download_response(&app, &owner, id);
+        tokio::pin!(queued);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut queued)
+                .await
+                .is_err(),
+            "a third download waits while both responses hold their slots"
+        );
+        assert_eq!(
+            call(&app, &owner, "GET", "/api/media", vec![]).await.0,
+            StatusCode::OK
+        );
+        drop(second); // An unpolled response also returns its slot.
+        let second = tokio::time::timeout(Duration::from_secs(5), queued)
+            .await
+            .expect("dropping an unpolled response must admit the queued download");
+        assert_eq!(second.status(), StatusCode::OK);
+        let mut body = first.into_body();
+        let first_chunk = body.frame().await.unwrap().unwrap().into_data().unwrap();
+        assert!(first_chunk.len() <= 64 * 1024);
+        assert!(first_chunk.len() < content.len());
+        let queued = download_response(&app, &owner, id);
+        tokio::pin!(queued);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut queued)
+                .await
+                .is_err(),
+            "a partially consumed response continues to hold its slot"
+        );
+        let mut partial = second.into_body();
+        assert!(partial.frame().await.unwrap().is_ok());
+        drop(partial); // Cancelling after a chunk also returns its slot.
+        let admitted = tokio::time::timeout(Duration::from_secs(5), queued)
+            .await
+            .expect("dropping a partial response must admit the queued download");
+        assert_eq!(admitted.status(), StatusCode::OK);
+        drop(admitted);
+        // An opened stream survives deletion. Different ciphertext has a different URL.
+        assert_eq!(
+            call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
+                .await
+                .0,
+            StatusCode::NO_CONTENT
+        );
+        let replacement =
+            client_crypto::encrypt(&other.seed, &client_crypto::content_aad(), b"replacement")
+                .unwrap();
+        let replacement_hash = crypto::body_hash(&replacement);
+        let id = replacement_hash.as_str();
+        let other_meta =
+            client_crypto::encrypt(&other.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
+        assert_eq!(
+            call(
+                &app,
+                &other,
+                "POST",
+                "/api/media",
+                client_crypto::encode_post(&other_meta, &replacement, "")
+            )
+            .await
+            .0,
+            StatusCode::CREATED
+        );
+        let mut received = first_chunk.to_vec();
+        while let Some(chunk) = body.frame().await {
+            let chunk = chunk.unwrap().into_data().unwrap();
+            assert!(chunk.len() <= 64 * 1024);
+            received.extend_from_slice(&chunk);
+        }
+        assert_eq!(received, content);
+        // Completion releases the permit even while the empty body remains alive.
+        let first = download_response(&app, &other, id).await;
+        let second = download_response(&app, &other, id).await;
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(second.status(), StatusCode::OK);
+        drop(first);
+        drop(second);
+        assert_eq!(
+            download_response(&app, &owner, id).await.status(),
+            StatusCode::NOT_FOUND
+        );
+    })
+    .await
+    .expect("download ownership and admission checks must finish within 60 seconds");
 }
 
 #[tokio::test]
