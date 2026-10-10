@@ -69,6 +69,14 @@ The stores use ordinary JavaScript and Svelte's readable store contract so the
 async transitions can be tested directly with deferred promises, without a
 component compiler or a separate state-machine dependency.
 
+Creation persists `pendingRegistration` (server URL, public key, and wrapped
+private key) before contacting the API. Retries unwrap the same identity and
+use a signed list request to confirm registration before spending an invitation.
+The password and invitation are not persisted. The final local identity and
+cleared pending marker are written together; a session-write failure leaves a
+locked identity that can be unlocked or backed up. Pending creation must be
+finished or explicitly discarded before restoring or changing servers.
+
 Tab-injected media fetches register a separate abort controller per request in
 the extension's isolated frame context. Caller cancellation aborts the remote
 fetch; completion and failure release the stream reader and remove frame state.

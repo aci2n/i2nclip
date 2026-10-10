@@ -170,6 +170,23 @@ export async function registerKey({ serverUrl, publicKey, otc, signal }) {
 	throw await responseError(response);
 }
 
+// A signed read proves registration without spending another invitation.
+export async function isKeyRegistered({ serverUrl, privateKey, signal }) {
+	const response = await signedFetch(
+		serverUrl,
+		await loadKey(privateKey),
+		"GET",
+		"/api/media",
+		new Uint8Array(),
+		undefined,
+		signal,
+	);
+	if (response.status !== 200 && response.status !== 401)
+		throw await responseError(response);
+	await response.body?.cancel();
+	return response.status === 200;
+}
+
 async function openMeta(key, item) {
 	try {
 		const plain = await decrypt(key, metaAad(item.id), b64ToBytes(item.meta));

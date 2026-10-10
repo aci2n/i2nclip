@@ -1,5 +1,5 @@
 import { get, writable } from "svelte/store";
-import { registerKey } from "../api.js";
+import { isKeyRegistered, registerKey } from "../api.js";
 import { loadKey } from "../protocol/crypto.js";
 import { generatePrivateKey } from "../protocol/identity.js";
 import { parseRecoveryFile, recoveryFile } from "../protocol/recovery.js";
@@ -27,6 +27,7 @@ export function createSession(platform) {
 		ready: false,
 		serverUrl: DEFAULT_SERVER_URL,
 		wrappedKey: null,
+		pendingRegistration: null,
 		privateKey: "",
 		busy: false,
 		error: "",
@@ -40,7 +41,12 @@ export function createSession(platform) {
 		const version = ++revision;
 		try {
 			const [local, session] = await Promise.all([
-				platform.local.get(["serverUrl", "wrappedKey", "publicKey"]),
+				platform.local.get([
+					"serverUrl",
+					"wrappedKey",
+					"publicKey",
+					"pendingRegistration",
+				]),
 				platform.session.get("privateKey"),
 			]);
 			let privateKey = "";
@@ -58,7 +64,12 @@ export function createSession(platform) {
 					...value,
 					...local,
 					ready: true,
-					serverUrl: local.serverUrl || DEFAULT_SERVER_URL,
+					serverUrl: local.wrappedKey
+						? local.serverUrl || DEFAULT_SERVER_URL
+						: local.pendingRegistration?.serverUrl ||
+							local.serverUrl ||
+							DEFAULT_SERVER_URL,
+					pendingRegistration: local.pendingRegistration || null,
 					wrappedKey: local.wrappedKey || null,
 					privateKey,
 					error: "",
@@ -98,8 +109,10 @@ export function createSession(platform) {
 			await refresh();
 			return true;
 		} catch (error) {
-			if (!disposed)
+			if (!disposed) {
+				await refresh();
 				state.update((value) => ({ ...value, error: error.message }));
+			}
 			return false;
 		} finally {
 			if (!disposed) state.update((value) => ({ ...value, busy: false }));
@@ -113,6 +126,7 @@ export function createSession(platform) {
 			serverUrl,
 			wrappedKey,
 			publicKey: loaded.registrationKey,
+			pendingRegistration: null,
 		});
 		active();
 		await platform.session.set({ privateKey });
@@ -131,22 +145,55 @@ export function createSession(platform) {
 					throw new Error("Password must be at least 8 characters.");
 				if (!otc.trim())
 					throw new Error("Enter an invitation code from the admin.");
-				const created = await generatePrivateKey();
-				const wrapped = await wrapPrivateKey(created.privateKey, password);
-				active();
-				try {
-					await registerKey({
+				let { pendingRegistration: pending } = await platform.local.get(
+					"pendingRegistration",
+				);
+				const retry = Boolean(pending);
+				let privateKey;
+				if (pending) {
+					if (pending.serverUrl !== serverUrl)
+						throw new Error(
+							"Retry creation on its original server, or discard the pending creation first.",
+						);
+					privateKey = await unwrapPrivateKey(pending.wrappedKey, password);
+					if ((await loadKey(privateKey)).registrationKey !== pending.publicKey)
+						throw new Error("Invalid pending identity.");
+				} else {
+					const created = await generatePrivateKey();
+					privateKey = created.privateKey;
+					pending = {
 						serverUrl,
 						publicKey: created.publicKey,
-						otc,
-						signal: controller.signal,
-					});
+						wrappedKey: await wrapPrivateKey(privateKey, password),
+					};
+					active();
+					// Never send registration until the encrypted identity is durable.
+					await platform.local.set({ pendingRegistration: pending });
+				}
+				active();
+				try {
+					// On retry this also recovers a successful registration with a lost response.
+					if (
+						!retry ||
+						!(await isKeyRegistered({
+							serverUrl,
+							privateKey,
+							signal: controller.signal,
+						}))
+					) {
+						await registerKey({
+							serverUrl,
+							publicKey: pending.publicKey,
+							otc,
+							signal: controller.signal,
+						});
+					}
 				} catch (error) {
 					throw new Error(
-						`${error.message === "registration failed" ? "Registration failed." : `Registration failed: ${error.message}.`} Check your invitation code and try again.`,
+						`${error.message === "registration failed" ? "Registration failed." : `Registration failed: ${error.message}.`} Your encrypted identity is saved. Check your invitation code and retry with the original password.`,
 					);
 				}
-				await saveIdentity(serverUrl, created.privateKey, wrapped);
+				await saveIdentity(serverUrl, privateKey, pending.wrappedKey);
 			}),
 		restore: (file, password) =>
 			mutate(async () => {
@@ -154,6 +201,12 @@ export function createSession(platform) {
 					throw new Error("A library is already configured.");
 				if (!file || file.size > 16_384)
 					throw new Error("Invalid recovery file.");
+				if (
+					(await platform.local.get("pendingRegistration")).pendingRegistration
+				)
+					throw new Error(
+						"Finish or discard the pending creation before restoring a library.",
+					);
 				const recovered = parseRecoveryFile(await file.text());
 				const privateKey = await unwrapPrivateKey(
 					recovered.wrappedKey,
@@ -176,9 +229,19 @@ export function createSession(platform) {
 				await platform.session.set({ privateKey });
 			}),
 		setServer: (serverUrl) =>
-			mutate(() => {
+			mutate(async () => {
 				checkServer(serverUrl);
+				if (
+					(await platform.local.get("pendingRegistration")).pendingRegistration
+				)
+					throw new Error(
+						"Finish or discard the pending creation before changing servers.",
+					);
 				return platform.local.set({ serverUrl });
+			}),
+		discardCreation: () =>
+			mutate(async () => {
+				await platform.local.remove("pendingRegistration");
 			}),
 		reset: () =>
 			mutate(async () => {

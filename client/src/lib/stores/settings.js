@@ -69,6 +69,24 @@ export function createSettings(session, platform) {
 				{ password: "", otc: "" },
 			);
 		},
+		discardCreation() {
+			if (
+				disposed ||
+				running ||
+				get(session).busy ||
+				!platform.confirm(
+					"Discard this pending identity? Its invitation may already be used, and any library registered with this identity will become inaccessible.",
+				)
+			)
+				return;
+			return action(
+				"create",
+				session.discardCreation,
+				"Pending creation discarded.",
+				"Discarding…",
+				{ password: "", otc: "" },
+			);
+		},
 		restore() {
 			const { recoveryFiles, restorePassword } = get(state);
 			return action(

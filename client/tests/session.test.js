@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createSession } from "../src/lib/stores/session.js";
 
-test("registration finishing after disposal cannot save an identity", async (t) => {
+test("registration finishing after disposal cannot configure an identity", async (t) => {
 	let receive;
 	const started = new Promise((resolve) => {
 		receive = resolve;
@@ -40,7 +40,7 @@ test("registration finishing after disposal cannot save an identity", async (t) 
 	assert.equal(signal.aborted, true);
 	finish(new Response(null, { status: 204 }));
 	assert.equal(await create, false);
-	assert.equal(writes, 0);
+	assert.equal(writes, 1); // Only the encrypted pending identity was saved before sending.
 	assert.equal(await session.setServer("https://other.example"), false);
 });
 

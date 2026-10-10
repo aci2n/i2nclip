@@ -15,7 +15,7 @@ const feedbackAt = $derived(
 			: feedback.scope,
 );
 function navigateTabs(event) {
-	if (!$session.busy)
+	if (!$session.busy && !$session.pendingRegistration)
 		selectTab(event, mode, (next) => settings.edit("mode", next));
 }
 function create(event) {
@@ -74,7 +74,7 @@ function create(event) {
 					aria-selected={mode === "restore"}
 					tabindex={mode === "restore" ? 0 : -1}
 					aria-controls="restore-panel"
-					disabled={$session.busy}
+					disabled={$session.busy || Boolean($session.pendingRegistration)}
 					onclick={() => {
 						settings.edit("mode", "restore");
 					}}
@@ -89,6 +89,13 @@ function create(event) {
 				hidden={mode !== "create"}
 			>
 				<form id="create" onsubmit={create}>
+					{#if $session.pendingRegistration}
+						<p id="pending-creation">
+							Your encrypted identity is saved. Retry registration with the
+							original password and invitation code. You can close this page and
+							return later.
+						</p>
+					{/if}
 					<label for="otc">Invitation code</label>
 					<input
 						id="otc"
@@ -120,9 +127,22 @@ function create(event) {
 						the server.
 					</p>
 					<button id="create-library" type="submit" disabled={$session.busy}>
-						Create library
+						{$session.pendingRegistration
+							? "Retry registration"
+							: "Create library"}
 					</button>
 					{@render notice("create")}
+					{#if $session.pendingRegistration}
+						<button
+							id="discard-creation"
+							type="button"
+							class="secondary danger"
+							disabled={$session.busy}
+							onclick={settings.discardCreation}
+						>
+							Discard pending creation
+						</button>
+					{/if}
 				</form>
 			</div>
 			<div
@@ -225,9 +245,13 @@ function create(event) {
 						() => $settings.server,
 						(value) => settings.edit("server", value)
 					}
-					disabled={$session.busy}
+					disabled={$session.busy || Boolean($session.pendingRegistration)}
 				>
-				<button id="save-server" type="submit" disabled={$session.busy}>
+				<button
+					id="save-server"
+					type="submit"
+					disabled={$session.busy || Boolean($session.pendingRegistration)}
+				>
 					Update URL
 				</button>
 			</div>

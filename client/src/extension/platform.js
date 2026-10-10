@@ -9,7 +9,9 @@ export const platform = {
 		const changed = (changes, area) => {
 			if (
 				(area === "local" &&
-					["serverUrl", "wrappedKey"].some((key) => key in changes)) ||
+					["serverUrl", "wrappedKey", "pendingRegistration"].some(
+						(key) => key in changes,
+					)) ||
 				(area === "session" && "privateKey" in changes)
 			)
 				listener();

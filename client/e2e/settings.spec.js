@@ -165,7 +165,7 @@ test("fresh setup defaults to the public server", async ({ page, app }) => {
 
 for (const submit of ["click", "Enter"]) {
 	for (const accepted of [false, true]) {
-		test(`pending registration stores no identity: ${submit}, ${accepted ? "accepted" : "rejected"}`, async ({
+		test(`pending registration saves only an encrypted identity: ${submit}, ${accepted ? "accepted" : "rejected"}`, async ({
 			page,
 			app,
 		}) => {
@@ -193,11 +193,22 @@ for (const submit of ["click", "Enter"]) {
 				await expect.poll(() => requests).toBe(1);
 				await expect(page.locator("#create-library")).toBeDisabled();
 				await expectSetup(page);
-				expect(await storage(page)).toEqual(before);
+				const pending = await storage(page);
+				expect(pending.session).toEqual(before.session);
+				expect(pending.local.wrappedKey).toBeUndefined();
+				expect(pending.local.publicKey).toBeUndefined();
+				expect(Object.keys(pending.local.pendingRegistration).sort()).toEqual([
+					"publicKey",
+					"serverUrl",
+					"wrappedKey",
+				]);
+				expect(pending.local.pendingRegistration.publicKey).toBe(
+					payload.public_key,
+				);
 				expect(Object.keys(payload).sort()).toEqual(["otc", "public_key"]);
 				// Submitting a busy form again must not consume another invitation.
 				await page.locator("#create").evaluate((form) => form.requestSubmit());
-				expect(await storage(page)).toEqual(before);
+				expect(await storage(page)).toEqual(pending);
 			} finally {
 				release();
 			}
@@ -210,7 +221,9 @@ for (const submit of ["click", "Enter"]) {
 				expect((await storage(page)).local.publicKey).toBe(payload.public_key);
 			} else {
 				await expectSetup(page);
-				expect(await storage(page)).toEqual(before);
+				expect((await storage(page)).local.pendingRegistration.publicKey).toBe(
+					payload.public_key,
+				);
 			}
 		});
 	}
@@ -265,7 +278,7 @@ for (const failure of [
 	"lost response",
 	"whitespace code",
 ]) {
-	test(`registration failure leaves no identity: ${failure}`, async ({
+	test(`registration failure retains encrypted creation for retry: ${failure}`, async ({
 		page,
 		app,
 	}) => {
@@ -307,13 +320,43 @@ for (const failure of [
 				: "Registration failed",
 		);
 		await expectSetup(page);
-		expect(await storage(page)).toEqual(before);
-		// A valid retry succeeds without requiring reset.
+		const failed = await storage(page);
+		if (failure === "whitespace code") expect(failed).toEqual(before);
+		else {
+			expect(failed.local.wrappedKey).toBeUndefined();
+			expect(failed.session).toEqual(before.session);
+			expect(failed.local.pendingRegistration).toBeTruthy();
+		}
+		if (failure === "lost response") {
+			await page.reload();
+			await expect(page.locator("#pending-creation")).toBeVisible();
+			await expect(page.locator("#server")).toHaveValue(app.origin);
+			for (const theme of ["light", "dark"]) {
+				await page.emulateMedia({ colorScheme: theme });
+				await page.setViewportSize({ width: 320, height: 800 });
+				await page.screenshot({
+					path: `e2e/shots/pending-creation-320-${theme}.png`,
+					fullPage: true,
+				});
+				expect(
+					await page.evaluate(
+						() => document.documentElement.scrollWidth <= innerWidth,
+					),
+				).toBe(true);
+			}
+			await fillCreation(page, code);
+		}
+		// A lost response retries the original spent invitation; no second code is needed.
 		await page.unroute("**/api/register-key");
-		await page.locator("#otc").fill(await issueOtc(app.data));
+		if (failure !== "lost response")
+			await page.locator("#otc").fill(await issueOtc(app.data));
 		await page.locator("#pass").press("Enter");
 		await expect(page.locator("#status")).toContainText("Library created.");
 		await expectConfigured(page);
+		if (failed.local.pendingRegistration)
+			expect((await storage(page)).local.publicKey).toBe(
+				failed.local.pendingRegistration.publicKey,
+			);
 	});
 }
 
@@ -602,6 +645,9 @@ test("setup errors stay beside the active form on narrow screens", async ({
 		await page.locator("#server-details").evaluate((element) => element.open),
 	).toBe(false);
 	await shot(page, "setup-error-narrow");
+	page.once("dialog", (dialog) => dialog.accept());
+	await page.locator("#discard-creation").click();
+	await expect(page.locator("#pending-creation")).toHaveCount(0);
 	await chooseRestore(page);
 	await expect(page.locator("#create #status")).toBeHidden();
 	await shot(page, "restore-narrow");
@@ -619,4 +665,73 @@ test("setup errors stay beside the active form on narrow screens", async ({
 	await expect(restoreTab).toHaveAttribute("aria-selected", "true");
 	await restoreTab.press("Home");
 	await expect(createTab).toBeFocused();
+});
+
+for (const area of ["local", "session"]) {
+	test(`creation recovers from ${area} storage failure after registration`, async ({
+		page,
+		app,
+	}) => {
+		await options(page, app);
+		const code = await issueOtc(app.data);
+		await fillCreation(page, code);
+		await page.evaluate((area) => {
+			const store = browser.storage[area];
+			const set = store.set;
+			store.set = async (value) => {
+				if (area === "session" ? value.privateKey : value.wrappedKey) {
+					store.set = set;
+					throw new Error("Test storage full");
+				}
+				return set(value);
+			};
+		}, area);
+		let requests = 0;
+		page.on("request", (request) => {
+			if (request.url().endsWith("/api/register-key")) requests++;
+		});
+		await page.locator("#create-library").click();
+		await expect(page.locator("#status")).toContainText("Test storage full");
+		const failed = await storage(page);
+		if (area === "local") {
+			await page.reload();
+			await fillCreation(page, code);
+			await page.locator("#create-library").click();
+			await expect(page.locator("#status")).toContainText("Library created.");
+			expect((await storage(page)).local.publicKey).toBe(
+				failed.local.pendingRegistration.publicKey,
+			);
+		} else {
+			await expectConfigured(page);
+			expect(failed.local.wrappedKey).toBeTruthy();
+			expect(failed.session.privateKey).toBeUndefined();
+			await page.getByRole("link", { name: "Library" }).click();
+			await page.locator('#unlock input[type="password"]').fill(PASSWORD);
+			await page.locator('#unlock button[type="submit"]').click();
+			await expect(page.locator("#unlock")).toBeHidden();
+		}
+		expect(requests).toBe(1);
+		expect((await storage(page)).session.privateKey).toBeTruthy();
+	});
+}
+
+test("pending creation requires confirmation before discarding the encrypted identity", async ({
+	page,
+	app,
+}) => {
+	await options(page, app);
+	await fillCreation(page, "invalid-code");
+	await page.locator("#create-library").click();
+	await expect(page.locator("#status")).toContainText("Registration failed");
+	const before = await storage(page);
+	page.once("dialog", (dialog) => dialog.dismiss());
+	await page.locator("#discard-creation").click();
+	expect(await storage(page)).toEqual(before);
+	page.once("dialog", (dialog) => dialog.accept());
+	await page.locator("#discard-creation").click();
+	await expect(page.locator("#pending-creation")).toHaveCount(0);
+	await expect(page.locator("#status")).toContainText("discarded");
+	expect((await storage(page)).local.pendingRegistration).toBeUndefined();
+	await expect(page.locator("#restore-tab")).toBeEnabled();
+	await expect(page.locator("#server")).toBeEnabled();
 });
