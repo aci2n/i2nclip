@@ -44,6 +44,7 @@ use crate::MAX_META;
 use crate::PAGE;
 
 const SCHEMA: &str = include_str!("../sql/001_init.sql");
+const UPLOAD_SLOTS: usize = 2;
 
 /// One stored object, still encrypted. `meta` is the ciphertext blob.
 #[derive(Debug)]
@@ -78,6 +79,7 @@ pub struct GcBlobsReport {
 /// around the single SQLite connection (SQLite allows one writer).
 #[derive(Clone)]
 pub(crate) struct AppState {
+    pub(crate) upload_slots: Arc<tokio::sync::Semaphore>,
     data_dir: Arc<PathBuf>,
     db: Arc<Mutex<Connection>>,
     /// Public origin the signatures must name, such as `https://clip.example.com`.
@@ -87,6 +89,7 @@ pub(crate) struct AppState {
 impl AppState {
     pub(crate) fn new(data_dir: PathBuf, conn: Connection, origin: String) -> Self {
         Self {
+            upload_slots: Arc::new(tokio::sync::Semaphore::new(UPLOAD_SLOTS)),
             data_dir: Arc::new(data_dir),
             db: Arc::new(Mutex::new(conn)),
             origin,

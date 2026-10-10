@@ -9,6 +9,7 @@
 mod auth;
 mod error;
 pub mod frame;
+mod media;
 mod routes;
 mod store;
 

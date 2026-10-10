@@ -1,60 +1,22 @@
-//! HTTP handlers.
-//!
-//! Axum is a small web framework. A route is a path plus a function, like a
-//! servlet mapped to a URL. `State` is the shared database handle. `Authed`
-//! is our own extractor: before the handler runs, it checks the signature,
-//! then reads the body, then checks that those bytes match the signed hash.
-//! That is the same job as a servlet filter.
-//!
-//! Nothing in this file decrypts. Bodies are ciphertext the client already
-//! sealed with the library identity.
+//! Router assembly, health and registration endpoints, and shared HTTP helpers.
 
 use std::path::Path;
 use std::time::Duration;
 
 use axum::body::Body;
-use axum::extract::FromRequest;
-use axum::extract::Path as UrlPath;
-use axum::extract::Request;
-use axum::extract::State;
-use axum::http::header;
-use axum::http::HeaderValue;
-use axum::http::Method;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use axum::response::Response;
-use axum::routing::get;
-use axum::routing::post;
-use axum::Json;
-use axum::Router;
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
+use axum::extract::{Request, State};
+use axum::http::{header, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use http_body_util::BodyExt;
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::auth;
-use crate::frame;
-use crate::store;
 use crate::store::AppState;
-use crate::store::Item;
-use crate::Error;
-use crate::MAX_BODY;
-use crate::MAX_META_BODY;
-use crate::MAX_REGISTER_BODY;
+use crate::{auth, media, store, Error, MAX_REGISTER_BODY};
 
-const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
-const META_BODY_DEADLINE: Duration = Duration::from_secs(30);
-const UPLOAD_BODY_DEADLINE: Duration = Duration::from_secs(120);
-
-fn media_body_limits(method: &Method) -> (usize, Duration) {
-    match *method {
-        Method::POST => (MAX_BODY, UPLOAD_BODY_DEADLINE),
-        Method::PUT => (MAX_META_BODY, META_BODY_DEADLINE),
-        _ => (0, SHORT_BODY_DEADLINE),
-    }
-}
+pub(crate) const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
 
 pub(crate) fn router(data_dir: &Path, origin: String) -> Result<Router, Error> {
     store::prepare(data_dir)?;
@@ -65,80 +27,14 @@ pub(crate) fn router(data_dir: &Path, origin: String) -> Result<Router, Error> {
     Ok(Router::new()
         .route("/api/health", get(health))
         .route("/api/register-key", post(register_key))
-        .route("/api/media", get(list).post(upload))
-        .route("/api/media/{id}", get(download).put(retag).delete(remove))
+        .merge(media::router())
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state))
 }
 
-/// What [`Authed`] pulls off a request after the signature checks out.
-/// `owner` is the public key. It is not read from the body.
-struct Authed {
-    owner: [u8; 32],
-    body: Vec<u8>,
-    query: Vec<String>,
-    after: Option<(i64, String)>,
-}
-
-impl FromRequest<AppState> for Authed {
-    type Rejection = Response;
-
-    async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
-        // The signature is checked here, before any body byte. It already
-        // covers the body hash from the Authorization header. Knowing a
-        // public key is not enough to reach `read_body`. The allow-list lives
-        // in SQLite, so authentication runs on the blocking pool.
-        let (parts, body) = req.into_parts();
-        let shared = state.clone();
-        let method = parts.method.clone();
-        let uri = parts.uri.clone();
-        let headers = parts.headers.clone();
-        let verified =
-            match blocking(move || auth::verify_request(&shared, &method, &uri, &headers)).await {
-                Ok(verified) => verified,
-                Err(err) => return Err(fail(err)),
-            };
-        let (query, after) = match list_query(parts.uri.query()) {
-            Ok(parsed) => parsed,
-            Err(err) => return Err(fail(err)),
-        };
-        let (max_body, deadline) = media_body_limits(&parts.method);
-        if let Some(value) = parts.headers.get(header::CONTENT_LENGTH) {
-            if let Ok(text) = value.to_str() {
-                if let Ok(len) = text.parse::<usize>() {
-                    if len > max_body {
-                        return Err(too_large());
-                    }
-                }
-            }
-        }
-        let bytes = match read_body_with_deadline(body, max_body, deadline).await {
-            Ok(bytes) => bytes,
-            Err(response) => return Err(*response),
-        };
-        // SHA-256 of the body is CPU, not disk, but a 32 MB digest would still
-        // hold an async worker for the whole hash. Same pool as the file IO.
-        let (owner, bytes) = match blocking(move || {
-            let owner = auth::verify_body(&verified, &bytes)?;
-            Ok((owner, bytes))
-        })
-        .await
-        {
-            Ok(pair) => pair,
-            Err(err) => return Err(fail(err)),
-        };
-        Ok(Authed {
-            owner,
-            body: bytes,
-            query,
-            after,
-        })
-    }
-}
-
 /// One deadline for the complete body read; chunks do not reset the timer.
 /// Timeout drops the reader, its partial buffer, and the request body.
-async fn read_body_with_deadline(
+pub(crate) async fn read_body_with_deadline(
     body: Body,
     max: usize,
     deadline: Duration,
@@ -167,32 +63,6 @@ async fn read_body_with_limit(mut body: Body, max: usize) -> Result<Vec<u8>, Box
         buf.extend_from_slice(&data);
     }
     Ok(buf)
-}
-
-/// `?tag=TOKEN&tag=TOKEN&after=<created_at>.<id>`. Tokens are base64url, so
-/// they need no escaping. `after` is the cursor of the last row already shown.
-type ListQuery = (Vec<String>, Option<(i64, String)>);
-
-fn list_query(query: Option<&str>) -> Result<ListQuery, Error> {
-    let Some(query) = query else {
-        return Ok((Vec::new(), None));
-    };
-    let mut values = Vec::new();
-    let mut after = None;
-    for pair in query.split('&') {
-        if pair.is_empty() {
-            continue;
-        }
-        let mut pieces = pair.splitn(2, '=');
-        let key = pieces.next().unwrap_or("");
-        let value = pieces.next().unwrap_or("");
-        if key == "tag" {
-            values.push(value.to_string());
-        } else if key == "after" {
-            after = Some(store::parse_cursor(value)?);
-        }
-    }
-    Ok((frame::parse_query_tokens(values)?, after))
 }
 
 async fn health() -> Response {
@@ -228,68 +98,6 @@ fn register_key_body(state: &AppState, body: &[u8]) -> Result<(), Error> {
     store::consume_registration_code(&mut conn, &payload.otc, &public)
 }
 
-async fn list(State(state): State<AppState>, authed: Authed) -> Response {
-    let owner = authed.owner;
-    let query = authed.query;
-    let after = authed.after;
-    match blocking(move || store::list(&state, owner, &query, after)).await {
-        Ok((items, next)) => json_response(
-            StatusCode::OK,
-            json!({ "media": items_json(items), "next": next }),
-        ),
-        Err(err) => fail(err),
-    }
-}
-
-async fn upload(State(state): State<AppState>, authed: Authed) -> Response {
-    let owner = authed.owner;
-    let body = authed.body;
-    match blocking(move || store::add(&state, owner, &body)).await {
-        Ok(item) => {
-            tracing::info!(id = %item.id, bytes = item.bytes, "stored");
-            json_response(StatusCode::CREATED, item_json(item))
-        }
-        Err(err) => fail(err),
-    }
-}
-
-async fn download(
-    State(state): State<AppState>,
-    UrlPath(id): UrlPath<String>,
-    authed: Authed,
-) -> Response {
-    let owner = authed.owner;
-    match blocking(move || store::read_content(&state, owner, &id)).await {
-        Ok(bytes) => bytes_response(bytes),
-        Err(err) => fail(err),
-    }
-}
-
-async fn retag(
-    State(state): State<AppState>,
-    UrlPath(id): UrlPath<String>,
-    authed: Authed,
-) -> Response {
-    let owner = authed.owner;
-    let body = authed.body;
-    match blocking(move || store::update_meta(&state, owner, &id, &body)).await {
-        Ok(item) => json_response(StatusCode::OK, item_json(item)),
-        Err(err) => fail(err),
-    }
-}
-
-async fn remove(
-    State(state): State<AppState>,
-    UrlPath(id): UrlPath<String>,
-    authed: Authed,
-) -> Response {
-    let owner = authed.owner;
-    match blocking(move || store::remove(&state, owner, &id)).await {
-        Ok(()) => empty(StatusCode::NO_CONTENT),
-        Err(err) => fail(err),
-    }
-}
-
 /// Run `job` on Tokio's blocking pool.
 ///
 /// The async workers are the threads that accept connections and read bodies.
@@ -298,7 +106,7 @@ async fn remove(
 /// worker, including the signature check that is supposed to reject a body
 /// before it is read. The pool is a separate set of threads for this kind of
 /// work. The database lock is still one mutex, so writes stay serialized.
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     job: impl FnOnce() -> Result<T, Error> + Send + 'static,
 ) -> Result<T, Error> {
     match tokio::task::spawn_blocking(job).await {
@@ -309,31 +117,7 @@ async fn blocking<T: Send + 'static>(
     }
 }
 
-fn items_json(items: Vec<Item>) -> Vec<MediaJson> {
-    items.into_iter().map(item_json).collect()
-}
-
-fn item_json(item: Item) -> MediaJson {
-    MediaJson {
-        id: item.id,
-        created_at: item.created_at,
-        bytes: item.bytes,
-        tokens: item.tokens,
-        // Base64 because JSON is text. The bytes are already ciphertext.
-        meta: STANDARD.encode(item.meta),
-    }
-}
-
-#[derive(Serialize)]
-struct MediaJson {
-    id: String,
-    created_at: i64,
-    bytes: i64,
-    tokens: Vec<String>,
-    meta: String,
-}
-
-fn json_response(status: StatusCode, body: impl Serialize) -> Response {
+pub(crate) fn json_response(status: StatusCode, body: impl Serialize) -> Response {
     let mut response = (status, Json(body)).into_response();
     response
         .headers_mut()
@@ -341,27 +125,7 @@ fn json_response(status: StatusCode, body: impl Serialize) -> Response {
     response
 }
 
-/// Ciphertext for one id. The bytes never change, so the browser may keep
-/// them. `private` keeps that copy out of any shared cache.
-fn bytes_response(body: Vec<u8>) -> Response {
-    (
-        StatusCode::OK,
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("application/octet-stream"),
-            ),
-            (
-                header::CACHE_CONTROL,
-                HeaderValue::from_static("private, max-age=31536000, immutable"),
-            ),
-        ],
-        body,
-    )
-        .into_response()
-}
-
-fn empty(status: StatusCode) -> Response {
+pub(crate) fn empty(status: StatusCode) -> Response {
     let mut response = status.into_response();
     response
         .headers_mut()
@@ -369,14 +133,14 @@ fn empty(status: StatusCode) -> Response {
     response
 }
 
-fn too_large() -> Response {
+pub(crate) fn too_large() -> Response {
     json_response(
         StatusCode::PAYLOAD_TOO_LARGE,
         json!({ "error": "too large" }),
     )
 }
 
-fn fail(err: Error) -> Response {
+pub(crate) fn fail(err: Error) -> Response {
     let (status, message) = match &err {
         Error::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized".to_string()),
         Error::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),

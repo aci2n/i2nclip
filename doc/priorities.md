@@ -1,6 +1,6 @@
 # Backend improvement priorities
 
-Status: upload receipt removal, strict Ed25519 validation, browser-compatible origin normalization, body-read deadlines, and endpoint-specific byte caps implemented with user approval; remaining changes are proposals. Updated 2026-10-10. The detailed findings and security boundaries are in [backend-review.md](backend-review.md).
+Status: upload receipt removal, strict Ed25519 validation, browser-compatible origin normalization, body-read deadlines, endpoint-specific byte caps, and two-upload admission implemented with user approval; remaining changes are proposals. Updated 2026-10-10. The detailed findings and security boundaries are in [backend-review.md](backend-review.md).
 
 ## Completed
 
@@ -16,6 +16,11 @@ Status: upload receipt removal, strict Ed25519 validation, browser-compatible or
 - Deadline verification passed: `make test` with Node v22.23.3 (55 client tests, 27 Rust tests, Svelte checks with zero errors/warnings), `make extension` without warnings, touched-file Rust formatting, and `git diff --check`.
 - Endpoint-specific byte caps: GET/DELETE require empty bodies, PUT allows 69,640 bytes, POST retains 33,624,180 bytes, and registration retains 4,096 bytes. Early declared-length checks and streaming reads enforce the same media cap after authentication. Frame decoding and cap calculations share one token-text bound.
 - Byte-cap verification passed: `make test` with Node v22.23.3 (55 client tests, 30 Rust tests, Svelte checks with zero errors/warnings), `make extension` without warnings, touched-file Rust formatting, and `git diff --check`. API tests cover exact boundaries, rejection before body polling, and streamed overflow with missing or dishonest Content-Length.
+- Two-upload admission: authenticated uploads acquire a shared slot without waiting before reading; saturation returns `503` with `Retry-After: 1`. Permits remain with buffered bytes through hashing and blocking storage, including cancelled HTTP tasks.
+
+- Admission verification passed: `make test` with Node v22.23.3 (55 client tests, 32 Rust tests, Svelte checks with zero errors/warnings), `make extension` without warnings, touched-file Rust formatting, and `git diff --check`. Tests cover shared admission, no body polling on saturation, nonce consumption, error cleanup, cancellation, and blocking-worker permit retention.
+
+- Flat HTTP module split: `src/media.rs` owns media routes and private `MediaRequest` policy; `src/routes.rs` owns assembly, health/registration, and shared HTTP helpers. Request order and upload permit ownership are preserved. Verification passed: 55 client tests, 32 Rust tests, Svelte checker, extension build, formatting, and `git diff --check`.
 
 ## Proposed order
 
@@ -25,7 +30,7 @@ Priority indicates urgency; order separates changes into independently reviewabl
 | --- | --- | --- | --- |
 | 1 | P1 — complete | Validate registered Ed25519 points, reject weak keys, and use strict request verification | Invalid/weak registrations return `400` without consuming an invitation; forged requests under legacy weak keys return `401`; valid clients and vectors remain compatible. Implementation scope below. |
 | 2 | P1 — complete | Replace manual origin normalization with browser-compatible URL parsing | Uppercase hosts, IDNA, IPv6, and default/nondefault ports serialize consistently with the browser. Invalid ports, credentials, paths beyond an optional root slash, queries, and fragments fail configuration validation. Parser-repaired inputs and collapsed raw paths are also rejected. |
-| 3 | P1 — partial | Set endpoint-specific body caps, body-read deadlines, and a bound on concurrent large transfers | Byte caps and total body-read deadlines are implemented. Pending: large transfers have admission control before buffering with permits covering retained buffers. See the request-limit proposal for concrete limits. |
+| 3 | P1 — partial | Set endpoint-specific body caps, body-read deadlines, and a bound on concurrent large transfers | Byte caps and total body-read deadlines are implemented. Uploads now have two slots before buffering, held through blocking storage. Pending: bounded download reads and streaming. See the request-limit document for concrete limits. |
 | 4 | P2 | Replace year-long immutable content caching with `no-store` | Delete/recreate of an ID returns current content, and client content fetches bypass previously cached responses. Verify response headers, delete/recreate behavior, and actual browser caching. This avoids permanent UUID tombstones or a new versioned URL format. |
 | 5 | P2 | Borrow content and metadata slices during upload frame decoding | Remove large frame-to-content copies while retaining bounds, UTF-8 checks, trailing-byte rejection, and identical wire bytes. Preserve vector and malformed-frame tests. |
 | 6 | P2 | Add an index on nonce expiry | Existing databases gain `nonces(expires)` through idempotent schema setup. Keep atomic replay rejection and the same timestamp/expiry rules. Defer scheduled cleanup until measurements justify it. |
@@ -69,4 +74,4 @@ Verification completed: focused library/API tests and `make test` using Node v22
 
 ### Next approval boundary
 
-Strict Ed25519 validation, origin normalization, total body-read deadlines, and endpoint-specific byte caps were approved and implemented. Remaining within order 3: bounded concurrent uploads, as described in the [request-limit proposal](request-limits.md). Download admission and streaming remain a separate follow-up within that priority. Await approval before implementing those remaining changes.
+Strict Ed25519 validation, origin normalization, total body-read deadlines, and endpoint-specific byte caps were approved and implemented. Two-upload admission is now implemented as described in [request limits](request-limits.md). Remaining within order 3: download admission and streaming, to be proposed separately. Await approval before implementing those remaining changes.

@@ -245,6 +245,25 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     let owner = new_identity();
     let (dir, app) = app(&[&owner]);
     let id = "77777777-7777-4777-8777-777777777777";
+    assert_eq!(
+        call(&app, &owner, "PUT", &format!("/api/media/{id}"), vec![])
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .unwrap()
+            )
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
     // The server checks ciphertext framing, not the authentication tag.
     let mut meta = vec![0u8; 65_536];
     meta[0] = 1;
@@ -878,4 +897,207 @@ async fn startup_removes_legacy_receipts_and_preserves_media() {
     drop(app);
     let _reopened = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
     assert_eq!(receipt_count(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn upload_admission_is_shared_and_releases_capacity() {
+    use axum::body::Bytes;
+    use http_body_util::Channel;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    async fn stall(
+        app: &axum::Router,
+        owner: &Identity,
+    ) -> tokio::task::JoinHandle<Result<axum::response::Response, std::convert::Infallible>> {
+        let (mut sender, body) = Channel::<Bytes>::new(1);
+        sender.send_data(Bytes::new()).await.unwrap();
+        let polled = Arc::new(tokio::sync::Notify::new());
+        let observed = polled.clone();
+        let body = Body::new(body.map_frame(move |frame| {
+            observed.notify_one();
+            frame
+        }));
+        let authorization = crypto::authorization(
+            owner,
+            "http://i2nclip.test",
+            crypto::now_secs(),
+            &crypto::fresh_nonce(),
+            "POST",
+            "/api/media",
+            b"",
+        );
+        // Retain the sender in the HTTP task so the stream stays unfinished.
+        let router = app.clone();
+        let task = tokio::spawn(async move {
+            let result = router
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/media")
+                        .header("authorization", authorization)
+                        .body(body)
+                        .unwrap(),
+                )
+                .await;
+            drop(sender);
+            result
+        });
+        polled.notified().await;
+        task
+    }
+
+    let owner = new_identity();
+    let other = new_identity();
+    let (dir, app) = app(&[&owner, &other]);
+    let first = stall(&app, &owner).await;
+    let second = stall(&app, &other).await;
+    let authorization = crypto::authorization(
+        &owner,
+        "http://i2nclip.test",
+        crypto::now_secs(),
+        &crypto::fresh_nonce(),
+        "POST",
+        "/api/media",
+        b"",
+    );
+    let unreadable = Body::new(Body::from("unread").map_frame(|_| panic!("busy body polled")));
+    let busy = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/media")
+                .header("authorization", &authorization)
+                .body(unreadable)
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(busy.headers()["retry-after"], "1");
+    assert_eq!(busy.headers()["cache-control"], "no-store");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(
+            &busy.into_body().collect().await.unwrap().to_bytes()
+        )
+        .unwrap(),
+        serde_json::json!({"error": "uploads busy; try again"})
+    );
+    let replay = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/media")
+                .header("authorization", authorization)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+    let bad = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/media")
+                .body(Body::new(
+                    Body::from("unread").map_frame(|_| panic!("unauthenticated body polled")),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        call(&app, &owner, "GET", "/api/media", vec![]).await.0,
+        StatusCode::OK
+    );
+    let id = "77777777-7777-4777-8777-777777777777";
+    assert_eq!(
+        call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();
+    enroll_key(&app, &new_identity(), &otc).await;
+    first.abort();
+    assert!(first.await.unwrap_err().is_cancelled());
+    // Streaming, transport, and hash failures also return the available slot.
+    let (sender, broken) = Channel::<Bytes, std::io::Error>::new(1);
+    sender.abort(std::io::Error::other("broken upload"));
+    for (body, expected) in [
+        (Body::new(broken), StatusCode::BAD_REQUEST),
+        (
+            Body::from(vec![0; 33_624_181]),
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ),
+        (Body::from("wrong signed bytes"), StatusCode::UNAUTHORIZED),
+    ] {
+        let authorization = crypto::authorization(
+            &owner,
+            "http://i2nclip.test",
+            crypto::now_secs(),
+            &crypto::fresh_nonce(),
+            "POST",
+            "/api/media",
+            b"",
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/media")
+                    .header("authorization", authorization)
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+    }
+    // Each failure must return the one available slot.
+    for _ in 0..3 {
+        assert_eq!(
+            call(
+                &app,
+                &owner,
+                "POST",
+                "/api/media",
+                b"invalid frame".to_vec()
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(id), b"file").unwrap();
+    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(id), b"{}").unwrap();
+    let frame = frame::encode_post(id, &meta, &content, "");
+    assert_eq!(
+        call(&app, &owner, "POST", "/api/media", frame.clone())
+            .await
+            .0,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        call(&app, &owner, "POST", "/api/media", frame).await.0,
+        StatusCode::CONFLICT
+    );
+    tokio::time::advance(Duration::from_secs(120)).await;
+    assert_eq!(
+        second.await.unwrap().unwrap().status(),
+        StatusCode::REQUEST_TIMEOUT
+    );
+    // Both slots become usable again after cancellation and timeout.
+    let first = stall(&app, &owner).await;
+    let second = stall(&app, &other).await;
+    first.abort();
+    second.abort();
+    let _ = first.await;
+    let _ = second.await;
 }
