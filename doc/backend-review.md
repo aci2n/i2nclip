@@ -1,88 +1,11 @@
-# Backend review — 2026-10-10
+# Backend review
 
-Current storage supersedes the historical file-lock verification below: uploads and deletions use a durable staged-file journal, and SIGUSR1 runs GC in the single server process. See [gc.md](gc.md).
+The historical SQLite/filesystem review is superseded by PostgreSQL storage. Current persistence lives in `src/db.rs`; `src/store.rs` holds shared application state and protocol validation. Handlers contain no SQL, database mutexes, filesystem operations, or blocking-work dispatch.
 
+Uploads atomically insert sealed content, metadata, and tags. Metadata updates lock the authorized row through UPDATE and replace tags in the same transaction. Deletes cascade tags. Lists fetch metadata and sorted tags in one statement without selecting content, deriving size with `octet_length`. Downloads fetch authorized owned bytes in one statement and return connections before response draining.
 
-Scope: all eight `src/*.rs` files, `sql/001_init.sql`, backend integration tests, and the matching current client protocol/API implementation. The initial review made no runtime changes. Upload receipts and their client replay path were subsequently removed, and strict Ed25519 validation and browser-compatible origin normalization were implemented with user approval. Related recommendations below reflect those changes. Other priorities distinguish confirmed defects from hardening recommendations and intentional security boundaries. Source line references reflect the initial review and may shift as code changes.
+Registration consumes invitations and registers keys atomically. Authentication verifies signatures, reserves a nonce asynchronously, and rechecks timestamps after insertion completes, before reading bodies. Failed body verification spends the nonce. Maintenance deletes nonces with `expires < now` and invitations with `expires_at <= now` in one transaction.
 
-## Findings
+Body sizes and read deadlines remain bounded. Two uploads and two downloads are admitted per application instance. Async hashes yield every 64 KiB; SQLx encoding/decoding can still copy complete content values. Full-buffer downloads are intentional. Slow response readers can delay shutdown and occupy download slots indefinitely; timeout work remains in [priorities.md](priorities.md). Storage quotas and proxy rate limiting remain deployment concerns.
 
-### 1. Fixed: weak registered Ed25519 keys allowed signatures without a secret
-
-Locations: `src/auth.rs` (`parse_public_key`), `src/crypto.rs` (`verify`). At review time, registration validated canonical base64 and length, but did not validate the curve point or reject low-order keys. Request verification used `Verifier::verify`.
-
-A temporary Rust probe confirmed the encoded Edwards identity point (`01` followed by 31 zero bytes), with signature `R = identity, S = 0`, passes the exported verifier for an arbitrary message; `verify_strict` rejects it. If such a key is registered using a valid invitation, possession of a signing secret is no longer required to access that namespace. This does not forge requests for normally generated user keys and does not bypass the invitation requirement.
-
-Implemented: registration parses a `VerifyingKey` and rejects `is_weak()` before consuming an invitation; requests use `verify_strict`. Regression tests cover weak/invalid points, preserved invitations, and forged requests under legacy stored weak keys rejected before reading the body or persisting a nonce. Existing rows and the wire format remain unchanged. The distinction is documented by [ed25519-dalek 2.2.0](https://docs.rs/ed25519-dalek/2.2.0/ed25519_dalek/struct.VerifyingKey.html#method.is_weak).
-
-### 2. Fixed: origin normalization disagreed with the browser
-
-Location: `src/lib.rs` (`normalize_origin`). At review time it manually stripped scheme/slashes/default ports, preserving uppercase hostnames and accepting invalid authorities. A probe confirmed `https://EXAMPLE.com:443` produced `https://EXAMPLE.com`, while `https://example.com:invalid` was accepted. The browser lowercases the host and rejects the invalid port. Valid deployment configuration using an uppercase hostname therefore made every normal client's signature fail. Unicode hostnames and credentials were other cases the parser did not normalize/reject consistently.
-
-Implemented: `url::Url` parsing and origin serialization, explicit HTTP(S)/host/component validation, and small raw-input checks to reject parser repairs and collapsed non-root paths. Shared `client/tests/origin-vectors.json` cases verify Rust outputs against JavaScript's `new URL(input.trim()).origin`, including uppercase hosts, IDNA, IPv6, and ports. API tests authenticate browser-canonical signed requests against every accepted configured origin. This fixes deployment correctness rather than a demonstrated cross-origin authentication bypass.
-
-### 3. Medium: transfer limits do not bound persistent storage
-
-Locations: `src/media.rs` (`MediaRequest`, upload admission), `src/routes.rs` (shared body reader), `src/frame.rs:90-94`, `src/store.rs:232-276`, `src/store.rs:367-379`.
-
-At review time every authenticated method could buffer the full approximately 32 MiB POST limit, including GET/DELETE handlers that ignored those bytes. Endpoint-specific caps now prevent that unnecessary buffering. Upload decoding still copies the content out of the buffered frame; additional requests and blocking jobs can retain many such buffers concurrently. Downloads now stream at most 64 KiB per chunk after checking stored and actual file sizes. Uploads and downloads each have a separate two-slot admission limit; account quotas and total storage remain unbounded. At review time there were also no body-read deadlines, allowing even small registration bodies to be held open indefinitely. A registered abusive client can exhaust memory, disk, or workers. The README correctly delegates rate limiting to the proxy, but request rate alone does not cap concurrent buffers or stored data.
-
-Partially implemented: complete body reads now have 120/30/10-second deadlines for media POST/PUT/GET-or-DELETE, respectively, and registration has a 10-second deadline. Trickling cannot reset them; timeout releases the body and partial buffer and returns `408`. GET/DELETE require an empty body; PUT is capped at 69,640 bytes; upload/registration caps are preserved. Uploads acquire one of two slots before buffering and hold it through hashing and storage, even if the request is cancelled during blocking work. Downloads now hold one of two separate permits until completion/disposal and stream from size-validated opened files. Remaining recommendations: enforce storage quotas if invitations are not a sufficient trust boundary. Borrow frame slices rather than copying content; GC now runs inside the single server and coordinates with upload admission and SQLite. Retain signature verification before body reads and streaming byte caps.
-
-### 4. Resolved: immutable caching now uses content-hash URLs
-
-Locations: `src/media.rs` (`content_response`), `src/store.rs` (`add`), client `api.js`. Caller-selected UUIDs were replaced by SHA-256 of the complete sealed content. Different ciphertext cannot reuse the same URL under the hash collision-resistance assumption. Metadata remains editable and uses `no-store`; content keeps private immutable caching. Clients check hashes before decrypting. A cached copy remains available locally after deletion or authorization changes; this does not revoke already downloaded bytes.
-
-### 5. Low: replay cleanup scans the entire nonce table on each request
-
-Completed: nonce expiration is indexed and cleanup runs in signal-triggered GC rather than on each authenticated request. Reservation remains atomic and persistent, with timestamp validation repeated after acquiring the writer transaction. GC retains the inclusive expiration boundary (`expires == now`). Nonce rows accumulate between GC runs.
-
-## Security boundaries and design tradeoffs
-
-- **No rollback detection:** A malicious server can replay prior valid metadata for the same ID, omit list items, or change the tag index. GCM protects each blob, not freshness or collection integrity. Document this boundary; add authenticated revisions only if malicious-server rollback resistance is a requirement.
-- **Random GCM nonce lifetime:** One encryption key covers all content and metadata in every restored client. There is no usage cap or key rotation. This is appropriate at ordinary personal-library scale, but not an unlimited-use guarantee. Explicit-nonce test APIs should be isolated or clearly marked. See [crypto.md](crypto.md) for limits and exact inputs.
-- **Storage is not one transaction:** Durable staged publication precedes SQLite commit. A committed cleanup intent tracks interrupted uploads and deletions; identical pending hashes return `409` until cleanup. In-process GC pauses uploads and rechecks intents under immediate transactions. See [gc.md](gc.md). See [protocol.md](protocol.md) for the exact order and limitations.
-- **Download ownership and opening are coordinated:** The shared database mutex keeps the authorized row current while the file is opened. The opened handle survives deletion. Content hashes prevent changed bytes from legitimately reusing a URL.
-- **Local data directory is trusted:** Canonical hash validation prevents request path traversal; owner-only directories and exclusive file creation are good. Downloads validate indexed and actual lengths, and clients verify hashes. Privileged filesystem mutation remains outside the trusted-directory boundary.
-- **Registration retry behavior:** A lost successful registration response leaves the code consumed; resending it fails even for the same key. That matches single-use codes but is not fully idempotent registration. Explain it in client/admin recovery workflows rather than casually calling the endpoint idempotent.
-
-## Is the custom protocol minimal?
-
-It is close to minimal for the chosen requirements: a public-key allow-list, no server decryption key, stateless request signing, replay prevention, binary uploads, encrypted metadata/previews, and searchable tags. The frame parser is short, bounded, and rejects trailing bytes. HTTP supplies routing/statuses and JSON supplies list serialization. The cryptographic primitives are standard library implementations.
-
-POST now omits its identifier field entirely: the server derives it from sealed-content bytes. The remaining length-prefixed metadata, content, and token fields are uniform and bounded. Binary tag tokens or consuming the remaining body for the final field could save some bytes, but add no established benefit at this scale. Version labels remain unchanged under the greenfield policy.
-
-The authentication envelope is the main custom security surface. Its fields have clear purposes: origin prevents cross-deployment reuse, method/target prevent rerouting, body hash commits the payload before reads, timestamp bounds replay storage, nonce prevents repeated execution, and public key selects the owner. Removing those fields weakens current guarantees. Calling the envelope `Bearer` is unconventional because it is proof-of-possession, but changing the scheme alone adds work without fixing a security defect.
-
-Simpler alternatives change requirements: a random bearer credential is easy to verify but gives the server a reusable impersonation secret; a challenge flow adds a round trip and state; standardized HTTP Message Signatures offer interoperability but add parsing/canonicalization scope. Choose those only for a concrete operational or interoperability reason.
-
-The former multipart comment in `src/frame.rs` was removed during comment cleanup. Multipart can carry binary data and be signed over its serialized bytes; the existing length-prefixed frame remains a reasonable smaller implementation.
-
-## Simplifications without changing the wire format
-
-1. Completed for crypto: `src/crypto.rs` now holds server-used verification, hashing, and blob checks. Reference-client encryption, tag derivation, identity generation, and signing live in test-only `src/reference_crypto.rs`, with client-only dependencies moved to dev dependencies. Shared vectors are preserved. Frame encoders remain in `frame.rs` for fixtures.
-2. Completed: frame decoding borrows metadata/content slices while the blocking storage workflow owns the original request buffer. Allocation tests guard against restoring the large copy.
-3. Completed by receipt removal: storage no longer hashes upload bodies again for receipt insertion or retry lookup. Authentication still verifies the signed body hash.
-4. Completed: listing now uses `Vec<rusqlite::types::Value>` and `params_from_iter`, with one reusable tag statement per request. Dynamic placeholders remain necessary for variable tag counts.
-5. Completed: the token query statement is reused across page rows. Returned token fields are preserved; removing them would require a separate API decision.
-6. Completed: only the list handler parses search and cursor parameters. Other endpoints ignore unrelated list parameters while signatures still bind the exact request target.
-7. Completed: live and pending duplicate hashes return typed `Error::Conflict`, and publication refuses existing destination files. The staged-file journal and directory synchronization retain crash-safe cleanup.
-8. Completed: Java/Python analogies and Rust syntax tutorials were trimmed. Comments explaining AAD, ownership, replay expiry, resource lifetime, and crash ordering remain.
-
-The single SQLite connection and explicit blocking pool are reasonable for this scale. A connection pool, generic repository layer, custom transaction framework, resumable chunks, or a new envelope library would add complexity without an established requirement. Upload receipts were intentionally removed: all duplicate sealed-content hashes now conflict, and a retry cannot confirm an upload whose successful response was lost.
-
-## Verification and limitations
-
-- Initial review: `cargo test` passed 9 unit tests and 8 API integration tests, including shared Rust/JS vector equality. After receipt removal, the first backend run passed 9 unit tests and 9 API integration tests.
-- Initial review: 11 focused Node tests passed under Node v26.11.1. Receipt-removal verification uses the specified Node v22.23.3 after `npm ci --prefix client`: all 54 client tests pass and the Svelte checker reports zero errors and warnings.
-- Final receipt-removal verification: `make test` passed all 54 client tests, Svelte checks, and 18 Rust tests. `make extension` built and packaged successfully without warnings. Formatting/lint checks passed for the six changed JavaScript files, and `git diff --check` passed.
-- Strict Ed25519 validation verification: `make test` under Node v22.23.3 passed 54 client tests and 22 Rust tests, including the new regression tests and shared vectors. The Svelte checker reported zero errors/warnings; touched-file Rust formatting and `git diff --check` passed.
-- Origin-normalization verification: `make test` under Node v22.23.3 passed 55 client tests and 24 Rust tests, including shared URL fixtures and authenticated API requests for every accepted origin. Svelte checks and `make extension` completed without warnings. Touched-file Rust/JavaScript/fixture formatting and `git diff --check` passed.
-- Body-deadline verification: `make test` under Node v22.23.3 passed 55 client tests and 27 Rust tests. Paused-clock tests cover timeout timing, trickling, disposal, endpoint deadlines, spent nonces, and preserved registration invitations. Svelte checks and `make extension` completed without warnings; touched-file Rust formatting and `git diff --check` passed.
-- A temporary Rust probe confirmed weak-key signature acceptance, strict-verifier rejection, uppercase-host preservation, and invalid-port acceptance. The probe was removed after execution.
-- Storage/cache findings were initially source-derived. Tests now cover duplicate-hash conflicts, publication failures and orphan cleanup, concurrent routers, GC waiting and reference rechecks, and content-hash URL behavior. No live Firefox cache/load test or process-crash durability reproduction was performed. Upload-receipt removal tests covered duplicate conflicts and removal of replay behavior; no legacy receipt-table migration is supported or tested under the greenfield schema policy.
-- This was not a dependency advisory audit, penetration test, or formal proof. Changes following the review cover receipt removal, associated client retry behavior, strict Ed25519 validation, origin normalization, body-read deadlines, content-hash storage, per-hash locking, tests, and documentation; unrelated existing frontend work is preserved.
-
-Content-hash implementation adds commit-failure, orphan/staging cleanup, lock coordination, and simultaneous-router/GC tests, plus Firefox coverage for content-hash URLs, metadata edits, and re-encryption retries. Earlier review findings about uncoordinated GC and UUID reuse are resolved by this change.
-
-Content-hash implementation verification passed under Node v22.23.3: `make test` (57 client tests, 38 Rust tests, Svelte checker with zero errors/warnings), all 69 Firefox E2E tests, `make extension`, touched-file Biome checks, Rust formatting, and `git diff --check`. Storage fault tests were also rerun after final staging-ownership cleanup. The subsequent per-hash locking change passed `make test` (57 client tests, 39 Rust tests), Svelte checks, `make extension`, Rust formatting, and `git diff --check`; Firefox E2E was not rerun for that backend-only change.
+Crypto framing and client/server vectors are unchanged. Content hashes bind metadata AAD and are checked before client decryption. Encryption detects corruption but does not provide metadata rollback detection or library completeness proofs.

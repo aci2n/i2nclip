@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::store::AppState;
-use crate::{auth, media, store, Error, MAX_REGISTER_BODY};
+use crate::{auth, media, Error, MAX_REGISTER_BODY};
 
 pub(crate) const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -74,33 +74,20 @@ async fn register_key(State(state): State<AppState>, request: Request) -> Respon
         Ok(bytes) => bytes,
         Err(response) => return *response,
     };
-    match blocking(move || register_key_body(&state, &bytes)).await {
+    match register_key_body(&state, &bytes).await {
         Ok(()) => empty(StatusCode::NO_CONTENT),
         Err(err) => fail(err),
     }
 }
 
-fn register_key_body(state: &AppState, body: &[u8]) -> Result<(), Error> {
+async fn register_key_body(state: &AppState, body: &[u8]) -> Result<(), Error> {
     let payload: RegisterKeyJson =
         serde_json::from_slice(body).map_err(|_| Error::BadRequest("invalid json".into()))?;
     if payload.otc.len() > 512 || payload.public_key.len() != 43 {
         return Err(Error::BadRequest("invalid registration payload".into()));
     }
     let public = auth::parse_public_key(&payload.public_key)?;
-    let mut conn = state.lock()?;
-    store::consume_registration_code(&mut conn, &payload.otc, &public)
-}
-
-/// Run synchronous disk/SQLite work and large hashes off the async workers.
-pub(crate) async fn blocking<T: Send + 'static>(
-    job: impl FnOnce() -> Result<T, Error> + Send + 'static,
-) -> Result<T, Error> {
-    match tokio::task::spawn_blocking(job).await {
-        Ok(result) => result,
-        // The closure panicked. The mutex poison path is a different error,
-        // raised from inside `job` and returned as `Ok(Err(Poisoned))`.
-        Err(_) => Err(std::io::Error::other("blocking task panicked").into()),
-    }
+    state.db.consume_code(&payload.otc, &public).await
 }
 
 pub(crate) fn json_response(status: StatusCode, body: impl Serialize) -> Response {
@@ -128,6 +115,10 @@ pub(crate) fn too_large() -> Response {
 
 pub(crate) fn fail(err: Error) -> Response {
     let (status, message) = match &err {
+        Error::Unavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "service unavailable".into(),
+        ),
         Error::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized".to_string()),
         Error::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
         Error::Conflict => (StatusCode::CONFLICT, "already exists".to_string()),
@@ -141,7 +132,13 @@ pub(crate) fn fail(err: Error) -> Response {
             )
         }
     };
-    json_response(status, json!({ "error": message }))
+    let mut response = json_response(status, json!({ "error": message }));
+    if status == StatusCode::SERVICE_UNAVAILABLE {
+        response
+            .headers_mut()
+            .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+    }
+    response
 }
 
 #[cfg(test)]

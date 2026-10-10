@@ -21,15 +21,14 @@ pub enum Error {
     /// 400. The String is a safe explanation, not an echo of the request body.
     #[error("{0}")]
     BadRequest(String),
-    /// `Mutex` was poisoned: a thread panicked while holding the database lock.
-    #[error("database lock poisoned")]
-    Poisoned,
     /// Encrypt or decrypt failed. Almost always a wrong key, wrong associated
     /// data, or a truncated blob. Details are intentionally not included.
     #[error("crypto")]
     Crypto,
+    #[error("service unavailable")]
+    Unavailable,
     #[error(transparent)]
-    Db(#[from] rusqlite::Error),
+    Db(sqlx::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }

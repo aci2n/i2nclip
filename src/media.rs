@@ -1,12 +1,11 @@
 //! Media endpoints and authenticated request policy.
 //!
 //! Signature checks precede body limits, upload admission, reading, and hashing.
-//! Buffered upload bodies retain their permits through blocking storage work.
+//! Buffered upload bodies retain their permits through database writes.
 
 use std::time::Duration;
 
 use axum::body::{Body, Bytes};
-use tokio::io::AsyncReadExt;
 
 use axum::extract::{FromRequest, Path as UrlPath, Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
@@ -18,10 +17,11 @@ use base64::Engine;
 use serde::Serialize;
 use serde_json::json;
 
+use crate::db::Item;
 use crate::routes::{
-    blocking, empty, fail, json_response, read_body_with_deadline, too_large, SHORT_BODY_DEADLINE,
+    empty, fail, json_response, read_body_with_deadline, too_large, SHORT_BODY_DEADLINE,
 };
-use crate::store::{AppState, Item};
+use crate::store::AppState;
 use crate::{auth, frame, store, Error, MAX_BODY, MAX_META_BODY};
 
 pub(crate) fn router() -> Router<AppState> {
@@ -53,17 +53,16 @@ impl FromRequest<AppState> for MediaRequest {
         // The signature is checked here, before any body byte. It already
         // covers the body hash from the Authorization header. Knowing a
         // public key is not enough to reach `read_body`. The allow-list lives
-        // in SQLite, so authentication runs on the blocking pool.
+        // in PostgreSQL.
         let (parts, body) = req.into_parts();
         let shared = state.clone();
         let method = parts.method.clone();
         let uri = parts.uri.clone();
         let headers = parts.headers.clone();
-        let verified =
-            match blocking(move || auth::verify_request(&shared, &method, &uri, &headers)).await {
-                Ok(verified) => verified,
-                Err(err) => return Err(fail(err)),
-            };
+        let verified = match auth::verify_request(&shared, &method, &uri, &headers).await {
+            Ok(verified) => verified,
+            Err(err) => return Err(fail(err)),
+        };
         Ok(Self {
             verified,
             parts,
@@ -73,7 +72,7 @@ impl FromRequest<AppState> for MediaRequest {
 }
 
 impl MediaRequest {
-    fn check_size(&self, max: usize) -> Result<(), Response> {
+    fn check_size(&self, max: usize) -> Result<(), Box<Response>> {
         if self
             .parts
             .headers
@@ -82,7 +81,7 @@ impl MediaRequest {
             .and_then(|text| text.parse::<usize>().ok())
             .is_some_and(|len| len > max)
         {
-            return Err(too_large());
+            return Err(Box::new(too_large()));
         }
         Ok(())
     }
@@ -92,24 +91,19 @@ impl MediaRequest {
         max: usize,
         deadline: Duration,
         permit: Option<tokio::sync::OwnedSemaphorePermit>,
-    ) -> Result<([u8; 32], BufferedBody), Response> {
-        let bytes = read_body_with_deadline(self.body, max, deadline)
-            .await
-            .map_err(|response| *response)?;
+    ) -> Result<([u8; 32], BufferedBody), Box<Response>> {
+        let bytes = read_body_with_deadline(self.body, max, deadline).await?;
         let buffered = BufferedBody {
             bytes,
             _upload_permit: permit,
         };
-        // Bytes and admission travel together even if this waiter is cancelled.
-        blocking(move || {
-            let owner = auth::verify_body(&self.verified, &buffered.bytes)?;
-            Ok((owner, buffered))
-        })
-        .await
-        .map_err(fail)
+        let owner = auth::verify_body(&self.verified, &buffered.bytes)
+            .await
+            .map_err(|error| Box::new(fail(error)))?;
+        Ok((owner, buffered))
     }
 
-    async fn empty(self) -> Result<[u8; 32], Response> {
+    async fn empty(self) -> Result<[u8; 32], Box<Response>> {
         self.check_size(0)?;
         let (owner, _) = self.read(0, SHORT_BODY_DEADLINE, None).await?;
         Ok(owner)
@@ -149,9 +143,9 @@ async fn list(State(state): State<AppState>, media: MediaRequest) -> Response {
     };
     let owner = match media.empty().await {
         Ok(owner) => owner,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
-    match blocking(move || store::list(&state, owner, &query, after)).await {
+    match state.db.list(owner, &query, after).await {
         Ok((items, next)) => json_response(
             StatusCode::OK,
             json!({ "media": items_json(items), "next": next }),
@@ -162,7 +156,7 @@ async fn list(State(state): State<AppState>, media: MediaRequest) -> Response {
 
 async fn upload(State(state): State<AppState>, media: MediaRequest) -> Response {
     if let Err(response) = media.check_size(MAX_BODY) {
-        return response;
+        return *response;
     }
     let permit = match state.upload_slots.clone().try_acquire_owned() {
         Ok(permit) => permit,
@@ -173,15 +167,9 @@ async fn upload(State(state): State<AppState>, media: MediaRequest) -> Response 
         .await
     {
         Ok(body) => body,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
-    match blocking(move || {
-        let result = store::add(&state, owner, &body.bytes);
-        drop(body);
-        result
-    })
-    .await
-    {
+    match state.db.add(owner, &body.bytes).await {
         Ok(item) => {
             tracing::info!(id = %item.id, bytes = item.bytes, "stored");
             json_response(StatusCode::CREATED, item_json(item))
@@ -197,20 +185,14 @@ async fn download(
 ) -> Response {
     let owner = match media.empty().await {
         Ok(owner) => owner,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let permit = match state.download_slots.clone().try_acquire_owned() {
         Ok(permit) => permit,
         Err(_) => return transfers_busy("downloads busy; try again"),
     };
-    // Opening owns the permit as well, including if this HTTP task is cancelled.
-    match blocking(move || {
-        let (file, bytes) = store::open_content(&state, owner, &id)?;
-        Ok((file, bytes, permit))
-    })
-    .await
-    {
-        Ok((file, bytes, permit)) => content_response(file, bytes, permit),
+    match state.db.content(owner, &id).await {
+        Ok(content) => content_response(content, permit),
         Err(err) => fail(err),
     }
 }
@@ -221,13 +203,13 @@ async fn retag(
     media: MediaRequest,
 ) -> Response {
     if let Err(response) = media.check_size(MAX_META_BODY) {
-        return response;
+        return *response;
     }
     let (owner, body) = match media.read(MAX_META_BODY, META_BODY_DEADLINE, None).await {
         Ok(body) => body,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
-    match blocking(move || store::update_meta(&state, owner, &id, &body.bytes)).await {
+    match state.db.update_meta(owner, &id, &body.bytes).await {
         Ok(item) => json_response(StatusCode::OK, item_json(item)),
         Err(err) => fail(err),
     }
@@ -240,9 +222,9 @@ async fn remove(
 ) -> Response {
     let owner = match media.empty().await {
         Ok(owner) => owner,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
-    match blocking(move || store::remove(&state, owner, &id)).await {
+    match state.db.remove(owner, &id).await {
         Ok(()) => empty(StatusCode::NO_CONTENT),
         Err(err) => fail(err),
     }
@@ -274,34 +256,18 @@ struct MediaJson {
 
 const DOWNLOAD_CHUNK: usize = 64 * 1024;
 
-struct Download {
-    file: tokio::fs::File,
-    remaining: u64,
-    _permit: tokio::sync::OwnedSemaphorePermit,
-}
-
-fn content_response(
-    file: std::fs::File,
-    bytes: u64,
-    permit: tokio::sync::OwnedSemaphorePermit,
-) -> Response {
-    let mut file = tokio::fs::File::from_std(file);
-    file.set_max_buf_size(DOWNLOAD_CHUNK);
-    let download = Download {
-        file,
-        remaining: bytes,
-        _permit: permit,
-    };
-    let stream = futures_util::stream::try_unfold(download, |mut download| async move {
-        if download.remaining == 0 {
-            return Ok::<_, std::io::Error>(None);
-        }
-        let mut chunk = vec![0; download.remaining.min(DOWNLOAD_CHUNK as u64) as usize];
-        // A truncation after headers becomes a body error, never a clean short response.
-        download.file.read_exact(&mut chunk).await?;
-        download.remaining -= chunk.len() as u64;
-        Ok(Some((Bytes::from(chunk), download)))
-    });
+fn content_response(content: Vec<u8>, permit: tokio::sync::OwnedSemaphorePermit) -> Response {
+    let bytes = content.len() as u64;
+    let stream = futures_util::stream::unfold(
+        (Bytes::from(content), permit),
+        |(mut content, permit)| async move {
+            if content.is_empty() {
+                return None;
+            }
+            let chunk = content.split_to(content.len().min(DOWNLOAD_CHUNK));
+            Some((Ok::<_, std::io::Error>(chunk), (content, permit)))
+        },
+    );
     let mut response = Body::from_stream(stream).into_response();
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -327,36 +293,4 @@ fn transfers_busy(message: &'static str) -> Response {
         .headers_mut()
         .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
     response
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn cancelled_blocking_work_retains_buffer_and_permit() {
-        let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
-        let buffered = BufferedBody {
-            bytes: vec![1; 1024],
-            _upload_permit: Some(slots.clone().try_acquire_owned().unwrap()),
-        };
-        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
-        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
-        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(blocking(move || {
-            started_tx.send(()).unwrap();
-            finish_rx.recv().unwrap();
-            assert_eq!(buffered.bytes.len(), 1024);
-            drop(buffered);
-            done_tx.send(()).unwrap();
-            Ok(())
-        }));
-        started_rx.await.unwrap();
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-        assert!(slots.clone().try_acquire_owned().is_err());
-        finish_tx.send(()).unwrap();
-        done_rx.await.unwrap();
-        assert_eq!(slots.available_permits(), 1);
-    }
 }

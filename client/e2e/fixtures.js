@@ -1,8 +1,7 @@
 import { execFile, spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import net from "node:net";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -21,18 +20,24 @@ const png = Buffer.from(
 
 const test = base.extend({
 	app: async ({ page }, use) => {
-		const data = await mkdtemp(path.join(tmpdir(), "i2nclip-e2e-"));
-		const apiPort = await freePort();
-		const origin = `http://127.0.0.1:${apiPort}`;
-		const api = await startApi(data, origin, `127.0.0.1:${apiPort}`);
-		const web = await startWeb();
-		await page.context().addInitScript(installBrowser);
+		const data = await fixtureDatabase("create");
+		let api;
+		let web;
 		try {
+			const apiPort = await freePort();
+			const origin = `http://127.0.0.1:${apiPort}`;
+			api = await startApi(data, origin, `127.0.0.1:${apiPort}`);
+			web = await startWeb();
+			await page.context().addInitScript(installBrowser);
 			await use({ data, origin, web });
 		} finally {
-			web.close();
-			api.kill();
-			await rm(data, { recursive: true, force: true });
+			web?.close();
+			if (api && api.exitCode === null) {
+				const exited = new Promise((resolve) => api.once("exit", resolve));
+				api.kill();
+				await exited;
+			}
+			await fixtureDatabase("drop", data);
 		}
 	},
 });
@@ -131,11 +136,11 @@ async function resetLibrary(page, accept = true) {
 
 const execFileAsync = promisify(execFile);
 
-async function issueOtc(dataDir) {
+async function issueOtc(databaseUrl) {
 	const { stdout } = await execFileAsync(
 		"cargo",
-		["run", "--quiet", "--", "otc", "issue", "--data-dir", dataDir],
-		{ cwd: root },
+		["run", "--quiet", "--", "otc", "issue"],
+		{ cwd: root, env: { ...process.env, I2N_DATABASE_URL: databaseUrl } },
 	);
 	return stdout.trim();
 }
@@ -238,9 +243,10 @@ function freePort() {
 function startApi(data, origin, listen) {
 	const child = spawn(
 		"cargo",
-		["run", "--quiet", "--example", "e2e-server", "--", data, origin, listen],
+		["run", "--quiet", "--example", "e2e-server", "--", origin, listen],
 		{
 			cwd: root,
+			env: { ...process.env, I2N_DATABASE_URL: data },
 			stdio: ["ignore", "pipe", "inherit"],
 		},
 	);
@@ -248,7 +254,11 @@ function startApi(data, origin, listen) {
 		let buf = "";
 		let settled = false;
 		const timer = setTimeout(() => {
-			if (!settled) reject(new Error("e2e server did not start"));
+			if (!settled) {
+				settled = true;
+				child.kill();
+				reject(new Error("e2e server did not start"));
+			}
 		}, 90_000);
 		child.stdout.on("data", (chunk) => {
 			buf += chunk.toString();
@@ -355,10 +365,18 @@ export async function videoFixture() {
 	};
 }
 
-export async function expireOtc(dataDir) {
-	await execFileAsync("python3", [
-		"-c",
-		"import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('UPDATE registration_codes SET expires_at = 0'); c.commit()",
-		path.join(dataDir, "i2nclip.db"),
-	]);
+export async function expireOtc(databaseUrl) {
+	await fixtureDatabase("expire", databaseUrl);
+}
+
+async function fixtureDatabase(operation, target) {
+	const { stdout } = await execFileAsync(
+		"cargo",
+		["run", "--quiet", "--example", "test-database", "--", operation],
+		{
+			cwd: root,
+			env: { ...process.env, ...(target ? { I2N_DATABASE_URL: target } : {}) },
+		},
+	);
+	return stdout.trim();
 }

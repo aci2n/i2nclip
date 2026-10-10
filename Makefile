@@ -10,7 +10,7 @@ CONTAINER_NETWORK ?= host
 -include local.mk
 
 .DEFAULT_GOAL := build
-.PHONY: build client client-test lint format-check e2e extension dev-extension run test audit container push
+.PHONY: build client client-test lint format-check e2e extension dev-extension run test test-db audit container push
 
 build: client
 	cargo build
@@ -39,13 +39,19 @@ run:
 test: client-test
 	cargo test
 
+# Explicit opt-in: testcontainers owns PostgreSQL; fixtures own isolated databases.
+test-db:
+	DOCKER_HOST="$${DOCKER_HOST:-unix://$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/podman/podman.sock}" \
+	  cargo run --quiet --features test-containers --example postgres-tests -- \
+	  cargo test --features postgres-tests $(TEST_ARGS)
+
 # Advisory scan of Cargo.lock (install once: cargo install cargo-audit --locked).
 audit:
 	cargo audit
 
 container:
 	podman build --network=$(CONTAINER_NETWORK) -t $(IMAGE):$(TAG) -f Containerfile .
-	@echo "podman run --rm -p $(PORT):8080 -e I2N_ORIGIN=https://clip.example.com -v $(IMAGE)-data:/var/lib/i2nclip:Z localhost/$(IMAGE):$(TAG)"
+	@echo "podman run --rm -p $(PORT):8080 -e I2N_ORIGIN=https://clip.example.com -e I2N_DATABASE_URL localhost/$(IMAGE):$(TAG)"
 
 # Build the image and load it on the remote Podman host over SSH (set HOST).
 push: SHELL := /bin/bash

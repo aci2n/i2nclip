@@ -194,6 +194,7 @@ pub fn authorization(
 
 /// 16 random bytes, base64url, no padding. This is the nonce string that goes
 /// both in the header and inside the signed message.
+#[allow(dead_code)]
 pub fn fresh_nonce() -> String {
     let mut raw = [0u8; 16];
     getrandom::getrandom(&mut raw).expect("operating system random source");

@@ -22,10 +22,9 @@ use axum::http::Uri;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use ed25519_dalek::VerifyingKey;
-use rusqlite::TransactionBehavior;
 
 use crate::crypto;
-use crate::store::{self, AppState};
+use crate::store::AppState;
 use crate::Error;
 use crate::SKEW_SECS;
 
@@ -74,7 +73,7 @@ pub(crate) fn check_timestamp(ts: u64, now: u64) -> Result<(), Error> {
 
 /// Check the key, the clock, and the signature. Remember the nonce.
 /// Callers must not read the body until this returns `Ok`.
-pub(crate) fn verify_request(
+pub(crate) async fn verify_request(
     state: &AppState,
     method: &Method,
     uri: &Uri,
@@ -82,12 +81,9 @@ pub(crate) fn verify_request(
 ) -> Result<VerifiedRequest, Error> {
     let bearer = parse_bearer(headers).ok_or(Error::Unauthorized)?;
     check_timestamp(bearer.ts, crypto::now_secs())?;
-    let conn = state.lock()?;
-    // Unknown key and bad signature both become 401, so the status line does not say which.
-    if !store::is_allowed_public_key(&conn, &bearer.public)? {
+    if !state.db.allowed(&bearer.public).await? {
         return Err(Error::Unauthorized);
     }
-    drop(conn);
     let request_message = crypto::request_message(
         state.origin(),
         bearer.ts,
@@ -104,12 +100,8 @@ pub(crate) fn verify_request(
     // Spent here, before the body, so a captured header cannot be aimed at a
     // new payload. A body that does not match the signed hash still uses up
     // the nonce.
-    let mut conn = state.lock()?;
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    // Recheck after waiting for both the connection and SQLite writer lock.
+    state.db.remember_nonce(&bearer.nonce, bearer.ts).await?;
     check_timestamp(bearer.ts, crypto::now_secs())?;
-    store::remember_nonce(&tx, &bearer.nonce, bearer.ts)?;
-    tx.commit()?;
     Ok(VerifiedRequest {
         public: bearer.public,
         body_hash: bearer.body_hash,
@@ -117,8 +109,11 @@ pub(crate) fn verify_request(
 }
 
 /// Hash `body` and compare it to the digest the signature already committed to.
-pub(crate) fn verify_body(verified: &VerifiedRequest, body: &[u8]) -> Result<[u8; 32], Error> {
-    if crypto::body_hash(body) != verified.body_hash {
+pub(crate) async fn verify_body(
+    verified: &VerifiedRequest,
+    body: &[u8],
+) -> Result<[u8; 32], Error> {
+    if crypto::body_hash_async(body).await != verified.body_hash {
         return Err(Error::Unauthorized);
     }
     Ok(verified.public)

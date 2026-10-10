@@ -1,13 +1,4 @@
-//! Listener for the browser tests. The installed service still uses
-//! `/var/lib/i2nclip` and `0.0.0.0:8080`. This binary exists so a test can
-//! pick a data directory and a port without changing that.
-//!
-//! A page served from another port is a different origin, so the browser asks
-//! permission before `fetch`. The real add-on does not need that: Firefox
-//! treats `moz-extension://` as allowed to call the server. The headers below
-//! are only for these tests.
-
-use std::path::PathBuf;
+//! Real API listener with test-only CORS, using I2N_DATABASE_URL.
 
 use axum::body::Body;
 use axum::extract::Request;
@@ -20,10 +11,11 @@ use tokio::net::TcpListener;
 #[tokio::main]
 async fn main() {
     let mut args = std::env::args().skip(1);
-    let data = PathBuf::from(args.next().expect("data dir"));
+    let database_url = i2nclip::database_url_from_env().expect("database URL");
     let origin = args.next().expect("origin");
     let listen = args.next().expect("listen address");
-    let app = i2nclip::router(&data, &origin)
+    let app = i2nclip::router(&database_url, &origin)
+        .await
         .expect("router")
         .layer(axum::middleware::from_fn(allow_browser));
     let listener = TcpListener::bind(&listen).await.expect("bind");

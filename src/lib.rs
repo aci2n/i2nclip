@@ -1,15 +1,16 @@
 //! Encrypted media store.
 //!
 //! Clients encrypt bytes and metadata before upload. This process checks
-//! Ed25519 signatures against public keys in SQLite and stores ciphertext plus
+//! Ed25519 signatures against public keys in PostgreSQL and stores ciphertext plus
 //! HMAC tag tokens. It does not have the private key, so it cannot decrypt.
 
 #![forbid(unsafe_code)]
 
 mod auth;
+mod db;
 mod error;
 pub mod frame;
-mod gc;
+mod maintenance;
 mod media;
 #[cfg(test)]
 mod reference_crypto;
@@ -18,16 +19,10 @@ mod store;
 
 pub mod crypto;
 
-use std::path::Path;
-use std::path::PathBuf;
-
 use tokio::net::TcpListener;
 
+pub use db::DEFAULT_REGISTRATION_TTL_SECS;
 pub use error::Error;
-pub use store::DEFAULT_REGISTRATION_TTL_SECS;
-
-/// Persistent state. One volume mount covers the database (including public keys) and blobs.
-pub const DATA_DIR: &str = "/var/lib/i2nclip";
 
 /// Fixed listen address. Publish a host port onto 8080 instead of configuring this.
 pub const LISTEN: &str = "0.0.0.0:8080";
@@ -46,29 +41,25 @@ pub(crate) const MAX_META_BODY: usize = 4 + MAX_META + 4 + MAX_TOKEN_TEXT;
 pub(crate) const MAX_REGISTER_BODY: usize = 4096;
 pub(crate) const SKEW_SECS: u64 = 300;
 
-/// Create a one-time registration code in `data_dir` and return the plaintext (once).
-pub fn issue_registration_otc(data_dir: &Path, ttl_secs: u64) -> Result<String, Error> {
-    store::prepare(data_dir)?;
-    let mut conn = store::open(data_dir)?;
-    store::issue_registration_code(&mut conn, ttl_secs)
+/// Issue a code against an already initialized database.
+pub async fn issue_registration_otc(database_url: &str, ttl_secs: u64) -> Result<String, Error> {
+    let db = db::Database::connect(database_url).await?;
+    let result = db.issue_code(ttl_secs).await;
+    db.close().await;
+    result
 }
-
-/// Router over `data_dir`. `origin` is the public scheme and host signatures
-/// must name. Tests pass both. The binary reads `I2N_ORIGIN`.
-pub fn router(data_dir: &Path, origin: &str) -> Result<axum::Router, Error> {
-    Ok(routes::router(open_state(
-        data_dir,
-        normalize_origin(origin)?,
-    )?))
+pub async fn router(database_url: &str, origin: &str) -> Result<axum::Router, Error> {
+    let state = open_state(database_url, normalize_origin(origin)?).await?;
+    Ok(routes::router(state))
 }
-
-fn open_state(data_dir: &Path, origin: String) -> Result<store::AppState, Error> {
-    store::prepare(data_dir)?;
-    Ok(store::AppState::new(
-        data_dir.to_path_buf(),
-        store::open(data_dir)?,
-        origin,
-    ))
+async fn open_state(database_url: &str, origin: String) -> Result<store::AppState, Error> {
+    let db = db::Database::connect(database_url).await?;
+    db.initialize().await?;
+    Ok(store::AppState::new(db, origin))
+}
+pub fn database_url_from_env() -> Result<String, Error> {
+    std::env::var("I2N_DATABASE_URL")
+        .map_err(|_| Error::Config("set I2N_DATABASE_URL to a PostgreSQL connection URL".into()))
 }
 
 /// An HTTP(S) origin with an optional root slash, serialized like the browser's
@@ -108,32 +99,6 @@ pub fn normalize_origin(raw: &str) -> Result<String, Error> {
     Ok(url.origin().ascii_serialization())
 }
 
-#[cfg(test)]
-mod origin_tests {
-    use super::*;
-
-    #[test]
-    fn origins_match_browser_vectors_and_reject_non_origins() {
-        let vectors: serde_json::Value =
-            serde_json::from_str(include_str!("../client/tests/origin-vectors.json")).unwrap();
-        for case in vectors["accepted"].as_array().unwrap() {
-            let input = case["input"].as_str().unwrap();
-            assert_eq!(
-                normalize_origin(input).unwrap(),
-                case["origin"].as_str().unwrap(),
-                "{input}"
-            );
-        }
-        for case in vectors["rejected"].as_array().unwrap() {
-            let input = case.as_str().unwrap();
-            assert!(
-                matches!(normalize_origin(input), Err(Error::Config(_))),
-                "{input}"
-            );
-        }
-    }
-}
-
 fn origin_from_env() -> Result<String, Error> {
     let raw = std::env::var("I2N_ORIGIN").map_err(|_| {
         Error::Config(
@@ -143,25 +108,29 @@ fn origin_from_env() -> Result<String, Error> {
     normalize_origin(&raw)
 }
 
-/// Serve `/var/lib/i2nclip` on [`LISTEN`] until Ctrl-C or SIGTERM.
+/// Serve until Ctrl-C or SIGTERM, then drain work and close PostgreSQL.
 pub async fn run() -> Result<(), Error> {
     init_tracing();
     let origin = origin_from_env()?;
-    let data_dir = PathBuf::from(DATA_DIR);
-    let state = open_state(&data_dir, origin.clone())?;
+    let state = open_state(&database_url_from_env()?, origin.clone()).await?;
     let app = routes::router(state.clone());
-    let gc_signal = gc::signal()?;
     let listener = TcpListener::bind(LISTEN).await?;
-    tracing::info!(listen = LISTEN, data = DATA_DIR, %origin, "listening");
+    tracing::info!(listen = LISTEN, %origin, "listening");
     let (stop, receiver) = tokio::sync::watch::channel(false);
-    let gc_task = tokio::spawn(gc::listen(state, gc_signal, receiver));
+    let stop_shutdown = stop.clone();
+    let maintenance = tokio::spawn(maintenance::run(state.db.clone(), receiver));
     let served = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            let _ = stop_shutdown.send(true);
+        })
         .await;
+    // Also stop maintenance if serving exits with an error.
     let _ = stop.send(true);
-    if let Err(err) = gc_task.await {
-        tracing::error!(%err, "GC task failed");
+    if let Err(err) = maintenance.await {
+        tracing::error!(%err, "maintenance task failed");
     }
+    state.db.close().await;
     served?;
     Ok(())
 }
@@ -192,4 +161,30 @@ async fn shutdown_signal() {
         _ = terminate => {}
     }
     tracing::info!("shutting down");
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+
+    #[test]
+    fn origins_match_browser_vectors_and_reject_non_origins() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../client/tests/origin-vectors.json")).unwrap();
+        for case in vectors["accepted"].as_array().unwrap() {
+            let input = case["input"].as_str().unwrap();
+            assert_eq!(
+                normalize_origin(input).unwrap(),
+                case["origin"].as_str().unwrap(),
+                "{input}"
+            );
+        }
+        for case in vectors["rejected"].as_array().unwrap() {
+            let input = case.as_str().unwrap();
+            assert!(
+                matches!(normalize_origin(input), Err(Error::Config(_))),
+                "{input}"
+            );
+        }
+    }
 }

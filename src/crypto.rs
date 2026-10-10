@@ -100,6 +100,19 @@ fn hex(bytes: &[u8]) -> String {
     out
 }
 
+/// Hash without monopolizing an async worker on maximum-size transfers.
+pub(crate) async fn body_hash_async(body: &[u8]) -> String {
+    let mut hash = Sha256::new();
+    for chunk in body.chunks(64 * 1024) {
+        hash.update(chunk);
+        tokio::task::yield_now().await;
+    }
+    hex(&hash.finalize())
+}
+pub(crate) fn body_hash_bytes(body: &[u8]) -> [u8; 32] {
+    Sha256::digest(body).into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

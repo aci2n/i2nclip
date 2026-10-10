@@ -18,8 +18,9 @@ getrandom = "0.2"
 http-body-util = "0.1"
 # Stream bounded file chunks into HTTP response bodies.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
-# SQLite, bundled so the container does not need a system libsqlite.
-rusqlite = { version = "0.37", features = ["bundled"] }
+# Optional tooling for the explicit database test target only.
+testcontainers = { version = "0.28", optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -42,9 +43,21 @@ unicode-normalization = "0.1"
 # Controlled request streams and paused-clock deadline tests.
 http-body-util = { version = "0.1", features = ["channel"] }
 tokio = { version = "1", features = ["test-util"] }
-rusqlite = { version = "0.37", features = ["bundled"] }
 serde_json = "1"
 # Lets tests call the router in-process, without binding a port.
 tower = { version = "0.5", features = ["util"] }
 # Test-only, thread-local heap allocation measurements for frame decoding.
 allocation-counter = "0.8.1"
+
+[features]
+postgres-tests = []
+test-containers = ["dep:testcontainers"]
+
+[[test]]
+name = "postgres_api"
+path = "tests/postgres_api.rs"
+required-features = ["postgres-tests"]
+
+[[example]]
+name = "postgres-tests"
+required-features = ["test-containers"]

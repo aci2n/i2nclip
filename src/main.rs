@@ -1,7 +1,4 @@
-use std::path::PathBuf;
-
 use i2nclip::issue_registration_otc;
-use i2nclip::DATA_DIR;
 use i2nclip::DEFAULT_REGISTRATION_TTL_SECS;
 
 #[tokio::main]
@@ -24,16 +21,9 @@ async fn main() {
                 std::process::exit(2);
             }
             let mut ttl_secs = DEFAULT_REGISTRATION_TTL_SECS;
-            let mut data_dir = PathBuf::from(DATA_DIR);
+
             while let Some(arg) = args.next() {
                 match arg.as_str() {
-                    "--data-dir" => {
-                        let path = args.next().unwrap_or_else(|| {
-                            usage_otc();
-                            std::process::exit(2);
-                        });
-                        data_dir = PathBuf::from(path);
-                    }
                     "--ttl-secs" => {
                         let text = args.next().unwrap_or_else(|| {
                             usage_otc();
@@ -54,7 +44,11 @@ async fn main() {
                     }
                 }
             }
-            match issue_registration_otc(&data_dir, ttl_secs) {
+            match async {
+                issue_registration_otc(&i2nclip::database_url_from_env()?, ttl_secs).await
+            }
+            .await
+            {
                 Ok(code) => println!("{code}"),
                 Err(err) => {
                     eprintln!("i2nclip otc issue: {err}");
@@ -71,7 +65,6 @@ async fn main() {
 }
 
 fn usage_otc() {
-    eprintln!("usage: i2nclip otc issue [--data-dir PATH] [--ttl-secs SECS]");
-    eprintln!("default data dir is {DATA_DIR}");
+    eprintln!("usage: i2nclip otc issue [--ttl-secs SECS]");
     eprintln!("default --ttl-secs is {DEFAULT_REGISTRATION_TTL_SECS}");
 }

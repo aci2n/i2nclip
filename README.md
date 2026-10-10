@@ -12,7 +12,7 @@ The password encrypts the identity in your Firefox profile and recovery file. It
 
 Registration happens automatically during creation. The library identity is saved and unlocked only after registration succeeds. If registration fails, check your invitation code and try again; no reset is needed.
 
-Admin (on the host or in the container data volume):
+Admin (with `I2N_DATABASE_URL` set, or inside the running application container):
 
 ```sh
 i2nclip otc issue              # prints a code (default TTL 24h)
@@ -22,77 +22,83 @@ podman exec i2nclip i2nclip otc issue
 
 ## Run
 
-The process listens on `0.0.0.0:8080` and uses `/var/lib/i2nclip`. Set `I2N_ORIGIN` to the public HTTPS origin users type in the browser, with no path—for example `https://clip.example.com`. Request signatures name that origin, not the `Host` header on the upstream connection.
+The process listens on `0.0.0.0:8080`. Set `I2N_ORIGIN` to the public HTTPS origin users type in the browser, with no path. Set `I2N_DATABASE_URL` to a PostgreSQL connection URL; its value is never logged. The server transactionally initializes the idempotent schema before serving. OTC issuance connects to an initialized database without running DDL.
 
 ```sh
-make test
+export I2N_ORIGIN=https://clip.example.com
+# Set I2N_DATABASE_URL through a private environment file or secret manager.
 cargo run
 ```
 
-`make test` runs Rust tests, client tests, and the Svelte checker. Install the client dependencies first with `npm ci --prefix client` (Node 22 from `client/.nvmrc`). `cargo run` needs a writable `/var/lib/i2nclip`.
+PostgreSQL stores content, metadata, public keys, invitations, nonces, and tags. Content uses `bytea` with external TOAST storage, so ciphertext is not compressed. Uploads and metadata/tag updates commit atomically. Content is immutable and reported sizes come from the stored content. Downloads fetch owned bytes before sending responses, so deletion cannot invalidate an in-flight response and slow clients hold no database connection. The SQLx pool has eight connections, one minimum connection, and a five-second acquisition timeout (`503` with `Retry-After: 1`).
 
-For a local container:
+An internal maintenance task runs on startup and hourly, deleting expired nonces and invitations in one transaction. Sweeps never overlap; failures are logged and retried next interval. Shutdown stops scheduling maintenance, awaits an active sweep, drains HTTP work, and closes the pool. PostgreSQL autovacuum reclaims physical space. Response-duration limits remain future work.
 
-```sh
-make container
-podman run --rm -p 8080:8080 \
-  -e I2N_ORIGIN=https://clip.example.com \
-  -v i2nclip-data:/var/lib/i2nclip:Z \
-  localhost/i2nclip
-```
+## Verification
 
-Image builds use host networking so they also work where rootless Podman's
-`pasta` cannot access `/dev/net/tun`. Build steps share the host network;
-override with `make container CONTAINER_NETWORK=private` to use Podman's
-isolated build networking on hosts that support it.
-
-The image runs as uid 10001. For a bind mount:
+Install client dependencies with `npm ci --prefix client`, using Node from `client/.nvmrc`.
 
 ```sh
-mkdir -p data-dir
-podman unshare chown 10001:10001 data-dir
-podman run --rm -p 8080:8080 \
-  -e I2N_ORIGIN=https://clip.example.com \
-  -v ./data-dir:/var/lib/i2nclip:Z \
-  localhost/i2nclip
+make test                 # client tests/checker and Rust tests without a database
+make test-db              # testcontainers starts and cleans up PostgreSQL 18
+make e2e                  # Firefox against the real Rust API
+make extension
 ```
+
+`make test` runs client tests/checker and Rust tests that need no database. `make test-db` uses [testcontainers](https://docs.rs/testcontainers/0.28.0/testcontainers/) to start PostgreSQL 18, wait for readiness, run the database tests, and remove the container afterward, including when tests fail. Each fixture creates and cleans up an isolated database. Testcontainers is an optional tooling dependency; ordinary builds and tests do not enable it.
+
+For rootless Podman, enable its API socket once, then run:
+
+```sh
+systemctl --user enable --now podman.socket
+make test-db
+```
+
+The target defaults `DOCKER_HOST` to the rootless Podman socket under `XDG_RUNTIME_DIR` (or `/run/user/<uid>`). Set `DOCKER_HOST` to use another Docker-compatible runtime. You do not need to start PostgreSQL yourself. Pass test filters or flags with `TEST_ARGS`, for example `make test-db TEST_ARGS="-- --nocapture"`.
+
+If Podman's default network cannot use `/dev/net/tun`, run `I2N_TEST_CONTAINER_NETWORK=host make test-db`. This local-runtime fallback binds PostgreSQL only to `127.0.0.1` on a randomly selected port. Set `I2N_TEST_DATABASE_RESTART=1` to additionally stop/start the owned container and check persistence and reconnection through an existing SQLx pool. Restart verification requires container provisioning.
+
+The same runner can provision PostgreSQL for Firefox:
+
+```sh
+DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock cargo run --quiet --features test-containers --example postgres-tests -- npm run e2e --prefix client
+```
+
+Use Node from `client/.nvmrc`; the host-network fallback also applies to this command.
+
+To use an existing disposable server, set `I2N_TEST_DATABASE_URL` to an administrator URL with database-creation rights; `make test-db` will skip container provisioning. Direct `cargo test --features postgres-tests` and Firefox E2E require this explicit URL. Never point test tooling at production.
+
+```sh
+cargo test --features postgres-tests --test postgres_api maximum_size_transfer_profile -- --ignored --nocapture
+```
+
+This optional profile exercises two maximum-size uploads followed by two concurrent downloads, reports in-process peak RSS (including fixture/client buffers), PostgreSQL backend allocations, and timer delay, and verifies that responses held unpolled have no idle database transaction.
 
 ## Self-hosting
 
-i2nclip serves plain HTTP on port 8080 inside the container. It does not terminate TLS, set security headers, or rate-limit clients. Run it on a private network or localhost and put a reverse proxy in front (Caddy, nginx, Traefik, etc.) for:
-
-- **HTTPS** — certificates and redirects from HTTP to HTTPS.
-- **Public hostname** — set `I2N_ORIGIN` to that `https://` origin so signatures match what the extension uses.
-- **Rate limiting and abuse controls** — especially on `POST /api/register-key` and failed authenticated requests; the app itself does not throttle.
-- **Optional path prefix** — not supported: the API lives at `/api/…` on the site root. Prefer a dedicated host or subdomain.
-
-| Artifact | Purpose |
-| --- | --- |
-| `Containerfile` | Builds `localhost/i2nclip:latest` |
-| `deploy/i2nclip.container` | Example Podman quadlet with a published port |
-| `make push` | Optional: build the image and stream it over SSH into the remote user's Podman image store (`HOST` in `local.mk`) |
-
-Typical setup:
-
-1. Build and run the container with a persistent volume on `/var/lib/i2nclip` and `I2N_ORIGIN` set to your public URL.
-2. Point the proxy at `http://127.0.0.1:8080` (or the container on an internal network) and do not expose 8080 on the public internet unless you intend to.
-3. Issue a one-time code for each new user (`i2nclip otc issue`) and send it to them over a trusted channel.
-
-Data lives in the volume: `i2nclip.db`, `blobs/`, `staging/`, and registered public keys. Back up the whole directory. Run one server process per data volume.
-
-Uploads commit a `staged_files(id, created_at)` cleanup intent before writing `staging/<hash>`. After syncing the file, publication renames it to `blobs/<hash>`, syncs both directories, and atomically replaces the intent with the media row and tags. DELETE journals its cleanup too. Both directories must be on the same filesystem. There are no file locks.
-
-Request GC in the running container from the host:
+The image runs as uid 10001 and has no persistent application volume. PostgreSQL owns storage. Pass only the application owner's credentials to i2nclip, preferably with an owner-only runtime environment file:
 
 ```sh
-podman kill --signal USR1 i2nclip
+make container
+podman run --rm -p 127.0.0.1:8080:8080 --env-file app.env localhost/i2nclip
 ```
 
-A systemd timer can send this signal periodically. GC waits for active uploads, pauses upload admission during its sweep, and removes pending files older than seven days. Failed cleanup retains the intent for retry. See [doc/gc.md](doc/gc.md) for crash guarantees and operational assumptions.
+`app.env` contains `I2N_ORIGIN` and `I2N_DATABASE_URL`. Put HTTPS, rate limits, and abuse controls on a reverse proxy. The API lives at `/api/…` on a dedicated origin; path prefixes are unsupported. PostgreSQL must stay private, with password authentication. `sslmode=disable` is suitable only for the private same-host container network configured in i2nfra.
 
-The SQLite database uses WAL mode so a GC read can overlap normal writes. Back up or copy `i2nclip.db` together with `i2nclip.db-wal` and `i2nclip.db-shm`, or checkpoint first.
+The i2nfra repository contains the rootless PostgreSQL 18 Quadlet, private database network, separate administrator/application credentials, health checks, and backup instructions. Its persistent named volume mounts `/var/lib/postgresql`, as required by the [official PostgreSQL 18 image](https://hub.docker.com/_/postgres). `make push` builds and copies the application image; production deployment is a separate step.
 
-This does not repair the opposite problem (a row with a missing blob). Download already returns 404 for that id.
+This is a fresh database transition. Existing local storage is left untouched, the new library starts empty, and administrators must issue new registration invitations. No import tool or backward compatibility is provided.
+
+Logical backups include encrypted content:
+
+```sh
+umask 077
+podman exec i2nclip-postgres pg_dump -U postgres -d i2nclip -Fc > i2nclip.dump
+# Restore into an empty database owned by the existing i2nclip application role:
+podman exec -i i2nclip-postgres pg_restore -U postgres -d i2nclip --role=i2nclip --no-owner --exit-on-error < i2nclip.dump
+```
+
+Stop the application before restoring. Keep encrypted inventory credentials with your recovery material; database dumps do not include PostgreSQL roles. See i2nfra's documented restore procedure. Automated backup scheduling is outside this change.
 
 ## Requests
 

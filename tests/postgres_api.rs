@@ -1,6 +1,5 @@
 //! In-process API tests; no listening port is needed.
 
-use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
@@ -22,20 +21,66 @@ mod reference_crypto;
 
 static N: AtomicU64 = AtomicU64::new(0);
 
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new() -> Self {
-        let n = N.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("i2nclip-api-{n}-{}", std::process::id()));
-        std::fs::create_dir_all(&path).unwrap();
-        Self(path)
+// Keep paused time from auto-advancing while real PostgreSQL I/O is pending.
+struct ManualClock(tokio::task::JoinHandle<()>);
+impl Drop for ManualClock {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
+fn manual_clock() -> ManualClock {
+    ManualClock(tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    }))
+}
 
-impl Drop for TempDir {
+struct TestDatabase(String, sqlx::PgPool);
+impl TestDatabase {
+    async fn new() -> Self {
+        let base = std::env::var("I2N_TEST_DATABASE_URL").expect(
+            "set I2N_TEST_DATABASE_URL; PostgreSQL integration tests require a real database",
+        );
+        let admin = sqlx::PgPool::connect(&base)
+            .await
+            .expect("test PostgreSQL unavailable");
+        let name = format!(
+            "i2nclip_test_{}_{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        );
+        sqlx::query(&format!("CREATE DATABASE {name}"))
+            .execute(&admin)
+            .await
+            .unwrap();
+        admin.close().await;
+        let mut url = url::Url::parse(&base).unwrap();
+        url.set_path(&name);
+        let pool = sqlx::PgPool::connect(url.as_str()).await.unwrap();
+        Self(url.to_string(), pool)
+    }
+}
+impl Drop for TestDatabase {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let target = self.0.clone();
+        std::thread::spawn(move || {
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(async move {
+                    let base = std::env::var("I2N_TEST_DATABASE_URL").unwrap();
+                    let pool = sqlx::PgPool::connect(&base).await.unwrap();
+                    let url = url::Url::parse(&target).unwrap();
+                    let name = url.path().trim_start_matches('/');
+                    sqlx::query(&format!("DROP DATABASE {name} WITH (FORCE)"))
+                        .execute(&pool)
+                        .await
+                        .unwrap();
+                    pool.close().await;
+                });
+        })
+        .join()
+        .unwrap();
     }
 }
 
@@ -45,18 +90,17 @@ fn new_identity() -> Identity {
     client_crypto::from_seed(seed)
 }
 
-fn app(keys: &[&Identity]) -> (TempDir, axum::Router) {
-    let dir = TempDir::new();
-    let router = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
-    if !keys.is_empty() {
-        let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
-        for key in keys {
-            conn.execute(
-                "INSERT OR IGNORE INTO registered_keys (public_key) VALUES (?1)",
-                rusqlite::params![key.public.as_slice()],
-            )
+async fn app(keys: &[&Identity]) -> (TestDatabase, axum::Router) {
+    let dir = TestDatabase::new().await;
+    let router = i2nclip::router(&dir.0, "http://i2nclip.test")
+        .await
+        .unwrap();
+    for key in keys {
+        sqlx::query("INSERT INTO registered_keys VALUES ($1) ON CONFLICT DO NOTHING")
+            .bind(key.public.as_slice())
+            .execute(&dir.1)
+            .await
             .unwrap();
-        }
     }
     (dir, router)
 }
@@ -124,14 +168,14 @@ async fn call(
 #[tokio::test]
 async fn configured_origins_authenticate_browser_canonical_signatures() {
     let key = new_identity();
-    let (dir, initial) = app(&[&key]);
+    let (dir, initial) = app(&[&key]).await;
     drop(initial);
     let vectors: serde_json::Value =
         serde_json::from_str(include_str!("../client/tests/origin-vectors.json")).unwrap();
     for case in vectors["accepted"].as_array().unwrap() {
         let input = case["input"].as_str().unwrap();
         let origin = case["origin"].as_str().unwrap();
-        let app = i2nclip::router(&dir.0, input).unwrap();
+        let app = i2nclip::router(&dir.0, input).await.unwrap();
         let authorization = client_crypto::authorization(
             &key,
             origin,
@@ -157,15 +201,16 @@ async fn configured_origins_authenticate_browser_canonical_signatures() {
 
 #[tokio::test(start_paused = true)]
 async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
+    let _clock = manual_clock();
     use axum::body::Bytes;
     use http_body_util::Channel;
     use std::sync::Arc;
     use std::time::Duration;
 
     let owner = new_identity();
-    let (dir, app) = app(&[&owner]);
+    let (dir, app) = app(&[&owner]).await;
     let new_key = new_identity();
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
     let id = "6666666666666666666666666666666666666666666666666666666666666666";
     for (method, path, seconds) in [
         ("POST", "/api/media".to_string(), 120),
@@ -236,9 +281,11 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
     // Even a complete registration JSON cannot consume an invitation until
     // the body stream ends; timing out leaves it available for a fresh request.
     enroll_key(&app, &new_key, &otc).await;
-    let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
+    let conn = &dir.1;
     assert_eq!(
-        conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0))
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM files")
+            .fetch_one(conn)
+            .await
             .unwrap(),
         0
     );
@@ -247,7 +294,7 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
 #[tokio::test]
 async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     let owner = new_identity();
-    let (dir, app) = app(&[&owner]);
+    let (dir, app) = app(&[&owner]).await;
     let id = "7777777777777777777777777777777777777777777777777777777777777777";
     assert_eq!(
         call(&app, &owner, "PUT", &format!("/api/media/{id}"), vec![])
@@ -302,7 +349,7 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     );
 
     let key = new_identity();
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
     let mut body = serde_json::json!({ "otc": otc, "public_key": key.registration_key() })
         .to_string()
         .into_bytes();
@@ -323,7 +370,7 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
 #[tokio::test]
 async fn media_body_caps_reject_declared_sizes_before_polling() {
     let owner = new_identity();
-    let (_dir, app) = app(&[&owner]);
+    let (_dir, app) = app(&[&owner]).await;
     let id = "8888888888888888888888888888888888888888888888888888888888888888";
     for (method, path, cap) in [
         ("POST", "/api/media".to_string(), 33_624_140),
@@ -381,7 +428,7 @@ async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
     use http_body_util::Channel;
 
     let owner = new_identity();
-    let (_dir, app) = app(&[&owner]);
+    let (_dir, app) = app(&[&owner]).await;
     let id = "9999999999999999999999999999999999999999999999999999999999999999";
     for (method, path, cap) in [
         ("POST", "/api/media".to_string(), 33_624_140),
@@ -434,7 +481,7 @@ async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
 
 #[tokio::test]
 async fn health_needs_no_key() {
-    let (_dir, app) = app(&[]);
+    let (_dir, app) = app(&[]).await;
     let response = app
         .oneshot(
             Request::builder()
@@ -450,7 +497,7 @@ async fn health_needs_no_key() {
 #[tokio::test]
 async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
     let key = new_identity();
-    let (dir, app) = app(&[&key]);
+    let (dir, app) = app(&[&key]).await;
 
     let marker = b"PLAINTEXT-MARKER-i2nclip-upload";
     let filename = "vacation-photo.jpg";
@@ -498,14 +545,14 @@ async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
     );
 
     let needles: [&[u8]; 3] = [marker, filename.as_bytes(), tag.as_bytes()];
-    for entry in walk(&dir.0) {
-        let data = std::fs::read(&entry).unwrap();
+    let row: (Vec<u8>, Vec<u8>) = sqlx::query_as("SELECT meta,content FROM files WHERE id=$1")
+        .bind(id)
+        .fetch_one(&dir.1)
+        .await
+        .unwrap();
+    for data in [row.0, row.1] {
         for needle in needles {
-            assert!(
-                !data.windows(needle.len()).any(|window| window == needle),
-                "{} contains plaintext",
-                entry.display()
-            );
+            assert!(!data.windows(needle.len()).any(|w| w == needle));
         }
     }
 
@@ -526,7 +573,7 @@ async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
 async fn another_key_cannot_see_or_search() {
     let owner = new_identity();
     let other = new_identity();
-    let (_dir, app) = app(&[&owner, &other]);
+    let (_dir, app) = app(&[&owner, &other]).await;
 
     let content =
         client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"pic").unwrap();
@@ -575,7 +622,7 @@ async fn another_key_cannot_see_or_search() {
 #[tokio::test]
 async fn rejects_bad_signature_replay_and_raw_jpeg() {
     let key = new_identity();
-    let (_dir, app) = app(&[&key]);
+    let (_dir, app) = app(&[&key]).await;
     let (status, _) = call(&app, &key, "GET", "/api/media", Vec::new()).await;
     assert_eq!(status, StatusCode::OK);
     // The first call already stored its nonce. Sign a fresh one and send it twice.
@@ -621,7 +668,7 @@ async fn rejects_bad_signature_replay_and_raw_jpeg() {
 #[tokio::test]
 async fn rejects_wrong_origin_and_a_body_other_than_the_signed_one() {
     let key = new_identity();
-    let (_dir, app) = app(&[&key]);
+    let (_dir, app) = app(&[&key]).await;
     let ts = crypto::now_secs();
     let body = b"signed-body".to_vec();
 
@@ -669,14 +716,18 @@ async fn rejects_wrong_origin_and_a_body_other_than_the_signed_one() {
 #[tokio::test]
 async fn register_rejects_bad_and_expired_otc() {
     let key = new_identity();
-    let dir = TempDir::new();
-    let app = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
+    let dir = TestDatabase::new().await;
+    let app = i2nclip::router(&dir.0, "http://i2nclip.test")
+        .await
+        .unwrap();
     let (status, _) = register(&app, &key, "not-a-real-code").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();
-    let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
-    conn.execute("UPDATE registration_codes SET expires_at = 0", [])
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
+    let conn = &dir.1;
+    sqlx::query("UPDATE registration_codes SET expires_at = 0")
+        .execute(conn)
+        .await
         .unwrap();
     let (status, _) = register(&app, &key, &otc).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -685,22 +736,24 @@ async fn register_rejects_bad_and_expired_otc() {
 #[tokio::test]
 async fn register_otc_is_single_use_and_idempotent_for_key() {
     let key = new_identity();
-    let dir = TempDir::new();
-    let app = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();
+    let dir = TestDatabase::new().await;
+    let app = i2nclip::router(&dir.0, "http://i2nclip.test")
+        .await
+        .unwrap();
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
     enroll_key(&app, &key, &otc).await;
     let (status, _) = register(&app, &key, &otc).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
-    let otc2 = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();
+    let otc2 = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
     let (status, _) = register(&app, &key, &otc2).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 }
 
 #[tokio::test]
 async fn rejected_public_keys_do_not_consume_registration_code() {
-    let (dir, app) = app(&[]);
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();
+    let (dir, app) = app(&[]).await;
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
     let mut identity = [0u8; 32];
     identity[0] = 1;
     for public in [identity, [0u8; 32], [2u8; 32]] {
@@ -715,10 +768,11 @@ async fn rejected_public_keys_do_not_consume_registration_code() {
             serde_json::json!({ "error": "invalid public_key" })
         );
     }
-    let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
+    let conn = &dir.1;
     assert_eq!(
-        conn.query_row("SELECT COUNT(*) FROM registered_keys", [], |row| row
-            .get::<_, i64>(0))
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM registered_keys")
+            .fetch_one(conn)
+            .await
             .unwrap(),
         0
     );
@@ -739,7 +793,7 @@ async fn legacy_weak_key_forgery_is_rejected_before_body_and_nonce() {
         public,
     };
     // Direct insertion simulates a key registered before strict validation.
-    let (dir, app) = app(&[&weak]);
+    let (dir, app) = app(&[&weak]).await;
     let mut signature = [0u8; 64];
     signature[0] = 1;
     let nonce = client_crypto::fresh_nonce();
@@ -767,46 +821,30 @@ async fn legacy_weak_key_forgery_is_rejected_before_body_and_nonce() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
+    let conn = &dir.1;
     assert_eq!(
-        conn.query_row(
-            "SELECT COUNT(*) FROM nonces WHERE nonce = ?1",
-            [&nonce],
-            |row| row.get::<_, i64>(0)
-        )
-        .unwrap(),
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM nonces WHERE nonce=$1")
+            .bind(&nonce)
+            .fetch_one(conn)
+            .await
+            .unwrap(),
         0
     );
     assert_eq!(
-        conn.query_row(
-            "SELECT COUNT(*) FROM registered_keys WHERE public_key = ?1",
-            [public.as_slice()],
-            |row| row.get::<_, i64>(0)
-        )
-        .unwrap(),
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM registered_keys WHERE public_key=$1")
+            .bind(public.as_slice())
+            .fetch_one(conn)
+            .await
+            .unwrap(),
         1
     );
-}
-
-fn walk(dir: &std::path::Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if path.is_dir() {
-            out.extend(walk(&path));
-        } else {
-            out.push(path);
-        }
-    }
-    out
 }
 
 #[tokio::test]
 async fn duplicate_uploads_conflict_without_replacing_content() {
     let owner = new_identity();
     let other = new_identity();
-    let (dir, app) = app(&[&owner, &other]);
+    let (_dir, app) = app(&[&owner, &other]).await;
 
     let content =
         client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"original").unwrap();
@@ -848,8 +886,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
     let (status, downloaded) = call(&app, &owner, "GET", &format!("/api/media/{id}"), vec![]).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(downloaded, content);
-    // A missing blob must not allow an existing database row to be replaced.
-    std::fs::remove_file(dir.0.join("blobs").join(id)).unwrap();
+
     assert_eq!(
         call(
             &app,
@@ -862,13 +899,12 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
         .0,
         StatusCode::CONFLICT
     );
-    assert!(!dir.0.join("blobs").join(id).exists());
 }
 
 #[tokio::test]
 async fn reopening_database_preserves_media() {
     let owner = new_identity();
-    let (dir, app) = app(&[&owner]);
+    let (dir, app) = app(&[&owner]).await;
 
     let content =
         client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"original").unwrap();
@@ -884,7 +920,9 @@ async fn reopening_database_preserves_media() {
     );
     drop(app);
 
-    let app = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
+    let app = i2nclip::router(&dir.0, "http://i2nclip.test")
+        .await
+        .unwrap();
     let (status, downloaded) = call(&app, &owner, "GET", &format!("/api/media/{id}"), vec![]).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(downloaded, content);
@@ -898,11 +936,14 @@ async fn reopening_database_preserves_media() {
         serde_json::json!([token])
     );
     drop(app);
-    let _reopened = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
+    let _reopened = i2nclip::router(&dir.0, "http://i2nclip.test")
+        .await
+        .unwrap();
 }
 
 #[tokio::test(start_paused = true)]
 async fn upload_admission_is_shared_and_releases_capacity() {
+    let _clock = manual_clock();
     use axum::body::Bytes;
     use http_body_util::Channel;
     use std::sync::Arc;
@@ -951,7 +992,7 @@ async fn upload_admission_is_shared_and_releases_capacity() {
 
     let owner = new_identity();
     let other = new_identity();
-    let (dir, app) = app(&[&owner, &other]);
+    let (dir, app) = app(&[&owner, &other]).await;
     let first = stall(&app, &owner).await;
     let second = stall(&app, &other).await;
     let authorization = client_crypto::authorization(
@@ -1024,7 +1065,7 @@ async fn upload_admission_is_shared_and_releases_capacity() {
             .0,
         StatusCode::NOT_FOUND
     );
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
     enroll_key(&app, &new_identity(), &otc).await;
     first.abort();
     assert!(first.await.unwrap_err().is_cancelled());
@@ -1139,8 +1180,10 @@ async fn download_response(
 async fn concurrent_routers_publish_one_hash() {
     let owner = new_identity();
     let other = new_identity();
-    let (dir, first) = app(&[&owner, &other]);
-    let second = i2nclip::router(&dir.0, "http://i2nclip.test").unwrap();
+    let (dir, first) = app(&[&owner, &other]).await;
+    let second = i2nclip::router(&dir.0, "http://i2nclip.test")
+        .await
+        .unwrap();
     let content = client_crypto::encrypt(
         &owner.seed,
         &client_crypto::content_aad(),
@@ -1169,20 +1212,21 @@ async fn concurrent_routers_publish_one_hash() {
             .1,
         content
     );
-    let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
+    let conn = &dir.1;
     assert_eq!(
-        conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0))
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM files")
+            .fetch_one(conn)
+            .await
             .unwrap(),
         1
     );
-    assert_eq!(std::fs::read_dir(dir.0.join("blobs")).unwrap().count(), 1);
 }
 
 #[tokio::test]
-async fn downloads_stream_with_admission_and_pin_authorized_files() {
+async fn downloads_retain_owned_content_after_deletion() {
     let owner = new_identity();
     let other = new_identity();
-    let (_dir, app) = app(&[&owner, &other]);
+    let (_dir, app) = app(&[&owner, &other]).await;
 
     let content = client_crypto::encrypt(
         &owner.seed,
@@ -1289,100 +1333,9 @@ async fn downloads_stream_with_admission_and_pin_authorized_files() {
 }
 
 #[tokio::test]
-async fn downloads_validate_lengths_and_fail_on_midstream_truncation() {
-    let owner = new_identity();
-    let (dir, app) = app(&[&owner]);
-
-    let content = client_crypto::encrypt(
-        &owner.seed,
-        &client_crypto::content_aad(),
-        &vec![9; 180_000],
-    )
-    .unwrap();
-    let hash = crypto::body_hash(&content);
-    let id = hash.as_str();
-    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-    assert_eq!(
-        call(
-            &app,
-            &owner,
-            "POST",
-            "/api/media",
-            frame::encode_post(&meta, &content, "")
-        )
-        .await
-        .0,
-        StatusCode::CREATED
-    );
-    let path = dir.0.join("blobs").join(id);
-    let conn = rusqlite::Connection::open(dir.0.join("i2nclip.db")).unwrap();
-    for size in [-1, 0, 28, 33_554_497] {
-        conn.execute(
-            "UPDATE files SET bytes = ?1 WHERE id = ?2",
-            rusqlite::params![size, id],
-        )
-        .unwrap();
-        assert_eq!(
-            download_response(&app, &owner, id).await.status(),
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
-    }
-    conn.execute(
-        "UPDATE files SET bytes = ?1 WHERE id = ?2",
-        rusqlite::params![content.len() as i64, id],
-    )
-    .unwrap();
-    for length in [content.len() - 1, content.len() + 1] {
-        std::fs::write(&path, vec![0; length]).unwrap();
-        assert_eq!(
-            download_response(&app, &owner, id).await.status(),
-            StatusCode::INTERNAL_SERVER_ERROR
-        );
-    }
-    std::fs::write(&path, &content).unwrap();
-    let response = download_response(&app, &owner, id).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let mut body = response.into_body();
-    assert!(body.frame().await.unwrap().is_ok());
-    std::fs::OpenOptions::new()
-        .write(true)
-        .open(&path)
-        .unwrap()
-        .set_len(0)
-        .unwrap();
-    assert!(body.collect().await.is_err());
-    // Growing after headers cannot cause more than the indexed length to be sent.
-    std::fs::write(&path, &content).unwrap();
-    let response = download_response(&app, &owner, id).await;
-    let mut extended = content.clone();
-    extended.extend_from_slice(b"extra bytes");
-    std::fs::write(&path, extended).unwrap();
-    assert_eq!(
-        response
-            .into_body()
-            .collect()
-            .await
-            .unwrap()
-            .to_bytes()
-            .as_ref(),
-        content
-    );
-    std::fs::remove_file(&path).unwrap();
-    assert_eq!(
-        download_response(&app, &owner, id).await.status(),
-        StatusCode::NOT_FOUND
-    );
-    std::fs::write(&path, &content).unwrap();
-    let first = download_response(&app, &owner, id).await;
-    let second = download_response(&app, &owner, id).await;
-    assert_eq!(first.status(), StatusCode::OK);
-    assert_eq!(second.status(), StatusCode::OK);
-}
-
-#[tokio::test]
 async fn list_query_validation_is_scoped_to_the_list_endpoint() {
     let owner = new_identity();
-    let (_dir, app) = app(&[&owner]);
+    let (_dir, app) = app(&[&owner]).await;
     assert_eq!(
         call(&app, &owner, "GET", "/api/media?after=invalid", vec![])
             .await
@@ -1420,4 +1373,275 @@ async fn list_query_validation_is_scoped_to_the_list_endpoint() {
             .0,
         StatusCode::OK
     );
+}
+
+#[tokio::test]
+async fn invitation_race_has_one_winner() {
+    let (dir, first) = app(&[]).await;
+    let second = i2nclip::router(&dir.0, "http://i2nclip.test")
+        .await
+        .unwrap();
+    let code = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
+    let one = new_identity();
+    let two = new_identity();
+    let (a, b) = tokio::join!(
+        register(&first, &one, &code),
+        register(&second, &two, &code)
+    );
+    let mut statuses = [a.0.as_u16(), b.0.as_u16()];
+    statuses.sort();
+    assert_eq!(statuses, [204, 403]);
+}
+
+#[tokio::test]
+async fn failed_tag_writes_roll_back_upload_and_metadata() {
+    let key = new_identity();
+    let (dir, app) = app(&[&key]).await;
+    let token = URL_SAFE_NO_PAD.encode([1u8; 32]);
+    let content =
+        client_crypto::encrypt(&key.seed, &client_crypto::content_aad(), b"atomic").unwrap();
+    let id = crypto::body_hash(&content);
+    let meta = client_crypto::encrypt(&key.seed, &client_crypto::meta_aad(&id), b"old").unwrap();
+    sqlx::raw_sql(
+        r#"
+        CREATE FUNCTION reject_tags() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION 'test failure';
+        END;
+        $$;
+
+        CREATE TRIGGER reject_tags
+            BEFORE INSERT ON tags
+            FOR EACH ROW EXECUTE FUNCTION reject_tags();
+        "#,
+    )
+    .execute(&dir.1)
+    .await
+    .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            &key,
+            "POST",
+            "/api/media",
+            frame::encode_post(&meta, &content, &token)
+        )
+        .await
+        .0,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM files")
+            .fetch_one(&dir.1)
+            .await
+            .unwrap(),
+        0
+    );
+    sqlx::query("DROP TRIGGER reject_tags ON tags")
+        .execute(&dir.1)
+        .await
+        .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            &key,
+            "POST",
+            "/api/media",
+            frame::encode_post(&meta, &content, &token)
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    sqlx::query(
+        r#"
+        CREATE TRIGGER reject_tags
+            BEFORE INSERT ON tags
+            FOR EACH ROW EXECUTE FUNCTION reject_tags()
+        "#,
+    )
+    .execute(&dir.1)
+    .await
+    .unwrap();
+    let new_meta =
+        client_crypto::encrypt(&key.seed, &client_crypto::meta_aad(&id), b"new").unwrap();
+    assert_eq!(
+        call(
+            &app,
+            &key,
+            "PUT",
+            &format!("/api/media/{id}"),
+            frame::encode_meta(&new_meta, &token)
+        )
+        .await
+        .0,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    let stored: Vec<u8> = sqlx::query_scalar("SELECT meta FROM files WHERE id=$1")
+        .bind(&id)
+        .fetch_one(&dir.1)
+        .await
+        .unwrap();
+    assert_eq!(stored, meta);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM tags")
+            .fetch_one(&dir.1)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn authentication_rechecks_timestamp_after_nonce_insert_wait() {
+    let key = new_identity();
+    let (dir, app) = app(&[&key]).await;
+    sqlx::raw_sql(
+        r#"
+        CREATE FUNCTION delay_nonce() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            PERFORM pg_sleep(2);
+            RETURN NEW;
+        END;
+        $$;
+
+        CREATE TRIGGER delay_nonce
+            BEFORE INSERT ON nonces
+            FOR EACH ROW EXECUTE FUNCTION delay_nonce();
+        "#,
+    )
+    .execute(&dir.1)
+    .await
+    .unwrap();
+    let header = client_crypto::authorization(
+        &key,
+        "http://i2nclip.test",
+        crypto::now_secs() - 300,
+        &client_crypto::fresh_nonce(),
+        "POST",
+        "/api/media",
+        b"",
+    );
+    let (sender, body) = http_body_util::Channel::<axum::body::Bytes>::new(1);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/media")
+                .header("authorization", header)
+                .body(Body::new(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    drop(sender);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM nonces")
+            .fetch_one(&dir.1)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+#[ignore = "maximum-size transfer resource profile; run explicitly with --ignored --nocapture"]
+async fn maximum_size_transfer_profile() {
+    let key = new_identity();
+    let (dir, app) = app(&[&key]).await;
+    let (stop, mut stopped) = tokio::sync::watch::channel(false);
+    let responsiveness = tokio::spawn(async move {
+        let mut worst = std::time::Duration::ZERO;
+        loop {
+            let start = std::time::Instant::now();
+            tokio::select! {
+                _ = stopped.changed() => break,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {}
+            }
+            worst = worst.max(
+                start
+                    .elapsed()
+                    .saturating_sub(std::time::Duration::from_millis(10)),
+            );
+        }
+        worst
+    });
+    let content1 = client_crypto::encrypt(
+        &key.seed,
+        &client_crypto::content_aad(),
+        &vec![1; 32 * 1024 * 1024],
+    )
+    .unwrap();
+    let content2 = client_crypto::encrypt(
+        &key.seed,
+        &client_crypto::content_aad(),
+        &vec![2; 32 * 1024 * 1024],
+    )
+    .unwrap();
+    let id1 = crypto::body_hash(&content1);
+    let id2 = crypto::body_hash(&content2);
+    let meta1 = client_crypto::encrypt(&key.seed, &client_crypto::meta_aad(&id1), b"{}").unwrap();
+    let meta2 = client_crypto::encrypt(&key.seed, &client_crypto::meta_aad(&id2), b"{}").unwrap();
+    let start = std::time::Instant::now();
+    let (a, b) = tokio::join!(
+        call(
+            &app,
+            &key,
+            "POST",
+            "/api/media",
+            frame::encode_post(&meta1, &content1, "")
+        ),
+        call(
+            &app,
+            &key,
+            "POST",
+            "/api/media",
+            frame::encode_post(&meta2, &content2, "")
+        )
+    );
+    assert_eq!(a.0, StatusCode::CREATED);
+    assert_eq!(b.0, StatusCode::CREATED);
+    let (a, b) = tokio::join!(
+        download_response(&app, &key, &id1),
+        download_response(&app, &key, &id2)
+    );
+    assert_eq!(a.status(), StatusCode::OK);
+    assert_eq!(b.status(), StatusCode::OK);
+    // Responses are held unpolled: the database must have no idle transaction.
+    let active: i64 = sqlx::query_scalar(
+        r#"
+        SELECT count(*)
+        FROM pg_stat_activity
+        WHERE datname = current_database() AND state = 'idle in transaction'
+        "#,
+    )
+    .fetch_one(&dir.1)
+    .await
+    .unwrap();
+    assert_eq!(active, 0);
+    let (a, b) = tokio::join!(a.into_body().collect(), b.into_body().collect());
+    assert_eq!(a.unwrap().to_bytes().as_ref(), content1);
+    assert_eq!(b.unwrap().to_bytes().as_ref(), content2);
+    stop.send(true).unwrap();
+    eprintln!(
+        "transfer elapsed={:?}, worst 10ms timer delay={:?}",
+        start.elapsed(),
+        responsiveness.await.unwrap()
+    );
+    eprintln!(
+        "{}",
+        std::fs::read_to_string("/proc/self/status")
+            .unwrap()
+            .lines()
+            .filter(|l| l.starts_with("VmHWM") || l.starts_with("VmRSS"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    let memory: i64 =
+        sqlx::query_scalar("SELECT sum(total_bytes)::bigint FROM pg_backend_memory_contexts")
+            .fetch_one(&dir.1)
+            .await
+            .unwrap();
+    eprintln!("PostgreSQL inspecting backend allocated context bytes={memory}");
 }
