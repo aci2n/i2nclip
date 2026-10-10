@@ -10,3 +10,4 @@
 - deployment validations
 - for atomic inserts, check conflicts consistently: either check insert err (preferred) or check insert count
 - [x] do not return 503 when download/upload permits are exhausted, keep the connection waiting for the resource. Upload admission coverage confirms requests wait and proceed when capacity becomes available.
+- deprecate I2N_DATABASE_URL

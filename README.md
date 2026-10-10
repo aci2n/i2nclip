@@ -78,16 +78,9 @@ For separate release-server, Node-client, and PostgreSQL process measurements, s
 
 ## Self-hosting
 
-The image runs as uid 10001 and has no persistent application volume. PostgreSQL owns storage. Pass only the application owner's credentials to i2nclip, preferably with an owner-only runtime environment file:
+The image runs as uid 10001 and has no persistent application volume. PostgreSQL owns storage. Pass only the application owner's credentials to i2nclip. In Quadlet, set `I2N_ORIGIN` with `Environment=` and mount a Podman secret at a file path provided by `I2N_DATABASE_URL_FILE`. `I2N_DATABASE_URL` remains available for local development. `make container` builds the image. Put HTTPS, rate limits, and abuse controls on a reverse proxy. The API lives at `/api/…` on a dedicated origin; path prefixes are unsupported. PostgreSQL must stay private, with password authentication. `sslmode=disable` is suitable only for the private same-host container network configured in i2nfra.
 
-```sh
-make container
-podman run --rm -p 127.0.0.1:8080:8080 --env-file app.env localhost/i2nclip
-```
-
-`app.env` contains `I2N_ORIGIN` and `I2N_DATABASE_URL`. Put HTTPS, rate limits, and abuse controls on a reverse proxy. The API lives at `/api/…` on a dedicated origin; path prefixes are unsupported. PostgreSQL must stay private, with password authentication. `sslmode=disable` is suitable only for the private same-host container network configured in i2nfra.
-
-The i2nfra repository contains the rootless PostgreSQL 18 Quadlet, private database network, separate administrator/application credentials, health checks, and backup instructions. Its persistent named volume mounts `/var/lib/postgresql`, as required by the [official PostgreSQL 18 image](https://hub.docker.com/_/postgres). `make push` builds and copies the application image; production deployment is a separate step.
+The i2nfra repository contains the rootless PostgreSQL 18 Quadlet, private database network, separate administrator/application credentials, health checks, and backup instructions. It stores PostgreSQL data in `~/.local/share/i2nclip/postgres`, bind-mounted at `/var/lib/postgresql` as required by the [official PostgreSQL 18 image](https://hub.docker.com/_/postgres). `make push` builds and copies the application image; production deployment is a separate step.
 
 This is a fresh database transition. Existing local storage is left untouched, the new library starts empty, and administrators must issue new registration invitations. No import tool or backward compatibility is provided.
 

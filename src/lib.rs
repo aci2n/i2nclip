@@ -92,9 +92,19 @@ async fn open_state(database_url: &str, origin: String) -> Result<AppState, Erro
 }
 
 /// Read the required connection setting without including credentials in errors.
+/// A file setting is preferred so container secrets never enter the process
+/// environment. The environment URL remains supported for local development.
 pub fn database_url_from_env() -> Result<String, Error> {
+    if let Ok(path) = std::env::var("I2N_DATABASE_URL_FILE") {
+        let mut url = std::fs::read_to_string(path)
+            .map_err(|_| Error::Config("unable to read I2N_DATABASE_URL_FILE".into()))?;
+        while url.ends_with('\n') || url.ends_with('\r') {
+            url.pop();
+        }
+        return Ok(url);
+    }
     std::env::var("I2N_DATABASE_URL")
-        .map_err(|_| Error::Config("set I2N_DATABASE_URL to a PostgreSQL connection URL".into()))
+        .map_err(|_| Error::Config("set I2N_DATABASE_URL_FILE or I2N_DATABASE_URL".into()))
 }
 
 /// An HTTP(S) origin with an optional root slash, serialized like the browser's

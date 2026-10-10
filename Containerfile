@@ -1,12 +1,15 @@
 # Build:  podman build --network=host -t i2nclip -f Containerfile .
-# Run with I2N_ORIGIN and I2N_DATABASE_URL. PostgreSQL owns persistent storage.
+# Run with I2N_ORIGIN and either I2N_DATABASE_URL or I2N_DATABASE_URL_FILE.
+# PostgreSQL owns persistent storage.
 
 FROM docker.io/library/rust:1-bookworm AS build
 WORKDIR /src
 ENV CARGO_TERM_COLOR=never
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir -p src \
+RUN mkdir -p src tests examples \
     && printf 'fn main() {}\n' > src/main.rs \
+    && printf 'fn main() {}\n' > examples/postgres-tests.rs \
+    && printf '#[test]\nfn manifest_target_placeholder() {}\n' > tests/postgres_api.rs \
     && cargo build --release --locked
 COPY src ./src
 COPY sql ./sql

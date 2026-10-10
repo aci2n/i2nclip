@@ -12,7 +12,7 @@ Use a fresh database, preserve the current protocol and crypto format, and keep 
 
 - Add `db.rs` containing a concrete `Database` type backed by SQLx's async PostgreSQL pool. All SQL, transactions, row decoding, and database-error classification belong here; handlers and authentication call named database operations. Do not add repository traits or generic transaction frameworks.
 - Separate shared application state from persistence. State contains `Database`, the public origin, and the existing two-upload/two-download semaphores.
-- Require `I2N_DATABASE_URL`; never log its value. Use eight pool connections, one minimum connection, and a five-second acquisition timeout. Return a generic `503` with `Retry-After: 1` for pool acquisition timeouts.
+- Require `I2N_DATABASE_URL_FILE` for the deployed container and keep `I2N_DATABASE_URL` available for local development; never log either value. Use eight pool connections, one minimum connection, and a five-second acquisition timeout. Return a generic `503` with `Retry-After: 1` for pool acquisition timeouts.
 - Make router construction and OTC issuance async. Remove filesystem parameters, `DATA_DIR`, and the OTC `--data-dir` option. OTC reads the same connection environment variable as the server.
 - Replace the initial schema directly. Keep registrations, invitation codes, nonces, files, and tags. Add immutable `content BYTEA NOT NULL` to `files`; remove `staged_files`. Use `STORAGE EXTERNAL` for content to avoid compressing ciphertext.
 - Preserve lowercase SHA-256 text identifiers, owner keys, integer timestamps, tag uniqueness, and existing pagination indexes. Enforce sealed-content and metadata length bounds in SQL; derive reported content size from stored content rather than maintaining an independently mutable size.
@@ -41,12 +41,12 @@ Database operations:
 
 ## i2nfra deployment
 
-- Add `i2nclip-postgres.container` using the official `postgres:18` image, pinned to its major version, with `AutoUpdate=registry` for minor updates. PostgreSQL 18 stores its versioned data under `/var/lib/postgresql`; mount a persistent named volume there. See the [official image documentation](https://hub.docker.com/_/postgres).
+- Add `i2nclip-postgres.container` using the official `postgres:18` image, pinned to its major version, with `AutoUpdate=registry` for minor updates. PostgreSQL 18 stores its versioned data under `/var/lib/postgresql`; the deployment bind-mounts `~/.local/share/i2nclip/postgres` there. See the [official image documentation](https://hub.docker.com/_/postgres).
 - Add `i2nclip-db.network`. Only PostgreSQL and i2nclip join it; i2nclip also retains its existing Caddy-facing network. Do not publish PostgreSQL's port or connect Caddy to the database network.
 - Use container name/DNS alias `i2nclip-postgres`. Add PostgreSQL service ordering and dependency to i2nclip; startup connection failures cause a clear error and systemd restart.
 - Initialize database `i2nclip` with a separate nonsuperuser application owner. Keep bootstrap administrator credentials separate; the application receives only its own credentials.
-- Generate two random credentials locally and store them through the existing Privy encrypted-inventory workflow. Render owner-only runtime environment files, suppress secret-bearing operation output, and percent-encode credentials when building the connection URL.
-- Pass the URL through `I2N_DATABASE_URL`, with TLS disabled explicitly for this private same-host container network. Require SCRAM authentication; do not enable trust authentication for network connections.
+- Generate two random credentials locally and store them through the existing Privy encrypted-inventory workflow. Provision them as Podman secrets, suppress secret-bearing operation output, and percent-encode credentials when building the connection URL.
+- Mount the PostgreSQL bootstrap password as a secret and use `POSTGRES_PASSWORD_FILE`. Mount the application URL as a secret and pass its path through `I2N_DATABASE_URL_FILE`; TLS is disabled explicitly for this private same-host container network. Require SCRAM authentication; do not enable trust authentication for network connections.
 - Configure PostgreSQL with `max_connections=30`, `shared_buffers=128MB`, `work_mem=4MB`, `maintenance_work_mem=64MB`, and `max_wal_size=1GB`. Keep autovacuum, `fsync`, `full_page_writes`, and `synchronous_commit` enabled. Set application-role statement timeout to 30 seconds and idle-in-transaction timeout to 60 seconds.
 - Add a PostgreSQL health check using `pg_isready`; extend host health checks to include the database service/container.
 - Remove the app's data-volume mount and storage-specific user mapping. Remove its image volume declaration and storage-directory assumptions.
