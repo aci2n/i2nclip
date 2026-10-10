@@ -9,7 +9,7 @@ use axum::body::{Body, Bytes};
 use tokio::io::AsyncReadExt;
 
 use axum::extract::{FromRequest, Path as UrlPath, Request, State};
-use axum::http::{header, HeaderValue, Method, StatusCode};
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
@@ -33,21 +33,11 @@ pub(crate) fn router() -> Router<AppState> {
 const META_BODY_DEADLINE: Duration = Duration::from_secs(30);
 const UPLOAD_BODY_DEADLINE: Duration = Duration::from_secs(120);
 
-fn media_body_limits(method: &Method) -> (usize, Duration) {
-    match *method {
-        Method::POST => (MAX_BODY, UPLOAD_BODY_DEADLINE),
-        Method::PUT => (MAX_META_BODY, META_BODY_DEADLINE),
-        _ => (0, SHORT_BODY_DEADLINE),
-    }
-}
-
-/// Authenticated media request with its bounded body and parsed list query.
-/// `owner` is the public key. It is not read from the body.
+/// Header-authenticated request. Endpoint handlers own body/query policy.
 struct MediaRequest {
-    owner: [u8; 32],
-    body: BufferedBody,
-    query: Vec<String>,
-    after: Option<(i64, String)>,
+    verified: auth::VerifiedRequest,
+    parts: axum::http::request::Parts,
+    body: Body,
 }
 
 // Field order releases buffered bytes before returning upload capacity.
@@ -59,8 +49,6 @@ struct BufferedBody {
 impl FromRequest<AppState> for MediaRequest {
     type Rejection = Response;
 
-    // FIXME: refactor this, move method-specific behavior to the methods
-    // example: upload permit should be handled by the upload method
     async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
         // The signature is checked here, before any body byte. It already
         // covers the body hash from the Authorization header. Knowing a
@@ -76,56 +64,55 @@ impl FromRequest<AppState> for MediaRequest {
                 Ok(verified) => verified,
                 Err(err) => return Err(fail(err)),
             };
-        let (query, after) = match list_query(parts.uri.query()) {
-            Ok(parsed) => parsed,
-            Err(err) => return Err(fail(err)),
-        };
-        let (max_body, deadline) = media_body_limits(&parts.method);
-        if let Some(value) = parts.headers.get(header::CONTENT_LENGTH) {
-            if let Ok(text) = value.to_str() {
-                if let Ok(len) = text.parse::<usize>() {
-                    if len > max_body {
-                        return Err(too_large());
-                    }
-                }
-            }
+        Ok(Self {
+            verified,
+            parts,
+            body,
+        })
+    }
+}
+
+impl MediaRequest {
+    fn check_size(&self, max: usize) -> Result<(), Response> {
+        if self
+            .parts
+            .headers
+            .get(header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|text| text.parse::<usize>().ok())
+            .is_some_and(|len| len > max)
+        {
+            return Err(too_large());
         }
-        let permit = if parts.method == Method::POST {
-            Some(
-                state
-                    .upload_slots
-                    .clone()
-                    .try_acquire_owned()
-                    .map_err(|_| uploads_busy())?,
-            )
-        } else {
-            None
-        };
-        let bytes = match read_body_with_deadline(body, max_body, deadline).await {
-            Ok(bytes) => bytes,
-            Err(response) => return Err(*response),
-        };
+        Ok(())
+    }
+
+    async fn read(
+        self,
+        max: usize,
+        deadline: Duration,
+        permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    ) -> Result<([u8; 32], BufferedBody), Response> {
+        let bytes = read_body_with_deadline(self.body, max, deadline)
+            .await
+            .map_err(|response| *response)?;
         let buffered = BufferedBody {
             bytes,
             _upload_permit: permit,
         };
-        // SHA-256 of the body is CPU, not disk, but a 32 MB digest would still
-        // hold an async worker for the whole hash. Same pool as the file IO.
-        let (owner, bytes) = match blocking(move || {
-            let owner = auth::verify_body(&verified, &buffered.bytes)?;
+        // Bytes and admission travel together even if this waiter is cancelled.
+        blocking(move || {
+            let owner = auth::verify_body(&self.verified, &buffered.bytes)?;
             Ok((owner, buffered))
         })
         .await
-        {
-            Ok(pair) => pair,
-            Err(err) => return Err(fail(err)),
-        };
-        Ok(MediaRequest {
-            owner,
-            body: bytes,
-            query,
-            after,
-        })
+        .map_err(fail)
+    }
+
+    async fn empty(self) -> Result<[u8; 32], Response> {
+        self.check_size(0)?;
+        let (owner, _) = self.read(0, SHORT_BODY_DEADLINE, None).await?;
+        Ok(owner)
     }
 }
 
@@ -156,9 +143,14 @@ fn list_query(query: Option<&str>) -> Result<ListQuery, Error> {
 }
 
 async fn list(State(state): State<AppState>, media: MediaRequest) -> Response {
-    let owner = media.owner;
-    let query = media.query;
-    let after = media.after;
+    let (query, after) = match list_query(media.parts.uri.query()) {
+        Ok(query) => query,
+        Err(err) => return fail(err),
+    };
+    let owner = match media.empty().await {
+        Ok(owner) => owner,
+        Err(response) => return response,
+    };
     match blocking(move || store::list(&state, owner, &query, after)).await {
         Ok((items, next)) => json_response(
             StatusCode::OK,
@@ -169,8 +161,20 @@ async fn list(State(state): State<AppState>, media: MediaRequest) -> Response {
 }
 
 async fn upload(State(state): State<AppState>, media: MediaRequest) -> Response {
-    let owner = media.owner;
-    let body = media.body;
+    if let Err(response) = media.check_size(MAX_BODY) {
+        return response;
+    }
+    let permit = match state.upload_slots.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => return uploads_busy(),
+    };
+    let (owner, body) = match media
+        .read(MAX_BODY, UPLOAD_BODY_DEADLINE, Some(permit))
+        .await
+    {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
     match blocking(move || {
         let result = store::add(&state, owner, &body.bytes);
         drop(body);
@@ -191,7 +195,10 @@ async fn download(
     UrlPath(id): UrlPath<String>,
     media: MediaRequest,
 ) -> Response {
-    let owner = media.owner;
+    let owner = match media.empty().await {
+        Ok(owner) => owner,
+        Err(response) => return response,
+    };
     let permit = match state.download_slots.clone().try_acquire_owned() {
         Ok(permit) => permit,
         Err(_) => return transfers_busy("downloads busy; try again"),
@@ -213,8 +220,13 @@ async fn retag(
     UrlPath(id): UrlPath<String>,
     media: MediaRequest,
 ) -> Response {
-    let owner = media.owner;
-    let body = media.body;
+    if let Err(response) = media.check_size(MAX_META_BODY) {
+        return response;
+    }
+    let (owner, body) = match media.read(MAX_META_BODY, META_BODY_DEADLINE, None).await {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
     match blocking(move || store::update_meta(&state, owner, &id, &body.bytes)).await {
         Ok(item) => json_response(StatusCode::OK, item_json(item)),
         Err(err) => fail(err),
@@ -226,7 +238,10 @@ async fn remove(
     UrlPath(id): UrlPath<String>,
     media: MediaRequest,
 ) -> Response {
-    let owner = media.owner;
+    let owner = match media.empty().await {
+        Ok(owner) => owner,
+        Err(response) => return response,
+    };
     match blocking(move || store::remove(&state, owner, &id)).await {
         Ok(()) => empty(StatusCode::NO_CONTENT),
         Err(err) => fail(err),

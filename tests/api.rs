@@ -1348,3 +1348,41 @@ async fn downloads_validate_lengths_and_fail_on_midstream_truncation() {
     assert_eq!(first.status(), StatusCode::OK);
     assert_eq!(second.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn list_query_validation_is_scoped_to_the_list_endpoint() {
+    let owner = new_identity();
+    let (_dir, app) = app(&[&owner]);
+    assert_eq!(
+        call(&app, &owner, "GET", "/api/media?after=invalid", vec![])
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    let path = format!("/api/media/{}?after=invalid&tag=invalid", "a".repeat(64));
+    assert_eq!(
+        call(&app, &owner, "GET", &path, vec![]).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(&app, &owner, "DELETE", &path, vec![]).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let content = crypto::encrypt(&owner.seed, &crypto::content_aad(), b"query isolation").unwrap();
+    let id = crypto::body_hash(&content);
+    let meta = crypto::encrypt(&owner.seed, &crypto::meta_aad(&id), b"{}").unwrap();
+    let body = frame::encode_post(&meta, &content, "");
+    assert_eq!(
+        call(&app, &owner, "POST", "/api/media?after=invalid", body)
+            .await
+            .0,
+        StatusCode::CREATED
+    );
+    let path = format!("/api/media/{id}?after=invalid");
+    assert_eq!(
+        call(&app, &owner, "PUT", &path, frame::encode_meta(&meta, ""))
+            .await
+            .0,
+        StatusCode::OK
+    );
+}

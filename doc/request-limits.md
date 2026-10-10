@@ -31,20 +31,11 @@ The two-upload limit bounds the number of retained large upload workflows, not e
 
 ## Code changes
 
-Completed: `src/lib.rs` defines the shared token-text bound and both frame caps, and `src/frame.rs` uses that bound for token field validation. `src/media.rs::media_body_limits` selects the cap and existing deadline by method. `AppState` initializes a shared semaphore with two upload slots. No new configuration surface is needed initially.
+Completed: `src/lib.rs` defines the shared token-text bound and both frame caps, and `src/frame.rs` uses that bound for token field validation. The handlers in `src/media.rs` select their own caps and deadlines. `AppState` initializes a shared semaphore with two upload slots. No new configuration surface is needed initially.
 
-The private `MediaRequest` extractor in `src/media.rs` chooses its cap and timeout from the request method:
+The private `MediaRequest` extractor in `src/media.rs` verifies signed headers and retains the unread body. Each endpoint chooses its own policy: upload uses `MAX_BODY` and 120 seconds, retag uses `MAX_META_BODY` and 30 seconds, and list/download/delete require an empty body within 10 seconds. Only list parses search tokens and the pagination cursor.
 
-```rust
-let (max_body, deadline) = match parts.method {
-    Method::GET | Method::DELETE => (0, Duration::from_secs(10)),
-    Method::PUT => (MAX_META_BODY, Duration::from_secs(30)),
-    Method::POST => (MAX_BODY, Duration::from_secs(120)),
-    _ => return Err(method_not_allowed()),
-};
-```
-
-Completed: the selected limit applies to both Content-Length early rejection and `read_body_with_deadline`. Registration uses that wrapper with its own cap/deadline. Error responses retain `Cache-Control: no-store`.
+Handlers reject oversized Content-Length before reading. Upload then acquires its permit before buffering. Shared helpers cap streamed bytes, enforce the body deadline, and verify the signed body hash on the blocking pool. Registration uses the bounded reader with its own cap/deadline. Error responses retain `Cache-Control: no-store`.
 
 `AppState` holds `Arc<tokio::sync::Semaphore>`, initialized with two permits. After successful authentication and early length checks, upload POSTs call `try_acquire_owned` and reject immediately if no slot is available. Requests do not wait in an admission queue.
 
