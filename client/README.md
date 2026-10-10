@@ -69,6 +69,10 @@ The stores use ordinary JavaScript and Svelte's readable store contract so the
 async transitions can be tested directly with deferred promises, without a
 component compiler or a separate state-machine dependency.
 
+Tab-injected media fetches register a separate abort controller per request in
+the extension's isolated frame context. Caller cancellation aborts the remote
+fetch; completion and failure release the stream reader and remove frame state.
+
 Upload retries reuse a media ID within the same library. The current server
 returns 409 for an existing ID, including a retry after a successful upload whose
 response was lost. The frontend surfaces that conflict and retains the failed
