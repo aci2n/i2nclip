@@ -1,9 +1,4 @@
-//! The upload body is a tiny binary frame, not multipart and not JSON.
-//!
-//! JSON would base64 the file and make it a third larger. Multipart needs a
-//! boundary that must not appear inside the ciphertext, and the signature has
-//! to cover the exact bytes. A length prefix is the same idea as
-//! `DataOutputStream.writeInt` followed by `write(bytes)` in Java:
+//! Length-prefixed upload and metadata frames, signed as exact binary bytes.
 //!
 //! ```text
 //! POST /api/media
@@ -94,11 +89,7 @@ pub(crate) fn decode_meta(bytes: &[u8]) -> Result<MetaParts<'_>, Error> {
     })
 }
 
-/// Read one length-prefixed slice.
-///
-/// `i` is the current offset and is moved forward. That is the Rust version of
-/// passing an `int[]` of one element in Java so a method can update the cursor.
-/// Returning a sub-slice (`&[u8]`) borrows from `data` instead of copying.
+/// Read a bounded slice borrowed from `data` and advance the cursor.
 fn read_chunk<'a>(data: &'a [u8], i: &mut usize, max: usize) -> Result<&'a [u8], Error> {
     if data.len().saturating_sub(*i) < 4 {
         return Err(Error::BadRequest("truncated body".into()));

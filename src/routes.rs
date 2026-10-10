@@ -18,8 +18,6 @@ use crate::{auth, media, store, Error, MAX_REGISTER_BODY};
 pub(crate) const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
 
 pub(crate) fn router(state: AppState) -> Router {
-    // `Router::new()` is the route table. `.with_state` is how every handler
-    // receives the same `AppState` (like a singleton injected into servlets).
     Router::new()
         .route("/api/health", get(health))
         .route("/api/register-key", post(register_key))
@@ -48,8 +46,7 @@ async fn read_body_with_limit(mut body: Body, max: usize) -> Result<Vec<u8>, Box
     let mut buf = Vec::new();
     while let Some(next) = body.frame().await {
         let frame = next.map_err(|_| Box::new(fail(Error::BadRequest("bad body".into()))))?;
-        // Trailers and other non-data frames are ignored. `into_data` is
-        // `Ok` only for the bytes of the body.
+        // Ignore trailers and other non-data frames.
         let Ok(data) = frame.into_data() else {
             continue;
         };
@@ -94,14 +91,7 @@ fn register_key_body(state: &AppState, body: &[u8]) -> Result<(), Error> {
     store::consume_registration_code(&mut conn, &payload.otc, &public)
 }
 
-/// Run `job` on Tokio's blocking pool.
-///
-/// The async workers are the threads that accept connections and read bodies.
-/// `std::fs` and SQLite do not yield: they hold their thread until the disk
-/// answers. One upload would then stall every other request sharing that
-/// worker, including the signature check that is supposed to reject a body
-/// before it is read. The pool is a separate set of threads for this kind of
-/// work. The database lock is still one mutex, so writes stay serialized.
+/// Run synchronous disk/SQLite work and large hashes off the async workers.
 pub(crate) async fn blocking<T: Send + 'static>(
     job: impl FnOnce() -> Result<T, Error> + Send + 'static,
 ) -> Result<T, Error> {

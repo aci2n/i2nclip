@@ -6,12 +6,8 @@
 //! /var/lib/i2nclip/staging/<ciphertext_sha256>
 //! ```
 //!
-//! `rusqlite` is a blocking SQLite API, closer to JDBC than to an async
-//! driver. These functions also read and write blob files with `std::fs`.
-//! Callers in the HTTP layer run them on Tokio's blocking pool so a disk
-//! wait does not stall the threads that read request bodies. `?1`, `?2` are
-//! placeholders. We never format a value into the SQL string, except for the
-//! `?N` placeholder numbers themselves.
+//! Blocking SQLite and file operations run on Tokio's blocking pool. SQL
+//! values are bound parameters; dynamic SQL contains only placeholder numbers.
 //!
 //! The owner column is the 32-byte public key taken from the signature.
 //! Every read and write includes `owner = ?`, so knowing a content hash is not enough
@@ -28,6 +24,8 @@ use std::sync::MutexGuard;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use rusqlite::params;
+use rusqlite::params_from_iter;
+use rusqlite::types::Value;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use rusqlite::Transaction;
@@ -67,10 +65,8 @@ pub(crate) struct GcReport {
     pub failed: usize,
 }
 
-/// Shared state for the process. `Clone` is cheap: it clones the `Arc`
-/// pointers, not the database. `Arc` is an atomic reference count, like
-/// `shared_ptr` in C++ or a shared immutable handle. `Mutex` is the lock
-/// around the single SQLite connection (SQLite allows one writer).
+/// Shared process state. The mutex serializes access to the single SQLite
+/// connection and coordinates authorized file opening with deletion.
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) upload_slots: Arc<tokio::sync::Semaphore>,
@@ -109,8 +105,7 @@ impl AppState {
     }
 }
 
-/// Create the data and blob directories the first time. Modes are octal, the
-/// same numbers `chmod` takes. `0o700` is owner-only on a directory.
+/// Create owner-only data, blob, and staging directories.
 pub(crate) fn prepare(data_dir: &Path) -> Result<(), Error> {
     ensure_dir(data_dir, 0o700)?;
     ensure_dir(&data_dir.join("blobs"), 0o700)?;
@@ -302,28 +297,27 @@ pub(crate) fn list(
     // The owner filter is always present. Tag tokens, when asked for, are an
     // AND: the file must contain every token, not merely one of them.
     let mut sql = String::from("SELECT id, meta, bytes, created_at FROM files WHERE owner = ?1");
-    let mut boxed: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    boxed.push(Box::new(owner.to_vec()));
+    let mut values = vec![Value::Blob(owner.to_vec())];
     if !tokens.is_empty() {
         let mut placeholders = Vec::new();
         for token in tokens {
-            boxed.push(Box::new(token.clone()));
-            placeholders.push(format!("?{}", boxed.len()));
+            values.push(Value::Text(token.clone()));
+            placeholders.push(format!("?{}", values.len()));
         }
-        boxed.push(Box::new(tokens.len() as i64));
-        let count_slot = boxed.len();
+        values.push(Value::Integer(tokens.len() as i64));
+        let count_slot = values.len();
         sql.push_str(&format!(
             " AND (SELECT COUNT(DISTINCT token) FROM tags WHERE file_id = files.id AND token IN ({})) = ?{count_slot}",
             placeholders.join(", ")
         ));
     }
     if let Some((created_at, id)) = after {
-        boxed.push(Box::new(created_at));
-        let older = boxed.len();
-        boxed.push(Box::new(created_at));
-        let same = boxed.len();
-        boxed.push(Box::new(id));
-        let tie = boxed.len();
+        values.push(Value::Integer(created_at));
+        let older = values.len();
+        values.push(Value::Integer(created_at));
+        let same = values.len();
+        values.push(Value::Text(id));
+        let tie = values.len();
         sql.push_str(&format!(
             " AND (created_at < ?{older} OR (created_at = ?{same} AND id > ?{tie}))"
         ));
@@ -333,8 +327,7 @@ pub(crate) fn list(
         PAGE + 1
     ));
     let mut stmt = conn.prepare(&sql)?;
-    let refs: Vec<&dyn rusqlite::types::ToSql> = boxed.iter().map(|value| value.as_ref()).collect();
-    let rows = stmt.query_map(refs.as_slice(), |row| {
+    let rows = stmt.query_map(params_from_iter(values), |row| {
         Ok(Item {
             id: row.get(0)?,
             meta: row.get(1)?,
@@ -352,9 +345,8 @@ pub(crate) fn list(
     if more {
         items.truncate(PAGE);
     }
+    let mut tag_stmt = conn.prepare("SELECT token FROM tags WHERE file_id = ?1 ORDER BY token")?;
     for item in &mut items {
-        let mut tag_stmt =
-            conn.prepare("SELECT token FROM tags WHERE file_id = ?1 ORDER BY token")?;
         let tags = tag_stmt.query_map([&item.id], |row| row.get::<_, String>(0))?;
         for tag in tags {
             item.tokens.push(tag?);
@@ -629,7 +621,7 @@ fn write_new_with(
 }
 
 #[cfg(test)]
-mod journal_tests {
+mod tests {
     use super::*;
     use crate::reference_crypto as client_crypto;
     struct Fixture(AppState, PathBuf);
@@ -677,6 +669,67 @@ mod journal_tests {
         let meta = client_crypto::encrypt(&[7; 32], &client_crypto::meta_aad(&id), b"{}").unwrap();
         (id, frame::encode_post(&meta, &content, ""))
     }
+    #[test]
+    fn list_preserves_owner_and_tag_filters_across_cursor_ties() {
+        let f = Fixture::new();
+        let owner = [7; 32];
+        let other = [8; 32];
+        let tags = vec!["A".repeat(43), "B".repeat(43)];
+        let ids: Vec<_> = (0..28).map(|n| format!("{n:064x}")).collect();
+        {
+            let mut conn = f.0.lock().unwrap();
+            let tx = conn.transaction().unwrap();
+            for (n, id) in ids.iter().enumerate() {
+                insert_file(
+                    &tx,
+                    id,
+                    &owner,
+                    b"meta",
+                    29,
+                    if n < 26 { 100 } else { 99 },
+                    &tags,
+                )
+                .unwrap();
+            }
+            insert_file(&tx, &"c".repeat(64), &owner, b"meta", 29, 98, &tags[..1]).unwrap();
+            insert_file(&tx, &"d".repeat(64), &owner, b"meta", 29, 98, &tags[1..]).unwrap();
+            insert_file(&tx, &"e".repeat(64), &other, b"meta", 29, 101, &tags).unwrap();
+            tx.commit().unwrap();
+        }
+        let (first, cursor) = list(&f.0, owner, &tags, None).unwrap();
+        assert_eq!(
+            first.iter().map(|item| &item.id).collect::<Vec<_>>(),
+            ids[..PAGE].iter().collect::<Vec<_>>()
+        );
+        assert!(first.iter().all(|item| item.tokens == tags));
+        let (last, next) = list(
+            &f.0,
+            owner,
+            &tags,
+            Some(parse_cursor(&cursor.unwrap()).unwrap()),
+        )
+        .unwrap();
+        assert_eq!(
+            last.iter().map(|item| &item.id).collect::<Vec<_>>(),
+            ids[PAGE..].iter().collect::<Vec<_>>()
+        );
+        assert!(last.iter().all(|item| item.tokens == tags));
+        assert!(next.is_none());
+        let (first, cursor) = list(&f.0, owner, &[], None).unwrap();
+        assert_eq!(first.len(), PAGE);
+        let (last, _) = list(
+            &f.0,
+            owner,
+            &[],
+            Some(parse_cursor(&cursor.unwrap()).unwrap()),
+        )
+        .unwrap();
+        assert_eq!(last.len(), 6);
+        let (foreign, _) = list(&f.0, other, &tags, None).unwrap();
+        assert_eq!(foreign.len(), 1);
+        assert_eq!(foreign[0].id, "e".repeat(64));
+    }
+
     #[test]
     fn successful_publication_conflict_and_journaled_deletion() {
         let f = Fixture::new();

@@ -1,5 +1,4 @@
-//! Calls the router in-process. No port is opened. This is the same idea as
-//! Spring's MockMvc or Python's httpx ASGI transport.
+//! In-process API tests; no listening port is needed.
 
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;

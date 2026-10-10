@@ -19,20 +19,15 @@ Status: strict Ed25519 validation, browser-compatible origins, endpoint body cap
 - UUIDs are removed. SHA-256 of complete sealed content is the identifier, blob filename, and content URL. Metadata AAD binds its ciphertext to this hash; clients verify downloaded hashes before decrypting. Immutable content caching remains valid; metadata/list responses stay `no-store`.
 - Publication and deletion use the durable `staged_files(id, created_at)` journal, without file locks. SIGUSR1 triggers GC in the running server; it pauses uploads and cleans intents older than seven days. See [gc.md](gc.md).
 - Server crypto is limited to verification, hashing, and sealed-blob checks. Reference-client seed handling, encryption, derivation, and signing live in test-only `src/reference_crypto.rs`; client-only dependencies are dev dependencies. Shared vectors are preserved.
+- List queries bind `Vec<rusqlite::types::Value>` with `params_from_iter` and reuse one tag statement per request. Owner filtering, AND searches, and cursor ordering are covered together in regression tests.
+- Tutorial language comparisons and basic Rust explanations were removed; protocol, AAD, ownership, replay, admission, and crash-ordering comments remain.
 - The initial schema includes `nonces(expires)` and the pagination index `(owner, created_at DESC, id ASC)`. Typed file-exists handling replaces error-string matching.
 
-## Remaining order
+## Remaining work
 
-| Order | Priority | Change | Acceptance criteria |
-| --- | --- | --- | --- |
-| 9 | P3 | Simplify database parameters and request parsing | Use `rusqlite::types::Value` and `params_from_iter`, reuse tag statements (list-only query parsing is completed). Preserve ownership, AND search, pagination, and signed targets. |
-| 10 | P3 | Trim tutorial comments | Retain explanations of AAD, ownership, replay, limits, lock order, and crash ordering. |
+The approved backend simplification list is complete. Storage quotas become P1 before expanding registration to less-trusted users: transfer limits do not cap persistent storage. Rollback detection for metadata, collection completeness, key rotation, and per-file keys remain separate threat-model decisions.
 
-Storage quotas become P1 before expanding registration to less-trusted users. Current transfer limits do not cap persistent storage. Rollback detection for metadata, collection completeness, key rotation, and per-file keys remain separate threat-model decisions.
-
-## Next approval boundary
-
-Next proposed change: simplify list SQL parameters with `rusqlite::types::Value` and `params_from_iter`, and reuse tag statements while preserving ownership, AND search, and pagination. Do not implement additional priorities without approval.
+No further implementation is proposed without a scope decision.
 
 Re-encrypting a failed client upload creates fresh ciphertext and normally a new hash. An exact sealed-byte retry returns `409`; after a lost successful response, refresh the library before retrying to avoid creating another entry. No cached replay body or nonce reuse is introduced.
 
@@ -47,3 +42,5 @@ The staged-journal rewrite passed 57 client tests, the Svelte checker with zero 
 Borrowed frame decoding passed `make test` (57 client tests, 42 Rust tests, Svelte checker with zero errors/warnings), `make extension`, Rust formatting, and `git diff --check`. The allocation regression test measures zero decoder allocations without tags and 2,816 total bytes with 32 tags, independent of content size; the previous copy pattern's positive control allocates 33,620,032 bytes. See [request-limits.md](request-limits.md#decoder-allocation-regression-test) for scope and reproduction.
 
 The server/reference crypto split passed `make test` (57 client tests, 42 Rust tests, Svelte checker with zero errors/warnings), `cargo check --lib --bins`, `make extension`, Rust formatting, and `git diff --check`. Shared vectors remain unchanged. The production dependency graph excludes AES-GCM, HKDF, HMAC, and Unicode normalization; only test targets compile `reference_crypto.rs`.
+
+SQL parameter/statement cleanup and comment trimming passed `make test` (57 client tests, 43 Rust tests, Svelte checker with zero errors/warnings), `make extension`, Rust formatting, and `git diff --check`. The added list regression covers owner isolation, AND tag filters, reused tag results, filtered/unfiltered pagination, and cursor ties across equal timestamps.

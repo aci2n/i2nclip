@@ -1,15 +1,5 @@
 use thiserror::Error;
 
-// `enum` is a closed set of variants, closer to a Java sealed interface than to
-// a C enum. Each variant can carry its own data. `Error` here is the single
-// failure type for the whole program, like one checked exception hierarchy.
-//
-// `#[derive(Debug, Error)]` generates the debug printer and the standard
-// `std::error::Error` trait (Rust's equivalent of a base exception type).
-// `#[error("...")]` is the message returned by `to_string()`, like getMessage().
-// `#[from]` lets `?` convert that inner error into this one automatically,
-// the way a catch block might wrap a SQLException in your own exception.
-
 /// Failures that stop a request or startup.
 ///
 /// Handlers turn these into HTTP status codes. The text is for logs.

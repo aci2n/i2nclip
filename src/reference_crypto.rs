@@ -31,8 +31,6 @@ pub struct Identity {
 
 impl std::fmt::Debug for Identity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // `write!` is like sprintf into the formatter. The public key is not
-        // secret, but logging it in full is noisy, so Debug stays opaque.
         f.write_str("Identity")
     }
 }
@@ -130,7 +128,6 @@ pub fn decrypt(seed: &[u8; 32], aad: &[u8], blob: &[u8]) -> Result<Vec<u8>, Erro
 pub fn tag_token(seed: &[u8; 32], tag: &str) -> Result<String, Error> {
     let normalized = normalize_tag(tag)?;
     let key = derive_key(seed, b"tag");
-    // `new_from_slice` fails only if the key were empty, which it is not.
     let mut mac = <HmacSha256 as Mac>::new_from_slice(&key).expect("HMAC key");
     mac.update(b"tag\n");
     mac.update(normalized.as_bytes());
@@ -140,8 +137,6 @@ pub fn tag_token(seed: &[u8; 32], tag: &str) -> Result<String, Error> {
 /// Trim, NFC, lowercase. Rejects empty tags and anything with a comma or a
 /// newline, because the upload form treats those as separators.
 pub fn normalize_tag(tag: &str) -> Result<String, Error> {
-    // `.nfc()` is an iterator over Unicode scalar values in composed form.
-    // `.collect::<String>()` builds an owned String from that iterator.
     let text: String = tag.trim().nfc().collect();
     let text = text.to_lowercase();
     if text.is_empty() || text.chars().count() > 64 || text.contains(['\n', '\r', ',']) {
@@ -150,16 +145,10 @@ pub fn normalize_tag(tag: &str) -> Result<String, Error> {
     Ok(text)
 }
 
-/// HKDF-SHA256. `info` is `b"enc"` or `b"tag"`.
-///
-/// HKDF is a standard way to turn one secret into several keys. The salt is
-/// the ASCII bytes `i2nclip`. The "info" string is what makes the two outputs
-/// different. 32 bytes is the AES-256 key size and a natural HMAC key size.
+/// Derive independent 32-byte keys with salt `i2nclip` and info `enc` or `tag`.
 fn derive_key(seed: &[u8; 32], info: &[u8]) -> [u8; 32] {
     let hk = Hkdf::<Sha256>::new(Some(HKDF_SALT), seed);
     let mut out = [0u8; 32];
-    // expand() only fails if you ask for more bytes than the hash allows
-    // (for SHA-256 that limit is thousands of bytes). 32 cannot fail.
     hk.expand(info, &mut out)
         .expect("32-byte HKDF output is within the limit");
     out
@@ -169,8 +158,6 @@ fn derive_key(seed: &[u8; 32], info: &[u8]) -> [u8; 32] {
 /// same message always produce the same 64-byte signature.
 pub fn sign(seed: &[u8; 32], message: &[u8]) -> [u8; 64] {
     let signing = SigningKey::from_bytes(seed);
-    // `.sign` comes from the `Signer` trait, which is in scope above.
-    // A trait is an interface. The method is only visible if the trait is imported.
     signing.sign(message).to_bytes()
 }
 

@@ -58,18 +58,18 @@ The authentication envelope is the main custom security surface. Its fields have
 
 Simpler alternatives change requirements: a random bearer credential is easy to verify but gives the server a reusable impersonation secret; a challenge flow adds a round trip and state; standardized HTTP Message Signatures offer interoperability but add parsing/canonicalization scope. Choose those only for a concrete operational or interoperability reason.
 
-The comment in `src/frame.rs` overstates multipart's difficulty: multipart can carry binary data and can be signed over its serialized bytes. It needs boundary selection/parsing, but is not inherently incompatible with signatures. The existing frame remains a reasonable smaller implementation.
+The former multipart comment in `src/frame.rs` was removed during comment cleanup. Multipart can carry binary data and be signed over its serialized bytes; the existing length-prefixed frame remains a reasonable smaller implementation.
 
 ## Simplifications without changing the wire format
 
 1. Completed for crypto: `src/crypto.rs` now holds server-used verification, hashing, and blob checks. Reference-client encryption, tag derivation, identity generation, and signing live in test-only `src/reference_crypto.rs`, with client-only dependencies moved to dev dependencies. Shared vectors are preserved. Frame encoders remain in `frame.rs` for fixtures.
-2. Return borrowed metadata/content slices from frame decoding. This removes a large copy and simplifies ownership; let the storage workflow own the original body buffer.
+2. Completed: frame decoding borrows metadata/content slices while the blocking storage workflow owns the original request buffer. Allocation tests guard against restoring the large copy.
 3. Completed by receipt removal: storage no longer hashes upload bodies again for receipt insertion or retry lookup. Authentication still verifies the signed body hash.
-4. Replace `Vec<Box<dyn ToSql>>` plus the derived reference vector in listing with `Vec<rusqlite::types::Value>` and `params_from_iter`. Dynamic placeholders remain necessary for variable tag counts; boxing does not.
-5. Reuse the token query statement across page rows. Returning tokens may also be unnecessary because clients already decrypt readable tags; check public API consumers before removing fields. There is no need for a complex batch-query layer for a fixed 24-item page.
-6. Parse list query parameters only for the list endpoint. Currently unrelated media methods can fail because a shared extractor parses an irrelevant `after` parameter. Preserve raw request-target signing regardless of query parsing.
-7. Completed: publication uses typed `ErrorKind::AlreadyExists`. File-write cleanup and synchronization are retained.
-8. Keep comments explaining invariants (AAD, ownership, replay expiry, crash ordering), and trim repeated Java/Python analogies and Rust syntax tutorials. They make security-relevant control flow harder to scan.
+4. Completed: listing now uses `Vec<rusqlite::types::Value>` and `params_from_iter`, with one reusable tag statement per request. Dynamic placeholders remain necessary for variable tag counts.
+5. Completed: the token query statement is reused across page rows. Returned token fields are preserved; removing them would require a separate API decision.
+6. Completed: only the list handler parses search and cursor parameters. Other endpoints ignore unrelated list parameters while signatures still bind the exact request target.
+7. Completed: live and pending duplicate hashes return typed `Error::Conflict`, and publication refuses existing destination files. The staged-file journal and directory synchronization retain crash-safe cleanup.
+8. Completed: Java/Python analogies and Rust syntax tutorials were trimmed. Comments explaining AAD, ownership, replay expiry, resource lifetime, and crash ordering remain.
 
 The single SQLite connection and explicit blocking pool are reasonable for this scale. A connection pool, generic repository layer, custom transaction framework, resumable chunks, or a new envelope library would add complexity without an established requirement. Upload receipts were intentionally removed: all duplicate sealed-content hashes now conflict, and a retry cannot confirm an upload whose successful response was lost.
 
