@@ -695,3 +695,103 @@ test("reencryption after a lost upload response creates a separate content hash"
 	await expect(page.locator(".card")).toHaveCount(2);
 	expect(posts).toBe(2);
 });
+
+test("downloading images without thumbnails displays decrypted previews before opening", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	const fixtures = [
+		{ width: 960, height: 540, name: "Landscape without a thumbnail.png" },
+		{ width: 540, height: 960, name: "Portrait without a thumbnail.png" },
+		{
+			width: 1600,
+			height: 360,
+			name: "Panorama with a long descriptive filename and no thumbnail.png",
+		},
+	];
+	await page.evaluate(async (fixtures) => {
+		const { upload } = await import("/client/src/lib/api.js");
+		const { serverUrl } = await browser.storage.local.get("serverUrl");
+		const { privateKey } = await browser.storage.session.get("privateKey");
+		for (const { width, height, name } of fixtures) {
+			const canvas = document.createElement("canvas");
+			canvas.width = width;
+			canvas.height = height;
+			const context = canvas.getContext("2d");
+			context.fillStyle = "#328878";
+			context.fillRect(0, 0, width, height);
+			context.fillStyle = "#dcebbd";
+			context.beginPath();
+			context.arc(
+				width / 2,
+				height / 2,
+				Math.min(width, height) / 3,
+				0,
+				Math.PI * 2,
+			);
+			context.fill();
+			const blob = await new Promise((resolve) =>
+				canvas.toBlob(resolve, "image/png"),
+			);
+			// The API allows omitted thumbnails; bypass automatic thumbnail generation.
+			await upload({
+				serverUrl,
+				privateKey,
+				bytes: new Uint8Array(await blob.arrayBuffer()),
+				name,
+				contentType: "image/png",
+			});
+		}
+	}, fixtures);
+	await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
+	await expect(page.locator(".card")).toHaveCount(fixtures.length);
+	let downloads = 0;
+	page.on("request", (request) => {
+		if (
+			request.method() === "GET" &&
+			/\/api\/media\/[^/]+$/.test(request.url())
+		)
+			downloads++;
+	});
+	for (const { name, width, height } of fixtures) {
+		const card = page
+			.locator(".card")
+			.filter({ has: page.locator(".card-title", { hasText: name }) });
+		await expect(card.locator("img")).toHaveCount(0);
+		await card.getByRole("button", { name: "Download", exact: true }).click();
+		const image = card.locator(".image-button img");
+		await expect(image).toHaveAttribute("src", /^blob:/);
+		await expect
+			.poll(() =>
+				image.evaluate((node) => ({
+					width: node.naturalWidth,
+					height: node.naturalHeight,
+				})),
+			)
+			.toEqual({ width, height });
+		await expect(page.getByRole("dialog")).toHaveCount(0);
+	}
+	expect(downloads).toBe(fixtures.length);
+	for (const theme of ["light", "dark"]) {
+		await page.emulateMedia({ colorScheme: theme });
+		for (const width of [320, 360]) {
+			await page.setViewportSize({ width, height: 800 });
+			await page.screenshot({
+				path: `e2e/shots/download-without-thumbnail-${width}-${theme}.png`,
+				fullPage: true,
+			});
+			expect(
+				await page.evaluate(
+					() => document.documentElement.scrollWidth <= innerWidth,
+				),
+			).toBe(true);
+		}
+	}
+	const landscape = page.locator(".card").filter({
+		has: page.locator(".card-title", { hasText: fixtures[0].name }),
+	});
+	await landscape.locator(".image-button").click();
+	await expect(page.getByRole("dialog").locator("img")).toBeVisible();
+	expect(downloads).toBe(fixtures.length);
+});

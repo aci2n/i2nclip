@@ -20,7 +20,10 @@ const summary = $derived(
 				onclick={(event) => library.reveal(item.id, event.currentTarget)}
 				disabled={$media.busy || $media.deleted}
 			>
-				<img src={$media.shown ? $media.url : $media.preview} alt={name}>
+				<img
+					src={$media.shown || !$media.preview ? $media.url : $media.preview}
+					alt={name}
+				>
 			</button>
 		{:else if type.startsWith("audio/") || type.startsWith("video/")}
 			{#if $media.shown}
