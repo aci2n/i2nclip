@@ -28,8 +28,9 @@ on unmount. Its save action delegates to the library and media stores.
 ## Ownership and transitions
 
 - **Application:** creates the session and settings stores; retains one library
-  across Library/Settings navigation. Popups are disposed when leaving their
-  view and recreated when returning through history.
+  across Library/Settings navigation. Context-menu windows also retain one
+  pending upload and its tag draft across views and history; their Upload link
+  preserves the source ID. Application disposal releases both workflows.
 - **Session:** loading → configured/locked/unlocked. Only one mutation can run
   locally, and the `i2nclip-session` Web Lock serializes mutations across pages.
   Each mutation rereads persistent storage inside the lock. Refresh revisions

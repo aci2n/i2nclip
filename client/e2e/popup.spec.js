@@ -191,6 +191,11 @@ test("preparation and transfer failures retry in the same popup and preserve tag
 	app,
 }) => {
 	await createLibrary(page, app);
+	await expect(
+		page
+			.getByRole("navigation")
+			.getByRole("link", { name: "Upload", exact: true }),
+	).toHaveCount(0);
 	const srcUrl =
 		"https://media.example/landscape-with-a-long-descriptive-file-name.svg";
 	let reads = 0,
@@ -229,6 +234,33 @@ test("preparation and transfer failures retry in the same popup and preserve tag
 	await expect(page.locator("#status")).toContainText(
 		"temporary transfer failure",
 	);
+	await expect(page.locator("#tags")).toHaveValue("landscape, retry draft");
+	const preview = await page.locator("#preview").getAttribute("src");
+	for (const destination of ["Settings", "Library"]) {
+		await page
+			.getByRole("navigation")
+			.getByRole("link", { name: destination, exact: true })
+			.click();
+		await expect(
+			page
+				.getByRole("navigation")
+				.getByRole("link", { name: "Upload", exact: true }),
+		).toBeVisible();
+		await page
+			.getByRole("navigation")
+			.getByRole("link", { name: "Upload", exact: true })
+			.click();
+		await expect(page.locator("#tags")).toHaveValue("landscape, retry draft");
+		await expect(page.locator("#status")).toContainText(
+			"temporary transfer failure",
+		);
+		await expect(page.locator("#preview")).toHaveAttribute("src", preview);
+	}
+	await page.goBack();
+	await expect(
+		page.getByRole("link", { name: "Library", exact: true }),
+	).toHaveAttribute("aria-current", "page");
+	await page.goForward();
 	await expect(page.locator("#tags")).toHaveValue("landscape, retry draft");
 	expect(reads).toBe(2);
 	expect(uploads).toBe(1);

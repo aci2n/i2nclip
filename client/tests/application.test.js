@@ -4,7 +4,9 @@ import { get } from "svelte/store";
 import { createApplication } from "../src/lib/stores/application.js";
 
 function setup(t, page) {
-	let location = new URL(`https://clip.example/${page}.html?id=one`);
+	let location = new URL(
+		`https://clip.example/${page}.html${["upload", "unlock"].includes(page) ? "?id=one" : ""}`,
+	);
 	const listeners = new Map();
 	const browser = {
 		get location() {
@@ -38,6 +40,9 @@ test("navigation and history retain one library; modified clicks use native navi
 	const { app, navigate, back, listeners } = setup(t, "library");
 	await app.session.ready;
 	const library = get(app).library;
+	assert.equal(get(app).popupPage, null);
+	assert.equal(get(app).pending, null);
+	assert.equal(app.href("options"), "options.html");
 	navigate("options");
 	assert.equal(get(app).page, "options");
 	back("library.html");
@@ -57,17 +62,23 @@ test("navigation and history retain one library; modified clicks use native navi
 	assert.equal(listeners.size, 0);
 });
 
-test("returning to a popup via history recreates its workflow without discarding the library", async (t) => {
+test("popup navigation and history preserve its workflow, tag draft, and source ID", async (t) => {
 	const { app, navigate, back } = setup(t, "upload");
 	await app.session.ready;
 	const first = get(app).pending;
 	await first.ready;
 	navigate("library");
 	const library = get(app).library;
-	assert.equal(get(app).pending, null);
+	assert.equal(get(app).pending, first);
+	first.tags.set("draft");
+	assert.equal(app.href("upload"), "upload.html?id=one");
+	assert.equal(app.href("options"), "options.html?id=one");
+	navigate("options");
+	navigate("upload");
+	assert.equal(get(first.tags), "draft");
 	back("upload.html?id=one");
 	assert.ok(get(app).pending);
-	assert.notEqual(get(app).pending, first);
+	assert.equal(get(app).pending, first);
 	assert.equal(get(app).auto, false);
 	assert.equal(get(app).library, library);
 	await get(app).pending.ready;

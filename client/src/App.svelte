@@ -23,6 +23,16 @@ onDestroy(app.dispose);
 			>i2nclip</a
 		>
 		<nav aria-label="Main navigation">
+			{#if $app.popupPage}
+				<a
+					href={app.href($app.popupPage)}
+					aria-current={page === "upload" || page === "unlock"
+						? "page"
+						: undefined}
+					onclick={(event) => app.navigate(event, $app.popupPage)}
+					>Upload</a
+				>
+			{/if}
 			<a
 				href={app.href("library")}
 				aria-current={page === "library" ? "page" : undefined}
@@ -72,6 +82,7 @@ header {
 	justify-content: space-between;
 	align-items: center;
 	gap: 1rem;
+	flex-wrap: wrap;
 	margin-bottom: 2rem;
 }
 .brand {

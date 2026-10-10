@@ -21,40 +21,37 @@ export function createApplication(platform, initialPage, browser = window) {
 			: "library";
 	};
 	const page = initialPage || pageAtLocation();
-	function popup(page) {
-		if (!["upload", "unlock"].includes(page))
-			return { pending: null, auto: false };
-		const params = new URLSearchParams(browser.location.search);
-		const auto = page === "unlock" || params.has("auto");
-		return {
-			pending: createPendingUpload(
-				session,
-				platform,
-				params.get("id"),
-				undefined,
-				{ auto },
-			),
-			auto,
-		};
-	}
+	const params = new URLSearchParams(browser.location.search);
+	const popupPage = ["upload", "unlock"].includes(page)
+		? page
+		: params.has("id")
+			? "upload"
+			: null;
+	const auto = popupPage === "unlock" || params.has("auto");
+	const pending = popupPage
+		? createPendingUpload(session, platform, params.get("id"), undefined, {
+				auto,
+			})
+		: null;
 	let library = ["library", "options"].includes(page)
 		? createLibrary(session, platform)
 		: null;
-	let { pending, auto } = popup(page);
-	const state = writable({ page, library, pending, auto });
+	const state = writable({ page, library, pending, auto, popupPage });
 	let disposed = false;
-	const href = (name) =>
-		standalone
-			? `?page=${name}`
-			: `${name === "options" ? "options" : "library"}.html`;
+	const href = (name) => {
+		const query = new URLSearchParams();
+		if (standalone) query.set("page", name);
+		if (popupPage && params.has("id")) query.set("id", params.get("id"));
+		if (popupPage && auto) query.set("auto", "");
+		const path = standalone ? "" : `${name}.html`;
+		return query.size ? `${path}?${query}` : path;
+	};
 	function show(page) {
 		if (disposed) return;
-		pending?.dispose();
-		({ pending, auto } = popup(page));
 		if (["library", "options"].includes(page))
 			library ??= createLibrary(session, platform);
 		library?.closePreview();
-		state.set({ page, library, pending, auto });
+		state.set({ page, library, pending, auto, popupPage });
 	}
 	const restore = () => show(pageAtLocation());
 	browser.addEventListener("popstate", restore);

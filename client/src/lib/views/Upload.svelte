@@ -2,7 +2,7 @@
 import Unlock from "../components/Unlock.svelte";
 
 let { session, pending, auto = false, settingsHref } = $props();
-let tags = $state("");
+const tags = $derived(pending.tags);
 </script>
 
 <section class="panel">
@@ -28,12 +28,12 @@ let tags = $state("");
 			id="send"
 			onsubmit={(event) => {
 				event.preventDefault();
-				pending.send(tags);
+				pending.send($tags);
 			}}
 		>
 			{#if !auto}
 				<label for="tags">Tags, separated by commas</label>
-				<input id="tags" bind:value={tags} disabled={$pending.busy}>
+				<input id="tags" bind:value={$tags} disabled={$pending.busy}>
 			{/if}
 			<button type="submit" disabled={!$pending.available || $pending.busy}>
 				{$pending.busy ? "Uploading…" : "Upload"}

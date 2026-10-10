@@ -213,6 +213,7 @@ export function createPendingUpload(
 	return {
 		subscribe: state.subscribe,
 		ready,
+		tags: writable(""),
 		send,
 		dispose() {
 			disposed = true;
