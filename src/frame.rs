@@ -25,6 +25,16 @@ use crate::MAX_META;
 use crate::MAX_TAGS;
 use crate::MAX_TOKEN_TEXT;
 
+/// Canonical SHA-256 of the complete sealed content.
+pub(crate) fn parse_id(id: &str) -> Result<String, Error> {
+    if id.len() != 64 || !id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        return Err(Error::BadRequest(
+            "id must be a lowercase SHA-256 hash".into(),
+        ));
+    }
+    Ok(id.to_string())
+}
+
 pub(crate) struct PostParts<'body> {
     pub meta: &'body [u8],
     pub content: &'body [u8],

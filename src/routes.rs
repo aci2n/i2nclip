@@ -12,7 +12,7 @@ use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::store::AppState;
+use crate::AppState;
 use crate::{auth, media, Error, MAX_REGISTER_BODY};
 
 pub(crate) const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);

@@ -1,6 +1,6 @@
 # Backend review
 
-The historical SQLite/filesystem review is superseded by PostgreSQL storage. Current persistence lives in `src/db.rs`; `src/store.rs` holds shared application state and protocol validation. Handlers contain no SQL, database mutexes, filesystem operations, or blocking-work dispatch.
+The historical SQLite/filesystem review is superseded by PostgreSQL storage. Current persistence lives in `src/db.rs`; `src/lib.rs` holds shared application state. Protocol validation belongs to `frame.rs`, `crypto.rs`, and the media query parser. Handlers contain no SQL, database mutexes, filesystem operations, or blocking-work dispatch.
 
 Uploads atomically insert sealed content, metadata, and tags. Metadata updates lock the authorized row through UPDATE and replace tags in the same transaction. Deletes cascade tags. Lists fetch metadata and sorted tags in one statement without selecting content, deriving size with `octet_length`. Downloads fetch authorized owned bytes in one statement and return connections before response draining.
 

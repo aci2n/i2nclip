@@ -17,7 +17,6 @@ use sqlx::Transaction;
 
 use crate::crypto;
 use crate::frame;
-use crate::store;
 use crate::Error;
 use crate::MAX_CONTENT;
 use crate::MAX_META;
@@ -187,8 +186,8 @@ impl Database {
     /// Commit sealed content, metadata, and tags together. An existing hash conflicts.
     pub(crate) async fn add(&self, owner: [u8; 32], body: &[u8]) -> Result<Item, Error> {
         let parts = frame::decode_post(body)?;
-        store::check_blob(parts.meta, MAX_META)?;
-        store::check_blob(parts.content, MAX_CONTENT)?;
+        crypto::check_blob(parts.meta, MAX_META)?;
+        crypto::check_blob(parts.content, MAX_CONTENT)?;
         let id = crypto::body_hash_async(parts.content).await;
         let created_at = crypto::now_secs() as i64;
         let mut tx = self.pool.begin().await?;
@@ -285,7 +284,7 @@ impl Database {
 
     /// Fetch authorized content into owned bytes and release the connection.
     pub(crate) async fn content(&self, owner: [u8; 32], id: &str) -> Result<Vec<u8>, Error> {
-        let id = store::parse_id(id)?;
+        let id = frame::parse_id(id)?;
         sqlx::query_scalar(
             r#"
             SELECT content FROM files
@@ -306,9 +305,9 @@ impl Database {
         id: &str,
         body: &[u8],
     ) -> Result<Item, Error> {
-        let id = store::parse_id(id)?;
+        let id = frame::parse_id(id)?;
         let parts = frame::decode_meta(body)?;
-        store::check_blob(parts.meta, MAX_META)?;
+        crypto::check_blob(parts.meta, MAX_META)?;
         let mut tx = self.pool.begin().await?;
         // UPDATE locks the authorized row until the tag replacement commits.
         // Concurrent metadata changes cannot mix one update's metadata with another's tags.
@@ -338,7 +337,7 @@ impl Database {
 
     /// Delete the authorized file; the foreign key cascades deletion to its tags.
     pub(crate) async fn remove(&self, owner: [u8; 32], id: &str) -> Result<(), Error> {
-        let id = store::parse_id(id)?;
+        let id = frame::parse_id(id)?;
         let result = sqlx::query(
             r#"
             DELETE FROM files

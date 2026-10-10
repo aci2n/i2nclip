@@ -15,10 +15,12 @@ mod media;
 #[cfg(test)]
 mod reference_crypto;
 mod routes;
-mod store;
 
 pub mod crypto;
 
+use std::sync::Arc;
+
+use db::Database;
 use tokio::net::TcpListener;
 
 pub use db::DEFAULT_REGISTRATION_TTL_SECS;
@@ -41,6 +43,34 @@ pub(crate) const MAX_META_BODY: usize = 4 + MAX_META + 4 + MAX_TOKEN_TEXT;
 pub(crate) const MAX_REGISTER_BODY: usize = 4096;
 pub(crate) const SKEW_SECS: u64 = 300;
 
+pub(crate) const UPLOAD_SLOTS: usize = 2;
+const DOWNLOAD_SLOTS: usize = 2;
+
+/// Clones share the database pool, transfer permits, and public origin.
+#[derive(Clone)]
+pub(crate) struct AppState {
+    pub(crate) db: Database,
+    pub(crate) upload_slots: Arc<tokio::sync::Semaphore>,
+    pub(crate) download_slots: Arc<tokio::sync::Semaphore>,
+    /// Public origin named in request signatures, such as `https://clip.example.com`.
+    origin: Arc<str>,
+}
+
+impl AppState {
+    pub(crate) fn new(db: Database, origin: String) -> Self {
+        Self {
+            db,
+            origin: origin.into(),
+            upload_slots: Arc::new(tokio::sync::Semaphore::new(UPLOAD_SLOTS)),
+            download_slots: Arc::new(tokio::sync::Semaphore::new(DOWNLOAD_SLOTS)),
+        }
+    }
+
+    pub(crate) fn origin(&self) -> &str {
+        &self.origin
+    }
+}
+
 /// Issue a code against an already initialized database.
 pub async fn issue_registration_otc(database_url: &str, ttl_secs: u64) -> Result<String, Error> {
     let db = db::Database::connect(database_url).await?;
@@ -55,10 +85,10 @@ pub async fn router(database_url: &str, origin: &str) -> Result<axum::Router, Er
     Ok(routes::router(state))
 }
 
-async fn open_state(database_url: &str, origin: String) -> Result<store::AppState, Error> {
+async fn open_state(database_url: &str, origin: String) -> Result<AppState, Error> {
     let db = db::Database::connect(database_url).await?;
     db.initialize().await?;
-    Ok(store::AppState::new(db, origin))
+    Ok(AppState::new(db, origin))
 }
 
 /// Read the required connection setting without including credentials in errors.

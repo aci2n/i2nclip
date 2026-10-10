@@ -24,7 +24,7 @@ use base64::Engine;
 use ed25519_dalek::VerifyingKey;
 
 use crate::crypto;
-use crate::store::AppState;
+use crate::AppState;
 use crate::Error;
 use crate::SKEW_SECS;
 

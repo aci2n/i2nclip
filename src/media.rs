@@ -21,8 +21,8 @@ use crate::db::Item;
 use crate::routes::{
     empty, fail, json_response, read_body_with_deadline, too_large, SHORT_BODY_DEADLINE,
 };
-use crate::store::AppState;
-use crate::{auth, frame, store, Error, MAX_BODY, MAX_META_BODY};
+use crate::AppState;
+use crate::{auth, frame, Error, MAX_BODY, MAX_META_BODY};
 
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
@@ -109,6 +109,17 @@ impl MediaRequest {
 /// they need no escaping. `after` is the cursor of the last row already shown.
 type ListQuery = (Vec<String>, Option<(i64, String)>);
 
+/// Decode the submitted page cursor and validate its content identifier.
+fn parse_cursor(text: &str) -> Result<(i64, String), Error> {
+    let Some((ts, id)) = text.split_once('.') else {
+        return Err(Error::BadRequest("after must be created_at.id".into()));
+    };
+    let created_at: i64 = ts
+        .parse()
+        .map_err(|_| Error::BadRequest("after must be created_at.id".into()))?;
+    Ok((created_at, frame::parse_id(id)?))
+}
+
 fn list_query(query: Option<&str>) -> Result<ListQuery, Error> {
     let Some(query) = query else {
         return Ok((Vec::new(), None));
@@ -125,7 +136,7 @@ fn list_query(query: Option<&str>) -> Result<ListQuery, Error> {
         if key == "tag" {
             values.push(value.to_string());
         } else if key == "after" {
-            after = Some(store::parse_cursor(value)?);
+            after = Some(parse_cursor(value)?);
         }
     }
     Ok((frame::parse_query_tokens(values)?, after))

@@ -30,6 +30,17 @@ pub fn looks_sealed(blob: &[u8], max: usize) -> bool {
     blob.len() >= 1 + NONCE_LEN + TAG_LEN && blob.len() <= max && blob[0] == VERSION
 }
 
+/// Require the sealed-blob shape before storing encrypted bytes.
+pub(crate) fn check_blob(bytes: &[u8], max: usize) -> Result<(), Error> {
+    if looks_sealed(bytes, max) {
+        Ok(())
+    } else {
+        Err(Error::BadRequest(
+            "encrypted blob required (version byte, not a raw file)".into(),
+        ))
+    }
+}
+
 /// Lowercase hex SHA-256 of `body`. The empty body has a hash too, so GET and
 /// DELETE still commit to "no bytes".
 pub fn body_hash(body: &[u8]) -> String {
