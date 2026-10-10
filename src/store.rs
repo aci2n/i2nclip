@@ -1,28 +1,40 @@
 //! Shared application state and protocol validation.
-use crate::db::Database;
-use crate::{crypto, Error};
+
 use std::sync::Arc;
+
+use crate::crypto;
+use crate::db::Database;
+use crate::Error;
+
 pub(crate) const UPLOAD_SLOTS: usize = 2;
+const DOWNLOAD_SLOTS: usize = 2;
+
+/// Clones share the database pool, transfer permits, and public origin.
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) db: Database,
     pub(crate) upload_slots: Arc<tokio::sync::Semaphore>,
     pub(crate) download_slots: Arc<tokio::sync::Semaphore>,
+    /// Public origin named in request signatures, such as `https://clip.example.com`.
     origin: Arc<str>,
 }
+
 impl AppState {
     pub(crate) fn new(db: Database, origin: String) -> Self {
         Self {
             db,
             origin: origin.into(),
             upload_slots: Arc::new(tokio::sync::Semaphore::new(UPLOAD_SLOTS)),
-            download_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+            download_slots: Arc::new(tokio::sync::Semaphore::new(DOWNLOAD_SLOTS)),
         }
     }
+
     pub(crate) fn origin(&self) -> &str {
         &self.origin
     }
 }
+
+/// Decode the submitted page cursor and validate its content identifier.
 pub(crate) fn parse_cursor(text: &str) -> Result<(i64, String), Error> {
     let Some((ts, id)) = text.split_once('.') else {
         return Err(Error::BadRequest("after must be created_at.id".into()));

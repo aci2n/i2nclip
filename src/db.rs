@@ -1,15 +1,30 @@
-//! Async PostgreSQL persistence. Transactions own all related writes.
+//! PostgreSQL storage for encrypted content, metadata, and search tokens.
+//!
+//! SQLx runs queries on a shared async pool. Uploads, metadata changes, and
+//! invitation consumption commit their related writes in one transaction.
+//! Media queries include the owner public key from the verified signature.
+//! Downloads return owned bytes so sending a response holds no connection.
 
 use std::time::Duration;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{PgPool, Postgres, Row, Transaction};
+use sqlx::PgPool;
+use sqlx::Postgres;
+use sqlx::Row;
+use sqlx::Transaction;
 
-use crate::{crypto, frame, store, Error, MAX_CONTENT, MAX_META, PAGE};
+use crate::crypto;
+use crate::frame;
+use crate::store;
+use crate::Error;
+use crate::MAX_CONTENT;
+use crate::MAX_META;
+use crate::PAGE;
 
-// HTTP policy stays outside persistence; classify pool exhaustion here.
+// A busy pool is retryable. Other database errors retain their cause for logs;
+// handlers choose the HTTP response without exposing database details.
 impl From<sqlx::Error> for Error {
     fn from(error: sqlx::Error) -> Self {
         match error {
@@ -22,6 +37,7 @@ impl From<sqlx::Error> for Error {
 /// Default lifetime for one-time registration invitations.
 pub const DEFAULT_REGISTRATION_TTL_SECS: u64 = 86400;
 
+/// Clones share the same connection pool. Closing it stops every clone.
 #[derive(Clone)]
 pub(crate) struct Database {
     pool: PgPool,
@@ -38,6 +54,7 @@ pub(crate) struct Item {
 }
 
 impl Database {
+    /// Open the bounded pool. Startup errors must not include the credential URL.
     pub(crate) async fn connect(url: &str) -> Result<Self, Error> {
         let pool = PgPoolOptions::new()
             .max_connections(8)
@@ -54,6 +71,7 @@ impl Database {
         Ok(Self { pool })
     }
 
+    /// Apply the idempotent initial schema atomically before serving requests.
     pub(crate) async fn initialize(&self) -> Result<(), Error> {
         let mut tx = self.pool.begin().await?;
         sqlx::raw_sql(include_str!("../sql/001_init.sql"))
@@ -63,10 +81,12 @@ impl Database {
         Ok(())
     }
 
+    /// Wait for checked-out connections and close the shared pool.
     pub(crate) async fn close(&self) {
         self.pool.close().await;
     }
 
+    /// Check whether this public key has been registered.
     pub(crate) async fn allowed(&self, public: &[u8; 32]) -> Result<bool, Error> {
         let allowed = sqlx::query_scalar(
             r#"
@@ -81,6 +101,7 @@ impl Database {
         Ok(allowed)
     }
 
+    /// Reserve a nonce once; an existing nonce rejects a replay.
     pub(crate) async fn remember_nonce(&self, nonce: &str, ts: u64) -> Result<(), Error> {
         let expires = i64::try_from(ts.saturating_add(crate::SKEW_SECS)).unwrap_or(i64::MAX);
         let result = sqlx::query(
@@ -100,6 +121,7 @@ impl Database {
         Ok(())
     }
 
+    /// Store only the invitation hash and return the secret code to the admin.
     pub(crate) async fn issue_code(&self, ttl: u64) -> Result<String, Error> {
         let mut secret = [0; 16];
         getrandom::getrandom(&mut secret).map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -119,6 +141,7 @@ impl Database {
         Ok(code)
     }
 
+    /// Consume a valid invitation and register the key in one transaction.
     pub(crate) async fn consume_code(&self, code: &str, public: &[u8; 32]) -> Result<(), Error> {
         let mut tx = self.pool.begin().await?;
         let result = sqlx::query(
@@ -134,6 +157,8 @@ impl Database {
         if result.rows_affected() == 0 {
             return Err(Error::RegistrationFailed);
         }
+        // The deletion stays uncommitted until registration succeeds. Concurrent
+        // consumers wait on the same code row, so only one can spend it.
         sqlx::query(
             r#"
             INSERT INTO registered_keys (public_key)
@@ -148,6 +173,7 @@ impl Database {
         Ok(())
     }
 
+    /// Commit sealed content, metadata, and tags together. An existing hash conflicts.
     pub(crate) async fn add(&self, owner: [u8; 32], body: &[u8]) -> Result<Item, Error> {
         let parts = frame::decode_post(body)?;
         store::check_blob(parts.meta, MAX_META)?;
@@ -183,6 +209,7 @@ impl Database {
         })
     }
 
+    /// Return one owner-filtered page and its tags without fetching content bytes.
     pub(crate) async fn list(
         &self,
         owner: [u8; 32],
@@ -245,16 +272,23 @@ impl Database {
         Ok((items, next))
     }
 
+    /// Fetch authorized content into owned bytes and release the connection.
     pub(crate) async fn content(&self, owner: [u8; 32], id: &str) -> Result<Vec<u8>, Error> {
         let id = store::parse_id(id)?;
-        sqlx::query_scalar("SELECT content FROM files WHERE owner = $1 AND id = $2")
-            .bind(owner.as_slice())
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?
-            .ok_or(Error::NotFound)
+        sqlx::query_scalar(
+            r#"
+            SELECT content FROM files
+            WHERE owner = $1 AND id = $2
+            "#,
+        )
+        .bind(owner.as_slice())
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(Error::NotFound)
     }
 
+    /// Update the authorized row and replace its tags in the same transaction.
     pub(crate) async fn update_meta(
         &self,
         owner: [u8; 32],
@@ -265,6 +299,8 @@ impl Database {
         let parts = frame::decode_meta(body)?;
         store::check_blob(parts.meta, MAX_META)?;
         let mut tx = self.pool.begin().await?;
+        // UPDATE locks the authorized row until the tag replacement commits.
+        // Concurrent metadata changes cannot mix one update's metadata with another's tags.
         let row = sqlx::query(
             r#"
             UPDATE files SET meta = $1
@@ -289,51 +325,81 @@ impl Database {
         })
     }
 
+    /// Delete the authorized file; the foreign key cascades deletion to its tags.
     pub(crate) async fn remove(&self, owner: [u8; 32], id: &str) -> Result<(), Error> {
         let id = store::parse_id(id)?;
-        let result = sqlx::query("DELETE FROM files WHERE id = $1 AND owner = $2")
-            .bind(id)
-            .bind(owner.as_slice())
-            .execute(&self.pool)
-            .await?;
+        let result = sqlx::query(
+            r#"
+            DELETE FROM files
+            WHERE id = $1 AND owner = $2
+            "#,
+        )
+        .bind(id)
+        .bind(owner.as_slice())
+        .execute(&self.pool)
+        .await?;
         if result.rows_affected() == 0 {
             return Err(Error::NotFound);
         }
         Ok(())
     }
 
+    /// Delete expired nonces and invitations together, returning their counts.
     pub(crate) async fn maintain(&self, now: i64) -> Result<(u64, u64), Error> {
         let mut tx = self.pool.begin().await?;
-        let nonces = sqlx::query("DELETE FROM nonces WHERE expires < $1")
-            .bind(now)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        let codes = sqlx::query("DELETE FROM registration_codes WHERE expires_at <= $1")
-            .bind(now)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
+        // Requests exactly on the nonce boundary remain valid; invitations
+        // expire at their boundary. Keep these comparisons distinct.
+        let nonces = sqlx::query(
+            r#"
+            DELETE FROM nonces
+            WHERE expires < $1
+            "#,
+        )
+        .bind(now)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        let codes = sqlx::query(
+            r#"
+            DELETE FROM registration_codes
+            WHERE expires_at <= $1
+            "#,
+        )
+        .bind(now)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
         tx.commit().await?;
         Ok((nonces, codes))
     }
 }
 
+// The caller owns the transaction so a failed tag write rolls back its file change.
 async fn replace_tokens(
     tx: &mut Transaction<'_, Postgres>,
     id: &str,
     tokens: &[String],
 ) -> Result<(), Error> {
-    sqlx::query("DELETE FROM tags WHERE file_id = $1")
+    sqlx::query(
+        r#"
+        DELETE FROM tags
+        WHERE file_id = $1
+        "#,
+    )
+    .bind(id)
+    .execute(&mut **tx)
+    .await?;
+    for token in tokens {
+        sqlx::query(
+            r#"
+            INSERT INTO tags (file_id, token)
+            VALUES ($1, $2)
+            "#,
+        )
         .bind(id)
+        .bind(token)
         .execute(&mut **tx)
         .await?;
-    for token in tokens {
-        sqlx::query("INSERT INTO tags (file_id, token) VALUES ($1, $2)")
-            .bind(id)
-            .bind(token)
-            .execute(&mut **tx)
-            .await?;
     }
     Ok(())
 }

@@ -48,15 +48,20 @@ pub async fn issue_registration_otc(database_url: &str, ttl_secs: u64) -> Result
     db.close().await;
     result
 }
+
+/// Build the HTTP router after connecting and initializing the database.
 pub async fn router(database_url: &str, origin: &str) -> Result<axum::Router, Error> {
     let state = open_state(database_url, normalize_origin(origin)?).await?;
     Ok(routes::router(state))
 }
+
 async fn open_state(database_url: &str, origin: String) -> Result<store::AppState, Error> {
     let db = db::Database::connect(database_url).await?;
     db.initialize().await?;
     Ok(store::AppState::new(db, origin))
 }
+
+/// Read the required connection setting without including credentials in errors.
 pub fn database_url_from_env() -> Result<String, Error> {
     std::env::var("I2N_DATABASE_URL")
         .map_err(|_| Error::Config("set I2N_DATABASE_URL to a PostgreSQL connection URL".into()))

@@ -5,10 +5,14 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::time::MissedTickBehavior;
 
-use crate::{crypto, db::Database};
+use crate::crypto;
+use crate::db::Database;
 
+/// Sweep immediately and hourly. A stop signal prevents another sweep while
+/// allowing an active transaction to finish before the task exits.
 pub(crate) async fn run(db: Database, mut stop: watch::Receiver<bool>) {
     let mut interval = tokio::time::interval(Duration::from_secs(3600));
+    // Await each sweep in this loop; missed ticks must not cause catch-up work.
     interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     loop {

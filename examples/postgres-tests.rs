@@ -1,4 +1,5 @@
 //! Own PostgreSQL for the lifetime of an explicitly requested test command.
+
 use std::time::Duration;
 
 use testcontainers::{
