@@ -35,9 +35,12 @@ pub(crate) const MAX_PLAIN: usize = 32 * 1024 * 1024;
 pub(crate) const MAX_CONTENT: usize = MAX_PLAIN + 64;
 pub(crate) const MAX_META: usize = 64 * 1024;
 pub(crate) const MAX_TAGS: usize = 32;
+/// Bound on newline-separated search-token text, including ignored empty lines.
+pub(crate) const MAX_TOKEN_TEXT: usize = 4096;
 /// One page of the library list. The next page starts after the last row.
 pub(crate) const PAGE: usize = 24;
-pub(crate) const MAX_BODY: usize = 4 + 36 + 4 + MAX_META + 4 + MAX_CONTENT + 4 + 4096;
+pub(crate) const MAX_BODY: usize = 4 + 36 + 4 + MAX_META + 4 + MAX_CONTENT + 4 + MAX_TOKEN_TEXT;
+pub(crate) const MAX_META_BODY: usize = 4 + MAX_META + 4 + MAX_TOKEN_TEXT;
 /// `POST /api/register-key` accepts a small JSON object only.
 pub(crate) const MAX_REGISTER_BODY: usize = 4096;
 pub(crate) const SKEW_SECS: u64 = 300;

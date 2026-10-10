@@ -41,17 +41,18 @@ use crate::store::AppState;
 use crate::store::Item;
 use crate::Error;
 use crate::MAX_BODY;
+use crate::MAX_META_BODY;
 use crate::MAX_REGISTER_BODY;
 
 const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
 const META_BODY_DEADLINE: Duration = Duration::from_secs(30);
 const UPLOAD_BODY_DEADLINE: Duration = Duration::from_secs(120);
 
-fn media_body_deadline(method: &Method) -> Duration {
+fn media_body_limits(method: &Method) -> (usize, Duration) {
     match *method {
-        Method::POST => UPLOAD_BODY_DEADLINE,
-        Method::PUT => META_BODY_DEADLINE,
-        _ => SHORT_BODY_DEADLINE,
+        Method::POST => (MAX_BODY, UPLOAD_BODY_DEADLINE),
+        Method::PUT => (MAX_META_BODY, META_BODY_DEADLINE),
+        _ => (0, SHORT_BODY_DEADLINE),
     }
 }
 
@@ -101,21 +102,20 @@ impl FromRequest<AppState> for Authed {
             Ok(parsed) => parsed,
             Err(err) => return Err(fail(err)),
         };
+        let (max_body, deadline) = media_body_limits(&parts.method);
         if let Some(value) = parts.headers.get(header::CONTENT_LENGTH) {
             if let Ok(text) = value.to_str() {
                 if let Ok(len) = text.parse::<usize>() {
-                    if len > MAX_BODY {
+                    if len > max_body {
                         return Err(too_large());
                     }
                 }
             }
         }
-        let bytes =
-            match read_body_with_deadline(body, MAX_BODY, media_body_deadline(&parts.method)).await
-            {
-                Ok(bytes) => bytes,
-                Err(response) => return Err(*response),
-            };
+        let bytes = match read_body_with_deadline(body, max_body, deadline).await {
+            Ok(bytes) => bytes,
+            Err(response) => return Err(*response),
+        };
         // SHA-256 of the body is CPU, not disk, but a 32 MB digest would still
         // hold an async worker for the whole hash. Same pool as the file IO.
         let (owner, bytes) = match blocking(move || {

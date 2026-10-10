@@ -30,9 +30,7 @@ use crate::Error;
 use crate::MAX_CONTENT;
 use crate::MAX_META;
 use crate::MAX_TAGS;
-
-/// Hard cap on the token text. 32 tokens of 43 characters plus newlines.
-const MAX_TOKEN_TEXT: usize = 4096;
+use crate::MAX_TOKEN_TEXT;
 
 pub(crate) struct PostParts {
     pub id: String,

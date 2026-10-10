@@ -78,10 +78,12 @@ Token parsing trims lines, ignores empty lines, and removes duplicates. Each tok
 | Token text field | 4,096 |
 | POST UUID field | 36 |
 | Total authenticated request body | 33,624,180 |
+| Metadata PUT request body | 69,640 |
+| Media GET/DELETE request body | 0 |
 | Registration HTTP body | 4,096 |
 | Registration code text | 512 |
 
-The shared authenticated extractor applies the full POST body limit to every media method, including GET, DELETE, and PUT. GET/DELETE bodies are hashed but otherwise ignored. The server does not enforce request Content-Type. Limits are per request, with no aggregate concurrency, storage, or account quota.
+The authenticated extractor selects byte caps by method: POST allows 33,624,180 bytes, PUT allows 69,640 bytes (two prefixes, encrypted metadata, and token text), and GET/DELETE require an empty body. Both the early Content-Length check and the streaming reader use that cap; missing or dishonest length headers cannot bypass the byte count. Nonempty GET/DELETE bodies return `413`. Authentication still happens before body reads and early size rejection, so authenticated oversized requests spend their nonce. Registration retains its separate 4,096-byte streaming cap. The server does not enforce request Content-Type. Limits are per request, with no aggregate concurrency, storage, or account quota.
 
 Complete body reads have total deadlines: 120 seconds for media POST, 30 seconds for PUT, and 10 seconds for media GET/DELETE and registration. The clock starts when body reading begins, after media authentication and early Content-Length checks, and never resets on chunks. Timeout drops the body and partial buffer and returns `408`, `{"error":"request body timed out"}`, with `Cache-Control: no-store`. Authentication nonces are already spent; timed-out registrations do not consume invitation codes. The deadline does not cover headers, authentication, subsequent hashing, or storage operations.
 

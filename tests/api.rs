@@ -175,6 +175,8 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
             serde_json::json!({ "otc": otc, "public_key": new_key.registration_key() })
                 .to_string()
                 .into_bytes()
+        } else if method == "GET" || method == "DELETE" {
+            vec![]
         } else {
             b"partial".to_vec()
         };
@@ -236,6 +238,173 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
             .unwrap(),
         0
     );
+}
+
+#[tokio::test]
+async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
+    let owner = new_identity();
+    let (dir, app) = app(&[&owner]);
+    let id = "77777777-7777-4777-8777-777777777777";
+    // The server checks ciphertext framing, not the authentication tag.
+    let mut meta = vec![0u8; 65_536];
+    meta[0] = 1;
+    let mut content = vec![0u8; 33_554_496];
+    content[0] = 1;
+    let tags = "\n".repeat(4096);
+    let body = frame::encode_post(id, &meta, &content, &tags);
+    assert_eq!(body.len(), 33_624_180);
+    assert_eq!(
+        call(&app, &owner, "POST", "/api/media", body).await.0,
+        StatusCode::CREATED
+    );
+    let body = frame::encode_meta(&meta, &tags);
+    assert_eq!(body.len(), 69_640);
+    assert_eq!(
+        call(&app, &owner, "PUT", &format!("/api/media/{id}"), body)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&app, &owner, "GET", "/api/media", vec![]).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+
+    let key = new_identity();
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).unwrap();
+    let mut body = serde_json::json!({ "otc": otc, "public_key": key.registration_key() })
+        .to_string()
+        .into_bytes();
+    body.resize(4096, b' ');
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/register-key")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn media_body_caps_reject_declared_sizes_before_polling() {
+    let owner = new_identity();
+    let (_dir, app) = app(&[&owner]);
+    let id = "88888888-8888-4888-8888-888888888888";
+    for (method, path, cap) in [
+        ("POST", "/api/media".to_string(), 33_624_180),
+        ("PUT", format!("/api/media/{id}"), 69_640),
+        ("GET", "/api/media".to_string(), 0),
+        ("DELETE", format!("/api/media/{id}"), 0),
+    ] {
+        let authorization = crypto::authorization(
+            &owner,
+            "http://i2nclip.test",
+            crypto::now_secs(),
+            &crypto::fresh_nonce(),
+            method,
+            &path,
+            b"",
+        );
+        let unreadable = Body::new(Body::from("unread").map_frame(|frame| {
+            assert!(
+                frame.data_ref().is_none(),
+                "oversized declared body was read"
+            );
+            frame
+        }));
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(&path)
+                    .header("authorization", &authorization)
+                    .header("content-length", cap + 1)
+                    .body(unreadable)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE, "{method}");
+        // Header rejection still spends the authenticated nonce.
+        let replay = Request::builder()
+            .method(method)
+            .uri(&path)
+            .header("authorization", authorization)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(replay).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+}
+
+#[tokio::test]
+async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
+    use axum::body::Bytes;
+    use http_body_util::Channel;
+
+    let owner = new_identity();
+    let (_dir, app) = app(&[&owner]);
+    let id = "99999999-9999-4999-8999-999999999999";
+    for (method, path, cap) in [
+        ("POST", "/api/media".to_string(), 33_624_180),
+        ("PUT", format!("/api/media/{id}"), 69_640),
+        ("GET", "/api/media".to_string(), 0),
+        ("DELETE", format!("/api/media/{id}"), 0),
+        ("POST", "/api/register-key".to_string(), 4096),
+    ] {
+        for declared in [None, Some(0)] {
+            let bytes = Bytes::from(vec![0u8; cap + 1]);
+            let authorization = crypto::authorization(
+                &owner,
+                "http://i2nclip.test",
+                crypto::now_secs(),
+                &crypto::fresh_nonce(),
+                method,
+                &path,
+                &bytes,
+            );
+            let (mut sender, body) = Channel::<Bytes>::new(2);
+            sender.send_data(bytes.slice(..cap)).await.unwrap();
+            sender.send_data(bytes.slice(cap..)).await.unwrap();
+            drop(sender);
+            let mut request = Request::builder().method(method).uri(&path);
+            if path != "/api/register-key" {
+                request = request.header("authorization", authorization);
+            }
+            if let Some(len) = declared {
+                request = request.header("content-length", len);
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::new(body)).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "{method} {path}, declared={declared:?}"
+            );
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+                serde_json::json!({ "error": "too large" })
+            );
+        }
+    }
 }
 
 #[tokio::test]
