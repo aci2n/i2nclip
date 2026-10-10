@@ -54,6 +54,16 @@ pub(crate) struct Item {
 }
 
 impl Database {
+    /// Request-policy tests use a closed pool so accidental SQL fails immediately.
+    #[cfg(test)]
+    pub(crate) async fn closed_for_test() -> Self {
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgresql://localhost/i2nclip_unused")
+            .unwrap();
+        pool.close().await;
+        Self { pool }
+    }
+
     /// Open the bounded pool. Startup errors must not include the credential URL.
     pub(crate) async fn connect(url: &str) -> Result<Self, Error> {
         let pool = PgPoolOptions::new()

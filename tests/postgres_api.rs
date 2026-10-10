@@ -480,21 +480,6 @@ async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
 }
 
 #[tokio::test]
-async fn health_needs_no_key() {
-    let (_dir, app) = app(&[]).await;
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/health")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-}
-
-#[tokio::test]
 async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
     let key = new_identity();
     let (dir, app) = app(&[&key]).await;

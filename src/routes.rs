@@ -200,3 +200,97 @@ mod deadline_tests {
         assert_eq!(broken.status(), StatusCode::BAD_REQUEST);
     }
 }
+
+#[cfg(test)]
+mod request_tests {
+    use super::*;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    async fn app() -> Router {
+        let db = crate::db::Database::closed_for_test().await;
+        router(AppState::new(db, "http://i2nclip.test".into()))
+    }
+
+    #[tokio::test]
+    async fn health_needs_no_key_or_database() {
+        let response = app()
+            .await
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            json!({ "ok": true })
+        );
+    }
+
+    #[tokio::test]
+    async fn unsigned_media_requests_are_rejected_before_body_or_database() {
+        let app = app().await;
+        let item = format!("/api/media/{}", "a".repeat(64));
+        for (method, path) in [
+            ("GET", "/api/media"),
+            ("POST", "/api/media"),
+            ("GET", item.as_str()),
+            ("PUT", item.as_str()),
+            ("DELETE", item.as_str()),
+        ] {
+            let body = Body::new(
+                Body::from("unread")
+                    .map_frame(|_| panic!("unauthenticated request body was polled")),
+            );
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .body(body)
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "{method} {path}"
+            );
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_registration_is_rejected_before_database() {
+        let app = app().await;
+        for body in [
+            "not json".to_owned(),
+            json!({ "otc": "code" }).to_string(),
+            json!({ "otc": "x".repeat(513), "public_key": "a".repeat(43) }).to_string(),
+            json!({ "otc": "code", "public_key": "short" }).to_string(),
+            json!({ "otc": "code", "public_key": "!".repeat(43) }).to_string(),
+            json!({ "otc": "code", "public_key": "A".repeat(43) }).to_string(),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/register-key")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        }
+    }
+}

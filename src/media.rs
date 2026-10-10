@@ -294,3 +294,67 @@ fn transfers_busy(message: &'static str) -> Response {
         .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http_body_util::BodyExt;
+    use std::sync::Arc;
+    use tokio::sync::Semaphore;
+
+    #[test]
+    fn list_query_validates_cursor_and_deduplicates_tags_without_database() {
+        assert_eq!(list_query(None).unwrap(), (vec![], None));
+        let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([1_u8; 32]);
+        let id = "a".repeat(64);
+        let query = format!("tag={token}&tag={token}&after=123.{id}&unknown=value&");
+        assert_eq!(
+            list_query(Some(&query)).unwrap(),
+            (vec![token], Some((123, id)))
+        );
+        for query in [
+            "tag=invalid",
+            "after=invalid",
+            "after=123.BAD",
+            "after=overflow.hash",
+        ] {
+            assert!(
+                matches!(list_query(Some(query)), Err(Error::BadRequest(_))),
+                "{query}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn download_body_owns_bytes_and_releases_permit_without_database() {
+        let slots = Arc::new(Semaphore::new(1));
+        let content = vec![7_u8; DOWNLOAD_CHUNK * 2 + 1];
+        let permit = slots.clone().acquire_owned().await.unwrap();
+        let response = content_response(content.clone(), permit);
+        assert_eq!(
+            response.headers()[header::CONTENT_LENGTH],
+            content.len().to_string()
+        );
+        assert_eq!(slots.available_permits(), 0);
+        drop(response);
+        assert_eq!(slots.available_permits(), 1);
+
+        let permit = slots.clone().acquire_owned().await.unwrap();
+        let mut body = content_response(content.clone(), permit).into_body();
+        let first = body.frame().await.unwrap().unwrap().into_data().unwrap();
+        assert_eq!(first.len(), DOWNLOAD_CHUNK);
+        drop(body);
+        assert_eq!(slots.available_permits(), 1);
+
+        let permit = slots.clone().acquire_owned().await.unwrap();
+        let mut body = content_response(content.clone(), permit).into_body();
+        let mut received = Vec::new();
+        while let Some(frame) = body.frame().await {
+            let chunk = frame.unwrap().into_data().unwrap();
+            assert!(chunk.len() <= DOWNLOAD_CHUNK);
+            received.extend_from_slice(&chunk);
+        }
+        assert_eq!(received, content);
+        assert_eq!(slots.available_permits(), 1);
+    }
+}
