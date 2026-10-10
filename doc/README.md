@@ -1,6 +1,7 @@
 # Backend review and protocol documentation
 
 - [PostgreSQL storage plan](postgresql-plan.md): agreed application, deployment, and verification scope.
+- [PostgreSQL process profile](postgresql-profile.md): separate server/client memory measurements, PostgreSQL process sampling, and reproduction steps.
 - [Protocol](protocol.md): HTTP API, signed requests, frames, limits, and storage semantics.
 - [Cryptography](crypto.md): exact algorithms, key derivation, encrypted formats, and security boundaries.
 - [Backend review](backend-review.md): findings, priorities, simplification opportunities, and verification.

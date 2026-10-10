@@ -104,7 +104,13 @@ async fn run() -> Result<()> {
                 .ok_or("restart verification requires a testcontainers-owned database")?;
             verify_restart(postgres, &database_url).await?;
         }
-        run_command(executable, args, database_url).await
+        run_command(
+            executable,
+            args,
+            database_url,
+            container.as_ref().map(|db| db.id()),
+        )
+        .await
     }
     .await;
     if let Some(postgres) = container {
@@ -161,6 +167,7 @@ async fn run_command(
     executable: String,
     args: impl Iterator<Item = String>,
     database_url: String,
+    container_id: Option<&str>,
 ) -> Result<()> {
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
@@ -179,12 +186,15 @@ async fn run_command(
     .await
     .map_err(|_| "test PostgreSQL did not become ready within 30 seconds")?;
 
-    let status = tokio::process::Command::new(executable)
+    let mut command = tokio::process::Command::new(executable);
+    command
         .args(args)
         .env("I2N_TEST_DATABASE_URL", database_url)
-        .kill_on_drop(true)
-        .status()
-        .await?;
+        .kill_on_drop(true);
+    if let Some(id) = container_id {
+        command.env("I2N_TEST_CONTAINER_ID", id);
+    }
+    let status = command.status().await?;
     if !status.success() {
         return Err(format!("test command failed: {status}").into());
     }

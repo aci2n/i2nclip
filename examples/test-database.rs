@@ -5,7 +5,7 @@ use sqlx::PgPool;
 #[tokio::main]
 async fn main() {
     let mut args = std::env::args().skip(1);
-    let operation = args.next().expect("create, drop, or expire");
+    let operation = args.next().expect("create, drop, expire, or inspect");
     let base = std::env::var("I2N_TEST_DATABASE_URL")
         .expect("set I2N_TEST_DATABASE_URL; real PostgreSQL is required");
     let pool = PgPool::connect(&base)
@@ -38,6 +38,14 @@ async fn main() {
                 .execute(&pool)
                 .await
                 .unwrap();
+        }
+        "inspect" => {
+            let target =
+                url::Url::parse(&std::env::var("I2N_DATABASE_URL").expect("fixture URL")).unwrap();
+            let count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND state = 'idle in transaction'"
+            ).bind(target.path().trim_start_matches('/')).fetch_one(&pool).await.unwrap();
+            println!("{count}");
         }
         "expire" => {
             let target = PgPool::connect(&std::env::var("I2N_DATABASE_URL").expect("fixture URL"))

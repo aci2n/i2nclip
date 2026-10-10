@@ -74,6 +74,8 @@ cargo test --features postgres-tests --test postgres_api maximum_size_transfer_p
 
 This optional profile exercises two maximum-size uploads followed by two concurrent downloads, reports in-process peak RSS (including fixture/client buffers), PostgreSQL backend allocations, and timer delay, and verifies that responses held unpolled have no idle database transaction.
 
+For separate release-server, Node-client, and PostgreSQL process measurements, see [the process profile](doc/postgresql-profile.md). Its manual script also checks chunked uploads and held downloads.
+
 ## Self-hosting
 
 The image runs as uid 10001 and has no persistent application volume. PostgreSQL owns storage. Pass only the application owner's credentials to i2nclip, preferably with an owner-only runtime environment file:
