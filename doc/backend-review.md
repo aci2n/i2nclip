@@ -4,7 +4,7 @@ The historical SQLite/filesystem review is superseded by PostgreSQL storage. Cur
 
 Uploads atomically insert sealed content, metadata, and tags. Metadata updates lock the authorized row through UPDATE and replace tags in the same transaction. Deletes cascade tags. Lists fetch metadata and sorted tags in one statement without selecting content, deriving size with `octet_length`. Downloads fetch authorized owned bytes in one statement and return connections before response draining.
 
-Registration consumes invitations and registers keys atomically. Authentication verifies signatures, reserves a nonce asynchronously, and rechecks timestamps after insertion completes, before reading bodies. Failed body verification spends the nonce. Maintenance deletes nonces with `expires < now` and invitations with `expires_at <= now` in one transaction.
+Registration consumes invitations and registers keys atomically. Authentication checks the timestamp, verifies the signature, reserves a nonce asynchronously, and checks the timestamp again after insertion before reading bodies. This prevents a delayed request from proceeding after maintenance removes an earlier nonce row. Failed body verification spends the nonce. Maintenance deletes nonces with `expires < now` and invitations with `expires_at <= now` in one transaction.
 
 Body sizes and read deadlines remain bounded. Two uploads and two downloads are admitted per application instance. Async hashes yield every 64 KiB; SQLx encoding/decoding can still copy complete content values. Full-buffer downloads are intentional. Slow response readers can delay shutdown and occupy download slots indefinitely; timeout work remains in [priorities.md](priorities.md). Storage quotas and proxy rate limiting remain deployment concerns.
 
@@ -23,4 +23,4 @@ Compared with the SQLite tests immediately before commit `e1e91eb`, applicable H
 | Interrupted writes, cleanup journals, unlink failures, and stale GC candidates | Filesystem-specific states no longer exist; transactional upload rollback and maintenance rollback/recovery cover the applicable failure guarantees |
 | Signal cleanup waiting for uploads and shutting down | Internal startup maintenance runs with all upload permits occupied; shutdown waits for a database-blocked active sweep to finish |
 
-Additional migration checks cover invitation rollback and races, pool saturation/reconnection, and timestamp rechecks after awaited nonce insertion. The suite passes nine private database tests and 22 API tests, plus database-free Rust tests. The optional maximum-transfer profile remains separately invoked.
+Additional migration checks cover invitation rollback and races, pool saturation/reconnection, and timestamp rejection after a delayed nonce insertion crosses the request window. The suite passes nine private database tests and 22 API tests, plus database-free Rust tests. The optional maximum-transfer profile remains separately invoked.

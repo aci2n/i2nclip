@@ -92,9 +92,19 @@ impl MediaRequest {
             bytes,
             _upload_permit: permit,
         };
-        let owner = auth::verify_body(&self.verified, &buffered.bytes)
-            .await
-            .map_err(|error| Box::new(fail(error)))?;
+        let owner = match auth::verify_body(&self.verified, &buffered.bytes).await {
+            Ok(owner) => owner,
+            Err(error @ Error::Unauthorized) => {
+                tracing::debug!(
+                    method = %self.parts.method,
+                    path = %self.parts.uri.path(),
+                    reason = "body_hash_mismatch",
+                    "request rejected as unauthorized"
+                );
+                return Err(Box::new(fail(error)));
+            }
+            Err(error) => return Err(Box::new(fail(error))),
+        };
         Ok((owner, buffered))
     }
 

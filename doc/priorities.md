@@ -6,7 +6,7 @@ PostgreSQL storage supersedes all SQLite connection/mutex, filesystem locking, s
 
 - Concrete async SQLx database layer, bounded eight-connection pool, atomic content/metadata/tag writes, and transactional invitation consumption.
 - Content-hash identifiers, strict Ed25519 verification, canonical browser origins, shared crypto vectors, owner isolation, AND tag search, and cursor pagination.
-- Authentication rechecks timestamps after awaited nonce insertion, before body reading.
+- Authentication checks timestamp freshness before database work and after nonce insertion, preventing delayed replays after nonce cleanup.
 - Endpoint body caps/deadlines and separate two-slot upload/download admission. Downloads own bytes and release database connections before responses drain.
 - Incremental hashing yields between at most 64 KiB chunks. Maintenance runs at startup/hourly without upload permits, retaining inclusive nonce boundaries and atomically deleting expired invitations.
 

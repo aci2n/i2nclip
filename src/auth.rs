@@ -79,9 +79,36 @@ pub(crate) async fn verify_request(
     uri: &Uri,
     headers: &HeaderMap,
 ) -> Result<VerifiedRequest, Error> {
-    let bearer = parse_bearer(headers).ok_or(Error::Unauthorized)?;
-    check_timestamp(bearer.ts, crypto::now_secs())?;
+    let Some(bearer) = parse_bearer(headers) else {
+        tracing::debug!(
+            method = %method,
+            path = %uri.path(),
+            reason = "malformed_authorization",
+            "request rejected as unauthorized"
+        );
+        return Err(Error::Unauthorized);
+    };
+    let now = crypto::now_secs();
+    if check_timestamp(bearer.ts, now).is_err() {
+        tracing::debug!(
+            method = %method,
+            path = %uri.path(),
+            reason = "timestamp_out_of_window",
+            client_ts = bearer.ts,
+            server_ts = now,
+            skew_secs = bearer.ts.abs_diff(now),
+            allowed_skew_secs = SKEW_SECS,
+            "request rejected as unauthorized"
+        );
+        return Err(Error::Unauthorized);
+    }
     if !state.db.allowed(&bearer.public).await? {
+        tracing::debug!(
+            method = %method,
+            path = %uri.path(),
+            reason = "public_key_not_registered",
+            "request rejected as unauthorized"
+        );
         return Err(Error::Unauthorized);
     }
     let request_message = crypto::request_message(
@@ -92,16 +119,55 @@ pub(crate) async fn verify_request(
         &path_and_query(uri),
         &bearer.body_hash,
     );
-    crypto::verify(
+    if crypto::verify(
         &bearer.public,
         request_message.as_bytes(),
         &bearer.signature,
-    )?;
+    )
+    .is_err()
+    {
+        tracing::debug!(
+            method = %method,
+            path = %uri.path(),
+            reason = "signature_verification_failed",
+            "request rejected as unauthorized"
+        );
+        return Err(Error::Unauthorized);
+    }
     // Spent here, before the body, so a captured header cannot be aimed at a
     // new payload. A body that does not match the signed hash still uses up
     // the nonce.
-    state.db.remember_nonce(&bearer.nonce, bearer.ts).await?;
-    check_timestamp(bearer.ts, crypto::now_secs())?;
+    match state.db.remember_nonce(&bearer.nonce, bearer.ts).await {
+        Ok(()) => {}
+        Err(Error::Unauthorized) => {
+            tracing::debug!(
+                method = %method,
+                path = %uri.path(),
+                reason = "nonce_replay",
+                "request rejected as unauthorized"
+            );
+            return Err(Error::Unauthorized);
+        }
+        Err(error) => return Err(error),
+    }
+    // A request can pass the first check, stall before reserving its nonce,
+    // then resume after a legitimate copy's nonce has expired and maintenance
+    // has deleted it. Recheck after insertion so that delayed replay cannot
+    // proceed just because the old nonce row was cleaned up.
+    let now = crypto::now_secs();
+    if check_timestamp(bearer.ts, now).is_err() {
+        tracing::debug!(
+            method = %method,
+            path = %uri.path(),
+            reason = "timestamp_expired_while_waiting",
+            client_ts = bearer.ts,
+            server_ts = now,
+            skew_secs = bearer.ts.abs_diff(now),
+            allowed_skew_secs = SKEW_SECS,
+            "request rejected as unauthorized"
+        );
+        return Err(Error::Unauthorized);
+    }
     Ok(VerifiedRequest {
         public: bearer.public,
         body_hash: bearer.body_hash,

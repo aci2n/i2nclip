@@ -34,6 +34,8 @@ PostgreSQL stores content, metadata, public keys, invitations, nonces, and tags.
 
 An internal maintenance task runs on startup and hourly, deleting expired nonces and invitations in one transaction. Sweeps never overlap; failures are logged and retried next interval. Shutdown stops scheduling maintenance, awaits an active sweep, drains HTTP work, and closes the pool. PostgreSQL autovacuum reclaims physical space. Response-duration limits remain future work.
 
+For authentication troubleshooting, temporarily set `RUST_LOG=i2nclip::auth=debug` in the app container's Quadlet and restart it, then inspect `podman logs i2nclip`. Rejections log a reason and request method/path; timestamp failures also log client/server time and skew. Logs omit authorization headers, keys, signatures, nonces, and query strings. Remove the setting when troubleshooting is complete.
+
 ## Verification
 
 Install client dependencies with `npm ci --prefix client`, using Node from `client/.nvmrc`.

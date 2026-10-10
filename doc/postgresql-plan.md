@@ -26,7 +26,7 @@ Database operations:
 - Listing fetches metadata and tags from one SQL statement, preserving owner filtering, AND tag matching, ordering, and cursor semantics. Content is never selected by list queries.
 - Download selects the authorized complete content value in one statement. Once fetched, release the connection and send the owned bytes; concurrent deletion cannot invalidate that response.
 - Invitation consumption and key registration remain one atomic transaction. Concurrent consumption permits only one success.
-- Authentication retains the cheap initial timestamp check. After signature verification, reserve the nonce through the database layer, then recheck the timestamp **after the awaited insertion finishes**, before reading the body. This covers pool and database waits without making the database layer call authentication policy. An expired request can leave a spent nonce but cannot execute its endpoint.
+- Authentication checks the request timestamp at the start and again after reserving the nonce, before reading the body. The second check prevents a request delayed past nonce expiry from proceeding after maintenance deletes the earlier nonce row. A failed body check still spends the nonce.
 
 ## Resource ownership and maintenance
 
