@@ -41,6 +41,7 @@ test: client-test
 
 # Explicit opt-in: testcontainers owns PostgreSQL; fixtures own isolated databases.
 test-db:
+	I2N_TEST_CONTAINER_NETWORK="$(CONTAINER_NETWORK)" \
 	DOCKER_HOST="$${DOCKER_HOST:-unix://$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/podman/podman.sock}" \
 	  cargo run --quiet --features test-containers --example postgres-tests -- \
 	  cargo test --features postgres-tests $(TEST_ARGS)
