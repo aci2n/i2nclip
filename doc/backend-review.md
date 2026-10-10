@@ -35,9 +35,7 @@ Locations: `src/media.rs` (`content_response`), `src/store.rs` (`add`), client `
 
 ### 5. Low: replay cleanup scans the entire nonce table on each request
 
-Locations: `src/store.rs:207-229`, `sql/001_init.sql` (`nonces`). Every successfully authenticated request deletes expired nonces by `expires`, and the initial schema now indexes `nonces(expires)`, avoiding a full-table scan. A future timestamp retains a nonce for almost ten minutes, increasing that work. This is a throughput concern, not a replay bypass.
-
-Completed: expiry index. Consider periodic/batched cleanup if measured traffic justifies it. Keep nonce insertion atomic and persistent. Globally unique random nonces are sufficient for the current client; owner-scoping is optional and does not justify a protocol rewrite by itself.
+Completed: nonce expiration is indexed and cleanup runs in signal-triggered GC rather than on each authenticated request. Reservation remains atomic and persistent, with timestamp validation repeated after acquiring the writer transaction. GC retains the inclusive expiration boundary (`expires == now`). Nonce rows accumulate between GC runs.
 
 ## Security boundaries and design tradeoffs
 

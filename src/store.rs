@@ -63,6 +63,7 @@ pub const DEFAULT_REGISTRATION_TTL_SECS: u64 = 86400;
 pub(crate) struct GcReport {
     pub removed: usize,
     pub failed: usize,
+    pub nonces_removed: usize,
 }
 
 /// Shared process state. The mutex serializes access to the single SQLite
@@ -200,22 +201,16 @@ pub(crate) fn open(data_dir: &Path) -> Result<Connection, Error> {
     Ok(conn)
 }
 
-pub(crate) fn remember_nonce(conn: &Connection, nonce: &str, ts: u64) -> Result<(), Error> {
-    let now = i64::try_from(crypto::now_secs()).unwrap_or(i64::MAX);
+pub(crate) fn remember_nonce(tx: &Transaction<'_>, nonce: &str, ts: u64) -> Result<(), Error> {
     // The nonce only needs to be remembered while the timestamp would still
     // be accepted. After that, the clock check rejects the replay by itself.
     let expires = i64::try_from(ts.saturating_add(crate::SKEW_SECS)).unwrap_or(i64::MAX);
-    let tx = conn.unchecked_transaction()?;
-    tx.execute("DELETE FROM nonces WHERE expires < ?1", [now])?;
     let inserted = tx.execute(
         "INSERT INTO nonces (nonce, expires) VALUES (?1, ?2)",
         params![nonce, expires],
     );
     match inserted {
-        Ok(_) => {
-            tx.commit()?;
-            Ok(())
-        }
+        Ok(_) => Ok(()),
         Err(rusqlite::Error::SqliteFailure(err, _))
             if err.code == rusqlite::ErrorCode::ConstraintViolation =>
         {
@@ -433,6 +428,18 @@ pub(crate) fn update_meta(
         created_at,
         tokens: parts.tokens,
     })
+}
+
+/// Run signal-triggered maintenance with separate nonce and staged-file cutoffs.
+pub(crate) fn gc(state: &AppState, now: i64) -> Result<GcReport, Error> {
+    let nonces_removed = {
+        let conn = state.lock()?;
+        // The timestamp window is inclusive, so retain nonces expiring now.
+        conn.execute("DELETE FROM nonces WHERE expires < ?1", [now])?
+    };
+    let mut report = gc_staged_files(state, now.saturating_sub(GC_MIN_AGE_SECS))?;
+    report.nonces_removed = nonces_removed;
+    Ok(report)
 }
 
 /// The caller holds every upload permit until this blocking sweep returns.
@@ -669,6 +676,53 @@ mod tests {
         let meta = client_crypto::encrypt(&[7; 32], &client_crypto::meta_aad(&id), b"{}").unwrap();
         (id, frame::encode_post(&meta, &content, ""))
     }
+    #[test]
+    fn nonce_cleanup_runs_only_in_gc_and_keeps_the_expiration_boundary() {
+        let f = Fixture::new();
+        let now = i64::try_from(crypto::now_secs()).unwrap();
+        {
+            let mut conn = f.0.lock().unwrap();
+            for (nonce, expires) in [("old", 0), ("boundary", now), ("future", now + 600)] {
+                conn.execute(
+                    "INSERT INTO nonces VALUES (?1, ?2)",
+                    params![nonce, expires],
+                )
+                .unwrap();
+            }
+            let tx = conn.transaction().unwrap();
+            remember_nonce(&tx, "fresh", now as u64).unwrap();
+            tx.commit().unwrap();
+        }
+        assert_eq!(f.count("nonces"), 4);
+        assert_eq!(gc(&f.0, now).unwrap().nonces_removed, 1);
+        assert_eq!(f.count("nonces"), 3);
+        assert_eq!(gc(&f.0, now).unwrap().nonces_removed, 0);
+        assert_eq!(gc(&f.0, now + 1).unwrap().nonces_removed, 1);
+        assert_eq!(f.count("nonces"), 2);
+    }
+
+    #[test]
+    fn nonce_reservation_uses_the_callers_transaction_and_rejects_replay() {
+        let f = Fixture::new();
+        let mut conn = f.0.lock().unwrap();
+        let now = crypto::now_secs();
+        {
+            let tx = conn.transaction().unwrap();
+            remember_nonce(&tx, "fresh", now).unwrap();
+            // Rollback must leave this nonce available for a later transaction.
+        }
+        {
+            let tx = conn.transaction().unwrap();
+            remember_nonce(&tx, "fresh", now).unwrap();
+            tx.commit().unwrap();
+        }
+        let tx = conn.transaction().unwrap();
+        assert!(matches!(
+            remember_nonce(&tx, "fresh", now),
+            Err(Error::Unauthorized)
+        ));
+    }
+
     #[test]
     fn list_preserves_owner_and_tag_filters_across_cursor_ties() {
         let f = Fixture::new();

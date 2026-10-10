@@ -22,9 +22,10 @@ use axum::http::Uri;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use ed25519_dalek::VerifyingKey;
+use rusqlite::TransactionBehavior;
 
 use crate::crypto;
-use crate::store::AppState;
+use crate::store::{self, AppState};
 use crate::Error;
 use crate::SKEW_SECS;
 
@@ -63,6 +64,14 @@ struct Bearer {
     signature: [u8; 64],
 }
 
+/// Validate against one clock sample, also used for nonce expiration cleanup.
+pub(crate) fn check_timestamp(ts: u64, now: u64) -> Result<(), Error> {
+    if ts.abs_diff(now) > SKEW_SECS {
+        return Err(Error::Unauthorized);
+    }
+    Ok(())
+}
+
 /// Check the key, the clock, and the signature. Remember the nonce.
 /// Callers must not read the body until this returns `Ok`.
 pub(crate) fn verify_request(
@@ -72,13 +81,10 @@ pub(crate) fn verify_request(
     headers: &HeaderMap,
 ) -> Result<VerifiedRequest, Error> {
     let bearer = parse_bearer(headers).ok_or(Error::Unauthorized)?;
-    let now = crypto::now_secs();
-    if bearer.ts.abs_diff(now) > SKEW_SECS {
-        return Err(Error::Unauthorized);
-    }
+    check_timestamp(bearer.ts, crypto::now_secs())?;
     let conn = state.lock()?;
     // Unknown key and bad signature both become 401, so the status line does not say which.
-    if !crate::store::is_allowed_public_key(&conn, &bearer.public)? {
+    if !store::is_allowed_public_key(&conn, &bearer.public)? {
         return Err(Error::Unauthorized);
     }
     drop(conn);
@@ -98,8 +104,12 @@ pub(crate) fn verify_request(
     // Spent here, before the body, so a captured header cannot be aimed at a
     // new payload. A body that does not match the signed hash still uses up
     // the nonce.
-    let conn = state.lock()?;
-    crate::store::remember_nonce(&conn, &bearer.nonce, bearer.ts)?;
+    let mut conn = state.lock()?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    // Recheck after waiting for both the connection and SQLite writer lock.
+    check_timestamp(bearer.ts, crypto::now_secs())?;
+    store::remember_nonce(&tx, &bearer.nonce, bearer.ts)?;
+    tx.commit()?;
     Ok(VerifiedRequest {
         public: bearer.public,
         body_hash: bearer.body_hash,
@@ -188,6 +198,21 @@ fn decode_sig(text: &str) -> Option<[u8; 64]> {
 mod tests {
     use super::*;
     use crate::reference_crypto as client_crypto;
+
+    #[test]
+    fn timestamp_check_rejects_requests_that_expire_while_waiting() {
+        let ts = 1_000;
+        assert!(check_timestamp(ts, ts + SKEW_SECS).is_ok());
+        assert!(matches!(
+            check_timestamp(ts, ts + SKEW_SECS + 1),
+            Err(Error::Unauthorized)
+        ));
+        assert!(check_timestamp(ts + SKEW_SECS, ts).is_ok());
+        assert!(matches!(
+            check_timestamp(ts + SKEW_SECS + 1, ts),
+            Err(Error::Unauthorized)
+        ));
+    }
 
     #[test]
     fn registration_requires_a_raw_canonical_public_key() {

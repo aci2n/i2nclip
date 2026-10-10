@@ -36,13 +36,14 @@ pub(crate) async fn listen(
         let result = tokio::task::spawn_blocking(move || {
             let _permits = permits;
             let now = i64::try_from(crate::crypto::now_secs()).unwrap_or(i64::MAX);
-            store::gc_staged_files(&shared, now.saturating_sub(store::GC_MIN_AGE_SECS))
+            store::gc(&shared, now)
         })
         .await;
         match result {
             Ok(Ok(report)) => tracing::info!(
                 removed = report.removed,
                 failed = report.failed,
+                nonces_removed = report.nonces_removed,
                 "GC complete"
             ),
             Ok(Err(err)) => tracing::error!(%err, "GC failed"),
