@@ -988,42 +988,25 @@ async fn upload_admission_is_shared_and_releases_capacity() {
         "/api/media",
         b"",
     );
-    let unreadable = Body::new(Body::from("unread").map_frame(|_| panic!("busy body polled")));
-    let busy = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/media")
-                .header("authorization", &authorization)
-                .body(unreadable)
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(busy.headers()["retry-after"], "1");
-    assert_eq!(busy.headers()["cache-control"], "no-store");
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(
-            &busy.into_body().collect().await.unwrap().to_bytes()
-        )
-        .unwrap(),
-        serde_json::json!({"error": "uploads busy; try again"})
-    );
-    let replay = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/media")
-                .header("authorization", authorization)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+    let queued = {
+        let router = app.clone();
+        let authorization = authorization.clone();
+        tokio::spawn(async move {
+            router
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/media")
+                        .header("authorization", authorization)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        })
+    };
+    tokio::task::yield_now().await;
+    assert!(!queued.is_finished(), "upload waits for an available slot");
     let bad = app
         .clone()
         .oneshot(
@@ -1053,6 +1036,20 @@ async fn upload_admission_is_shared_and_releases_capacity() {
     enroll_key(&app, &new_identity(), &otc).await;
     first.abort();
     assert!(first.await.unwrap_err().is_cancelled());
+    assert_eq!(queued.await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    let replay = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/media")
+                .header("authorization", authorization)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
     // Streaming, transport, and hash failures also return the available slot.
     let (sender, broken) = Channel::<Bytes, std::io::Error>::new(1);
     sender.abort(std::io::Error::other("broken upload"));

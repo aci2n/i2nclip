@@ -164,9 +164,9 @@ async fn upload(State(state): State<AppState>, media: MediaRequest) -> Response 
     if let Err(response) = media.check_size(MAX_BODY) {
         return *response;
     }
-    let permit = match state.upload_slots.clone().try_acquire_owned() {
+    let permit = match state.upload_slots.clone().acquire_owned().await {
         Ok(permit) => permit,
-        Err(_) => return uploads_busy(),
+        Err(_) => return fail(Error::Unavailable),
     };
     let (owner, body) = match media
         .read(MAX_BODY, UPLOAD_BODY_DEADLINE, Some(permit))
@@ -193,9 +193,9 @@ async fn download(
         Ok(owner) => owner,
         Err(response) => return *response,
     };
-    let permit = match state.download_slots.clone().try_acquire_owned() {
+    let permit = match state.download_slots.clone().acquire_owned().await {
         Ok(permit) => permit,
-        Err(_) => return transfers_busy("downloads busy; try again"),
+        Err(_) => return fail(Error::Unavailable),
     };
     match state.db.content(owner, &id).await {
         Ok(content) => content_response(content, permit),
@@ -286,18 +286,6 @@ fn content_response(content: Vec<u8>, permit: tokio::sync::OwnedSemaphorePermit)
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, max-age=31536000, immutable"),
     );
-    response
-}
-
-fn uploads_busy() -> Response {
-    transfers_busy("uploads busy; try again")
-}
-
-fn transfers_busy(message: &'static str) -> Response {
-    let mut response = json_response(StatusCode::SERVICE_UNAVAILABLE, json!({ "error": message }));
-    response
-        .headers_mut()
-        .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
     response
 }
 

@@ -9,4 +9,4 @@
 - [x] process memory measurements — added a repeatable release-server/Node-client/PostgreSQL profile with ordinary and chunked maximum-size concurrent transfers, held downloads, RSS/CPU sampling, and health latency. Two runs measured 234–284 MiB server peak RSS separately from client allocations. PostgreSQL RSS accounting limits and reproduction steps are in postgresql-profile.md; buffer attribution remains a follow-up.
 - deployment validations
 - for atomic inserts, check conflicts consistently: either check insert err (preferred) or check insert count
-- do not return 503 when download/upload permits are exhausted, keep the connection waiting for the resource
+- [x] do not return 503 when download/upload permits are exhausted, keep the connection waiting for the resource. Upload admission coverage confirms requests wait and proceed when capacity becomes available.
