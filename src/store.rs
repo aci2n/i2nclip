@@ -206,14 +206,7 @@ pub(crate) fn open(data_dir: &Path) -> Result<Connection, Error> {
     // Overwrite deleted pages so a removed tag token does not linger in the file.
     conn.pragma_update(None, "secure_delete", "ON")?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    // Greenfield schema: initialize once, with no legacy migrations.
-    let tx = conn.unchecked_transaction()?;
-    let version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version == 0 {
-        tx.execute_batch(SCHEMA)?;
-        tx.pragma_update(None, "user_version", 1)?;
-    }
-    tx.commit()?;
+    conn.execute_batch(SCHEMA)?;
     Ok(conn)
 }
 

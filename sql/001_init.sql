@@ -17,10 +17,7 @@ CREATE TABLE IF NOT EXISTS files (
     created_at INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS files_owner ON files (owner, created_at DESC);
-
--- Remove receipts from existing databases; duplicate uploads now conflict.
-DROP TABLE IF EXISTS upload_receipts;
+CREATE INDEX IF NOT EXISTS files_owner_created_id ON files (owner, created_at DESC, id ASC);
 
 CREATE TABLE IF NOT EXISTS tags (
     file_id TEXT NOT NULL REFERENCES files (id) ON DELETE CASCADE,
@@ -28,9 +25,9 @@ CREATE TABLE IF NOT EXISTS tags (
     PRIMARY KEY (file_id, token)
 );
 
-CREATE INDEX IF NOT EXISTS tags_token ON tags (token, file_id);
-
 CREATE TABLE IF NOT EXISTS nonces (
     nonce TEXT PRIMARY KEY,
     expires INTEGER NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS nonces_expires ON nonces (expires);

@@ -10,6 +10,11 @@
 - Packaging is `npm run pack:extension` inside `client/`, using the system `zip` command. No Python packaging script is needed. The XPI is `client/dist/i2nclip.xpi`; runtime files belong at its root. Exclude update metadata and remove stale build entries when repacking.
 - Do not minify JavaScript or CSS unless explicitly needed. Both Vite builds disable minification. ZIP compression is fine.
 
+## Database policy
+
+- Treat the project as greenfield. Update the initial schema directly. When removing a table or index, remove its creation statement rather than adding a `DROP` statement or legacy cleanup migration. Recreate development databases when schema changes require it.
+- SQL `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` are fine; reopening a current database must preserve its data.
+
 ## State and resource ownership
 
 - Components render state and invoke actions; stores and services own async workflows. Avoid direct DOM mutation or Firefox storage calls in reusable UI components.
