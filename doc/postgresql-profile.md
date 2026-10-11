@@ -27,6 +27,15 @@ Both rounds had zero idle database transactions while responses were held. This 
 
 The server peak is substantially above the 64 MiB of content in two transfers. SQLx buffers, HTTP Vec growth, concurrent downloads, and allocator retention need allocation-level measurement to attribute that difference. This profile does not establish a hard bound or justify changing the accepted full-buffer download design. Buffer-growth and response-duration work remains in priorities.md.
 
+## Coverage retained during consolidation
+
+This process profile replaces the older in-process maximum-size transfer profile.
+Both concurrent uploads must return 201; both downloads must return 200, match
+length, hash, and every encrypted byte; held downloads must leave zero idle
+transactions. These checks run for both ordinary and chunked uploads. RSS and
+responsiveness remain reported measurements, without pass/fail thresholds.
+The separate Rust frame-decoding test retains its allocation-count assertions.
+
 ## Reproduce
 
 Use Linux, Node from `client/.nvmrc`, and the local rootless Podman API socket. Port 8080 must be free. The runner owns the container; the script owns its isolated database and server process. All are cleaned up after the profile. The script does not run in ordinary client tests.

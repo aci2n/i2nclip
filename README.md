@@ -58,8 +58,9 @@ provisions PostgreSQL through the same runner as `test-db`;
 provide `I2N_TEST_DATABASE_URL` to use an existing disposable administrator connection.
 
 `make test-all` runs every test suite sequentially, including package checks,
-ignored Rust maximum-size tests, the Linux process profile, Firefox tests, and
-the live smoke test. It also runs lint and formatting checks. Configure the
+the Linux maximum-size transfer profile, Firefox tests, and
+the live smoke test. It also runs lint and formatting checks. Rust tests execute once through
+`test-db`; standalone `make test` still runs Rust and client checks. Configure the
 private smoke credentials first. `client-test`, `e2e`, and `smoketest` remain
 aliases for `test-client`, `test-e2e`, and `test-smoke`. The optional advisory
 check `make audit` remains separate.
@@ -86,12 +87,6 @@ DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock cargo run --quiet --featu
 Use Node from `client/.nvmrc`; the host-network fallback also applies to this command.
 
 To use an existing disposable server, set `I2N_TEST_DATABASE_URL` to an administrator URL with database-creation rights; `make test-db` will skip container provisioning. Direct `cargo test --features postgres-tests` and Firefox E2E require this explicit URL. Never point test tooling at production.
-
-```sh
-cargo test --features postgres-tests --test postgres_api maximum_size_transfer_profile -- --ignored --nocapture
-```
-
-This optional profile exercises two maximum-size uploads followed by two concurrent downloads, reports in-process peak RSS (including fixture/client buffers), PostgreSQL backend allocations, and timer delay, and verifies that responses held unpolled have no idle database transaction.
 
 For separate release-server, Node-client, and PostgreSQL process measurements, see [the process profile](doc/postgresql-profile.md). `make test-profile` also checks chunked uploads and held downloads.
 

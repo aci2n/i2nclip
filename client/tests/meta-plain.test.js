@@ -28,6 +28,10 @@ test("meta plain roundtrips with and without a thumb", () => {
 
 test("encode drops nothing when under the metadata cap", () => {
 	const meta = { name: "x", content_type: "image/jpeg", size: 1, tags: [] };
-	const thumb = new Uint8Array(8000);
-	assert.ok(encodeMetaPlain(meta, thumb).length <= MAX_META_PLAINTEXT);
+	const thumb = Uint8Array.from({ length: 8000 }, (_, i) => i % 256);
+	const packed = encodeMetaPlain(meta, thumb);
+	assert.ok(packed.length <= MAX_META_PLAINTEXT);
+	const decoded = decodeMetaPlain(packed);
+	assert.deepEqual(decoded.metadata, meta);
+	assert.deepEqual(decoded.thumb, thumb);
 });

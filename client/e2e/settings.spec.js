@@ -432,102 +432,112 @@ for (const state of ["locked", "unlocked"]) {
 	}
 }
 
-for (const failure of [
-	"missing file",
-	"missing password",
-	"malformed JSON",
-	"wrong format",
-	"wrong version",
-	"invalid server",
-	"invalid envelope",
-	"excessive iterations",
-	"oversized file",
-	"wrong password",
-	"damaged ciphertext",
-	"mismatched identity",
+// Keep every rejection case in Firefox while sharing identity/database setup.
+for (const [group, failures] of [
+	["required inputs", ["missing file", "missing password"]],
+	[
+		"malformed documents",
+		[
+			"malformed JSON",
+			"wrong format",
+			"wrong version",
+			"invalid server",
+			"invalid envelope",
+			"excessive iterations",
+			"oversized file",
+		],
+	],
+	[
+		"decryption and identity",
+		["wrong password", "damaged ciphertext", "mismatched identity"],
+	],
 ]) {
-	test(`recovery failure preserves setup: ${failure}`, async ({
-		page,
-		app,
-	}) => {
+	test(`recovery failures preserve setup: ${group}`, async ({ page, app }) => {
 		const created = await createLibrary(page, app);
-		let recovery = await downloadRecovery(page);
+		const original = await downloadRecovery(page);
 		await resetLibrary(page);
-		await chooseRestore(page);
-		const document = JSON.parse(recovery);
-		if (failure === "malformed JSON") recovery = "not JSON";
-		if (failure === "wrong format") document.format = "other-format";
-		if (failure === "wrong version") document.v = 2;
-		if (failure === "invalid server")
-			document.serverUrl = "javascript:alert(1)";
-		if (failure === "invalid envelope") document.wrappedKey.salt = "AAAA";
-		if (failure === "excessive iterations")
-			document.wrappedKey.iterations = 9_000_000;
-		if (failure === "damaged ciphertext") {
-			const bytes = Buffer.from(document.wrappedKey.ct, "base64");
-			bytes[0] ^= 1;
-			document.wrappedKey.ct = bytes.toString("base64");
-		}
-		if (failure === "mismatched identity") {
-			document.wrappedKey = await page.evaluate(
-				async ({ privateKey, password }) => {
-					const { generatePrivateKey } = await import(
-						"/client/src/lib/protocol/identity.js"
-					);
-					const { wrapPrivateKey } = await import(
-						"/client/src/lib/protocol/vault.js"
-					);
-					const other = await generatePrivateKey();
-					const mismatched = {
-						...JSON.parse(privateKey),
-						publicKey: other.publicKey,
-					};
-					return wrapPrivateKey(JSON.stringify(mismatched), password);
-				},
-				{ privateKey: created.session.privateKey, password: PASSWORD },
-			);
-		}
-		if (failure !== "malformed JSON") recovery = JSON.stringify(document);
-		if (failure === "oversized file") recovery = " ".repeat(16_385);
-		if (failure !== "missing file")
-			await page.locator("#file").setInputFiles({
-				name: "recovery.json",
-				mimeType: "application/json",
-				buffer: Buffer.from(recovery),
-			});
-		await page
-			.locator("#restore-pass")
-			.fill(
-				failure === "missing password"
-					? ""
-					: failure === "wrong password"
-						? "wrong-password"
-						: PASSWORD,
-			);
-		// Saving a server URL also verifies a failed restore preserves existing settings.
+		// Every rejection must preserve this same saved configuration.
 		await openServer(page);
 		await page.locator("#server").fill(app.origin);
 		await page.locator("#save-server").click();
-		const before = await storage(page);
-		await page.locator("#restore").click();
-		if (failure === "missing file" || failure === "missing password") {
-			const input = page.locator(
-				failure === "missing file" ? "#file" : "#restore-pass",
-			);
-			expect(await input.evaluate((input) => input.validity.valueMissing)).toBe(
-				true,
-			);
-		} else {
-			await expect(page.locator("#status")).toContainText(
-				failure === "mismatched identity"
-					? "does not match"
-					: ["wrong password", "damaged ciphertext"].includes(failure)
-						? "Wrong password"
-						: "Invalid",
-			);
+		const baseline = await storage(page);
+		for (const failure of failures) {
+			await test.step(failure, async () => {
+				await page.reload();
+				await chooseRestore(page);
+				expect(await storage(page)).toEqual(baseline);
+				let recovery = original;
+				const document = JSON.parse(recovery);
+				if (failure === "malformed JSON") recovery = "not JSON";
+				if (failure === "wrong format") document.format = "other-format";
+				if (failure === "wrong version") document.v = 2;
+				if (failure === "invalid server")
+					document.serverUrl = "javascript:alert(1)";
+				if (failure === "invalid envelope") document.wrappedKey.salt = "AAAA";
+				if (failure === "excessive iterations")
+					document.wrappedKey.iterations = 9_000_000;
+				if (failure === "damaged ciphertext") {
+					const bytes = Buffer.from(document.wrappedKey.ct, "base64");
+					bytes[0] ^= 1;
+					document.wrappedKey.ct = bytes.toString("base64");
+				}
+				if (failure === "mismatched identity") {
+					document.wrappedKey = await page.evaluate(
+						async ({ privateKey, password }) => {
+							const { generatePrivateKey } = await import(
+								"/client/src/lib/protocol/identity.js"
+							);
+							const { wrapPrivateKey } = await import(
+								"/client/src/lib/protocol/vault.js"
+							);
+							const other = await generatePrivateKey();
+							const mismatched = {
+								...JSON.parse(privateKey),
+								publicKey: other.publicKey,
+							};
+							return wrapPrivateKey(JSON.stringify(mismatched), password);
+						},
+						{ privateKey: created.session.privateKey, password: PASSWORD },
+					);
+				}
+				if (failure !== "malformed JSON") recovery = JSON.stringify(document);
+				if (failure === "oversized file") recovery = " ".repeat(16_385);
+				if (failure !== "missing file")
+					await page.locator("#file").setInputFiles({
+						name: "recovery.json",
+						mimeType: "application/json",
+						buffer: Buffer.from(recovery),
+					});
+				await page
+					.locator("#restore-pass")
+					.fill(
+						failure === "missing password"
+							? ""
+							: failure === "wrong password"
+								? "wrong-password"
+								: PASSWORD,
+					);
+				await page.locator("#restore").click();
+				if (failure === "missing file" || failure === "missing password") {
+					const input = page.locator(
+						failure === "missing file" ? "#file" : "#restore-pass",
+					);
+					expect(
+						await input.evaluate((input) => input.validity.valueMissing),
+					).toBe(true);
+				} else {
+					await expect(page.locator("#status")).toContainText(
+						failure === "mismatched identity"
+							? "does not match"
+							: ["wrong password", "damaged ciphertext"].includes(failure)
+								? "Wrong password"
+								: "Invalid",
+					);
+				}
+				await expectSetup(page);
+				expect(await storage(page)).toEqual(baseline);
+			});
 		}
-		await expectSetup(page);
-		expect(await storage(page)).toEqual(before);
 	});
 }
 

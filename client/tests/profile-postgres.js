@@ -136,13 +136,24 @@ async function download(key, id) {
 	});
 }
 
-async function receive(response, id, expectedLength) {
+async function receive(response, id, expectedContent) {
 	assert.equal(response.statusCode, 200);
-	assert.equal(Number(response.headers["content-length"]), expectedLength);
+	assert.equal(
+		Number(response.headers["content-length"]),
+		expectedContent.length,
+	);
 	const chunks = [];
 	for await (const chunk of response) chunks.push(chunk);
 	const bytes = Buffer.concat(chunks);
 	assert.equal(await bodyHash(bytes), id);
+	assert.deepEqual(
+		bytes,
+		Buffer.from(
+			expectedContent.buffer,
+			expectedContent.byteOffset,
+			expectedContent.byteLength,
+		),
+	);
 }
 
 async function run() {
@@ -276,7 +287,7 @@ async function run() {
 			);
 			await Promise.all(
 				responses.map((response, index) =>
-					receive(response, files[index].id, files[index].content.length),
+					receive(response, files[index].id, files[index].content),
 				),
 			);
 			rounds.push({

@@ -74,13 +74,14 @@ test-e2e:
 test-smoke:
 	$(MAKE) -C client test-smoke SMOKE_SERVER="$(SMOKE_SERVER)" SMOKE_DIR="$(abspath $(SMOKE_DIR))"
 
-# Run every suite, including ignored Rust resource tests and the live deployment test.
+# Run every suite, including the transfer/resource profile and live deployment test.
+# test-db runs all Rust tests once, including those covered by standalone test.
 # Recursive recipes run sequentially even with make -j, avoiding shared build races.
 test-all:
-	$(MAKE) test
+	$(MAKE) test-client
 	$(MAKE) lint
 	$(MAKE) test-packages
-	$(MAKE) test-db TEST_ARGS="-- --include-ignored"
+	$(MAKE) test-db
 	$(MAKE) test-profile
 	$(MAKE) test-e2e
 	$(MAKE) test-smoke
