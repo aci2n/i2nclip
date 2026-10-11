@@ -979,6 +979,8 @@ async fn upload_admission_is_shared_and_releases_capacity() {
     let (dir, app) = app(&[&owner, &other]).await;
     let first = stall(&app, &owner).await;
     let second = stall(&app, &other).await;
+    let third = stall(&app, &owner).await;
+    let fourth = stall(&app, &other).await;
     let authorization = client_crypto::authorization(
         &owner,
         "http://i2nclip.test",
@@ -1123,7 +1125,13 @@ async fn upload_admission_is_shared_and_releases_capacity() {
         second.await.unwrap().unwrap().status(),
         StatusCode::REQUEST_TIMEOUT
     );
-    // Both slots become usable again after cancellation and timeout.
+    for task in [third, fourth] {
+        assert_eq!(
+            task.await.unwrap().unwrap().status(),
+            StatusCode::REQUEST_TIMEOUT
+        );
+    }
+    // Slots become usable again after cancellation and timeout.
     let first = stall(&app, &owner).await;
     let second = stall(&app, &other).await;
     first.abort();
@@ -1242,6 +1250,12 @@ async fn downloads_retain_owned_content_after_deletion() {
         );
         let first = download_response(&app, &owner, id).await;
         let second = download_response(&app, &owner, id).await;
+        let mut held = Vec::new();
+        for _ in 0..14 {
+            let response = download_response(&app, &owner, id).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            held.push(response);
+        }
         assert_eq!(first.status(), StatusCode::OK);
         assert_eq!(first.headers()["content-length"], content.len().to_string());
         assert_eq!(first.headers()["content-type"], "application/octet-stream");
@@ -1251,7 +1265,7 @@ async fn downloads_retain_owned_content_after_deletion() {
             tokio::time::timeout(Duration::from_millis(100), &mut queued)
                 .await
                 .is_err(),
-            "a third download waits while both responses hold their slots"
+            "a seventeenth download waits while all sixteen slots are held"
         );
         assert_eq!(
             call(&app, &owner, "GET", "/api/media", vec![]).await.0,

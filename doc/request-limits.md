@@ -1,6 +1,6 @@
 # Request deadlines, body limits, and transfer admission
 
-Status: body-read deadlines, byte caps, two-upload and two-download admission, and bounded streaming implemented. Transactional PostgreSQL content storage is implemented; see [protocol.md](protocol.md). Storage quotas remain separate work.
+Status: body-read deadlines, byte caps, four-upload and sixteen-download admission, and bounded streaming implemented. Transactional PostgreSQL content storage is implemented; see [protocol.md](protocol.md). Storage quotas remain separate work.
 
 ## Implemented deadlines
 
@@ -23,21 +23,21 @@ Current verification is recorded in [priorities.md](priorities.md).
 
 The implemented deadlines cover the entire body read, not just the interval between chunks. They apply even if a client keeps trickling bytes. A missing or dishonest Content-Length cannot bypass streaming byte counts. A nonempty GET/DELETE body returns `413`; an unfinished empty-body request times out. Oversized requests return `413`, expired body reads return `408`, and body transport failures retain the existing `400` response.
 
-The server allows **two concurrent upload POSTs per router instance (one in the server process)**, shared across owners. It checks signatures and early length limits first, then waits for a permit before buffering the body. If both permits are occupied, the request remains queued until capacity is released or the request is cancelled. Saturation does not return `503`. The body-read deadline starts after admission; no deadline currently bounds admission waiting.
+The server allows **four concurrent upload POSTs per router instance (one in the server process)**, shared across owners. It checks signatures and early length limits first, then waits for a permit before buffering the body. If all permits are occupied, the request remains queued until capacity is released or the request is cancelled. Saturation does not return `503`. The body-read deadline starts after admission; no deadline currently bounds admission waiting.
 
 A valid authenticated header spends its nonce before admission/body processing, as it does today. A retry after `503`, `408`, or `413` must be newly signed with a new nonce. Bad signatures remain `401` and must neither read the body nor use upload capacity. Health, listing, metadata edits, deletion, and registration do not acquire upload permits.
 
-The two-upload limit bounds the number of retained large upload workflows, not exact RSS. Frame decoding borrows content from the body buffer, but `Vec` allocation may overreserve and SQLx may allocate additional buffers. Download streaming separately bounds active download reads. These limits do not bound the number of small requests, total disk usage, or storage per owner.
+The four-upload limit bounds the number of retained large upload workflows, not exact RSS. Frame decoding borrows content from the body buffer, but `Vec` allocation may overreserve and SQLx may allocate additional buffers. Download streaming separately bounds active download reads. These limits do not bound the number of small requests, total disk usage, or storage per owner.
 
 ## Code changes
 
-Completed: `src/lib.rs` defines the shared token-text bound and both frame caps, and `src/frame.rs` uses that bound for token field validation. The handlers in `src/media.rs` select their own caps and deadlines. `AppState` initializes a shared semaphore with two upload slots. No new configuration surface is needed initially.
+Completed: `src/lib.rs` defines the shared token-text bound and both frame caps, and `src/frame.rs` uses that bound for token field validation. The handlers in `src/media.rs` select their own caps and deadlines. `AppState` initializes a shared semaphore with four upload slots. No new configuration surface is needed initially.
 
 The private `MediaRequest` extractor in `src/media.rs` verifies signed headers and retains the unread body. Each endpoint chooses its own policy: upload uses `MAX_BODY` and 120 seconds, retag uses `MAX_META_BODY` and 30 seconds, and list/download/delete require an empty body within 10 seconds. Only list parses search tokens and the pagination cursor.
 
 Handlers reject oversized Content-Length before reading. Upload then acquires its permit before buffering. Shared helpers cap streamed bytes, enforce the body deadline, and verify the signed body hash incrementally, yielding every 64 KiB. Registration uses the bounded reader with its own cap/deadline. Error responses retain `Cache-Control: no-store`.
 
-`AppState` holds `Arc<tokio::sync::Semaphore>`, initialized with two permits. After successful authentication and early length checks, upload POSTs call `acquire_owned().await` and wait in the admission queue if both slots are occupied.
+`AppState` holds `Arc<tokio::sync::Semaphore>`, initialized with four permits. After successful authentication and early length checks, upload POSTs call `acquire_owned().await` and wait in the admission queue if all slots are occupied.
 
 **Permit ownership:** buffered upload bytes and admission remain together through incremental hashing and async database writes. Cancellation drops the request buffer and returns its permit; SQLx rolls back interrupted transactions. Hashing yields every 64 KiB.
 
@@ -46,14 +46,14 @@ Handlers reject oversized Content-Length before reading. Upload then acquires it
 - Completed: signed nonempty GET/DELETE bodies return `413`, with and without Content-Length; ordinary empty requests still work. Declared oversized media bodies are rejected without polling.
 - Completed: PUT and POST enforce their distinct caps, including channel bodies crossing the boundary and dishonest length headers. Full valid frames at both exact maximum sizes are accepted, as is a padded valid registration JSON at 4,096 bytes. Registration rejects streamed overflow at its smaller cap.
 - Completed: a stalled body returns `408`, and a trickling body cannot extend the total deadline. Controlled channel bodies and Tokio's paused clock test body disposal, all endpoint deadlines, spent authentication nonces, and preserved registration invitations. `test-util` and `http-body-util`'s `channel` feature are enabled only for dev dependencies.
-- Completed: two authenticated stalled upload streams hold both slots. A third waits without polling its body and proceeds when a slot is released. Non-upload requests and invalid signatures still return their normal statuses while slots are occupied.
+- Completed: four authenticated stalled upload streams hold all slots. A fifth waits without polling its body and proceeds when a slot is released. Non-upload requests and invalid signatures still return their normal statuses while slots are occupied.
 - Completed: failed reads, timeouts, invalid frames, and successful writes release capacity. Cancelling an HTTP task during body reading releases its permit. Cancellation during async work drops its buffer/permit and rolls back pending transactions.
 - Existing signature-before-body, replay, ownership, duplicate-upload, registration, and shared Rust/JavaScript vector tests still pass.
 - Completed: `make test` under Node 22, touched-file formatting checks, and `make extension`; the limits/statuses are documented in `protocol.md`.
 
 ## Implemented download streaming
 
-Content GETs acquire one of two download slots after authenticated empty-body verification, waiting when both are occupied. These slots are separate from upload slots. The nonce has already been spent. Capacity is acquired before ownership lookup, so missing/unowned hashes also wait and then return `404`. Saturation does not return `503`. Admission waits and response draining currently have no duration limit.
+Content GETs acquire one of sixteen download slots after authenticated empty-body verification, waiting when all are occupied. These slots are separate from upload slots. The nonce has already been spent. Capacity is acquired before ownership lookup, so missing/unowned hashes also wait and then return `404`. Saturation does not return `503`. Admission waits and response draining currently have no duration limit.
 
 `Database::content` selects authorized complete bytes in one statement. SQL length constraints enforce sealed-content bounds. The connection is released before response construction. The body sends owned byte slices in at most 64 KiB pieces without copying each slice, declares Content-Length, and retains download admission until completion or disposal. Concurrent deletion cannot change fetched bytes.
 

@@ -43,8 +43,8 @@ pub(crate) const MAX_META_BODY: usize = 4 + MAX_META + 4 + MAX_TOKEN_TEXT;
 pub(crate) const MAX_REGISTER_BODY: usize = 4096;
 pub(crate) const SKEW_SECS: u64 = 300;
 
-pub(crate) const UPLOAD_SLOTS: usize = 2;
-const DOWNLOAD_SLOTS: usize = 2;
+pub(crate) const UPLOAD_SLOTS: usize = 4;
+const DOWNLOAD_SLOTS: usize = 16;
 
 /// Clones share the database pool, transfer permits, and public origin.
 #[derive(Clone)]
