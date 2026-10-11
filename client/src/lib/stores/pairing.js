@@ -19,6 +19,7 @@ export function createPairing(session, services = {}) {
 		active: false,
 		approval: false,
 		code: "",
+		verificationCode: "",
 		server: "",
 		remaining: 0,
 		status: "",
@@ -58,6 +59,7 @@ export function createPairing(session, services = {}) {
 			active: false,
 			approval: false,
 			code: "",
+			verificationCode: "",
 			remaining: 0,
 			status: message,
 			error: false,
@@ -113,6 +115,17 @@ export function createPairing(session, services = {}) {
 		check(current);
 		return result;
 	}
+	async function verification(current) {
+		const code = await call(current, "verificationCode");
+		if (
+			typeof code !== "string" ||
+			!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(
+				code,
+			)
+		)
+			throw new Error("Invalid verification code. Create a new pairing code.");
+		return code;
+	}
 	async function submit(current, number, message) {
 		check(current);
 		const result = await retry(current, () =>
@@ -142,6 +155,7 @@ export function createPairing(session, services = {}) {
 			active: true,
 			approval: false,
 			code: "",
+			verificationCode: "",
 			server,
 			remaining: 120,
 			status: "Preparing secure pairing…",
@@ -179,6 +193,7 @@ export function createPairing(session, services = {}) {
 					active: false,
 					approval: false,
 					code: "",
+					verificationCode: "",
 					remaining: 0,
 					error: false,
 					status:
@@ -194,6 +209,7 @@ export function createPairing(session, services = {}) {
 					active: false,
 					approval: false,
 					code: "",
+					verificationCode: "",
 					remaining: 0,
 					error: true,
 					status: current.saved
@@ -253,15 +269,28 @@ export function createPairing(session, services = {}) {
 				});
 				update({
 					approval: true,
+					code: "",
+					verificationCode: await verification(current),
 					status:
-						"New device authenticated. Send your library to give it full access.",
+						"Compare this code with the new device. Send your library only if they match. This gives it full access.",
 				});
-				await new Promise((resolve) => {
-					current.approve = resolve;
-				});
+				let approved = false;
+				current.approve = () => {
+					approved = true;
+				};
+				while (!approved) {
+					await wait(current);
+					// Keep checking the room while the user compares codes, so a
+					// receiver cancellation removes the pending approval too.
+					await step(current, 3);
+				}
 				current.approve = null;
 				check(current);
-				update({ approval: false, status: "Sending library…" });
+				update({
+					approval: false,
+					verificationCode: "",
+					status: "Sending library…",
+				});
 				await session.withIdentity(
 					current.operation,
 					async ({ privateKey, publicKey }) => {
@@ -295,7 +324,8 @@ export function createPairing(session, services = {}) {
 				});
 				await submit(current, 3, finish);
 				update({
-					status: "Authenticated. Approve sending on your unlocked device.",
+					verificationCode: await verification(current),
+					status: "Compare this code on your unlocked device before approving.",
 				});
 				const value = await call(current, "receive", {
 					message: await step(current, 4),
@@ -309,7 +339,10 @@ export function createPairing(session, services = {}) {
 				)
 					throw new Error("Invalid paired identity.");
 				current.operation.dispose();
-				update({ status: "Saving your encrypted library…" });
+				update({
+					verificationCode: "",
+					status: "Saving your encrypted library…",
+				});
 				const savedOperation = await session.importPairing({
 					...value,
 					password,
@@ -328,10 +361,14 @@ export function createPairing(session, services = {}) {
 			});
 		},
 		approve() {
-			if (get(state).approval && task?.approve) {
+			if (get(state).approval && get(state).verificationCode && task?.approve) {
 				update({ approval: false });
 				task.approve();
 			}
+		},
+		rejectVerification() {
+			if (get(state).verificationCode)
+				stop("Verification codes did not match. Create a new pairing code.");
 		},
 		cancel: () => stop(),
 		dispose() {

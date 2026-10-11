@@ -96,12 +96,37 @@ for (const [from, to] of [
 			}
 			await connectForm(receiver, code.toLowerCase(), app);
 			await expect(page.locator("#pairing-approve")).toBeVisible();
+			await expect(page.locator("#pairing-approve")).toHaveText(
+				"Codes match — send library",
+			);
+			await expect(page.locator("#pairing-code")).toHaveCount(0);
+			const verification = await page
+				.locator("#pairing-verification-code")
+				.textContent();
+			expect(verification).toMatch(
+				/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/,
+			);
+			await expect(receiver.locator("#pairing-verification-code")).toHaveText(
+				verification,
+			);
 			expect((await identity(receiver, to)).privateKey).toBeUndefined();
 			if (from === "web" && to === "web") {
 				await page.setViewportSize({ width: 360, height: 800 });
 				await receiver.setViewportSize({ width: 320, height: 800 });
 				await shot(page, "pairing-approval-360");
 				await shot(receiver, "pairing-receive-320");
+				for (const width of [320, 360]) {
+					await page.setViewportSize({ width, height: 800 });
+					await receiver.setViewportSize({ width, height: 800 });
+					await shot(page, `pairing-verification-sender-${width}`);
+					await shot(receiver, `pairing-verification-receiver-${width}`);
+					for (const device of [page, receiver])
+						expect(
+							await device.evaluate(
+								() => document.documentElement.scrollWidth <= innerWidth,
+							),
+						).toBe(true);
+				}
 			}
 			await page.locator("#pairing-approve").click();
 			await expect(receiver.locator("#pairing-status")).toContainText(
@@ -109,6 +134,10 @@ for (const [from, to] of [
 			);
 			await expect(page.locator("#pairing-status")).toHaveText(
 				"New device connected.",
+			);
+			await expect(page.locator("#pairing-verification-code")).toHaveCount(0);
+			await expect(receiver.locator("#pairing-verification-code")).toHaveCount(
+				0,
 			);
 			expect((await identity(receiver, to)).privateKey).toBe(
 				original.privateKey,
@@ -137,8 +166,58 @@ for (const [from, to] of [
 				expect(request.body).not.toContain(secret);
 				expect(request.body).not.toContain(original.privateKey);
 				expect(request.body).not.toContain("different-device-password");
+				for (const value of [verification, verification.replace("-", "")]) {
+					expect(request.url).not.toContain(value);
+					expect(request.body).not.toContain(value);
+				}
 			}
 			expect(errors).toEqual([]);
+		} finally {
+			await context.close();
+		}
+	});
+}
+
+for (const rejector of ["sender", "receiver"]) {
+	test(`${rejector} rejects verification and neither device transfers the identity`, async ({
+		page,
+		app,
+		browser,
+	}) => {
+		await setup(page, "web", app);
+		await page.locator("#pairing-settings > summary").click();
+		await page.locator("#pairing-start").click();
+		await expect(page.locator("#pairing-code")).toBeVisible();
+		const code = await page.locator("#pairing-code").textContent();
+		const context = await browser.newContext();
+		try {
+			const receiver = await context.newPage();
+			await receiver.goto(optionsUrl("web", app));
+			await connectForm(receiver, code, app);
+			await expect(page.locator("#pairing-approve")).toBeVisible();
+			const verification = await page
+				.locator("#pairing-verification-code")
+				.textContent();
+			await expect(receiver.locator("#pairing-verification-code")).toHaveText(
+				verification,
+			);
+			const rejecting = rejector === "sender" ? page : receiver;
+			const other = rejector === "sender" ? receiver : page;
+			await rejecting.locator("#pairing-mismatch").click();
+			await expect(rejecting.locator("#pairing-status")).toContainText(
+				"Verification codes did not match. Create a new pairing code.",
+			);
+			await expect(other.locator("#pairing-status")).toContainText(
+				"Pairing ended",
+			);
+			for (const device of [page, receiver])
+				await expect(device.locator("#pairing-verification-code")).toHaveCount(
+					0,
+				);
+			await expect(page.locator("#pairing-approve")).toHaveCount(0);
+			expect((await identity(receiver, "web")).privateKey).toBeUndefined();
+			await rejecting.setViewportSize({ width: 320, height: 800 });
+			await shot(rejecting, `pairing-verification-rejected-${rejector}-320`);
 		} finally {
 			await context.close();
 		}
@@ -169,6 +248,8 @@ test("a wrong pairing secret never installs an identity and requires a fresh cod
 			"Pairing ended",
 		);
 		await expect(page.locator("#pairing-approve")).toHaveCount(0);
+		await expect(page.locator("#pairing-verification-code")).toHaveCount(0);
+		await expect(receiver.locator("#pairing-verification-code")).toHaveCount(0);
 		await receiver.setViewportSize({ width: 320, height: 800 });
 		await shot(receiver, "pairing-error-320");
 	} finally {
@@ -196,9 +277,11 @@ test("reset cancels an authenticated pairing before approving the identity trans
 		await page.locator("#reset-settings > summary").click();
 		await page.locator("#reset").click();
 		await expect(page.locator("#pairing-code")).toHaveCount(0);
+		await expect(page.locator("#pairing-verification-code")).toHaveCount(0);
 		await expect(receiver.locator("#pairing-status")).toContainText(
 			"Pairing ended",
 		);
+		await expect(receiver.locator("#pairing-verification-code")).toHaveCount(0);
 		expect((await identity(receiver, "web")).privateKey).toBeUndefined();
 	} finally {
 		await context.close();

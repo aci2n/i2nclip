@@ -95,6 +95,9 @@ try {
   const response = await sender("senderResponse", {message: initial});
   const finish = await receiver("receiverFinish", {message: response, context});
   await sender("senderFinish", {message: finish});
+  const verification = await sender("verificationCode");
+  if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(verification)) throw new Error("Invalid verification code");
+  if (await receiver("verificationCode") !== verification) throw new Error("Verification codes differ");
   const packet = await sender("transfer", {value: {v: 1, test: "packaged-worker"}});
   const value = await receiver("receive", {message: packet});
   if (value.test !== "packaged-worker") throw new Error("Incorrect transfer");

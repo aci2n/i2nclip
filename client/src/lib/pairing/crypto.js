@@ -7,8 +7,8 @@ export function createPairingCrypto() {
 	let phase = "initial";
 	let context, setup, record, loginState, secret, keys;
 	const identifiers = () => ({
-		client: `${context} receiver`,
-		server: `${context} sender`,
+		client: `${context} receiver verification-code`,
+		server: `${context} sender verification-code`,
 	});
 	function expect(expected) {
 		if (phase !== expected) throw new Error("Invalid pairing step.");
@@ -87,6 +87,11 @@ export function createPairingCrypto() {
 				keys = await pairingKeys(result.sessionKey, context);
 				phase = "sender-authenticated";
 				return null;
+			}
+			case "verificationCode": {
+				if (!["sender-authenticated", "receiver-authenticated"].includes(phase))
+					throw new Error("Invalid pairing step.");
+				return keys.verificationCode;
 			}
 			case "transfer": {
 				expect("sender-authenticated");

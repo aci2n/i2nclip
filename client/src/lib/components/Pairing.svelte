@@ -103,12 +103,30 @@ async function connect(event) {
 			{#if $pairing.code}
 				<output id="pairing-code" class="code">{$pairing.code}</output>
 			{/if}
+			{#if $pairing.verificationCode}
+				<div class="verification">
+					<label for="pairing-verification-code">Verification code</label>
+					<output id="pairing-verification-code" class="code"
+						>{$pairing.verificationCode}</output
+					>
+				</div>
+			{/if}
 			<p class="address">Server: {$pairing.server}</p>
 			<p>Expires in {$pairing.remaining} seconds.</p>
 			<div class="actions">
-				{#if $pairing.approval}
+				{#if $pairing.approval && $pairing.verificationCode}
 					<button type="button" id="pairing-approve" onclick={pairing.approve}>
-						Send library
+						Codes match — send library
+					</button>
+				{/if}
+				{#if $pairing.verificationCode}
+					<button
+						type="button"
+						id="pairing-mismatch"
+						class="secondary"
+						onclick={pairing.rejectVerification}
+					>
+						Codes don’t match
 					</button>
 				{/if}
 				<button type="button" class="secondary" onclick={pairing.cancel}>
@@ -140,6 +158,11 @@ async function connect(event) {
 }
 .pairing p {
 	margin: 0;
+}
+.verification {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
 }
 .code {
 	font-family: monospace;

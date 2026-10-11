@@ -19,7 +19,34 @@ its default memory-constrained Argon2 configuration is used. The receiver is the
 OPAQUE client and the sending device is the OPAQUE server. The Rust relay is
 neither endpoint and never receives the OPAQUE setup or registration record.
 Identifiers bind version, origin, public room ID, random 128-bit room instance,
-and participant roles. Each worker accepts one authentication attempt only.
+and participant roles. Client and server identifiers end with `receiver
+verification-code` and `sender verification-code` respectively. Verification
+support is therefore authenticated: both devices must use updated clients;
+mixed old/new clients fail authentication with no fallback. The context prefix
+remains `i2nclip/pairing/v1`, and all packet versions and relay steps stay at v1.
+Each worker accepts one authentication attempt only.
+
+After authentication, each worker independently derives a 40-bit verification
+value with HKDF-SHA256 from the OPAQUE session key, using the pairing context as
+salt and `verification-code` as info. Encode the five derived bytes in base-32
+with the pairing alphabet, most significant bits first, and display as
+`XXXX-XXXX`. These bits use a separate purpose from encryption keys. The worker
+exposes the formatted code only in the authenticated sender/receiver phases;
+session keys remain inside the worker.
+
+Both devices display **Verification code**. The original pairing code is hidden
+on the sender after authentication. Compare the displayed codes on the intended
+devices, then choose **Codes match — send library** on the sender. **Codes don't
+match** cancels the room and requires a fresh pairing code; no identity is sent.
+Codes are never sent through the relay, logged, or persisted, and are cleared
+when sending/saving begins or the attempt ends. A comparison is a human check;
+the application cannot tell whether the user actually compared both screens.
+
+Verification helps detect an unintended receiver that obtained the original
+pairing secret. Independent sessions with the same secret produce independent
+verification values, with a 1-in-2^40 accidental match probability per independent
+comparison. It does not prevent room claiming, message dropping, or compromised
+client builds. Users must cancel if the other device has no verification code.
 
 After authentication and explicit sender approval, HKDF-SHA256 derives separate
 AES-256-GCM keys for the identity transfer and save acknowledgment from the PAKE
@@ -124,6 +151,10 @@ ended-pairing error; existing creation and recovery restore remain available.
 Unit tests cover the real OPAQUE exchange, wrong secrets, session bindings,
 tampering, direction separation, replay rejection, bounded reads, sender approval,
 durable-save acknowledgment, cancellation, and serialized identity import.
+Verification tests include independent HKDF vectors, matching real OPAQUE codes,
+distinct sessions, mixed-client rejection, worker phase restrictions, mismatch
+cancellation, and stale-code cleanup. Firefox tests compare both displays in
+all web/extension directions and verify mismatch cancellation without import.
 Rust tests cover role capabilities, ordering/idempotency, room/rate/body limits,
 source spoofing, saturated read admission, permit release, and expiry. Client
 regressions cover stalled reset/server changes, stale persisted credentials,
@@ -135,6 +166,7 @@ cancellation. The extension needs packaged WASM enabled by its narrowly scoped
 
 `make test-extension-pairing` builds the add-on, installs a temporary copy in a
 fresh headless Firefox profile, and runs the packaged OPAQUE Workers under the
-actual manifest CSP. It needs a Firefox version accepted by the manifest;
+actual manifest CSP, including verification-code derivation and agreement.
+It needs a Firefox version accepted by the manifest;
 `I2N_TEST_FIREFOX` overrides the default `/usr/bin/firefox`. It does not access
 existing profiles or user identities.

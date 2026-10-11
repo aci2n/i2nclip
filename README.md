@@ -7,7 +7,10 @@ Encrypted media store. The browser encrypts each file in your browser before upl
 To connect another device, open Settings on an unlocked browser and choose
 **Create pairing code**. On the new browser, choose **Connect existing library**,
 use the same server, enter the 12-character code, and choose a password for that
-device. Approve **Send library** on the original browser. The code expires after
+device. Compare the **Verification code** displayed on both devices, then choose
+**Codes match — send library** on the original browser. If the codes differ or
+either device does not display one, cancel and start again with updated clients
+on both devices. The pairing code expires after
 two minutes and a failed authentication requires a fresh code. Both the web app
 and Firefox extension support pairing; it gives the new device full access to
 the same library without another invitation. Download a recovery file on the new
