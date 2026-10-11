@@ -106,7 +106,7 @@ let filesInput = $state();
 			</button>
 		{:else}
 			<h2>No files match your search</h2>
-			<p>Try different tags or clear your search to see all clips.</p>
+			<p>Try different tags or clear your search to see all files.</p>
 			<button
 				type="button"
 				class="secondary"
