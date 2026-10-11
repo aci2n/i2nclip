@@ -9,9 +9,14 @@ import { unwrapPrivateKey, wrapPrivateKey } from "../protocol/vault.js";
 export const DEFAULT_SERVER_URL = "https://clip.i2n.duckdns.org";
 
 export function createSession(platform) {
+	const defaultServerUrl = ["http:", "https:"].includes(
+		globalThis.location?.protocol,
+	)
+		? globalThis.location.origin
+		: DEFAULT_SERVER_URL;
 	const state = writable({
 		ready: false,
-		serverUrl: DEFAULT_SERVER_URL,
+		serverUrl: defaultServerUrl,
 		wrappedKey: null,
 		pendingRegistration: null,
 		identityGeneration: null,
@@ -75,10 +80,10 @@ export function createSession(platform) {
 					...local,
 					ready: true,
 					serverUrl: local.wrappedKey
-						? local.serverUrl || DEFAULT_SERVER_URL
+						? local.serverUrl || defaultServerUrl
 						: local.pendingRegistration?.serverUrl ||
 							local.serverUrl ||
-							DEFAULT_SERVER_URL,
+							defaultServerUrl,
 					pendingRegistration: local.pendingRegistration || null,
 					wrappedKey: local.wrappedKey || null,
 					identityGeneration: local.identityGeneration || null,

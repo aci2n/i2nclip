@@ -9,6 +9,32 @@ import { deferred, installSessionLocks, tick } from "./helpers.js";
 
 beforeEach(installSessionLocks);
 
+test("default server follows the web origin including its port, with an extension fallback", async (t) => {
+	const previous = Object.getOwnPropertyDescriptor(globalThis, "location");
+	t.after(() => {
+		if (previous) Object.defineProperty(globalThis, "location", previous);
+		else delete globalThis.location;
+	});
+	for (const [page, expected] of [
+		["http://localhost:8080/settings", "http://localhost:8080"],
+		["https://library.example:8443/settings", "https://library.example:8443"],
+		["https://library.example/settings", "https://library.example"],
+		["moz-extension://extension-id/popup.html", "https://clip.i2n.duckdns.org"],
+	]) {
+		Object.defineProperty(globalThis, "location", {
+			configurable: true,
+			value: new URL(page),
+		});
+		const session = open(t, area(), area());
+		assert.equal(get(session).serverUrl, expected);
+		await session.ready;
+		assert.equal(get(session).serverUrl, expected);
+		const saved = open(t, area({ serverUrl: "https://saved.example" }), area());
+		await saved.ready;
+		assert.equal(get(saved).serverUrl, "https://saved.example");
+	}
+});
+
 test("paired identities use a new local password and generation without registering again", async (t) => {
 	const { saved, privateKey } = await identityFixture();
 	const local = area(),
