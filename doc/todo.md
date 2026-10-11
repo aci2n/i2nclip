@@ -19,4 +19,12 @@ Work through these in order. Details and reproductions are in [the audit report]
 
 12. [x] Device pairing with a 12-character code and OPAQUE. Backend only relays messages; see [the protocol](pairing.md). Explicit approval, encrypted transfer, and a new device password work across web and extension clients. Client/Rust tests, all 81 Firefox tests, final pairing regressions, installed-extension worker/CSP verification, lint, and package checks pass.
 
+12.5 move all client-side multi-window state syncrhonization to a single process (shared worker/background context)
+
 13. multi-library: with pairing, a user may choose to share a library with other users, while keeping a personal library private. Libraries should be name-able client side. Backend should be mostly unchanged, but it shuold provide a authenticated API to register new public keys so we don't need to issue OTC every time.
+
+14. replace dev.sh script with podman compose
+
+15. allow multiple pairing initiations per owner, since multiple users may share the same owner key
+
+16. move pairing state (rooms, etc) to the db, aim for stateless server

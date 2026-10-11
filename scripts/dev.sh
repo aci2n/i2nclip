@@ -9,6 +9,7 @@ volume=i2nclip-dev-postgres-data
 server=i2nclip-dev-server
 image=localhost/i2nclip-dev:latest
 port=${DEV_PORT:-8080}
+db_port=${DEV_DB_PORT:-5432}
 origin=${DEV_ORIGIN:-http://localhost:$port}
 
 start_database() {
@@ -24,6 +25,7 @@ start_database() {
             --env POSTGRES_USER=i2nclip --env POSTGRES_DB=i2nclip \
             --env POSTGRES_PASSWORD=i2nclip-dev \
             --env POSTGRES_HOST_AUTH_METHOD=scram-sha-256 \
+            --publish "127.0.0.1:$db_port:5432" \
             docker.io/library/postgres:18
     fi
     attempts=0

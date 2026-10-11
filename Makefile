@@ -6,6 +6,7 @@ PORT ?= 8080
 HOST ?= deploy@example.com
 DEV_PORT ?= 8080
 DEV_ORIGIN ?= http://localhost:$(DEV_PORT)
+DEV_DB_URL ?= postgresql://i2nclip:i2nclip-dev@127.0.0.1:5432/i2nclip?sslmode=disable
 SMOKE_SERVER ?= https://clip.i2n.duckdns.org
 SMOKE_DIR ?= $(HOME)/.config/i2nclip/smoke
 
@@ -24,7 +25,10 @@ web extension cli packages dev-extension:
 	$(MAKE) -C client $@
 
 run:
-	cargo run
+	I2N_ORIGIN="$(DEV_ORIGIN)" I2N_DATABASE_URL="$(DEV_DB_URL)" cargo run $(RUN_ARGS)
+
+debug:
+	rust-gdb target/debug/i2nclip
 
 # Local containers: only the web/API port is published, on loopback.
 .PHONY: dev dev-db dev-down dev-otc
