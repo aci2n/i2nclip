@@ -1,11 +1,77 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import { get, writable } from "svelte/store";
 import { createPendingUpload } from "../src/lib/stores/pending-upload.js";
 
-import { deferred, tick } from "./helpers.js";
+import { deferred, installUploadLocks, tick } from "./helpers.js";
+
+beforeEach(installUploadLocks);
 
 const credentials = { privateKey: "first", serverUrl: "https://clip.example" };
+
+test("two popup stores preserve competing drafts and cannot resend cached completed or removed sources", async (t) => {
+	const state = writable(credentials);
+	const session = {
+		subscribe: state.subscribe,
+		credentials: () => credentials,
+	};
+	const entries = { "upload:one": { name: "one" } };
+	const transfer = deferred();
+	let sends = 0,
+		closes = 0,
+		notices = 0;
+	const platform = {
+		session: {
+			get: async (key) => ({ [key]: entries[key] }),
+			remove: async (key) => {
+				delete entries[key];
+			},
+		},
+		notify: async () => notices++,
+		close: () => closes++,
+	};
+	const media = {
+		prepareMedia: async (source) => ({ ...source, blob: new Blob(["file"]) }),
+		sendUpload: async () => {
+			sends++;
+			await transfer.promise;
+		},
+	};
+	const first = createPendingUpload(session, platform, "one", media);
+	const second = createPendingUpload(session, platform, "one", media);
+	t.after(() => {
+		first.dispose();
+		second.dispose();
+	});
+	await Promise.all([first.ready, second.ready]);
+	second.tags.set("keep this draft");
+	const sending = first.send("first");
+	await tick();
+	await second.send(get(second.tags));
+	assert.match(get(second).status, /Uploading in another page/);
+	assert.equal(get(second.tags), "keep this draft");
+	assert.equal(get(second).busy, false);
+	assert.equal(get(second).available, true);
+	assert.equal(sends, 1);
+	transfer.resolve();
+	await sending;
+	await second.send(get(second.tags));
+	assert.equal(get(second).status, "This upload was completed or removed.");
+	assert.equal(get(second).available, false);
+	assert.equal(get(second.tags), "keep this draft");
+	assert.equal(sends, 1);
+	assert.equal(closes, 1);
+	assert.equal(notices, 1);
+
+	entries["upload:one"] = { name: "reset source" };
+	const reset = createPendingUpload(session, platform, "one", media);
+	t.after(reset.dispose);
+	await reset.ready;
+	delete entries["upload:one"];
+	await reset.send("");
+	assert.equal(get(reset).available, false);
+	assert.equal(sends, 1);
+});
 
 test("pending uploads keep independent IDs, prevent duplicate sends, and survive failure", async (t) => {
 	const state = writable(credentials);
@@ -45,6 +111,7 @@ test("pending uploads keep independent IDs, prevent duplicate sends, and survive
 	await Promise.all([one.ready, two.ready]);
 	const first = one.send("");
 	await one.send("");
+	await tick();
 	assert.equal(requests.length, 1);
 	requests[0].reject(new Error("temporary"));
 	await first;
@@ -52,6 +119,7 @@ test("pending uploads keep independent IDs, prevent duplicate sends, and survive
 	assert.deepEqual(Object.keys(sources), ["upload:one", "upload:two"]);
 	const retry = one.send("");
 	const second = two.send("");
+	await tick();
 	requests[1].resolve();
 	requests[2].resolve();
 	await Promise.all([retry, second]);
@@ -153,7 +221,7 @@ for (const first of ["source", "unlock"]) {
 	});
 }
 
-test("old popup completion cannot clear the busy state of a new-library retry", async (t) => {
+test("a cancelled transfer retains its lock until settlement before a new-library retry", async (t) => {
 	const state = writable(credentials);
 	const requests = [];
 	const pending = createPendingUpload(
@@ -179,10 +247,16 @@ test("old popup completion cannot clear the busy state of a new-library retry", 
 	t.after(pending.dispose);
 	await pending.ready;
 	const old = pending.send("");
+	await tick();
 	state.set({ ...credentials, privateKey: "second" });
-	const retry = pending.send("");
+	await pending.send("");
+	assert.equal(requests.length, 1);
+	assert.equal(get(pending).busy, false);
+	assert.match(get(pending).status, /Uploading in another page/);
 	requests[0].resolve();
 	await old;
+	const retry = pending.send("");
+	await tick();
 	requests[0].progress(99);
 	assert.equal(get(pending).busy, true);
 	assert.equal(get(pending).status, "Uploading…");
@@ -425,6 +499,7 @@ test("a server change aborts preparation retry before any upload can start", asy
 	t.after(pending.dispose);
 	await pending.ready;
 	const retry = pending.send("");
+	await tick();
 	state.set({ ...credentials, serverUrl: "https://other.example" });
 	assert.equal(signal.aborted, true);
 	preparation.resolve({ name: "one", blob: new Blob(["file"]) });

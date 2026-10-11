@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import { get, writable } from "svelte/store";
 import {
 	createUploadTask,
 	sendPendingUpload,
 } from "../src/lib/media/upload-workflow.js";
-import { deferred } from "./helpers.js";
+import { deferred, installUploadLocks, tick } from "./helpers.js";
+
+beforeEach(installUploadLocks);
 
 function fixture(t, options = {}) {
 	const state = writable({
@@ -98,6 +100,7 @@ test("library changes during pending-ID cleanup suppress completion and notifica
 				source: {},
 				platform: {
 					session: {
+						get: async () => ({ "upload:one": {} }),
 						remove: async (key) => {
 							removed = key;
 							state.update((value) => ({ ...value, privateKey: "other" }));
@@ -113,4 +116,142 @@ test("library changes during pending-ID cleanup suppress completion and notifica
 		{ name: "AbortError" },
 	);
 	assert.equal(removed, "upload:one");
+});
+
+test("pending ID ownership covers preparation, skips competing sends, and rejects stale sources", async (t) => {
+	const first = fixture(t).task;
+	const second = fixture(t).task;
+	const preparation = deferred();
+	const stored = { "upload:one": {} };
+	let sends = 0,
+		notices = 0,
+		prepares = 0;
+	const platform = {
+		session: {
+			get: async (key) => ({ [key]: stored[key] }),
+			remove: async (key) => {
+				delete stored[key];
+			},
+		},
+		notify: async () => notices++,
+	};
+	const upload = async () => sends++;
+	const options = {
+		id: "one",
+		platform,
+		prepareSource: () => {
+			prepares++;
+			return preparation.promise;
+		},
+	};
+	const sending = sendPendingUpload({ ...options, task: first }, upload);
+	await tick();
+	assert.equal(
+		await sendPendingUpload({ ...options, task: second }, upload),
+		"busy",
+	);
+	assert.equal(prepares, 1);
+	preparation.resolve({});
+	assert.equal(await sending, "uploaded");
+	assert.equal(
+		await sendPendingUpload({ ...options, task: second }, upload),
+		"missing",
+	);
+	assert.equal(prepares, 1);
+	assert.equal(sends, 1);
+	assert.equal(notices, 1);
+});
+
+for (const stage of ["preparation", "transfer"]) {
+	test(`${stage} failure releases pending ownership for an explicit retry`, async (t) => {
+		const { task } = fixture(t);
+		let failed = true;
+		const failure = () => {
+			if (failed) throw new Error("temporary");
+			return {};
+		};
+		const options = {
+			task,
+			id: "one",
+			platform: {
+				session: {
+					get: async () => ({ "upload:one": {} }),
+					remove: async () => {},
+				},
+				notify: async () => {},
+			},
+			prepareSource: stage === "preparation" ? failure : async () => ({}),
+		};
+		const upload = stage === "transfer" ? failure : async () => {};
+		await assert.rejects(sendPendingUpload(options, upload), /temporary/);
+		failed = false;
+		assert.equal(await sendPendingUpload(options, upload), "uploaded");
+	});
+}
+
+test("cancellation before ownership or during the storage recheck never sends", async (t) => {
+	const { task } = fixture(t);
+	const read = deferred();
+	const options = {
+		task,
+		id: "one",
+		platform: { session: { get: () => read.promise } },
+		prepareSource: () => assert.fail("cancelled source must not prepare"),
+	};
+	const sending = sendPendingUpload(options);
+	task.dispose();
+	read.resolve({ "upload:one": {} });
+	await assert.rejects(sending, { name: "AbortError" });
+	await assert.rejects(sendPendingUpload(options), { name: "AbortError" });
+});
+
+test("missing Web Locks retains the source and never submits", async (t) => {
+	const { task } = fixture(t);
+	Object.defineProperty(navigator, "locks", {
+		configurable: true,
+		value: undefined,
+	});
+	await assert.rejects(
+		sendPendingUpload({
+			task,
+			id: "one",
+			platform: {
+				session: { get: () => assert.fail("must not touch storage") },
+			},
+		}),
+		/Upload coordination is unavailable/,
+	);
+});
+
+test("successful cleanup releases ownership before notification finishes", async (t) => {
+	const first = fixture(t).task;
+	const second = fixture(t).task;
+	const notice = deferred();
+	let pending = {};
+	const options = {
+		id: "one",
+		source: {},
+		platform: {
+			session: {
+				get: async () => ({ "upload:one": pending }),
+				remove: async () => {
+					pending = undefined;
+				},
+			},
+			notify: () => notice.promise,
+		},
+	};
+	const sending = sendPendingUpload(
+		{ ...options, task: first },
+		async () => {},
+	);
+	await tick();
+	assert.equal(
+		await sendPendingUpload({ ...options, task: second }, () =>
+			assert.fail("completed source must not send"),
+		),
+		"missing",
+	);
+	notice.resolve();
+	assert.equal(await sending, "uploaded");
 });

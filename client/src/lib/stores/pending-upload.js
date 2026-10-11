@@ -122,13 +122,15 @@ export function createPendingUpload(
 		activeTask = task;
 		update({ busy: true, status: prepared ? "Uploading…" : "Preparing file…" });
 		try {
-			const source = prepared || (await prepare(task.signal));
-			task.assertCurrent();
-			update({ status: "Uploading…" });
-			await sendPendingUpload(
+			const outcome = await sendPendingUpload(
 				{
 					id,
-					source,
+					prepareSource: async () => {
+						const result = prepared || (await prepare(task.signal));
+						task.assertCurrent();
+						update({ status: "Uploading…" });
+						return result;
+					},
 					task,
 					platform,
 					tags,
@@ -141,7 +143,16 @@ export function createPendingUpload(
 				media.sendUpload,
 			);
 			task.assertCurrent();
-			platform.close();
+			if (outcome === "uploaded") platform.close();
+			else if (outcome === "busy")
+				update({
+					status: "Uploading in another page. Try again when it finishes.",
+				});
+			else
+				update({
+					available: false,
+					status: "This upload was completed or removed.",
+				});
 		} catch (error) {
 			if (!disposed && !task.signal.aborted) update({ status: error.message });
 		} finally {

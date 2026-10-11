@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import { get, writable } from "svelte/store";
 import { submitContextUpload } from "../src/lib/stores/context-upload.js";
 import { createPendingUpload } from "../src/lib/stores/pending-upload.js";
-import { deferred, tick } from "./helpers.js";
+import { deferred, installUploadLocks, tick } from "./helpers.js";
+
+beforeEach(installUploadLocks);
 
 const source = { srcUrl: "https://media.example/photo.png", tabId: 7 };
 const credentials = { privateKey: "key", serverUrl: "https://clip.example" };

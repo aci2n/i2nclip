@@ -50,18 +50,48 @@ export function createUploadTask({ session, signal, onInvalidated }) {
 	};
 }
 
-// Pending-ID cleanup is shared by background and popup submissions.
+// One pending ID has one sender across background and popup pages.
 export async function sendPendingUpload(
-	{ task, id, source, platform, tags = "", onProgress, onUploaded },
+	{
+		task,
+		id,
+		source,
+		prepareSource,
+		platform,
+		tags = "",
+		onProgress,
+		onUploaded,
+	},
 	upload = sendUpload,
 ) {
-	await task.send({ source, platform, tags, onProgress }, upload);
-	await platform.session.remove(`upload:${id}`);
 	task.assertCurrent();
-	onUploaded?.();
+	const locks = globalThis.navigator?.locks;
+	if (!locks) throw new Error("Upload coordination is unavailable. Try again.");
+	const outcome = await locks.request(
+		`i2nclip-pending-upload:${id}`,
+		{ mode: "exclusive", ifAvailable: true },
+		async (lock) => {
+			task.assertCurrent();
+			if (!lock) return "busy";
+			const key = `upload:${id}`;
+			const stored = await platform.session.get(key);
+			task.assertCurrent();
+			if (!stored[key]) return "missing";
+			const prepared = prepareSource ? await prepareSource() : source;
+			task.assertCurrent();
+			await task.send({ source: prepared, platform, tags, onProgress }, upload);
+			await platform.session.remove(key);
+			task.assertCurrent();
+			onUploaded?.();
+			return "uploaded";
+		},
+	);
+	task.assertCurrent();
+	if (outcome !== "uploaded") return outcome;
 	// A failed notification cannot undo a successful upload.
 	await Promise.resolve()
 		.then(() => platform.notify("Uploaded."))
 		.catch(() => {});
 	task.assertCurrent();
+	return outcome;
 }

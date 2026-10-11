@@ -102,7 +102,9 @@ flowchart LR
   task cancels active submissions. The popup alone decides when to close.
 - `media/upload-workflow.js` owns credential-bound tasks, cancellation, and
   late-progress suppression. Its `sendPendingUpload` completes background and
-  popup transfers, clears only their pending ID, and sends a notification.
+  popup transfers under an exclusive `i2nclip-pending-upload:<id>` Web Lock,
+  rereads the pending entry before preparing or sending, clears only that ID,
+  and sends a notification after releasing the lock.
   Callers retain the task through completion and dispose it in `finally`.
 - `media/upload.js` accepts named options, reads bounded bytes, generates a
   thumbnail, and calls the encryption/API layer. A prepared source reuses its
@@ -113,6 +115,14 @@ flowchart LR
 
 Pending sources are retained after both preparation and transfer failures.
 Preparation failures retry only on explicit submission, including unlock popups.
+If another page holds the same pending ID, submission immediately reports that
+it is uploading elsewhere and preserves the tag draft for an explicit retry.
+It does not queue or automatically resend after the other attempt fails. A page
+that cached a completed or reset-cleared source disables submission when the
+storage recheck finds it missing. Different pending IDs can upload independently.
+Web Locks are required for pending submissions; unavailable coordination reports
+an error and keeps the source. Cancellation retains the lock until the underlying
+work settles, so ignored cancellation cannot permit another concurrent sender.
 Retries encrypt again with fresh randomness, creating a new content hash. A lost
 successful upload response can therefore lead to a duplicate item on retry;
 check the library before retrying an ambiguous failure. The server returns 409

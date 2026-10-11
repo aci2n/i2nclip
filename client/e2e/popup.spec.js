@@ -7,6 +7,134 @@ import {
 	test,
 } from "./fixtures.js";
 
+for (const failure of [false, true]) {
+	test(`two upload pages share one sender and ${failure ? "retry explicitly after failure" : "skip a completed source"}`, async ({
+		page,
+		app,
+	}) => {
+		await createLibrary(page, app);
+		const context = page.context();
+		const srcUrl = `${app.web.origin}/shared-remote.svg`;
+		await context.route("**/shared-remote.svg", (route) =>
+			route.fulfill({
+				contentType: "image/svg+xml",
+				body: '<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect width="960" height="540" fill="#308878"/></svg>',
+			}),
+		);
+		await page.evaluate(
+			async (source) => {
+				await browser.storage.session.set({ "upload:shared": source });
+				localStorage.setItem("shared-pending", JSON.stringify(source));
+			},
+			{ srcUrl, name: "landscape-with-a-long-descriptive-file-name.svg" },
+		);
+		const savedSession = (await storage(page)).session;
+		let uploads = 0;
+		let release;
+		const delayed = new Promise((resolve) => {
+			release = resolve;
+		});
+		await context.route("**/api/media", async (route) => {
+			if (route.request().method() !== "POST") return route.continue();
+			if (++uploads === 1) {
+				await delayed;
+				if (failure)
+					return route.fulfill({ status: 503, body: "Temporary failure" });
+			}
+			return route.continue();
+		});
+		const other = await context.newPage();
+		try {
+			await other.addInitScript((session) => {
+				sessionStorage.setItem("i2nclip-e2e", JSON.stringify(session));
+			}, savedSession);
+			for (const popup of [page, other]) {
+				await popup.addInitScript(() => {
+					window.close = () => {
+						window.uploadClosed = true;
+					};
+				});
+				await popup.goto(
+					`${app.web.origin}/client/dist/extension/upload.html?id=shared`,
+				);
+				await expect(popup.locator("#preview")).toBeVisible();
+				// Firefox session storage is shared across extension pages. The
+				// ordinary test shim uses tab-local sessionStorage, so share this ID.
+				await popup.evaluate(() => {
+					const area = browser.storage.session;
+					const originalGet = area.get.bind(area);
+					const originalRemove = area.remove.bind(area);
+					area.get = async (key) =>
+						key === "upload:shared"
+							? { [key]: JSON.parse(localStorage.getItem("shared-pending")) }
+							: originalGet(key);
+					area.remove = async (key) => {
+						if (key === "upload:shared")
+							localStorage.removeItem("shared-pending");
+						await originalRemove(key);
+					};
+				});
+			}
+			await page.locator("#tags").fill("first page");
+			await other.locator("#tags").fill("second page draft");
+			await page.locator("#send button").click();
+			await expect.poll(() => uploads).toBe(1);
+			await other.locator("#send button").click();
+			await expect(other.locator("#status")).toHaveText(
+				"Uploading in another page. Try again when it finishes.",
+			);
+			await expect(other.locator("#tags")).toHaveValue("second page draft");
+			await expect(other.locator("#send button")).toBeEnabled();
+			expect(uploads).toBe(1);
+			if (!failure) await captureSharedUpload(other, "busy");
+			release();
+			await expect(page.locator("#status")).toHaveText(
+				failure ? "Temporary failure" : "Uploaded.",
+			);
+			await expect(other.locator("#status")).toContainText(
+				"Uploading in another page",
+			);
+			await other.locator("#send button").click();
+			await expect(other.locator("#status")).toHaveText(
+				failure ? "Uploaded." : "This upload was completed or removed.",
+			);
+			await expect(other.locator("#tags")).toHaveValue("second page draft");
+			expect(uploads).toBe(failure ? 2 : 1);
+			if (!failure) {
+				await expect(other.locator("#send button")).toBeDisabled();
+				expect(await other.evaluate(() => window.uploadClosed)).toBeUndefined();
+				await captureSharedUpload(other, "missing");
+			}
+			await other.getByRole("link", { name: "Library", exact: true }).click();
+			await expect(other.locator(".card")).toHaveCount(1);
+			await expect(other.locator(".tag-text")).toHaveText(
+				failure ? "second page draft" : "first page",
+			);
+		} finally {
+			release();
+			await other.close();
+		}
+	});
+}
+
+async function captureSharedUpload(page, state) {
+	for (const theme of ["light", "dark"]) {
+		await page.emulateMedia({ colorScheme: theme });
+		for (const width of [320, 360]) {
+			await page.setViewportSize({ width, height: 700 });
+			const dimensions = await page.evaluate(() => ({
+				content: document.documentElement.scrollWidth,
+				viewport: innerWidth,
+			}));
+			expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport);
+			await page.screenshot({
+				path: `e2e/shots/shared-upload-${state}-${width}-${theme}.png`,
+				fullPage: true,
+			});
+		}
+	}
+}
+
 test("a failed immediate context-menu upload opens an explicit retry popup", async ({
 	page,
 	app,

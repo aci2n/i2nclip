@@ -16,7 +16,7 @@ export default defineConfig({
 		outDir: "dist/extension",
 		minify: false,
 		cssMinify: false,
-		target: "firefox128",
+		target: "firefox157",
 		rollupOptions: {
 			input: {
 				app: fileURLToPath(new URL("./src/extension/app.js", import.meta.url)),
