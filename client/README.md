@@ -236,3 +236,8 @@ are made by bundling.
 
 Run `make test-packages` to build and check all packages. See the repository README's
 Client packages section for hosting requirements and CLI extraction instructions.
+
+The server container builds only the web target and serves it through the Rust
+listener alongside `/api/`. `I2N_WEB_DIR` selects its static directory; local
+source execution defaults to `client/dist/web`. Browser E2E builds web, extension,
+and CLI artifacts and tests the web client on the Rust listener's own origin.

@@ -15,6 +15,7 @@ mod media;
 #[cfg(test)]
 mod reference_crypto;
 mod routes;
+mod web;
 
 pub mod crypto;
 
@@ -79,10 +80,10 @@ pub async fn issue_registration_otc(database_url: &str, ttl_secs: u64) -> Result
     result
 }
 
-/// Build the HTTP router after connecting and initializing the database.
+/// Build the API and web router after connecting and initializing the database.
 pub async fn router(database_url: &str, origin: &str) -> Result<axum::Router, Error> {
     let state = open_state(database_url, normalize_origin(origin)?).await?;
-    Ok(routes::router(state))
+    Ok(web::serve(routes::router(state), web::directory()))
 }
 
 async fn open_state(database_url: &str, origin: String) -> Result<AppState, Error> {
@@ -158,7 +159,7 @@ pub async fn run() -> Result<(), Error> {
     init_tracing();
     let origin = origin_from_env()?;
     let state = open_state(&database_url_from_env()?, origin).await?;
-    let app = routes::router(state.clone());
+    let app = web::serve(routes::router(state.clone()), web::directory());
     let listener = TcpListener::bind(LISTEN).await?;
     tracing::info!(listen = LISTEN, origin = state.origin(), "listening");
     let (stop, receiver) = tokio::sync::watch::channel(false);

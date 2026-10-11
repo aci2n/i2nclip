@@ -13,7 +13,7 @@
     "test": "node --test tests/*.test.js",
     "build:extension": "vite build --config vite.extension.config.js",
     "dev:extension": "npm run build:extension -- --watch",
-    "e2e": "npm run build:extension && npm run pack:cli && playwright test",
+    "e2e": "npm run build:web && npm run build:extension && npm run pack:cli && playwright test",
     "pack:extension": "npm run build:extension && rm -f dist/i2nclip.xpi && cd dist/extension && zip -q -r ../i2nclip.xpi .",
     "cli": "node cli/index.js",
     "build:web": "vite build",

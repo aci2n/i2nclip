@@ -2,6 +2,7 @@
 
 ## Layout and commands
 
+- The server image includes only the web client build, served by Rust on port 8080 alongside the API. `I2N_WEB_DIR` defaults to `client/dist/web` locally and is set to `/usr/local/share/i2nclip/web` in the image.
 - The Rust server lives in `src/`. All frontend source, npm tooling, browser tests, and extension assets live in `client/`.
 - `client/` is a Svelte 5 + Vite project. Reusable crypto, API, media, stores, and components live in `client/src/lib/`. Firefox APIs belong only in `client/src/extension/`, behind the platform adapter.
 - Firefox's manifest, page shells, icons, and update metadata live in `client/public/`. Build before loading `client/dist/extension/manifest.json` as a temporary add-on.

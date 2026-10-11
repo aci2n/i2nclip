@@ -2,6 +2,14 @@
 # Run with I2N_ORIGIN and either I2N_DATABASE_URL or I2N_DATABASE_URL_FILE.
 # PostgreSQL owns persistent storage.
 
+FROM docker.io/library/node:22.23.3-bookworm-slim AS web
+WORKDIR /client
+COPY client/package.json client/package-lock.json ./
+RUN npm ci
+COPY client/index.html client/vite.config.js ./
+COPY client/src ./src
+RUN npm run build:web
+
 FROM docker.io/library/rust:1-bookworm AS build
 WORKDIR /src
 ENV CARGO_TERM_COLOR=never
@@ -22,8 +30,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --no-create-home i2n
 COPY --from=build /src/target/release/i2nclip /usr/local/bin/i2nclip
+COPY --from=web /client/dist/web /usr/local/share/i2nclip/web
+ENV I2N_WEB_DIR=/usr/local/share/i2nclip/web
 USER i2n
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8080/api/health || exit 1
+    CMD curl -fsS http://127.0.0.1:8080/api/health >/dev/null && curl -fsS http://127.0.0.1:8080/ >/dev/null
 CMD ["i2nclip"]

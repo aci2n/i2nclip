@@ -95,6 +95,29 @@ This optional profile exercises two maximum-size uploads followed by two concurr
 
 For separate release-server, Node-client, and PostgreSQL process measurements, see [the process profile](doc/postgresql-profile.md). `make test-profile` also checks chunked uploads and held downloads.
 
+## Web client in the server image
+
+`make container` builds the web client in a Node 22.23.3 stage and copies only
+its static HTML/JS/CSS into the final Rust server image. Rust serves the web
+client at `/` and its assets at `/assets/`, alongside the existing `/api/` routes.
+The image runs one process as uid 10001; Node and npm are absent at runtime.
+Its health check verifies both API health and the web entry page.
+
+`I2N_WEB_DIR` selects the directory of built web files. The image sets it to
+`/usr/local/share/i2nclip/web`; source execution defaults to `client/dist/web`
+relative to the working directory. Run `npm run build:web --prefix client`
+before `cargo run` to serve the built client locally, then select that server
+origin in Settings. Missing local web files return 404 while the API stays usable.
+HTML revalidates on each use; generated hashed assets are cached immutably.
+Unknown API paths and missing assets return 404 instead of an HTML fallback.
+
+In i2nfra, the existing Caddy proxy and i2nclip Quadlet serve both API and UI at
+`https://clip.i2n.duckdns.org`. No extra container, network, or CORS setup is needed.
+The web browser session is separate from the extension; restore the same recovery
+file to access its library. Build/push updates both API and UI together. See
+`i2nfra/I2NCLIP.md` for image backup, explicit service restart, health checks,
+and rollback; `make push` alone does not restart the running service.
+
 ## Self-hosting
 
 The image runs as uid 10001 and has no persistent application volume. PostgreSQL owns storage. Pass only the application owner's credentials to i2nclip. In Quadlet, set `I2N_ORIGIN` with `Environment=` and mount a Podman secret at a file path provided by `I2N_DATABASE_URL_FILE`. `I2N_DATABASE_URL` remains available for local development. `make container` builds the image. Put HTTPS, rate limits, and abuse controls on a reverse proxy. The API lives at `/api/…` on a dedicated origin; path prefixes are unsupported. PostgreSQL must stay private, with password authentication. `sslmode=disable` is suitable only for the private same-host container network configured in i2nfra.
