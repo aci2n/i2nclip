@@ -21,11 +21,15 @@ async function entries(file, command, args) {
 test("web ZIP contains only its entry page and bundled assets", async () => {
 	const names = await entries("i2nclip-web.zip", "unzip", ["-Z1"]);
 	assert(names.includes("index.html"));
+	assert(names.includes("favicon.ico"));
 	assert(names.some((name) => /^assets\/.*\.js$/.test(name)));
 	assert(names.some((name) => /^assets\/.*\.css$/.test(name)));
 	assert(
 		names.every(
-			(name) => name === "index.html" || /^assets\/[^/]+\.(js|css)$/.test(name),
+			(name) =>
+				name === "index.html" ||
+				name === "favicon.ico" ||
+				/^assets\/[^/]+\.(js|css)$/.test(name),
 		),
 	);
 	const html = await readFile(join(dist, "web/index.html"), "utf8");

@@ -18,6 +18,10 @@ pub(crate) fn serve(api: Router, directory: PathBuf) -> Router {
     let html = Router::new()
         .route_service("/", ServeFile::new(directory.join("index.html")))
         .route_service("/index.html", ServeFile::new(directory.join("index.html")))
+        .route_service(
+            "/favicon.ico",
+            ServeFile::new(directory.join("favicon.ico")),
+        )
         .layer(map_response(html_cache));
     let assets = Router::new()
         .nest_service(
@@ -66,6 +70,7 @@ mod tests {
             std::fs::create_dir(&directory).unwrap();
             std::fs::create_dir(directory.join("assets")).unwrap();
             std::fs::write(directory.join("index.html"), "<html>web</html>").unwrap();
+            std::fs::write(directory.join("favicon.ico"), b"\x00\x00\x01\x00").unwrap();
             std::fs::write(directory.join("assets/app-ab123456.js"), "export {};").unwrap();
             std::fs::write(directory.join("assets/app-ab123456.css"), "body {}").unwrap();
             std::fs::write(directory.join("private.txt"), "not public").unwrap();
@@ -135,7 +140,23 @@ mod tests {
                 .unwrap()
                 .is_empty());
         }
-        for path in ["/", "/index.html", "/assets/app-ab123456.js"] {
+        let favicon = request(app.clone(), Method::GET, "/favicon.ico").await;
+        assert_eq!(favicon.status(), StatusCode::OK);
+        assert_eq!(favicon.headers()[header::CACHE_CONTROL], "no-cache");
+        assert!(favicon.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .contains("icon"));
+        assert_eq!(
+            to_bytes(favicon.into_body(), 1024).await.unwrap(),
+            &b"\x00\x00\x01\x00"[..]
+        );
+        for path in [
+            "/",
+            "/index.html",
+            "/favicon.ico",
+            "/assets/app-ab123456.js",
+        ] {
             let response = request(app.clone(), Method::HEAD, path).await;
             assert_eq!(response.status(), StatusCode::OK);
             assert!(response.headers().contains_key(header::CONTENT_LENGTH));
