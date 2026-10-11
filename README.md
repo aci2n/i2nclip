@@ -247,7 +247,8 @@ A tag is stored as `HMAC-SHA256` of the normalized word, keyed from the private 
 
 After deploying, run `make test-smoke` against the public server
 (`https://clip.i2n.duckdns.org`). It uses the Node version in `client/.nvmrc` and
-needs no frontend build or installed npm dependencies. Override the executable
+needs no frontend build. Install its OPAQUE dependency with `npm ci --prefix client`.
+Override the executable
 with `NODE=/path/to/node` when needed.
 
 Put the testing invitation in `~/.config/i2nclip/smoke/otc` and its password in
@@ -268,7 +269,10 @@ credential directory for another deployment. `SMOKE_DIR` defaults to
 `~/.config/i2nclip/smoke` and must already contain `otc` and `pw`; it is independent of the
 normal CLI's XDG recovery location.
 
-The test uploads random 1 KiB, 1 MiB, and 32 MiB files individually, checks
+The test authenticates both pairing participants with OPAQUE, compares their
+verification codes, verifies encrypted identity transfer and acknowledgment,
+and cancels the relay room. Pairing secrets and identities are never printed.
+It then uploads random 1 KiB, 1 MiB, and 32 MiB files individually, checks
 metadata and tag searches, verifies downloaded bytes, exercises tag replacement
 and normalized add/remove, deletes its files, and checks that deleted metadata
 returns HTTP 404. Expect approximately 66 MiB of upload/download traffic per run.

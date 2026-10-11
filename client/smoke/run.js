@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url";
 import { passwordFromFile, readFileBounded } from "../cli/io.js";
 import { run as runCli } from "../cli/run.js";
 import * as library from "../src/lib/index.js";
+import { createPairingCrypto } from "../src/lib/pairing/crypto.js";
+import { pairingRelay } from "../src/lib/pairing/service.js";
+import { pairingContext, pairingSecret } from "../src/lib/protocol/pairing.js";
 
 export const DEFAULT_SERVER = "https://clip.i2n.duckdns.org";
 export const FILES = [
@@ -51,6 +54,7 @@ export async function smoketest({
 	cleanupTimeoutMs = 30_000,
 	files = FILES,
 	makeRandom = randomBytes,
+	relay = pairingRelay,
 } = {}) {
 	const recoveryPath = join(resolve(directory), "recovery.json");
 	const passwordPath = join(resolve(directory), "pw");
@@ -63,6 +67,7 @@ export async function smoketest({
 	let credentials;
 	let uploaded = false;
 	let cleanupFailed = false;
+	let pairingRoom;
 
 	const bounded = (parent) => {
 		const timeout = AbortSignal.timeout(commandTimeoutMs);
@@ -133,6 +138,73 @@ export async function smoketest({
 			privateKey: await api.unwrapPrivateKey(recovery.wrappedKey, password),
 		};
 		report("PASS registration (encrypted identity retained for reuse)");
+		stage = "pairing authentication";
+		const pairing = relay(serverUrl, bounded(signal));
+		pairingRoom = await pairing.create(credentials.privateKey);
+		const context = pairingContext(serverUrl, pairingRoom);
+		const sender = createPairingCrypto();
+		const receiver = createPairingCrypto();
+		const secret = pairingSecret();
+		await sender("senderSetup", { context, secret });
+		const joined = await pairing.join(
+			pairingRoom.id,
+			await receiver("receiverStart", { secret }),
+		);
+		const exchange = async (room, peer, step, message) => {
+			const submitted = await pairing.submit(room, step, message);
+			check(submitted.step === step && submitted.message === message);
+			const snapshot = await pairing.poll(peer);
+			check(pairingContext(serverUrl, snapshot) === context);
+			check(snapshot.step === step && snapshot.message === message);
+			return snapshot.message;
+		};
+		check(pairingContext(serverUrl, joined) === context && joined.step === 1);
+		const response = await exchange(
+			pairingRoom,
+			joined,
+			2,
+			await sender("senderResponse", { message: joined.message }),
+		);
+		const finish = await exchange(
+			joined,
+			pairingRoom,
+			3,
+			await receiver("receiverFinish", { context, message: response }),
+		);
+		await sender("senderFinish", { message: finish });
+		const verification = await sender("verificationCode", {});
+		check(
+			/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(
+				verification,
+			),
+		);
+		same(await receiver("verificationCode", {}), verification);
+		report("PASS pairing authentication and verification codes");
+		stage = "pairing encrypted identity transfer";
+		const identity = {
+			v: 1,
+			...credentials,
+			publicKey: (await api.loadKey(credentials.privateKey)).registrationKey,
+		};
+		const transfer = await exchange(
+			pairingRoom,
+			joined,
+			4,
+			await sender("transfer", { value: identity }),
+		);
+		same(await receiver("receive", { message: transfer }), identity);
+		const acknowledgment = await exchange(
+			joined,
+			pairingRoom,
+			5,
+			await receiver("acknowledge", {}),
+		);
+		await sender("verifyAcknowledgment", { message: acknowledgment });
+		report("PASS pairing encrypted identity and acknowledgment");
+		stage = "pairing cancellation";
+		await pairing.cancel(pairingRoom);
+		pairingRoom = undefined;
+		report("PASS pairing cancellation");
 		temporary = await mkdtemp(join(tmpdir(), "i2nclip-smoke-"));
 		const saved = [];
 		for (const file of files) {
@@ -216,6 +288,17 @@ export async function smoketest({
 		failure = error;
 		failedStage = stage;
 	} finally {
+		if (pairingRoom) {
+			try {
+				await relay(serverUrl, AbortSignal.timeout(cleanupTimeoutMs)).cancel(
+					pairingRoom,
+				);
+				report("PASS pairing cleanup");
+			} catch {
+				cleanupFailed = true;
+				report("FAIL pairing cleanup (room will expire)");
+			}
+		}
 		if (uploaded && credentials) {
 			// Independent of the interrupted/expired command; bounded as a whole.
 			const cleanupSignal = AbortSignal.timeout(cleanupTimeoutMs);

@@ -42,7 +42,39 @@ async function fixture(t, { create = false, origin = serverUrl } = {}) {
 		logs: [],
 		generated: [],
 		localPaths: [],
+		pairingSteps: [],
+		pairingCanceled: 0,
 	};
+	let room;
+	const relay = (_origin, signal) => ({
+		create: async () => {
+			room = {
+				v: 1,
+				id: "2345",
+				instance: "a".repeat(22),
+				step: 0,
+				capability: "sender",
+			};
+			return { ...room };
+		},
+		join: async (_id, message) => {
+			room = { ...room, step: 1, message };
+			return { ...room, capability: "receiver" };
+		},
+		submit: async (_participant, step, message) => {
+			signal.throwIfAborted();
+			if (state.pairingFailure === step) throw httpError(503, password);
+			assert.equal(step, room.step + 1);
+			state.pairingSteps.push(step);
+			room = { ...room, step, message };
+			return { ...room };
+		},
+		poll: async () => ({ ...room }),
+		cancel: async () => {
+			signal.throwIfAborted();
+			state.pairingCanceled++;
+		},
+	});
 	const api = {
 		...library,
 		isKeyRegistered: async () => state.registered,
@@ -122,6 +154,7 @@ async function fixture(t, { create = false, origin = serverUrl } = {}) {
 		directory,
 		api,
 		cli,
+		relay,
 		state,
 		report: (line) => state.logs.push(line),
 		serverUrl,
@@ -145,6 +178,8 @@ test("smoke defaults include a maximum-size file and verify the complete CLI wor
 		FILES.map((file) => file.size),
 	);
 	assert.equal(f.state.registrations, 0);
+	assert.deepEqual(f.state.pairingSteps, [2, 3, 4, 5]);
+	assert.equal(f.state.pairingCanceled, 1);
 	assert.equal(f.state.items.size, 0);
 	assert.equal(
 		f.state.calls.filter((call) => call.command === "upload").length,
@@ -160,6 +195,18 @@ test("smoke defaults include a maximum-size file and verify the complete CLI wor
 		await assert.rejects(stat(path), { code: "ENOENT" });
 	for (const secret of [password, otc])
 		assert.ok(!f.state.logs.join("\n").includes(secret));
+});
+
+test("pairing failure cancels its room before any upload and hides secrets", async (t) => {
+	const f = await fixture(t);
+	f.state.pairingFailure = 4;
+	await assert.rejects(smoketest(f), {
+		message:
+			"Smoke test failed at pairing encrypted identity transfer (HTTP 503).",
+	});
+	assert.equal(f.state.pairingCanceled, 1);
+	assert.equal(f.state.items.size, 0);
+	assert.ok(!f.state.logs.join("\n").includes(password));
 });
 
 test("first run creates protected recovery and later runs reuse the same identity", async (t) => {
@@ -241,7 +288,7 @@ test("commands time out and cleanup uses a fresh signal", async (t) => {
 	const keepAlive = setInterval(() => {}, 1000);
 	try {
 		await assert.rejects(
-			smoketest({ ...f, commandTimeoutMs: 100 }),
+			smoketest({ ...f, commandTimeoutMs: 1000 }),
 			/upload 1 KiB/,
 		);
 	} finally {
