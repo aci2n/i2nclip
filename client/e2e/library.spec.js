@@ -179,7 +179,10 @@ test("empty library upload and clear-search actions work", async ({
 	await page.locator("#tags").fill("missing");
 	await page.locator("#tags").press("Enter");
 	await expect(
-		page.getByRole("heading", { name: "No matching clips", exact: true }),
+		page.getByRole("heading", {
+			name: "No files match your search",
+			exact: true,
+		}),
 	).toBeVisible();
 	await shot(page, "no-search-results");
 	await page.getByRole("button", { name: "Clear search", exact: true }).click();
@@ -558,7 +561,7 @@ test("a slow search cannot clear the newer search results", async ({
 	await requestFinished;
 	await expect(page.locator(".card strong")).toHaveText("saved.png");
 	await expect(
-		page.getByRole("heading", { name: "No matching clips" }),
+		page.getByRole("heading", { name: "No files match your search" }),
 	).toBeHidden();
 });
 

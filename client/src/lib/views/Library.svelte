@@ -105,7 +105,7 @@ let filesInput = $state();
 				Upload files
 			</button>
 		{:else}
-			<h2>No matching clips</h2>
+			<h2>No files match your search</h2>
 			<p>Try different tags or clear your search to see all clips.</p>
 			<button
 				type="button"
