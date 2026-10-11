@@ -45,8 +45,11 @@ p {
 }
 label {
 	display: block;
-	margin: 1rem 0 0.5rem;
+	margin: 0;
 	font-size: 0.9rem;
+}
+form label {
+	margin: 1rem 0 0.5rem;
 }
 input,
 button {
