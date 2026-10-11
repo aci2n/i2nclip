@@ -17,7 +17,7 @@ Current verification is recorded in [priorities.md](priorities.md).
 | Request | Implemented maximum body bytes | Implemented total body-read deadline |
 | --- | --- | --- |
 | Media GET and DELETE | 0 | 10 seconds |
-| Metadata PUT | 69,640 (two prefixes + 65,536 metadata + 4,096 token text) | 30 seconds |
+| Metadata PUT | 69,672 (32-byte prior metadata hash + two prefixes + 65,536 metadata + 4,096 token text) | 30 seconds |
 | Upload POST | 33,624,140 (three prefixes plus metadata, content, and token text) | 120 seconds |
 | Registration POST | 4,096 (existing limit) | 10 seconds |
 
@@ -54,6 +54,8 @@ Handlers reject oversized Content-Length before reading. Upload then acquires it
 ## Implemented download streaming
 
 Content GETs acquire one of sixteen download slots after authenticated empty-body verification, waiting when all are occupied. These slots are separate from upload slots. The nonce has already been spent. Capacity is acquired before ownership lookup, so missing/unowned hashes also wait and then return `404`. Saturation does not return `503`. Admission waits and response draining currently have no duration limit.
+
+The [transfer and shutdown proposal](transfer-shutdown-proposal.md) describes finite admission waits, download resource lifetimes, and a process shutdown deadline. Those changes are proposed, not implemented.
 
 `Database::content` selects authorized complete bytes in one statement. SQL length constraints enforce sealed-content bounds. The connection is released before response construction. The body sends owned byte slices in at most 64 KiB pieces without copying each slice, declares Content-Length, and retains download admission until completion or disposal. Concurrent deletion cannot change fetched bytes.
 

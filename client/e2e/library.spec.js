@@ -114,12 +114,16 @@ test("stale metadata edits refresh tags and preserve the draft for retry", async
 	});
 	await otherCard.getByRole("button", { name: "Add tag to dot.png" }).click();
 	await otherCard.locator(".tags input").fill("second");
-	await otherCard.getByRole("button", { name: "Save tag", exact: true }).click();
+	await otherCard
+		.getByRole("button", { name: "Save tag", exact: true })
+		.click();
 	await startedPut;
 
 	await firstCard.getByRole("button", { name: "Add tag to dot.png" }).click();
 	await firstCard.locator(".tags input").fill("first");
-	await firstCard.getByRole("button", { name: "Save tag", exact: true }).click();
+	await firstCard
+		.getByRole("button", { name: "Save tag", exact: true })
+		.click();
 	await expect(firstCard.locator(".tag-text")).toHaveText(["first"]);
 	continuePut();
 	await expect(otherCard.locator("output")).toContainText(
@@ -127,7 +131,9 @@ test("stale metadata edits refresh tags and preserve the draft for retry", async
 	);
 	await expect(otherCard.locator(".tag-text")).toHaveText(["first"]);
 	await expect(otherCard.locator(".tags input")).toHaveValue("second");
-	await otherCard.getByRole("button", { name: "Save tag", exact: true }).click();
+	await otherCard
+		.getByRole("button", { name: "Save tag", exact: true })
+		.click();
 	await expect(otherCard.locator(".tag-text")).toHaveText(["first", "second"]);
 	await other.close();
 	await page.reload();

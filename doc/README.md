@@ -7,7 +7,8 @@
 - [Cryptography](crypto.md): exact algorithms, key derivation, encrypted formats, and security boundaries.
 - [Backend review](backend-review.md): findings, priorities, simplification opportunities, and verification.
 - [Priorities and implementation scope](priorities.md): completed work, remaining ordered changes, and the next approval boundary.
-- [Request limits and admission](request-limits.md): implemented body-read deadlines, endpoint caps, and separate two-slot upload/download admission.
+- [Transfer and shutdown proposal](transfer-shutdown-proposal.md): proposed admission, response-resource, and shutdown deadlines; not implemented.
+- [Request limits and admission](request-limits.md): implemented body-read deadlines, endpoint caps, and separate four-upload and sixteen-download admission.
 
 These documents describe the working tree reviewed on 2026-10-10 and subsequent upload receipt removal, strict Ed25519 validation, browser-compatible origin normalization, body-read deadlines, endpoint-specific byte caps, upload/download admission, and content-hash identifiers with transactional PostgreSQL content storage. Other recommendations remain proposals; their status is tracked in the priority list. The Rust server is in `src/`; the corresponding browser implementation is in `client/src/lib/protocol/` and `client/src/lib/api.js`. Unrelated frontend work is preserved.
 

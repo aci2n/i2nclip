@@ -55,6 +55,11 @@ retry after failure. Client/Rust tests, checker, lint, formatting, and extension
 packaging passed. The full real-API Firefox suite passed all 77 tests. Busy and missing-state screenshots at narrow widths were
 inspected in both themes.
 
-Finding 2 is deferred: metadata and tokens remain atomically replaced, but stale
-edits across library pages can overwrite an earlier edit. No metadata-protocol
-change was made.
+Finding 2 is now addressed: metadata PUT frames include the SHA-256 hash of the
+previous encrypted metadata. The server locks the authorized file row and
+compares that hash before replacing metadata and tokens. A stale replacement
+returns `409` with `metadata_conflict` and the current encrypted item, without
+writing. The client loads the current tags and preserves its draft for explicit
+retry. The database race regression and two-page Firefox regression passed in
+the 2026-10-11 review; all 78 Firefox tests passed. See [protocol.md](protocol.md)
+for the current frame and response format.

@@ -177,7 +177,12 @@ export function createMediaItem(
 					}));
 					return { conflict: true, item: null };
 				}
-				item = { ...item, tokens: result.tokens, metaHash: result.metaHash, metadata };
+				item = {
+					...item,
+					tokens: result.tokens,
+					metaHash: result.metaHash,
+					metadata,
+				};
 				state.update((current) => ({
 					...current,
 					metadata,

@@ -149,13 +149,21 @@ export async function updateMetadata({
 			const item = await openMeta(key, payload.media);
 			return {
 				conflict: true,
-				item: { ...item, metaHash: item.metaHash, tokens: payload.media.tokens },
+				item: {
+					...item,
+					metaHash: item.metaHash,
+					tokens: payload.media.tokens,
+				},
 			};
 		}
 	}
 	if (!response.ok) throw await responseError(response);
 	const saved = await response.json();
-	return { conflict: false, tokens: saved.tokens, metaHash: await bodyHash(meta) };
+	return {
+		conflict: false,
+		tokens: saved.tokens,
+		metaHash: await bodyHash(meta),
+	};
 }
 
 export async function remove({ serverUrl, privateKey, id, signal }) {
