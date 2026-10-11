@@ -1,5 +1,6 @@
 # Backend review and protocol documentation
 
+- [Database concurrency audit](database-concurrency-audit.md): query-by-query isolation reasoning, concurrent operation outcomes, and startup serialization.
 - [PostgreSQL storage plan](postgresql-plan.md): agreed application, deployment, and verification scope.
 - [PostgreSQL process profile](postgresql-profile.md): separate server/client memory measurements, PostgreSQL process sampling, and reproduction steps.
 - [Protocol](protocol.md): HTTP API, signed requests, frames, limits, and storage semantics.

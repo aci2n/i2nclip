@@ -4,6 +4,8 @@
 //! invitation consumption commit their related writes in one transaction.
 //! Media queries include the owner public key from the verified signature.
 //! Downloads return owned bytes so sending a response holds no connection.
+//! Workflows use PostgreSQL's default READ COMMITTED isolation. Metadata writers
+//! lock the file before reading/replacing its tags; listing uses one snapshot.
 
 use std::time::Duration;
 
@@ -88,6 +90,11 @@ impl Database {
     /// Apply the idempotent initial schema atomically before serving requests.
     pub(crate) async fn initialize(&self) -> Result<(), Error> {
         let mut tx = self.pool.begin().await?;
+        // IF NOT EXISTS does not serialize concurrent catalog creation. Share a
+        // database-local, transaction-scoped startup lock across server instances.
+        sqlx::query("SELECT pg_advisory_xact_lock(1764904547, 1)")
+            .execute(&mut *tx)
+            .await?;
         sqlx::raw_sql(include_str!("../sql/001_init.sql"))
             .execute(&mut *tx)
             .await?;
@@ -429,18 +436,16 @@ async fn replace_tokens(
     .bind(id)
     .execute(&mut **tx)
     .await?;
-    for token in tokens {
-        sqlx::query(
-            r#"
-            INSERT INTO tags (file_id, token)
-            VALUES ($1, $2)
-            "#,
-        )
-        .bind(id)
-        .bind(token)
-        .execute(&mut **tx)
-        .await?;
-    }
+    sqlx::query(
+        r#"
+        INSERT INTO tags (file_id, token)
+        SELECT $1, token FROM unnest($2::text[]) AS tokens(token)
+        "#,
+    )
+    .bind(id)
+    .bind(tokens)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 
@@ -449,6 +454,12 @@ mod tests {
     use super::*;
 
     async fn fixture() -> (Database, PgPool, String) {
+        let (db, admin, name) = empty_fixture().await;
+        db.initialize().await.unwrap();
+        (db, admin, name)
+    }
+
+    async fn empty_fixture() -> (Database, PgPool, String) {
         let base = std::env::var("I2N_TEST_DATABASE_URL")
             .expect("set I2N_TEST_DATABASE_URL; real PostgreSQL is required");
         let admin = PgPool::connect(&base)
@@ -470,7 +481,6 @@ mod tests {
         let mut url = url::Url::parse(&base).unwrap();
         url.set_path(&name);
         let db = Database::connect(url.as_str()).await.unwrap();
-        db.initialize().await.unwrap();
         (db, admin, name)
     }
 
@@ -481,6 +491,304 @@ mod tests {
             .await
             .unwrap();
         admin.close().await;
+    }
+
+    async fn wait_for_locks(db: &Database, query_pattern: &str, count: i64) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let waiting: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE $1",
+                )
+                .bind(query_pattern)
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+                if waiting >= count {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("operation must wait for the preceding transaction");
+    }
+
+    fn sealed_blob(value: u8) -> [u8; 29] {
+        let mut blob = [value; 29];
+        blob[0] = 1;
+        blob
+    }
+
+    #[tokio::test]
+    async fn bulk_tags_support_maximum_set_replacement_and_clearing() {
+        let (db, admin, name) = fixture().await;
+        let mut tokens: Vec<_> = (0..crate::MAX_TAGS)
+            .map(|value| URL_SAFE_NO_PAD.encode([value as u8; 32]))
+            .collect();
+        let item = db
+            .add(
+                [1; 32],
+                &crate::reference_crypto::encode_post(
+                    &sealed_blob(1),
+                    &sealed_blob(1),
+                    &tokens.join("\n"),
+                ),
+            )
+            .await
+            .unwrap();
+        tokens.sort();
+        let (mut listed, _) = db.list([1; 32], &tokens, None).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        listed[0].tokens.sort();
+        assert_eq!(listed[0].tokens, tokens);
+
+        // Replace a full set with a different full set, not just append rows.
+        let replacement: Vec<_> = (32..32 + crate::MAX_TAGS)
+            .map(|value| URL_SAFE_NO_PAD.encode([value as u8; 32]))
+            .collect();
+        let result = db
+            .update_meta(
+                [1; 32],
+                &item.id,
+                &crate::reference_crypto::encode_meta(
+                    &crypto::body_hash_bytes(&item.meta),
+                    &sealed_blob(2),
+                    &replacement.join("\n"),
+                ),
+            )
+            .await
+            .unwrap();
+        let MetadataUpdate::Updated(updated) = result else {
+            panic!("current metadata must update");
+        };
+        assert!(db.list([1; 32], &tokens, None).await.unwrap().0.is_empty());
+        let (mut listed, _) = db.list([1; 32], &replacement, None).await.unwrap();
+        let mut sorted = replacement;
+        sorted.sort();
+        listed[0].tokens.sort();
+        assert_eq!(listed[0].tokens, sorted);
+
+        let result = db
+            .update_meta(
+                [1; 32],
+                &item.id,
+                &crate::reference_crypto::encode_meta(
+                    &crypto::body_hash_bytes(&updated.meta),
+                    &sealed_blob(3),
+                    "",
+                ),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(result, MetadataUpdate::Updated(_)));
+        let (listed, _) = db.list([1; 32], &[], None).await.unwrap();
+        assert!(listed[0].tokens.is_empty());
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_initialization_preserves_data() {
+        let (db, admin, name) = empty_fixture().await;
+        // Queue both initializers before any catalogs exist.
+        let mut blocker = db.pool.begin().await.unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock(1764904547, 1)")
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        let release = async {
+            wait_for_locks(&db, "%pg_advisory_xact_lock%", 2).await;
+            blocker.commit().await.unwrap();
+        };
+        let (a, b, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(db.initialize(), db.initialize(), release)
+        })
+        .await
+        .unwrap();
+        a.unwrap();
+        b.unwrap();
+        db.remember_nonce("preserved", 100).await.unwrap();
+        let (a, b) = tokio::join!(db.initialize(), db.initialize());
+        a.unwrap();
+        b.unwrap();
+        assert!(matches!(
+            db.remember_nonce("preserved", 100).await,
+            Err(Error::Unauthorized)
+        ));
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn waiting_metadata_update_reads_committed_metadata_and_tags() {
+        let (db, admin, name) = fixture().await;
+        let original = [1; 29];
+        let committed = sealed_blob(2);
+        let token = URL_SAFE_NO_PAD.encode([3; 32]);
+        let item = db
+            .add(
+                [1; 32],
+                &crate::reference_crypto::encode_post(&original, &[1; 29], ""),
+            )
+            .await
+            .unwrap();
+        let mut writer = db.pool.begin().await.unwrap();
+        sqlx::query("UPDATE files SET meta = $1 WHERE id = $2")
+            .bind(committed.as_slice())
+            .bind(&item.id)
+            .execute(&mut *writer)
+            .await
+            .unwrap();
+        replace_tokens(&mut writer, &item.id, std::slice::from_ref(&token))
+            .await
+            .unwrap();
+        // One listing snapshot must not mix uncommitted tags with old metadata.
+        let (listed, _) = db.list([1; 32], &[], None).await.unwrap();
+        assert_eq!(listed[0].meta, original);
+        assert!(listed[0].tokens.is_empty());
+        let updater = {
+            let db = db.clone();
+            let id = item.id.clone();
+            tokio::spawn(async move {
+                db.update_meta(
+                    [1; 32],
+                    &id,
+                    &crate::reference_crypto::encode_meta(
+                        &crypto::body_hash_bytes(&original),
+                        &sealed_blob(4),
+                        "",
+                    ),
+                )
+                .await
+            })
+        };
+        wait_for_locks(&db, "%FOR UPDATE%", 1).await;
+        writer.commit().await.unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(5), updater)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let MetadataUpdate::Conflict(current) = result else {
+            panic!("stale metadata must not overwrite the preceding writer");
+        };
+        assert_eq!(current.meta, committed);
+        assert_eq!(current.tokens, vec![token]);
+        let (listed, _) = db.list([1; 32], &[], None).await.unwrap();
+        assert_eq!(listed[0].meta, current.meta);
+        assert_eq!(listed[0].tokens, current.tokens);
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn competing_metadata_updates_have_one_winner() {
+        let (db, admin, name) = fixture().await;
+        let original = [1; 29];
+        let item = db
+            .add(
+                [1; 32],
+                &crate::reference_crypto::encode_post(&original, &[1; 29], ""),
+            )
+            .await
+            .unwrap();
+        let mut blocker = db.pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM files WHERE id = $1 FOR UPDATE")
+            .bind(&item.id)
+            .fetch_one(&mut *blocker)
+            .await
+            .unwrap();
+        let mut tasks = Vec::new();
+        for value in [2, 3] {
+            let db = db.clone();
+            let id = item.id.clone();
+            tasks.push(tokio::spawn(async move {
+                let token = URL_SAFE_NO_PAD.encode([value; 32]);
+                db.update_meta(
+                    [1; 32],
+                    &id,
+                    &crate::reference_crypto::encode_meta(
+                        &crypto::body_hash_bytes(&original),
+                        &sealed_blob(value),
+                        &token,
+                    ),
+                )
+                .await
+            }));
+        }
+        wait_for_locks(&db, "%FOR UPDATE%", 2).await;
+        blocker.commit().await.unwrap();
+        let mut winner = None;
+        let mut loser = None;
+        for task in tasks {
+            match tokio::time::timeout(Duration::from_secs(5), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()
+            {
+                MetadataUpdate::Updated(item) => assert!(winner.replace(item).is_none()),
+                MetadataUpdate::Conflict(item) => assert!(loser.replace(item).is_none()),
+            }
+        }
+        let winner = winner.expect("one update succeeds");
+        let loser = loser.expect("one update conflicts");
+        assert_eq!(winner.meta, loser.meta);
+        assert_eq!(winner.tokens, loser.tokens);
+        let (listed, _) = db.list([1; 32], &[], None).await.unwrap();
+        assert_eq!(listed[0].meta, winner.meta);
+        assert_eq!(listed[0].tokens, winner.tokens);
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn committed_deletion_prevents_waiting_metadata_update() {
+        let (db, admin, name) = fixture().await;
+        let original = [1; 29];
+        let token = URL_SAFE_NO_PAD.encode([2; 32]);
+        let item = db
+            .add(
+                [1; 32],
+                &crate::reference_crypto::encode_post(&original, &[1; 29], &token),
+            )
+            .await
+            .unwrap();
+        let mut deletion = db.pool.begin().await.unwrap();
+        sqlx::query("DELETE FROM files WHERE id = $1 AND owner = $2")
+            .bind(&item.id)
+            .bind([1_u8; 32].as_slice())
+            .execute(&mut *deletion)
+            .await
+            .unwrap();
+        let updater = {
+            let db = db.clone();
+            let id = item.id;
+            tokio::spawn(async move {
+                db.update_meta(
+                    [1; 32],
+                    &id,
+                    &crate::reference_crypto::encode_meta(
+                        &crypto::body_hash_bytes(&original),
+                        &sealed_blob(3),
+                        "",
+                    ),
+                )
+                .await
+            })
+        };
+        wait_for_locks(&db, "%FOR UPDATE%", 1).await;
+        deletion.commit().await.unwrap();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(5), updater)
+                .await
+                .unwrap()
+                .unwrap(),
+            Err(Error::NotFound)
+        ));
+        let counts: (i64, i64) =
+            sqlx::query_as("SELECT (SELECT count(*) FROM files), (SELECT count(*) FROM tags)")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(counts, (0, 0));
+        dispose(db, admin, name).await;
     }
 
     #[tokio::test]
