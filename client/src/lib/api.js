@@ -96,6 +96,20 @@ export async function list({ serverUrl, privateKey, tags, after, signal }) {
 	return { items, next: page.next || null };
 }
 
+export async function getMetadata({ serverUrl, privateKey, id, signal }) {
+	const key = await loadKey(privateKey);
+	const item = await send(
+		serverUrl,
+		key,
+		"GET",
+		`/api/media/${id}/meta`,
+		new Uint8Array(),
+		undefined,
+		signal,
+	);
+	return { ...(await openMeta(key, item)), tokens: item.tokens };
+}
+
 export async function getContent({
 	serverUrl,
 	privateKey,
@@ -138,7 +152,7 @@ export async function updateMetadata({
 		serverUrl,
 		key,
 		"PUT",
-		`/api/media/${id}`,
+		`/api/media/${id}/meta`,
 		body,
 		undefined,
 		signal,
@@ -362,7 +376,7 @@ async function signedFetch(
 	const payload = method === "GET" || method === "DELETE" ? undefined : body;
 	// fetch() cannot report how much of the body has been sent. The upload
 	// events on XMLHttpRequest can.
-	if (onProgress && payload)
+	if (onProgress && payload && typeof XMLHttpRequest !== "undefined")
 		return requestWithProgress(
 			method,
 			url,

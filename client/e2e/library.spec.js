@@ -105,7 +105,7 @@ test("stale metadata edits refresh tags and preserve the draft for retry", async
 	const heldPut = new Promise((resolve) => (continuePut = resolve));
 	let putStarted;
 	const startedPut = new Promise((resolve) => (putStarted = resolve));
-	await other.route("**/api/media/*", async (route) => {
+	await other.route("**/api/media/*/meta", async (route) => {
 		if (route.request().method() === "PUT") {
 			putStarted();
 			await heldPut;
@@ -419,7 +419,7 @@ test("inline tag saves deduplicate and guard a slow request", async ({
 		started = resolve;
 	});
 	let saves = 0;
-	await page.route(/\/api\/media\/[^/?]+$/, async (route) => {
+	await page.route(/\/api\/media\/[^/?]+\/meta$/, async (route) => {
 		if (route.request().method() !== "PUT") return route.continue();
 		saves++;
 		started();
@@ -584,7 +584,7 @@ test("inline tags keep failed drafts, allow repeated saves, close on blur, remov
 	const card = page.locator(".card");
 	await expect(card).toHaveCount(1);
 	let updates = 0;
-	await page.route(/\/api\/media\/[^/?]+$/, async (route) => {
+	await page.route(/\/api\/media\/[^/?]+\/meta$/, async (route) => {
 		if (route.request().method() !== "PUT") return route.continue();
 		if (++updates === 1)
 			return route.fulfill({ status: 503, body: "Try again" });
@@ -674,7 +674,7 @@ test("a tag draft survives a failed save after focus leaves the editor", async (
 	const requestStarted = new Promise((resolve) => {
 		started = resolve;
 	});
-	await page.route(/\/api\/media\/[^/?]+$/, async (route) => {
+	await page.route(/\/api\/media\/[^/?]+\/meta$/, async (route) => {
 		if (route.request().method() !== "PUT") return route.continue();
 		started();
 		await gate;

@@ -1,3 +1,4 @@
+import { checkServer } from "./server.js";
 import { validateWrappedKey } from "./vault.js";
 
 export function recoveryFile({ serverUrl, wrappedKey }) {
@@ -20,17 +21,9 @@ export function parseRecoveryFile(text) {
 	) {
 		throw new Error("Invalid recovery file.");
 	}
-	let url;
 	try {
-		url = new URL(value.serverUrl);
+		checkServer(value.serverUrl);
 	} catch {
-		throw new Error("Invalid recovery server URL.");
-	}
-	if (
-		!["https:", "http:"].includes(url.protocol) ||
-		url.username ||
-		url.password
-	) {
 		throw new Error("Invalid recovery server URL.");
 	}
 	validateWrappedKey(value.wrappedKey);

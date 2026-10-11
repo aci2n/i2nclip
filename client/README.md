@@ -154,3 +154,60 @@ Organization follows the shared `src/lib` convention from
 without adding SvelteKit to this Vite project. See also Svelte's guidance on
 [stores for async flows](https://svelte.dev/docs/svelte/stores) and
 [derived state, effects, props, and scoped styles](https://svelte.dev/docs/svelte/best-practices).
+
+## Node CLI
+
+The CLI imports the same public API and encryption libraries as the extension.
+Use Node 22.23.3 from `.nvmrc`; no build or additional dependencies are needed.
+Run `node client/cli/index.js --help` from the repository root, or
+`npm run cli --prefix client -- --help`.
+
+The encrypted recovery file defaults to `$XDG_CONFIG_HOME/i2nclip/recovery.json`,
+or `~/.config/i2nclip/recovery.json` when XDG_CONFIG_HOME is unset, empty, or relative.
+Copy the recovery file downloaded by the extension there, or pass
+`--recovery /path/to/i2nclip-recovery.json` to any command. The CLI uses the server
+URL in that document and does not store your password or plaintext identity.
+New recovery files use mode 0600 and the automatically created directory uses
+0700. Existing recovery files are never overwritten.
+
+Passwords are prompted without echo. For scripts, use `--password-file PATH`,
+including `/dev/stdin`; one trailing line ending is removed. Creating a library
+requires at least eight password characters and confirmation when prompted.
+Creation saves the encrypted recovery file before registration. If registration
+fails, use `register` with the same recovery file to retry safely.
+
+```sh
+node client/cli/index.js create --server https://clip.example.com --otc INVITATION
+node client/cli/index.js register --otc INVITATION
+node client/cli/index.js list --tags 'photos,holiday'
+node client/cli/index.js list --after CURSOR
+node client/cli/index.js upload ./photo.jpg --tags 'photos,holiday'
+node client/cli/index.js download ID --output ./saved-photo.jpg
+node client/cli/index.js tags ID --add 'Favorite' --remove 'holiday'
+node client/cli/index.js tags ID --tags 'photos,Favorite'
+node client/cli/index.js tags ID --tags ''
+node client/cli/index.js delete ID
+```
+
+Replace `ID` with a media ID from list/upload output. List returns one page as
+JSON `{items, next}`; pass the next cursor with the same search to continue.
+Other commands also emit JSON to stdout. Prompts and errors use stderr.
+Exit codes are 0 for success, 1 for an operational failure, 2 for invalid command
+arguments, and 130 for interruption. Ctrl-C aborts the active request.
+Downloads require an explicit path and never overwrite existing files.
+
+Upload accepts exactly one local file, at most 32 MiB. It stores the filename,
+content type and tags without generating browser thumbnails. Override content
+sniffing with `--content-type TYPE`. Handle batches externally, for example:
+
+```sh
+for file in ./photos/*; do
+  node client/cli/index.js upload "$file" --tags photos --password-file /path/to/password || break
+done
+```
+
+Tag editing reads `GET /api/media/{id}/meta` directly and updates through
+`PUT /api/media/{id}/meta`, preserving other metadata and the thumbnail. A
+concurrent edit produces an error; rerun to fetch the latest tags. The old
+`PUT /api/media/{id}` route has been removed; update the server and extension
+together.

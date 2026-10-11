@@ -3,24 +3,10 @@ import { isKeyRegistered, registerKey } from "../api.js";
 import { loadKey } from "../protocol/crypto.js";
 import { generatePrivateKey } from "../protocol/identity.js";
 import { parseRecoveryFile, recoveryFile } from "../protocol/recovery.js";
+import { checkServer } from "../protocol/server.js";
 import { unwrapPrivateKey, wrapPrivateKey } from "../protocol/vault.js";
 
 export const DEFAULT_SERVER_URL = "https://clip.i2n.duckdns.org";
-
-function checkServer(serverUrl) {
-	let url;
-	try {
-		url = new URL(serverUrl);
-	} catch {
-		throw new Error("Invalid server URL.");
-	}
-	if (
-		!["http:", "https:"].includes(url.protocol) ||
-		url.username ||
-		url.password
-	)
-		throw new Error("Invalid server URL.");
-}
 
 export function createSession(platform) {
 	const state = writable({

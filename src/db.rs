@@ -310,6 +310,30 @@ impl Database {
         .ok_or(Error::NotFound)
     }
 
+    /// Fetch one metadata snapshot without loading content bytes.
+    pub(crate) async fn metadata(&self, owner: [u8; 32], id: &str) -> Result<Item, Error> {
+        let id = frame::parse_id(id)?;
+        let row = sqlx::query(
+            r#"
+            SELECT id, meta, octet_length(content)::bigint AS bytes, created_at,
+                   ARRAY(SELECT token FROM tags WHERE file_id = files.id ORDER BY token) AS tokens
+            FROM files WHERE owner = $1 AND id = $2
+            "#,
+        )
+        .bind(owner.as_slice())
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(Error::NotFound)?;
+        Ok(Item {
+            id: row.try_get("id")?,
+            meta: row.try_get("meta")?,
+            bytes: row.try_get("bytes")?,
+            created_at: row.try_get("created_at")?,
+            tokens: row.try_get("tokens")?,
+        })
+    }
+
     /// Update the authorized row and replace its tags in the same transaction.
     pub(crate) async fn update_meta(
         &self,

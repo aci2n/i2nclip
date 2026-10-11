@@ -16,9 +16,12 @@ The client generates its identity locally. The server registers only the public 
 | `POST /api/register-key` | No signature; JSON `{"otc":"…","public_key":"…"}` | `204` |
 | `GET /api/media` | Signed; client sends no body | `200`, `{"media":[…],"next":null}` or a cursor |
 | `POST /api/media` | Signed POST frame | `201`, one media object |
+| `GET /api/media/{id}/meta` | Signed; client sends no body | `200`, one encrypted metadata object |
 | `GET /api/media/{id}` | Signed; client sends no body | `200`, encrypted content bytes |
-| `PUT /api/media/{id}` | Signed metadata frame | `200`, one media object |
+| `PUT /api/media/{id}/meta` | Signed metadata frame | `200`, one media object |
 | `DELETE /api/media/{id}` | Signed; client sends no body | `204` |
+
+Metadata reads return the same media object as list entries, without content bytes, and use `Cache-Control: no-store`. Missing items and items owned by another identity return `404`. Metadata reads do not consume download slots. Metadata updates are available only at `/api/media/{id}/meta`; the old PUT route returns `405`.
 
 A media object contains `id`, `created_at` (server Unix seconds), `bytes` (encrypted content length), `tokens` (search fingerprints), and `meta` (encrypted metadata encoded using **standard padded base64**, not b64url).
 
@@ -62,7 +65,7 @@ POST /api/media:
     chunk(encrypted_content)
     chunk(UTF8(tokens joined by LF))
 
-PUT /api/media/{id}:
+PUT /api/media/{id}/meta:
     raw SHA-256 of the previously read encrypted metadata (32 bytes)
     chunk(encrypted_metadata)
     chunk(UTF8(tokens joined by LF))

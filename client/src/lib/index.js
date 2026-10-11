@@ -4,6 +4,8 @@
 
 export {
 	getContent,
+	getMetadata,
+	isKeyRegistered,
 	list,
 	MAX_FILE_BYTES,
 	registerKey,
@@ -30,3 +32,8 @@ export {
 } from "./protocol/crypto.js";
 export { encodeMeta, encodePost } from "./protocol/frame.js";
 export { generatePrivateKey, parsePrivateKey } from "./protocol/identity.js";
+
+export { parseRecoveryFile, recoveryFile } from "./protocol/recovery.js";
+export { checkServer } from "./protocol/server.js";
+export { uniqueTags } from "./protocol/tags.js";
+export { unwrapPrivateKey, wrapPrivateKey } from "./protocol/vault.js";

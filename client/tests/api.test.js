@@ -3,19 +3,25 @@ import test from "node:test";
 
 import {
 	getContent,
+	getMetadata,
 	list,
 	MAX_FILE_BYTES,
 	registerKey,
 	remove,
+	updateMetadata,
 	upload,
 } from "../src/lib/api.js";
+import { bytesToB64 } from "../src/lib/protocol/bytes.js";
 import {
+	authorizationHeader,
 	bodyHash,
 	contentAad,
 	encrypt,
 	loadKey,
+	metaAad,
 } from "../src/lib/protocol/crypto.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
+import { encodeMetaPlain } from "../src/lib/protocol/meta-plain.js";
 
 for (const [body, contentType, message] of [
 	['{"error":"permission denied"}', "application/json", "permission denied"],
@@ -43,6 +49,7 @@ for (const [body, contentType, message] of [
 			() => registerKey({ ...settings, publicKey, otc: "test" }),
 			() => list(settings),
 			() => getContent(settings),
+			() => getMetadata(settings),
 			() => remove(settings),
 		]) {
 			await assert.rejects(request, (error) => error.message === message);
@@ -166,4 +173,120 @@ test("content hashes are checked before decryption", async (t) => {
 		await getContent({ ...options, id: await bodyHash(content) }),
 		plain,
 	);
+});
+
+test("metadata GET and PUT sign the meta route and preserve decrypted fields", async (t) => {
+	const { privateKey } = await generatePrivateKey();
+	const key = await loadKey(privateKey);
+	const id = "a".repeat(64);
+	const metadata = {
+		name: "photo",
+		content_type: "image/png",
+		tags: ["One"],
+		size: 3,
+	};
+	const thumb = new Uint8Array([1, 2, 3]);
+	const meta = await encrypt(
+		key,
+		metaAad(id),
+		encodeMetaPlain(metadata, thumb),
+	);
+	const controller = new AbortController();
+	const methods = [];
+	t.mock.method(globalThis, "fetch", async (url, options) => {
+		assert.equal(String(url), `https://clip.example/api/media/${id}/meta`);
+		assert.equal(options.signal, controller.signal);
+		const [, ts, nonce] = options.headers.authorization.slice(7).split(".");
+		assert.equal(
+			options.headers.authorization,
+			await authorizationHeader({
+				key,
+				origin: "https://clip.example",
+				ts: Number(ts),
+				nonce,
+				method: options.method,
+				path: `/api/media/${id}/meta`,
+				body: options.body ?? new Uint8Array(),
+			}),
+		);
+		methods.push(options.method);
+		return Response.json({
+			id,
+			created_at: 123,
+			bytes: 32,
+			tokens: ["token"],
+			meta: bytesToB64(meta),
+		});
+	});
+	const credentials = {
+		serverUrl: "https://clip.example",
+		privateKey,
+		id,
+		signal: controller.signal,
+	};
+	const item = await getMetadata(credentials);
+	assert.deepEqual(item, {
+		id,
+		createdAt: 123,
+		bytes: 32,
+		metadata,
+		thumb,
+		metaHash: await bodyHash(meta),
+		tokens: ["token"],
+	});
+	const saved = await updateMetadata({
+		...credentials,
+		metadata,
+		thumb,
+		prevMetaHash: item.metaHash,
+	});
+	assert.equal(saved.conflict, false);
+	assert.deepEqual(methods, ["GET", "PUT"]);
+	controller.abort();
+	await assert.rejects(getMetadata(credentials), { name: "AbortError" });
+	assert.deepEqual(methods, ["GET", "PUT"]);
+});
+
+test("undecryptable metadata is returned without an editable payload", async (t) => {
+	const { privateKey } = await generatePrivateKey();
+	const meta = new Uint8Array(29);
+	meta[0] = 1;
+	t.mock.method(globalThis, "fetch", async () =>
+		Response.json({
+			id: "a".repeat(64),
+			created_at: 1,
+			bytes: 1,
+			tokens: [],
+			meta: bytesToB64(meta),
+		}),
+	);
+	const item = await getMetadata({
+		serverUrl: "https://clip.example",
+		privateKey,
+		id: "a".repeat(64),
+	});
+	assert.equal(item.metadata, null);
+	assert.equal(item.thumb, null);
+	assert.equal(item.metaHash, await bodyHash(meta));
+});
+
+test("Node uploads with progress callbacks fall back to fetch", async (t) => {
+	const { privateKey } = await generatePrivateKey();
+	assert.equal(typeof XMLHttpRequest, "undefined");
+	let calls = 0;
+	t.mock.method(globalThis, "fetch", async () => {
+		calls++;
+		return Response.json({ id: "saved" }, { status: 201 });
+	});
+	await upload({
+		serverUrl: "https://clip.example",
+		privateKey,
+		bytes: new Uint8Array([1]),
+		name: "file",
+		tags: [],
+		onProgress: () => {
+			throw new Error("fetch cannot report upload progress");
+		},
+	});
+	assert.equal(calls, 1);
 });

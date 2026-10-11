@@ -237,11 +237,13 @@ mod request_tests {
     async fn unsigned_media_requests_are_rejected_before_body_or_database() {
         let app = app().await;
         let item = format!("/api/media/{}", "a".repeat(64));
+        let meta = format!("{item}/meta");
         for (method, path) in [
             ("GET", "/api/media"),
             ("POST", "/api/media"),
             ("GET", item.as_str()),
-            ("PUT", item.as_str()),
+            ("GET", meta.as_str()),
+            ("PUT", meta.as_str()),
             ("DELETE", item.as_str()),
         ] {
             let body = Body::new(
