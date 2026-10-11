@@ -6,16 +6,21 @@
   "exports": "./src/lib/index.js",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && vite build --config vite.extension.config.js",
+    "build": "npm run build:web && npm run build:extension && npm run build:cli",
     "check": "svelte-check --fail-on-warnings",
     "lint": "biome lint src cli tests e2e *.config.js",
     "format:check": "biome ci src cli tests e2e *.config.js",
     "test": "node --test tests/*.test.js",
     "build:extension": "vite build --config vite.extension.config.js",
     "dev:extension": "npm run build:extension -- --watch",
-    "e2e": "npm run build:extension && playwright test",
-    "pack:extension": "npm run build:extension && cd dist/extension && zip -q -r -FS ../i2nclip.xpi . -x updates.json",
-    "cli": "node cli/index.js"
+    "e2e": "npm run build:extension && npm run pack:cli && playwright test",
+    "pack:extension": "npm run build:extension && rm -f dist/i2nclip.xpi && cd dist/extension && zip -q -r ../i2nclip.xpi .",
+    "cli": "node cli/index.js",
+    "build:web": "vite build",
+    "build:cli": "vite build --config vite.cli.config.js",
+    "pack:web": "npm run build:web && rm -f dist/i2nclip-web.zip && cd dist/web && zip -q -r ../i2nclip-web.zip .",
+    "pack:cli": "npm run build:cli && rm -f dist/i2nclip-cli.tar.gz && tar -czf dist/i2nclip-cli.tar.gz --transform=s,^cli,i2nclip-cli, -C dist cli",
+    "test:packages": "node --test tests/packaging.js"
   },
   "dependencies": {
     "svelte": "^5.57.2"

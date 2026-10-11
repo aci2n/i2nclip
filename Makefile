@@ -10,7 +10,7 @@ CONTAINER_NETWORK ?= host
 -include local.mk
 
 .DEFAULT_GOAL := build
-.PHONY: build client client-test lint format-check e2e extension dev-extension run test test-db audit container push
+.PHONY: build client client-test lint format-check e2e web extension cli packages dev-extension run test test-db audit container push
 
 build: client
 	cargo build
@@ -30,7 +30,7 @@ format-check:
 	cargo fmt --all -- --check
 	$(MAKE) -C client format-check
 
-e2e extension dev-extension:
+e2e web extension cli packages dev-extension:
 	$(MAKE) -C client $@
 
 run:

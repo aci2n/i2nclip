@@ -14,7 +14,9 @@ import {
 } from "./fixtures.js";
 
 const execute = promisify(execFile);
-const executable = fileURLToPath(new URL("../cli/index.js", import.meta.url));
+const archive = fileURLToPath(
+	new URL("../dist/i2nclip-cli.tar.gz", import.meta.url),
+);
 
 test("CLI and extension share a recovery identity and edit the same library", async ({
 	page,
@@ -22,6 +24,8 @@ test("CLI and extension share a recovery identity and edit the same library", as
 }) => {
 	const dir = await mkdtemp(join(tmpdir(), "i2nclip-cli-e2e-"));
 	try {
+		await execute("tar", ["-xzf", archive, "-C", dir]);
+		const executable = join(dir, "i2nclip-cli/i2nclip.mjs");
 		const passwordFile = join(dir, "password");
 		await writeFile(passwordFile, `${PASSWORD}\n`, { mode: 0o600 });
 		const env = { ...process.env, XDG_CONFIG_HOME: dir };

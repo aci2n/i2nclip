@@ -158,7 +158,7 @@ without adding SvelteKit to this Vite project. See also Svelte's guidance on
 ## Node CLI
 
 The CLI imports the same public API and encryption libraries as the extension.
-Use Node 22.23.3 from `.nvmrc`; no build or additional dependencies are needed.
+Use Node 22.23.3 from `.nvmrc`; source execution needs no build or additional dependencies.
 Run `node client/cli/index.js --help` from the repository root, or
 `npm run cli --prefix client -- --help`.
 
@@ -211,3 +211,25 @@ Tag editing reads `GET /api/media/{id}/meta` directly and updates through
 concurrent edit produces an error; rerun to fetch the latest tags. The old
 `PUT /api/media/{id}` route has been removed; update the server and extension
 together.
+
+## Distributable builds
+
+`make packages` from this directory builds and packages web, Firefox extension,
+and Node CLI targets. Use `make web`, `make extension`, or `make cli` individually.
+All output is under `client/dist/`: `i2nclip-web.zip`, `i2nclip.xpi`, and
+`i2nclip-cli.tar.gz`, alongside their `web/`, `extension/`, and `cli/` build directories.
+`make build` builds all directories without creating archives.
+
+The web archive contains only static HTML and bundled JS/CSS. The extension
+contains its manifest, four page shells, SVG icon, and bundled JS/CSS; update
+metadata and unused assets are excluded. The CLI contains one executable Node
+ESM bundle with its reachable protocol/API code; Node built-ins stay external,
+and no npm dependencies are required after extraction.
+
+The current source boundaries are retained: `src/main.js` is the web entry point,
+`src/extension/` owns Firefox entry points, and `cli/` owns Node entry points.
+`src/lib/index.js` remains the shared public API. No runtime protocol changes
+are made by bundling.
+
+Run `npm run test:packages` after packaging. See the repository README's
+Client packages section for hosting requirements and CLI extraction instructions.

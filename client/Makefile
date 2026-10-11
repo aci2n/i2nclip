@@ -1,7 +1,8 @@
 # Frontend commands. Run directly here or through the repository Makefile.
 NODE ?= $(HOME)/.nvm/versions/node/v$(strip $(file <.nvmrc))/bin/node
 
-.PHONY: build test lint format-check e2e extension dev-extension
+.DEFAULT_GOAL := build
+.PHONY: build test lint format-check e2e web extension cli packages dev-extension
 
 build:
 	npm run build
@@ -24,9 +25,11 @@ e2e:
 	npx playwright install firefox
 	npm run e2e
 
-# Build the add-on before packing it; load dist/extension/manifest.json in Firefox.
-extension:
-	npm run pack:extension
+# Build and package only the selected client target.
+web extension cli:
+	npm run pack:$@
+
+packages: web extension cli
 
 # Build once before Firefox starts, then rebuild and reload on source changes.
 # npx downloads web-ext on first use. Ctrl-C also stops the build watcher.

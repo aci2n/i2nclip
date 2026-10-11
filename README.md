@@ -128,7 +128,7 @@ The source has three boundaries:
 
 Stores own session mutations, request cancellation, pagination, and upload batches. Media stores own and release their decrypted bytes and object URLs. Settings mutations use a Web Lock across open pages; tag changes and uploads prevent overlapping submissions. The tests cover stale completions, identity changes, retry behavior, and file-size limits as well as the full browser flows.
 
-`client/Makefile` owns the frontend targets; the root Makefile delegates with `make -C client`. `make -C client build` and `make -C client test` work independently. `make build` builds the Rust server and both frontend bundles. `make client` builds just the standalone UI and extension (`npm run build --prefix client`). `npm run e2e --prefix client` builds the extension and runs Firefox tests; `make e2e` also installs dependencies and Firefox.
+`client/Makefile` owns the frontend targets; the root Makefile delegates with `make -C client`. `make -C client build` and `make -C client test` work independently. `make build` builds the Rust server and all three client bundles. `make client` builds just the standalone UI, extension, and Node CLI (`npm run build --prefix client`). `npm run e2e --prefix client` builds the extension and runs Firefox tests; `make e2e` also installs dependencies and Firefox.
 
 The manifest's update URL now points to `client/public/updates.json`. Previously installed releases that use the old update URL need a manual update when this layout is published.
 
@@ -149,3 +149,39 @@ import { generatePrivateKey, registerKey, upload, list } from "./client/src/lib/
 ## Tags
 
 A tag is stored as `HMAC-SHA256` of the normalized word, keyed from the private key. The server can match the fingerprint. It never receives the word. The readable tags sit inside the encrypted metadata. Normalization is trim, Unicode NFC, then lowercase, so `Vacation` and `vacation` match.
+
+## Client packages
+
+After installing dependencies with `npm ci --prefix client` using the Node version
+in `client/.nvmrc`, run `make packages` to create all three distributables.
+`make web`, `make extension`, and `make cli` build and package individual targets.
+These commands also work directly with `make -C client`.
+
+| Target | Build directory | Archive |
+| --- | --- | --- |
+| Web | `client/dist/web/` | `client/dist/i2nclip-web.zip` |
+| Firefox extension | `client/dist/extension/` | `client/dist/i2nclip.xpi` |
+| Node CLI | `client/dist/cli/` | `client/dist/i2nclip-cli.tar.gz` |
+
+The web ZIP contains `index.html` and its JavaScript/CSS assets at the archive
+root. Extract it into the root of a static HTTPS site. Build assets use absolute
+`/assets/` URLs, so hosting under a path prefix is unsupported. The Vite development
+API proxy is not included: production hosting must route `/api/` to the Rust API
+on the configured origin, or use an API server that permits the browser origin.
+
+The CLI archive contains `i2nclip-cli/i2nclip.mjs`. It requires Node 22.23.3 or
+newer and no npm installation or repository files:
+
+```sh
+tar -xzf client/dist/i2nclip-cli.tar.gz
+./i2nclip-cli/i2nclip.mjs --help
+# Alternatively: node i2nclip-cli/i2nclip.mjs --help
+```
+
+Packages contain only their runtime files. Extension update metadata remains in
+`client/public/updates.json` and is not copied into the build or XPI. Each build
+cleans its own directory, and each archive is recreated to remove stale entries.
+JavaScript and CSS remain unminified. Packaging uses system `zip` and GNU `tar`.
+Run `npm run test:packages --prefix client` after `make packages` to check archive
+contents and the extracted CLI. Browser E2E tests also package the CLI and exercise
+that extracted executable against the real API.

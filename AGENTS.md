@@ -7,8 +7,9 @@
 - Firefox's manifest, page shells, icons, and update metadata live in `client/public/`. Build before loading `client/dist/extension/manifest.json` as a temporary add-on.
 - Keep one npm project: `client/package.json`, its lockfile, `.nvmrc`, and Playwright configuration all belong in `client/`.
 - The root Makefile delegates frontend commands with `$(MAKE) -C client`; do not include the client Makefile. `make build` builds server and frontend, `make client` builds frontend, and `make extension` builds and packages the add-on.
+- `make web`, `make extension`, and `make cli` build and package individual client targets; `make packages` packages all three. All outputs stay in `client/dist/`. Web ships as `i2nclip-web.zip`; CLI ships as `i2nclip-cli.tar.gz` with an executable Node 22 ESM bundle and no npm runtime dependencies.
 - Packaging is `npm run pack:extension` inside `client/`, using the system `zip` command. No Python packaging script is needed. The XPI is `client/dist/i2nclip.xpi`; runtime files belong at its root. Exclude update metadata and remove stale build entries when repacking.
-- Do not minify JavaScript or CSS unless explicitly needed. Both Vite builds disable minification. ZIP compression is fine.
+- Do not minify JavaScript or CSS unless explicitly needed. All three Vite builds disable minification. ZIP compression is fine.
 
 ## Database policy
 

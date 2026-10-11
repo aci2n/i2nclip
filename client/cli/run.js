@@ -193,7 +193,7 @@ export async function run(
 			});
 		} catch (error) {
 			stderr(
-				`Encrypted identity saved at ${path}. Retry: node client/cli/index.js register --recovery ${shellQuote(path)} --otc CODE\n`,
+				`Encrypted identity saved at ${path}. Retry: ${shellQuote(process.execPath)} ${shellQuote(process.argv[1])} register --recovery ${shellQuote(path)} --otc CODE\n`,
 			);
 			throw error;
 		}
