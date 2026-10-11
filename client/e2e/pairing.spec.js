@@ -83,6 +83,7 @@ for (const [from, to] of [
 						});
 				});
 			await receiver.goto(optionsUrl(to, app));
+			await page.locator("#pairing-settings > summary").click();
 			await page.locator("#pairing-start").click();
 			await expect(page.locator("#pairing-code")).toBeVisible();
 			const code = await page.locator("#pairing-code").textContent();
@@ -150,6 +151,7 @@ test("a wrong pairing secret never installs an identity and requires a fresh cod
 	browser,
 }) => {
 	await setup(page, "web", app);
+	await page.locator("#pairing-settings > summary").click();
 	await page.locator("#pairing-start").click();
 	await expect(page.locator("#pairing-code")).toBeVisible();
 	const code = await page.locator("#pairing-code").textContent();
@@ -180,6 +182,7 @@ test("reset cancels an authenticated pairing before approving the identity trans
 	browser,
 }) => {
 	await setup(page, "web", app);
+	await page.locator("#pairing-settings > summary").click();
 	await page.locator("#pairing-start").click();
 	await expect(page.locator("#pairing-code")).toBeVisible();
 	const code = await page.locator("#pairing-code").textContent();

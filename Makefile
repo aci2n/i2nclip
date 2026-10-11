@@ -6,6 +6,8 @@ PORT ?= 8080
 HOST ?= deploy@example.com
 # Avoid rootless pasta's /dev/net/tun requirement during image builds.
 CONTAINER_NETWORK ?= host
+DEV_PORT ?= 8080
+DEV_ORIGIN ?= http://localhost:$(DEV_PORT)
 SMOKE_SERVER ?= https://clip.i2n.duckdns.org
 SMOKE_DIR ?= $(HOME)/.config/i2nclip/smoke
 
@@ -25,6 +27,12 @@ web extension cli packages dev-extension:
 
 run:
 	cargo run
+
+# Local containers: only the web/API port is published, on loopback.
+.PHONY: dev dev-db dev-down dev-otc
+dev dev-db dev-down dev-otc:
+	DEV_PORT="$(DEV_PORT)" DEV_ORIGIN="$(DEV_ORIGIN)" \
+	  CONTAINER_NETWORK="$(CONTAINER_NETWORK)" sh scripts/dev.sh $@
 
 # Tests and verification. Install toolchains and client dependencies first.
 .PHONY: test test-client test-packages test-extension-pairing test-db test-profile test-e2e test-smoke test-all

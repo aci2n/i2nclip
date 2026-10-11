@@ -46,6 +46,44 @@ export I2N_ORIGIN=https://clip.example.com
 cargo run
 ```
 
+For local development with Linux Podman, run `make dev`. It builds the existing
+server image (including the web client), starts PostgreSQL 18, and serves the app
+at `http://localhost:8080`. Rust, Node, and npm run inside the image build; only
+Podman is required on the host. Rerun `make dev` after source changes to rebuild.
+
+The server and database share the `i2nclip-dev` bridge network. Only the server
+publishes a port, bound to host loopback; PostgreSQL has no host port. Image builds
+use `CONTAINER_NETWORK=host` by default, independently of the runtime network.
+Runtime requires working Podman bridge networking. If rootless Pasta reports a
+missing `/dev/net/tun`, fix the host's rootless networking configuration; changing
+the build network does not fix container startup.
+The database uses fixed development-only credentials and persists in the named
+`i2nclip-dev-postgres-data` volume mounted at `/var/lib/postgresql`.
+
+```sh
+make dev                         # attached server logs; Ctrl-C stops the server
+make dev-otc                     # in another terminal, issue a registration code
+make dev-down                    # stop both containers, preserving database data
+make dev DEV_PORT=8081           # app origin defaults to http://localhost:8081
+```
+
+`make dev-db` starts only the database and waits for an authenticated TCP query
+to succeed. `DEV_ORIGIN` overrides the server's expected browser origin, for
+example `make dev DEV_ORIGIN=http://localhost:5173` when using Vite separately.
+The database stays running after Ctrl-C or a server failure. Database startup
+has a 60-second readiness limit; failure prints database logs and prevents server
+startup. `make run` still runs Rust directly with your own environment settings.
+
+When schema changes require a fresh development database, explicitly delete its
+container and volume (this destroys all local development data), then restart:
+
+```sh
+make dev-down
+podman rm i2nclip-dev-postgres
+podman volume rm i2nclip-dev-postgres-data
+make dev
+```
+
 PostgreSQL stores content, metadata, public keys, invitations, nonces, and tags. Content uses `bytea` with external TOAST storage, so ciphertext is not compressed. Uploads and metadata/tag updates commit atomically. Content is immutable and reported sizes come from the stored content. Downloads fetch owned bytes before sending responses, so deletion cannot invalidate an in-flight response and slow clients hold no database connection. The SQLx pool has eight connections, one minimum connection, and a five-second acquisition timeout (`503` with `Retry-After: 1`).
 
 An internal maintenance task runs on startup and hourly, deleting expired nonces and invitations in one transaction. Sweeps never overlap; failures are logged and retried next interval. Shutdown stops scheduling maintenance, awaits an active sweep, drains HTTP work, and closes the pool. PostgreSQL autovacuum reclaims physical space. Response-duration limits remain future work.
