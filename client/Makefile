@@ -5,7 +5,7 @@ NODE ?= $(HOME)/.nvm/versions/node/v$(strip $(file <.nvmrc))/bin/node
 .PHONY: build web extension cli packages dev-extension
 
 SMOKE_SERVER ?= https://clip.i2n.duckdns.org
-SMOKE_DIR ?= $(abspath smoke)
+SMOKE_DIR ?= $(HOME)/.config/i2nclip/smoke
 
 build:
 	npm run build
@@ -31,16 +31,18 @@ dev-extension:
 # Tests and verification (repository Makefile lists all permission groups).
 # -----------------------------------------------------------------------------
 
-.PHONY: test lint format-check test-packages e2e smoketest
+.PHONY: test lint format-check test-packages test-profile test-e2e test-smoke e2e smoketest
 
-# Local processes/files only; no browser, database, or external service.
+# Unit tests for shared libraries, CLI, and smoke runner, plus Svelte type checking.
 test:
 	npm run test
 	npm run check
 
+# Check JavaScript/Svelte for static analysis errors.
 lint:
 	npm run lint
 
+# Check client formatting without changing files.
 format-check:
 	npm run format:check
 
@@ -48,16 +50,26 @@ format-check:
 test-packages: packages
 	npm run test:packages
 
-# Browser launch, local HTTP servers, and disposable PostgreSQL admin access.
+# Firefox UI and packaged CLI integration tests against the real local API.
+# Requires browser launch, local servers, and disposable PostgreSQL admin access.
 # I2N_TEST_DATABASE_URL must be set separately. Downloads dependencies and Firefox.
 # Override NODE when Node 22 is installed outside the default nvm directory.
-e2e: export PATH := $(dir $(NODE)):$(PATH)
-e2e:
+test-e2e: export PATH := $(dir $(NODE)):$(PATH)
+test-e2e:
 	@test -x "$(NODE)" || { echo "Node 22 not found at $(NODE); run nvm install or set NODE" >&2; exit 1; }
 	PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
 	npx playwright install firefox
 	npm run e2e
 
-# External network and writes to the selected deployment; private credentials required.
-smoketest:
+# Live CLI upload, metadata/tag edits, verified download, and deletion.
+# External network and deployment writes; private credentials required.
+test-smoke:
 	@"$(NODE)" smoke/index.js --server "$(SMOKE_SERVER)" --directory "$(SMOKE_DIR)"
+
+# Linux transfer/resource assertions; root target supplies the server build and database.
+test-profile:
+	"$(NODE)" tests/profile-postgres.js
+
+# Compatibility aliases.
+e2e: test-e2e
+smoketest: test-smoke

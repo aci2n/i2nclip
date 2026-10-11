@@ -32,12 +32,7 @@ The server peak is substantially above the 64 MiB of content in two transfers. S
 Use Linux, Node from `client/.nvmrc`, and the local rootless Podman API socket. Port 8080 must be free. The runner owns the container; the script owns its isolated database and server process. All are cleaned up after the profile. The script does not run in ordinary client tests.
 
 ```sh
-cargo build --release
-cargo build --example test-database
-DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock \
-  I2N_TEST_CONTAINER_NETWORK=host \
-  cargo run --quiet --features test-containers --example postgres-tests -- \
-  node client/tests/profile-postgres.js
+make test-profile
 ```
 
-Unset `I2N_TEST_DATABASE_URL` so the runner provisions its own PostgreSQL container. The host-network fallback binds PostgreSQL only to loopback; omit `I2N_TEST_CONTAINER_NETWORK` when the default container network works. PostgreSQL process inspection requires local Podman access. Output contains resource counters and timings, not database credentials.
+The target always provisions its own PostgreSQL container, independently of `I2N_TEST_DATABASE_URL`. The host-network fallback binds PostgreSQL only to loopback; omit `I2N_TEST_CONTAINER_NETWORK` when the default container network works. PostgreSQL process inspection requires local Podman access. Output contains resource counters and timings, not database credentials.

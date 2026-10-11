@@ -133,6 +133,9 @@ only when the same sealed-content hash is posted again.
 
 Use the Node version in `.nvmrc`, then `npm ci --prefix client` from the repo root.
 `make test` runs client tests, the Svelte checker, and Rust tests.
+`make test-all` from the repo root runs every suite, including package checks,
+PostgreSQL integration/resource tests, Firefox tests, and the live deployment smoke test.
+`make test-e2e` provisions PostgreSQL and installs browser dependencies.
 `make extension` builds the XPI without minifying JS or CSS.
 `npm run e2e --prefix client` rebuilds and runs Firefox against the real local API.
 

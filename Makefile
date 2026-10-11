@@ -26,58 +26,85 @@ web extension cli packages dev-extension:
 run:
 	cargo run
 
-# -----------------------------------------------------------------------------
-# Tests and verification, grouped by required access.
-# All commands write local build/cache files and may launch child processes.
-# Install toolchains and client dependencies first; dependency downloads need network.
-# -----------------------------------------------------------------------------
+# Tests and verification. Install toolchains and client dependencies first.
+.PHONY: test test-client test-packages test-db test-profile test-e2e test-smoke test-all
+.PHONY: lint format-check audit client-test e2e smoketest
 
-.PHONY: test client-test lint format-check test-packages test-db e2e audit smoketest
-
-# Local checks: no browser, database, container runtime, or external service.
-test: client-test
+# Fast checks: client unit tests, Svelte type checking, and Rust unit/config tests.
+test: test-client
 	cargo test
 
-client-test:
+# Shared libraries, CLI, and smoke-runner unit tests, plus the Svelte checker.
+test-client:
 	$(MAKE) -C client test
 
-lint:
-	cargo clippy --all-targets --all-features -- -D warnings
-	$(MAKE) -C client lint
-	$(MAKE) format-check
-
-format-check:
-	cargo fmt --all -- --check
-	$(MAKE) -C client format-check
-
-# Build archives and run their contents locally; requires zip, unzip, and GNU tar.
+# Build all three archives; verify their contents and run the extracted CLI.
+# Requires zip, unzip, and GNU tar.
 test-packages:
 	$(MAKE) -C client test-packages
 
-# Local PostgreSQL: database creation/deletion and local TCP connections.
-# Without I2N_TEST_DATABASE_URL, requires a Docker/Podman API socket and may pull images.
-# Testcontainers owns PostgreSQL; fixtures own isolated databases.
+# Rust PostgreSQL API/protocol tests using isolated databases; TEST_ARGS adds filters.
+# Provisions PostgreSQL through Docker/Podman unless I2N_TEST_DATABASE_URL is set.
 test-db:
 	I2N_TEST_CONTAINER_NETWORK="$(CONTAINER_NETWORK)" \
 	DOCKER_HOST="$${DOCKER_HOST:-unix://$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/podman/podman.sock}" \
 	  cargo run --quiet --features test-containers --example postgres-tests -- \
 	  cargo test --features postgres-tests $(TEST_ARGS)
 
-# Firefox + local servers + PostgreSQL: browser launch, loopback listeners/connections,
-# and database creation/deletion. Set I2N_TEST_DATABASE_URL to a disposable admin URL.
-# Also downloads npm dependencies and Firefox; this target does not provision PostgreSQL.
-e2e:
-	$(MAKE) -C client e2e
+# Verify maximum-size/chunked transfers and held downloads; report process resources.
+# Requires Linux, local Podman, port 8080 free, and an owned PostgreSQL container.
+test-profile:
+	cargo build --release
+	cargo build --example test-database
+	I2N_TEST_CONTAINER_NETWORK="$(CONTAINER_NETWORK)" \
+	DOCKER_HOST="$${DOCKER_HOST:-unix://$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/podman/podman.sock}" \
+	  env -u I2N_TEST_DATABASE_URL cargo run --quiet --features test-containers --example postgres-tests -- \
+	  $(MAKE) -C client test-profile
 
-# External network, read-only: fetch vulnerability advisories for Cargo.lock.
-# Install cargo-audit once with cargo install cargo-audit --locked.
+# Firefox UI and packaged CLI flows against the real local API and isolated databases.
+# Provisions PostgreSQL; installs npm dependencies and Firefox when needed.
+test-e2e:
+	I2N_TEST_CONTAINER_NETWORK="$(CONTAINER_NETWORK)" \
+	DOCKER_HOST="$${DOCKER_HOST:-unix://$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/podman/podman.sock}" \
+	  cargo run --quiet --features test-containers --example postgres-tests -- \
+	  $(MAKE) -C client test-e2e
+
+# Live deployment: register/restore, upload random blobs, edit tags, verify downloads,
+# and delete test media. Requires private invitation/password/recovery files.
+test-smoke:
+	$(MAKE) -C client test-smoke SMOKE_SERVER="$(SMOKE_SERVER)" SMOKE_DIR="$(abspath $(SMOKE_DIR))"
+
+# Run every suite, including ignored Rust resource tests and the live deployment test.
+# Recursive recipes run sequentially even with make -j, avoiding shared build races.
+test-all:
+	$(MAKE) test
+	$(MAKE) lint
+	$(MAKE) test-packages
+	$(MAKE) test-db TEST_ARGS="-- --include-ignored"
+	$(MAKE) test-profile
+	$(MAKE) test-e2e
+	$(MAKE) test-smoke
+
+# Rust/JavaScript static analysis and all formatting checks.
+lint:
+	cargo clippy --all-targets --all-features -- -D warnings
+	$(MAKE) -C client lint
+	$(MAKE) format-check
+
+# Check Rust and client formatting without changing source files.
+format-check:
+	cargo fmt --all -- --check
+	$(MAKE) -C client format-check
+
+# Fetch Cargo vulnerability advisories; optional security check, outside test-all.
+# Requires cargo-audit and external network access.
 audit:
 	cargo audit
 
-# External network, writes to the selected deployment: register an identity, upload,
-# edit tags, and delete test media. Requires private invitation/password files.
-smoketest:
-	$(MAKE) -C client smoketest SMOKE_SERVER="$(SMOKE_SERVER)" SMOKE_DIR="$(abspath $(SMOKE_DIR))"
+# Compatibility aliases for existing commands; canonical suite names use test-*.
+client-test: test-client
+e2e: test-e2e
+smoketest: test-smoke
 
 # Container build and deployment.
 container:

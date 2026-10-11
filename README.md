@@ -44,17 +44,25 @@ The root Makefile groups verification commands by required access:
 
 | Access | Targets | Requirements |
 | --- | --- | --- |
-| Local processes and files | `test`, `client-test`, `lint`, `format-check`, `test-packages` | Installed toolchains and client dependencies; package checks also need zip, unzip, and GNU tar |
+| Local processes and files | `test`, `test-client`, `lint`, `format-check`, `test-packages` | Installed toolchains and client dependencies; package checks also need zip, unzip, and GNU tar |
 | Local database/container | `test-db` | Disposable PostgreSQL administrator connection, or Docker/Podman API access to provision one; image pulls may use the network |
-| Browser and local servers/database | `e2e` | Firefox launch, loopback HTTP/TCP, and `I2N_TEST_DATABASE_URL`; also downloads npm dependencies and Firefox |
+| Linux process profile | `test-profile` | Local Podman, Linux process counters, and port 8080 free; always provisions its own PostgreSQL container |
+| Browser and local servers/database | `test-e2e` | Firefox launch, loopback HTTP/TCP, and Docker/Podman or a disposable administrator URL; also installs dependencies and Firefox |
 | External network, read-only | `audit` | Installed cargo-audit and access to vulnerability advisories |
-| External network, deployment writes | `smoketest` | Private test credentials; creates an identity and uploads, edits, and deletes test media |
+| External network, deployment writes | `test-smoke` | Private test credentials; creates an identity and uploads, edits, and deletes test media |
 
 `make test-packages` builds all three client archives and checks their contents
 and the extracted CLI. Local checks need no running database or browser; initial
-toolchain/dependency downloads still require network access. `make e2e` does not
-provision PostgreSQL itself; use the testcontainers runner below or provide a
-disposable database administrator URL.
+toolchain/dependency downloads still require network access. `make test-e2e`
+provisions PostgreSQL through the same runner as `test-db`;
+provide `I2N_TEST_DATABASE_URL` to use an existing disposable administrator connection.
+
+`make test-all` runs every test suite sequentially, including package checks,
+ignored Rust maximum-size tests, the Linux process profile, Firefox tests, and
+the live smoke test. It also runs lint and formatting checks. Configure the
+private smoke credentials first. `client-test`, `e2e`, and `smoketest` remain
+aliases for `test-client`, `test-e2e`, and `test-smoke`. The optional advisory
+check `make audit` remains separate.
 
 `make test` runs client tests/checker and Rust tests that need no database. `make test-db` uses [testcontainers](https://docs.rs/testcontainers/0.28.0/testcontainers/) to start PostgreSQL 18, wait for readiness, run the database tests, and remove the container afterward, including when tests fail. Each fixture creates and cleans up an isolated database. Testcontainers is an optional tooling dependency; ordinary builds and tests do not enable it.
 
@@ -85,7 +93,7 @@ cargo test --features postgres-tests --test postgres_api maximum_size_transfer_p
 
 This optional profile exercises two maximum-size uploads followed by two concurrent downloads, reports in-process peak RSS (including fixture/client buffers), PostgreSQL backend allocations, and timer delay, and verifies that responses held unpolled have no idle database transaction.
 
-For separate release-server, Node-client, and PostgreSQL process measurements, see [the process profile](doc/postgresql-profile.md). Its manual script also checks chunked uploads and held downloads.
+For separate release-server, Node-client, and PostgreSQL process measurements, see [the process profile](doc/postgresql-profile.md). `make test-profile` also checks chunked uploads and held downloads.
 
 ## Self-hosting
 
@@ -161,27 +169,27 @@ A tag is stored as `HMAC-SHA256` of the normalized word, keyed from the private 
 
 ## Live deployment smoke test
 
-After deploying, run `make smoketest` against the public server
+After deploying, run `make test-smoke` against the public server
 (`https://clip.i2n.duckdns.org`). It uses the Node version in `client/.nvmrc` and
 needs no frontend build or installed npm dependencies. Override the executable
 with `NODE=/path/to/node` when needed.
 
-Put the testing invitation in `client/smoke/otc` and its password in
-`client/smoke/pw`; use private files with mode 0600. The password must have at
-least eight characters. Both files and `client/smoke/recovery.json` are ignored
-by Git. The first run saves an encrypted recovery file before registration and
+Put the testing invitation in `~/.config/i2nclip/smoke/otc` and its password in
+`~/.config/i2nclip/smoke/pw`; use private files with mode 0600. The password must have at
+least eight characters. These credentials and the encrypted `recovery.json` stay
+outside the checkout. The first run saves an encrypted recovery file before registration and
 consumes the invitation. Subsequent runs reuse that identity and check its
 registration without spending another code. Keep the recovery file and original
 password when retrying a failed registration.
 
 ```sh
-make smoketest
-make smoketest SMOKE_SERVER=https://clip.example.com SMOKE_DIR=/private/test-credentials
+make test-smoke
+make test-smoke SMOKE_SERVER=https://clip.example.com SMOKE_DIR=/private/test-credentials
 ```
 
 An existing recovery file must match the selected server origin. Use a separate
 credential directory for another deployment. `SMOKE_DIR` defaults to
-`client/smoke` and must already contain `otc` and `pw`; it is independent of the
+`~/.config/i2nclip/smoke` and must already contain `otc` and `pw`; it is independent of the
 normal CLI's XDG recovery location.
 
 The test uploads random 1 KiB, 1 MiB, and 32 MiB files individually, checks
