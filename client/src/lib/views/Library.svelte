@@ -11,7 +11,7 @@ let filesInput = $state();
 </script>
 
 {#if !$session.wrappedKey}
-	<section id="setup" class="panel empty">
+	<section id="setup" class="panel empty stack">
 		<h2>Your library starts here</h2>
 		<p>
 			<a href={settingsHref} onclick={onsettings}
@@ -93,7 +93,7 @@ let filesInput = $state();
 	</section>
 {/if}
 {#if $session.privateKey && $library.empty}
-	<section id="empty-library" class="panel empty">
+	<section id="empty-library" class="panel empty stack">
 		{#if $library.empty === "library"}
 			<h2>Your library is empty</h2>
 			<p>Upload a photo, video, or audio file to get started.</p>
@@ -148,7 +148,6 @@ let filesInput = $state();
 	cursor: pointer;
 	display: inline-block;
 	flex: none;
-	margin: 0;
 }
 .file.disabled {
 	opacity: 0.5;
@@ -167,6 +166,9 @@ let filesInput = $state();
 }
 .toolbar {
 	margin-bottom: 1rem;
+}
+.empty > button {
+	align-self: center;
 }
 .empty {
 	max-width: 42rem;

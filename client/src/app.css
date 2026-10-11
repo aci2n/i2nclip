@@ -48,9 +48,6 @@ label {
 	margin: 0;
 	font-size: 0.9rem;
 }
-form label {
-	margin: 1rem 0 0.5rem;
-}
 input,
 button {
 	font: inherit;
@@ -90,9 +87,28 @@ button:disabled {
 	opacity: 0.5;
 	cursor: default;
 }
-form > button,
-section > button {
-	margin-top: 1rem;
+/* Containers own spacing: fields group labels with controls; stacks separate groups. */
+.stack {
+	display: flex;
+	flex-direction: column;
+	gap: 1rem;
+}
+.stack > h2,
+.stack > p {
+	margin: 0;
+}
+.stack > button {
+	align-self: flex-start;
+}
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	min-width: 0;
+}
+.field > p {
+	margin: 0;
+	font-size: 0.9rem;
 }
 .bar {
 	display: flex;

@@ -25,6 +25,21 @@ components do not fetch, touch storage, manage object URLs, or await workflows.
 The tag editor creates a view-scoped store and disposes its presentation state
 on unmount. Its save action delegates to the library and media stores.
 
+## Layout spacing
+
+Containers own spacing. Use `.stack` for vertical groups (1rem gap), `.field`
+for a label, its control, and optional hint (0.5rem gap), and `.bar` for inline
+controls (0.5rem gap). Labels and actions have no implicit form margins. Keep
+hints inside their field and associate them with `aria-describedby`. Disclosures
+need an explicit gap between their summary and body. Component-specific layout
+stays in its Svelte style block, using the project rem scale.
+
+This applies the proximity and consistent-scale guidance in
+[Spectrum spacing](https://spectrum.adobe.com/page/spacing/) and
+[GOV.UK spacing](https://design-system.service.gov.uk/styles/spacing/): related
+labels, controls, and hints sit closer together than separate fields or actions.
+The shared primitives implement those relationships with CSS gap.
+
 ## Ownership and transitions
 
 - **Application:** creates the session and settings stores; retains one library
