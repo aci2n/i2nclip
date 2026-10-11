@@ -17,7 +17,7 @@ web extension cli:
 packages: web extension cli
 
 # Build once before Firefox starts, then rebuild and reload on source changes.
-# npx downloads web-ext on first use. Ctrl-C also stops the build watcher.
+# web-ext is installed with npm ci. Ctrl-C also stops the build watcher.
 dev-extension: export PATH := $(dir $(NODE)):$(PATH)
 dev-extension:
 	@node node_modules/vite/bin/vite.js build --config vite.extension.config.js --watch & \
@@ -25,7 +25,7 @@ dev-extension:
 	trap 'kill "$$watcher" 2>/dev/null || true; wait "$$watcher" 2>/dev/null || true' EXIT; \
 	trap 'exit 130' INT; \
 	trap 'exit 143' TERM; \
-	npx --yes web-ext run --source-dir dist/extension
+	./node_modules/.bin/web-ext run --source-dir dist/extension
 
 # -----------------------------------------------------------------------------
 # Tests and verification (repository Makefile lists all permission groups).
