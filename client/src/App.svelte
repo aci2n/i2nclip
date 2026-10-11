@@ -1,5 +1,6 @@
 <script>
 import { onDestroy, untrack } from "svelte";
+import AboutDialog from "./lib/components/AboutDialog.svelte";
 import { createApplication } from "./lib/stores/application.js";
 import Library from "./lib/views/Library.svelte";
 import Settings from "./lib/views/Settings.svelte";
@@ -11,6 +12,7 @@ const app = untrack(() => createApplication(platform, initialPage));
 const session = app.session;
 const page = $derived($app.page);
 const library = $derived($app.library);
+let aboutOpen = $state(false);
 onDestroy(app.dispose);
 </script>
 
@@ -45,6 +47,7 @@ onDestroy(app.dispose);
 				onclick={(event) => app.navigate(event, "options")}
 				>Settings</a
 			>
+			<button type="button" onclick={() => (aboutOpen = true)}>About</button>
 		</nav>
 	</header>
 	{#if !$session.ready}
@@ -67,6 +70,7 @@ onDestroy(app.dispose);
 		/>
 	{/if}
 </main>
+<AboutDialog open={aboutOpen} onclose={() => (aboutOpen = false)} />
 
 <style>
 main {
@@ -93,11 +97,20 @@ header {
 }
 nav {
 	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
 	gap: 1rem;
 }
-nav a {
+nav a,
+nav button {
 	color: var(--muted);
 	text-decoration: none;
+}
+nav button {
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
 }
 nav a[aria-current] {
 	color: var(--accent);

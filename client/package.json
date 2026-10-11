@@ -1,6 +1,10 @@
 {
   "name": "i2nclip-client",
   "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aci2n/i2nclip"
+  },
   "private": true,
   "type": "module",
   "exports": "./src/lib/index.js",
