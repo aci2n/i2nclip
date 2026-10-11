@@ -120,6 +120,7 @@ pub(crate) fn fail(err: Error) -> Response {
             "service unavailable".into(),
         ),
         Error::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized".to_string()),
+        Error::TooEarly => (StatusCode::TOO_EARLY, "too early".to_string()),
         Error::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
         Error::Conflict => (StatusCode::CONFLICT, "already exists".to_string()),
         Error::BadRequest(message) => (StatusCode::BAD_REQUEST, message.clone()),

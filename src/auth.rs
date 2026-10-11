@@ -79,6 +79,18 @@ pub(crate) async fn verify_request(
     uri: &Uri,
     headers: &HeaderMap,
 ) -> Result<VerifiedRequest, Error> {
+    // Early data can be replayed, but authentication consumes a single-use
+    // nonce even for GET. Reject before reserving it so the client can retry
+    // after the handshake with the same signed request (RFC 8470).
+    if headers.contains_key("early-data") {
+        tracing::debug!(
+            method = %method,
+            path = %uri.path(),
+            reason = "early_data",
+            "request rejected as too early"
+        );
+        return Err(Error::TooEarly);
+    }
     let Some(bearer) = parse_bearer(headers) else {
         tracing::debug!(
             method = %method,
@@ -259,6 +271,54 @@ fn decode_sig(text: &str) -> Option<[u8; 64]> {
 mod tests {
     use super::*;
     use crate::reference_crypto as client_crypto;
+
+    #[tokio::test]
+    async fn early_data_is_rejected_before_authentication_without_database_access() {
+        let state = AppState::new(
+            crate::db::Database::closed_for_test().await,
+            "http://i2nclip.test".into(),
+        );
+        let method = Method::GET;
+        let uri = Uri::from_static("/api/media");
+        let key = client_crypto::from_seed([1u8; 32]);
+        let authorization = client_crypto::authorization(
+            &key,
+            state.origin(),
+            crypto::now_secs(),
+            &URL_SAFE_NO_PAD.encode([2u8; 16]),
+            method.as_str(),
+            uri.path(),
+            &[],
+        );
+
+        // Presence is sufficient, including malformed and duplicate values.
+        for values in [vec!["1"], vec![""], vec!["invalid"], vec!["1", "1"]] {
+            for bearer in [None, Some(authorization.as_str())] {
+                let mut headers = HeaderMap::new();
+                for value in &values {
+                    headers.append("early-data", value.parse().unwrap());
+                }
+                if let Some(bearer) = bearer {
+                    headers.insert("authorization", bearer.parse().unwrap());
+                }
+                let error = match verify_request(&state, &method, &uri, &headers).await {
+                    Err(error) => error,
+                    Ok(_) => panic!("early data must be rejected"),
+                };
+                assert!(matches!(error, Error::TooEarly));
+                let response = crate::routes::fail(error);
+                assert_eq!(response.status(), axum::http::StatusCode::TOO_EARLY);
+            }
+        }
+
+        // Without early data, this valid bearer reaches the closed pool.
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", authorization.parse().unwrap());
+        assert!(matches!(
+            verify_request(&state, &method, &uri, &headers).await,
+            Err(Error::Db(sqlx::Error::PoolClosed))
+        ));
+    }
 
     #[test]
     fn timestamp_check_rejects_requests_that_expire_while_waiting() {

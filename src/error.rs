@@ -11,6 +11,9 @@ pub enum Error {
     Config(String),
     #[error("unauthorized")]
     Unauthorized,
+    /// Retry without TLS early data before consuming a single-use nonce.
+    #[error("too early")]
+    TooEarly,
     /// Invalid, expired, or already used one-time registration code.
     #[error("registration failed")]
     RegistrationFailed,
