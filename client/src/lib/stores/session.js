@@ -124,10 +124,11 @@ export function createSession(platform) {
 		}
 	}
 
-	async function saveIdentity(serverUrl, privateKey, wrappedKey) {
+	async function saveIdentity(serverUrl, privateKey, wrappedKey, signal) {
 		const loaded = await loadKey(privateKey);
 		const identityGeneration = crypto.randomUUID();
 		active();
+		signal?.throwIfAborted();
 		await platform.local.set({
 			serverUrl,
 			wrappedKey,
@@ -146,6 +147,26 @@ export function createSession(platform) {
 		subscribe: state.subscribe,
 		ready,
 		refresh,
+		importPairing: ({ serverUrl, privateKey, publicKey, password, signal }) =>
+			mutate(async () => {
+				signal.throwIfAborted();
+				checkServer(serverUrl);
+				const local = await platform.local.get([
+					"wrappedKey",
+					"pendingRegistration",
+				]);
+				if (local.wrappedKey || local.pendingRegistration)
+					throw new Error(
+						"A library or pending creation is already configured.",
+					);
+				if (password.length < 8)
+					throw new Error("Password must be at least 8 characters.");
+				if ((await loadKey(privateKey)).registrationKey !== publicKey)
+					throw new Error("Invalid paired identity.");
+				const wrappedKey = await wrapPrivateKey(privateKey, password);
+				signal.throwIfAborted();
+				await saveIdentity(serverUrl, privateKey, wrappedKey, signal);
+			}),
 		create: ({ serverUrl, password, otc }) =>
 			mutate(async () => {
 				checkServer(serverUrl);

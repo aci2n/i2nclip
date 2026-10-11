@@ -4,6 +4,17 @@ Encrypted media store. The browser encrypts each file in your browser before upl
 
 ## Set up your library
 
+To connect another device, open Settings on an unlocked browser and choose
+**Create pairing code**. On the new browser, choose **Connect existing library**,
+use the same server, enter the 12-character code, and choose a password for that
+device. Approve **Send library** on the original browser. The code expires after
+two minutes and a failed authentication requires a fresh code. Both the web app
+and Firefox extension support pairing; it gives the new device full access to
+the same library without another invitation. Download a recovery file on the new
+device: its recovery file uses its new password. Pairing requires HTTPS except
+for loopback development servers. See [device pairing](doc/pairing.md) for the
+protocol and limits.
+
 Open the extension settings, use the default server (`https://clip.i2n.duckdns.org`) or enter your own URL and an invitation code from the admin, then choose an unlock password of at least 8 characters and click **Create library**. The browser generates the library identity and registers its public key automatically.
 
 Download your **recovery file** before uploading. It contains your encrypted library identity and server URL. Keep it and remember your password: both are required to restore your library in another browser. The server cannot recover either for you. Settings also let you download the recovery file again later.

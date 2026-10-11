@@ -4,7 +4,18 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { defineConfig } from "vite";
 
 export default defineConfig({
+	base: "./",
 	publicDir: false,
+	worker: {
+		format: "es",
+		rolldownOptions: {
+			output: {
+				minify: false,
+				entryFileNames: "chunks/[name]-[hash].js",
+				chunkFileNames: "chunks/[name]-[hash].js",
+			},
+		},
+	},
 	plugins: [
 		svelte(),
 		{

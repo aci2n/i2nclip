@@ -27,6 +27,7 @@
     "test:packages": "node --test tests/packaging.js"
   },
   "dependencies": {
+    "@serenity-kit/opaque": "1.1.0",
     "svelte": "^5.57.2"
   },
   "devDependencies": {

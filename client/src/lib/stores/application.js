@@ -1,5 +1,6 @@
 import { get, writable } from "svelte/store";
 import { createLibrary } from "./library.js";
+import { createPairing } from "./pairing.js";
 import { createPendingUpload } from "./pending-upload.js";
 import { createSession } from "./session.js";
 import { createSettings } from "./settings.js";
@@ -7,6 +8,7 @@ import { createSettings } from "./settings.js";
 // The application owns workflows across view changes; views only render them.
 export function createApplication(platform, initialPage, browser = window) {
 	const session = createSession(platform);
+	const pairing = createPairing(session);
 	const settings = createSettings(session, platform);
 	const standalone = !initialPage;
 	const pageAtLocation = () => {
@@ -58,6 +60,7 @@ export function createApplication(platform, initialPage, browser = window) {
 	return {
 		subscribe: state.subscribe,
 		session,
+		pairing,
 		settings,
 		href,
 		navigate(event, page) {
@@ -82,6 +85,7 @@ export function createApplication(platform, initialPage, browser = window) {
 			pending?.dispose();
 			library?.dispose();
 			settings.dispose();
+			pairing.dispose();
 			session.dispose();
 		},
 	};

@@ -12,6 +12,7 @@ mod error;
 mod frame;
 mod maintenance;
 mod media;
+mod pairing;
 #[cfg(test)]
 mod reference_crypto;
 mod routes;
@@ -53,6 +54,7 @@ pub(crate) struct AppState {
     pub(crate) db: Database,
     pub(crate) upload_slots: Arc<tokio::sync::Semaphore>,
     pub(crate) download_slots: Arc<tokio::sync::Semaphore>,
+    pub(crate) pairings: Arc<std::sync::Mutex<pairing::Pairings>>,
     /// Public origin named in request signatures, such as `https://clip.example.com`.
     origin: Arc<str>,
 }
@@ -64,6 +66,7 @@ impl AppState {
             origin: origin.into(),
             upload_slots: Arc::new(tokio::sync::Semaphore::new(UPLOAD_SLOTS)),
             download_slots: Arc::new(tokio::sync::Semaphore::new(DOWNLOAD_SLOTS)),
+            pairings: Arc::new(std::sync::Mutex::new(pairing::Pairings::default())),
         }
     }
 

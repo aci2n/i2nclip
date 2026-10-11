@@ -327,6 +327,7 @@ export {
 	expectConfigured,
 	expectSetup,
 	fillCreation,
+	installBrowser,
 	issueOtc,
 	openReset,
 	openServer,

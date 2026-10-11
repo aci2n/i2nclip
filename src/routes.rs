@@ -22,6 +22,7 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/register-key", post(register_key))
         .merge(media::router())
+        .merge(crate::pairing::router())
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
 }

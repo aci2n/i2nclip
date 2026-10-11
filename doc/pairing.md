@@ -1,0 +1,103 @@
+# Device pairing
+
+Web and Firefox extension clients can copy an unlocked library identity to a
+fresh browser. The receiver chooses its own password. Pairing copies the full
+identity: there is no per-device revocation or restricted sharing. Recovery files,
+media encryption, request signatures, registration, and local generation checks
+retain their existing formats.
+
+## Code and authentication
+
+Codes have twelve uniformly random base-32 characters, grouped `XXXX-XXXX-XXXX`.
+The first four identify the relay room; the final eight are a 40-bit secret.
+The alphabet is `23456789ABCDEFGHJKLMNPQRSTUVWXYZ`. Input is case-insensitive and
+ignores spaces and hyphens. The secret never appears in a request or URL.
+
+The sending device creates a temporary OPAQUE setup and registration record
+locally. `@serenity-kit/opaque` 1.1.0 performs the PAKE in packaged Web Workers;
+its default memory-constrained Argon2 configuration is used. The receiver is the
+OPAQUE client and the sending device is the OPAQUE server. The Rust relay is
+neither endpoint and never receives the OPAQUE setup or registration record.
+Identifiers bind version, origin, public room ID, random 128-bit room instance,
+and participant roles. Each worker accepts one authentication attempt only.
+
+After authentication and explicit sender approval, HKDF-SHA256 derives separate
+AES-256-GCM keys for the identity transfer and save acknowledgment from the PAKE
+session key. The HKDF salt is the pairing context and info is `transfer` or
+`acknowledgment`. Each packet uses a fresh 12-byte nonce. AAD additionally binds
+direction and protocol step. JSON packets contain `v: 1`, `iv`, and `ct` encoded
+as unpadded base64url. The identity plaintext contains `v`, `serverUrl`,
+`privateKey`, and `publicKey`; the acknowledgment contains `v: 1, saved: true`.
+
+The receiver validates the identity and selected server, acquires the session
+Web Lock, checks that no library/pending registration exists, and saves a freshly
+password-wrapped key with fresh local generation IDs. The sender reports success
+only after decrypting the acknowledgment. A failed acknowledgment does not undo
+a successful save; the receiver reports that distinction.
+
+Pairing state, passwords, setup, and capability tokens are memory-only. Reset,
+identity/server changes, cancellation, expiry, and page disposal terminate the
+worker and release references. This does not guarantee erasure of JavaScript
+strings from process memory. HTTPS is required except for `localhost`,
+`127.0.0.1`, and `::1`. The design protects against relay observation and message
+substitution, assuming trusted client builds; a compromised web client can access
+an unlocked identity. An attacker can still disrupt pairing by claiming a room
+or dropping messages.
+
+## Relay API
+
+The server holds at most 256 ephemeral rooms in memory, with one active room per
+registered library and five creations per library per minute. Rooms expire after
+120 seconds without extension. Expired rooms and rate records are pruned on
+requests. Server restart abandons all rooms. Multiple server processes require
+sticky routing; shared relay storage is outside this version.
+
+| Endpoint | Authorization | Payload/result |
+| --- | --- | --- |
+| `POST /api/pairings` | Existing signed request from registered library | `{v:1}` creates room and returns sender capability |
+| `POST /api/pairings/{id}/join` | None; first receiver wins atomically | `{message}` submits OPAQUE initiation and returns receiver capability |
+| `GET /api/pairings/{id}/messages` | Participant capability | Current room snapshot |
+| `POST /api/pairings/{id}/messages` | Participant capability | `{step,message}` advances the exchange |
+| `DELETE /api/pairings/{id}` | Participant capability | Cancels the room; `204` |
+
+Snapshots contain `v`, `id`, `instance`, `remaining_secs`, `step`, and `message`.
+Only create/join return `capability`, a random 256-bit token used in the
+`Authorization: Bearer …` header. IDs are unique among live rooms; the instance
+distinguishes later reuse. No room enumeration endpoint is provided.
+
+Steps are 1 receiver initiation, 2 sender OPAQUE response, 3 receiver OPAQUE finish,
+4 sender encrypted identity, and 5 receiver encrypted acknowledgment. Only the
+expected participant can submit a step. Identical repeated messages are
+idempotent; replacements and skipped steps are rejected. The last message and
+step remain available until expiry, including the acknowledgment.
+Clients retry a lost poll or submission response once, reusing the exact message.
+They never retry room creation/join or start a second PAKE attempt with the same
+code. After a successful save, acknowledgment failures do not delete the room,
+so an acknowledgment already accepted by the relay remains available.
+
+Request bodies and client-read responses are capped at 16 KiB; message strings
+are capped at 8 KiB. Bodies and client requests have ten-second deadlines.
+Clients poll once per second with one request in flight, and independently
+enforce expiry. Responses are `no-store`. Errors use `401`, `404`, `409`, `413`,
+`429`, and `503` as appropriate. Client UI uses fixed error messages; server logs
+record lifecycle events/status codes without message bodies or capabilities.
+
+Deploy the relay before the clients. Old servers return a clear unsupported or
+ended-pairing error; existing creation and recovery restore remain available.
+
+## Verification
+
+Unit tests cover the real OPAQUE exchange, wrong secrets, session bindings,
+tampering, direction separation, replay rejection, bounded reads, sender approval,
+durable-save acknowledgment, cancellation, and serialized identity import.
+Rust tests cover role capabilities, ordering/idempotency, room/rate/body limits,
+and expiry. Firefox tests use independent browser contexts and the real Rust API
+for every web/extension direction, new-password unlock, wrong codes, and reset
+cancellation. The extension needs packaged WASM enabled by its narrowly scoped
+`wasm-unsafe-eval` CSP permission.
+
+`make test-extension-pairing` builds the add-on, installs a temporary copy in a
+fresh headless Firefox profile, and runs the packaged OPAQUE Workers under the
+actual manifest CSP. It needs a Firefox version accepted by the manifest;
+`I2N_TEST_FIREFOX` overrides the default `/usr/bin/firefox`. It does not access
+existing profiles or user identities.

@@ -41,6 +41,11 @@ export default defineConfig({
 		proxy: { "/api": process.env.I2N_API_TARGET || "http://127.0.0.1:8080" },
 	},
 	build: { outDir: "dist/web", minify: false, cssMinify: false },
+	worker: {
+		format: "es",
+		plugins: () => [],
+		rolldownOptions: { output: { minify: false } },
+	},
 });
 
 import { readFile } from "node:fs/promises";

@@ -27,7 +27,7 @@ run:
 	cargo run
 
 # Tests and verification. Install toolchains and client dependencies first.
-.PHONY: test test-client test-packages test-db test-profile test-e2e test-smoke test-all
+.PHONY: test test-client test-packages test-extension-pairing test-db test-profile test-e2e test-smoke test-all
 .PHONY: lint format-check audit client-test e2e smoketest
 
 # Fast checks: client unit tests, Svelte type checking, and Rust unit/config tests.
@@ -42,6 +42,10 @@ test-client:
 # Requires zip, unzip, and GNU tar.
 test-packages:
 	$(MAKE) -C client test-packages
+
+# Installs the built add-on in an isolated Firefox profile to verify Worker/WASM CSP.
+test-extension-pairing:
+	$(MAKE) -C client test-extension-pairing
 
 # Rust PostgreSQL API/protocol tests using isolated databases; TEST_ARGS adds filters.
 # Provisions PostgreSQL through Docker/Podman unless I2N_TEST_DATABASE_URL is set.

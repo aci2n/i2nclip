@@ -9,6 +9,92 @@ import { deferred, installSessionLocks, tick } from "./helpers.js";
 
 beforeEach(installSessionLocks);
 
+test("paired identities use a new local password and generation without registering again", async (t) => {
+	const { saved, privateKey } = await identityFixture();
+	const local = area(),
+		cached = area();
+	const session = open(t, local, cached);
+	await session.ready;
+	const signal = new AbortController().signal;
+	assert.equal(
+		await session.importPairing({
+			serverUrl: saved.serverUrl,
+			privateKey,
+			publicKey: saved.publicKey,
+			password: "new-device-password",
+			signal,
+		}),
+		true,
+	);
+	assert.notEqual(
+		(await local.get()).identityGeneration,
+		saved.identityGeneration,
+	);
+	assert.equal((await cached.get()).privateKey, privateKey);
+	await cached.clear();
+	await session.refresh();
+	assert.equal(await session.unlock("password123"), false);
+	assert.equal(await session.unlock("new-device-password"), true);
+});
+
+test("competing paired imports serialize and cannot replace an existing library", async (t) => {
+	const { saved, privateKey } = await identityFixture();
+	const local = area();
+	const first = open(t, local, area()),
+		second = open(t, local, area());
+	await Promise.all([first.ready, second.ready]);
+	const value = {
+		serverUrl: saved.serverUrl,
+		privateKey,
+		publicKey: saved.publicKey,
+		password: "new-device-password",
+		signal: new AbortController().signal,
+	};
+	const outcomes = await Promise.all([
+		first.importPairing(value),
+		second.importPairing(value),
+	]);
+	assert.deepEqual(outcomes.sort(), [false, true]);
+	assert.equal((await local.get()).publicKey, saved.publicKey);
+});
+
+test("canceled or invalid paired imports never write an identity", async (t) => {
+	const { saved, privateKey } = await identityFixture();
+	const local = area(),
+		cached = area();
+	const session = open(t, local, cached);
+	await session.ready;
+	const controller = new AbortController();
+	controller.abort();
+	const value = {
+		serverUrl: saved.serverUrl,
+		privateKey,
+		publicKey: saved.publicKey,
+		password: "new-device-password",
+		signal: controller.signal,
+	};
+	assert.equal(await session.importPairing(value), false);
+	assert.deepEqual(await local.get(), {});
+	assert.equal(
+		await session.importPairing({
+			...value,
+			signal: new AbortController().signal,
+			publicKey: "different",
+		}),
+		false,
+	);
+	assert.deepEqual(await local.get(), {});
+	await local.set({ pendingRegistration: {} });
+	assert.equal(
+		await session.importPairing({
+			...value,
+			signal: new AbortController().signal,
+		}),
+		false,
+	);
+	assert.equal((await local.get()).wrappedKey, undefined);
+});
+
 function area(initial = {}) {
 	let values = { ...initial };
 	return {

@@ -1,5 +1,8 @@
 {
   "manifest_version": 3,
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; worker-src 'self'"
+  },
   "name": "i2nclip",
   "version": "0.0.1",
   "description": "Upload media to your i2nclip server. Your library is encrypted in this browser.",

@@ -53,7 +53,7 @@ onDestroy(app.dispose);
 	{#if !$session.ready}
 		<p role="status">Loading…</p>
 	{:else if page === "options"}
-		<Settings {session} settings={app.settings} />
+		<Settings {session} settings={app.settings} pairing={app.pairing} />
 	{:else if page === "upload" || page === "unlock"}
 		<Upload
 			{session}

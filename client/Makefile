@@ -31,7 +31,7 @@ dev-extension:
 # Tests and verification (repository Makefile lists all permission groups).
 # -----------------------------------------------------------------------------
 
-.PHONY: test lint format-check test-packages test-profile test-e2e test-smoke e2e smoketest
+.PHONY: test lint format-check test-packages test-extension-pairing test-profile test-e2e test-smoke e2e smoketest
 
 # Unit tests for shared libraries, CLI, and smoke runner, plus Svelte type checking.
 test:
@@ -49,6 +49,11 @@ format-check:
 # Build and inspect all archives, then run the extracted CLI; zip/unzip/GNU tar required.
 test-packages: packages
 	npm run test:packages
+
+# Temporary installed add-on; requires a supported system Firefox (or I2N_TEST_FIREFOX).
+test-extension-pairing: export PATH := $(dir $(NODE)):$(PATH)
+test-extension-pairing: extension
+	node --test tests/extension-pairing.js
 
 # Firefox UI and packaged CLI integration tests against the real local API.
 # Requires browser launch, local servers, and disposable PostgreSQL admin access.
