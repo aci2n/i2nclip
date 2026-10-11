@@ -17,6 +17,7 @@ test("content hashes keep immutable downloads correct across deletion and new up
 			...credentials,
 			id: first.id,
 			metadata: { ...first.metadata, name: "renamed.txt" },
+			prevMetaHash: first.metaHash,
 		});
 		const listed = await api.list(credentials);
 		await api.remove({ ...credentials, id: first.id });

@@ -226,7 +226,17 @@ async fn retag(
         Err(response) => return *response,
     };
     match state.db.update_meta(owner, &id, &body.bytes).await {
-        Ok(item) => json_response(StatusCode::OK, item_json(item)),
+        Ok(crate::db::MetadataUpdate::Updated(item)) => {
+            json_response(StatusCode::OK, item_json(item))
+        }
+        Ok(crate::db::MetadataUpdate::Conflict(item)) => json_response(
+            StatusCode::CONFLICT,
+            serde_json::json!({
+                "error": "metadata changed in another page",
+                "code": "metadata_conflict",
+                "media": item_json(item),
+            }),
+        ),
         Err(err) => fail(err),
     }
 }

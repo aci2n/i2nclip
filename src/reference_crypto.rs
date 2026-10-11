@@ -210,8 +210,9 @@ pub fn encode_post(meta: &[u8], content: &[u8], tags: &str) -> Vec<u8> {
     out
 }
 
-pub fn encode_meta(meta: &[u8], tags: &str) -> Vec<u8> {
+pub fn encode_meta(prev_meta_hash: &[u8; 32], meta: &[u8], tags: &str) -> Vec<u8> {
     let mut out = Vec::new();
+    out.extend_from_slice(prev_meta_hash);
     push_chunk(&mut out, meta);
     push_chunk(&mut out, tags.as_bytes());
     out

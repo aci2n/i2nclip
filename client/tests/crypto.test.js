@@ -14,7 +14,7 @@ import {
 	requestMessage,
 	tagToken,
 } from "../src/lib/protocol/crypto.js";
-import { encodePost } from "../src/lib/protocol/frame.js";
+import { encodeMeta, encodePost } from "../src/lib/protocol/frame.js";
 
 const vectors = JSON.parse(
 	readFileSync(new URL("./test-vectors.json", import.meta.url), "utf8"),
@@ -78,6 +78,17 @@ test("library identity matches the rust vectors", async () => {
 			body,
 		}),
 		vectors.authorization,
+	);
+});
+
+test("metadata frame begins with exactly the prior ciphertext hash", () => {
+	const priorMetaHash = new Uint8Array(32).fill(0x5a);
+	const body = encodeMeta({ prevMetaHash: priorMetaHash, meta: [1, 2], tags: "" });
+	assert.deepEqual(body.slice(0, 32), priorMetaHash);
+	assert.deepEqual([...body.slice(32)], [0, 0, 0, 2, 1, 2, 0, 0, 0, 0]);
+	assert.throws(
+		() => encodeMeta({ prevMetaHash: new Uint8Array(31), meta: [], tags: "" }),
+		/32 bytes/,
 	);
 });
 

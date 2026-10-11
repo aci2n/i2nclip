@@ -20,6 +20,11 @@ mod reference_crypto;
 
 static N: AtomicU64 = AtomicU64::new(0);
 
+fn raw_hash(bytes: &[u8]) -> [u8; 32] {
+    let encoded = crypto::body_hash(bytes);
+    std::array::from_fn(|index| u8::from_str_radix(&encoded[index * 2..index * 2 + 2], 16).unwrap())
+}
+
 // Keep paused time from auto-advancing while real PostgreSQL I/O is pending.
 struct ManualClock(tokio::task::JoinHandle<()>);
 impl Drop for ManualClock {
@@ -328,8 +333,8 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
     );
-    let body = client_crypto::encode_meta(&meta, &tags);
-    assert_eq!(body.len(), 69_640);
+    let body = client_crypto::encode_meta(&raw_hash(&meta), &meta, &tags);
+    assert_eq!(body.len(), 69_672);
     assert_eq!(
         call(&app, &owner, "PUT", &format!("/api/media/{id}"), body)
             .await
@@ -373,7 +378,7 @@ async fn media_body_caps_reject_declared_sizes_before_polling() {
     let id = "8888888888888888888888888888888888888888888888888888888888888888";
     for (method, path, cap) in [
         ("POST", "/api/media".to_string(), 33_624_140),
-        ("PUT", format!("/api/media/{id}"), 69_640),
+        ("PUT", format!("/api/media/{id}"), 69_672),
         ("GET", "/api/media".to_string(), 0),
         ("DELETE", format!("/api/media/{id}"), 0),
     ] {
@@ -431,7 +436,7 @@ async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
     let id = "9999999999999999999999999999999999999999999999999999999999999999";
     for (method, path, cap) in [
         ("POST", "/api/media".to_string(), 33_624_140),
-        ("PUT", format!("/api/media/{id}"), 69_640),
+        ("PUT", format!("/api/media/{id}"), 69_672),
         ("GET", "/api/media".to_string(), 0),
         ("DELETE", format!("/api/media/{id}"), 0),
         ("POST", "/api/register-key".to_string(), 4096),
@@ -1386,7 +1391,7 @@ async fn list_query_validation_is_scoped_to_the_list_endpoint() {
             &owner,
             "PUT",
             &path,
-            client_crypto::encode_meta(&meta, "")
+            client_crypto::encode_meta(&raw_hash(&meta), &meta, "")
         )
         .await
         .0,
@@ -1490,7 +1495,7 @@ async fn failed_tag_writes_roll_back_upload_and_metadata() {
             &key,
             "PUT",
             &format!("/api/media/{id}"),
-            client_crypto::encode_meta(&new_meta, &token)
+            client_crypto::encode_meta(&raw_hash(&meta), &new_meta, &token)
         )
         .await
         .0,
@@ -1508,6 +1513,86 @@ async fn failed_tag_writes_roll_back_upload_and_metadata() {
             .await
             .unwrap(),
         1
+    );
+}
+
+#[tokio::test]
+async fn stale_metadata_update_returns_current_item_without_writing() {
+    let owner = new_identity();
+    let (dir, app) = app(&[&owner]).await;
+    let content =
+        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"clip").unwrap();
+    let id = crypto::body_hash(&content);
+    let original =
+        client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"original").unwrap();
+    let initial_token = client_crypto::tag_token(&owner.seed, "initial").unwrap();
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "POST",
+            "/api/media",
+            client_crypto::encode_post(&original, &content, &initial_token),
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+
+    let current =
+        client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"current").unwrap();
+    let current_token = client_crypto::tag_token(&owner.seed, "current").unwrap();
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "PUT",
+            &format!("/api/media/{id}"),
+            client_crypto::encode_meta(&raw_hash(&original), &current, &current_token,),
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+
+    let stale =
+        client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"stale").unwrap();
+    let stale_token = client_crypto::tag_token(&owner.seed, "stale").unwrap();
+    let (status, response) = call(
+        &app,
+        &owner,
+        "PUT",
+        &format!("/api/media/{id}"),
+        client_crypto::encode_meta(&raw_hash(&original), &stale, &stale_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let payload: serde_json::Value = serde_json::from_slice(&response).unwrap();
+    assert_eq!(payload["code"], "metadata_conflict");
+    assert_eq!(payload["media"]["meta"], STANDARD.encode(&current));
+    assert_eq!(
+        payload["media"]["tokens"],
+        serde_json::json!([current_token])
+    );
+
+    let stored: Vec<u8> = sqlx::query_scalar("SELECT meta FROM files WHERE id=$1")
+        .bind(&id)
+        .fetch_one(&dir.1)
+        .await
+        .unwrap();
+    assert_eq!(stored, current);
+
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "PUT",
+            &format!("/api/media/{id}"),
+            client_crypto::encode_meta(&raw_hash(&current), &stale, &stale_token),
+        )
+        .await
+        .0,
+        StatusCode::OK
     );
 }
 

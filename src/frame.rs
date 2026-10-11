@@ -10,6 +10,7 @@
 //!   bytes     UTF-8 tokens separated by '\n'
 //!
 //! PUT /api/media/{id}
+//!   bytes     SHA-256 of the prior encrypted metadata (32 bytes)
 //!   uint32be  length of encrypted metadata
 //!   bytes     metadata blob
 //!   uint32be  length of the tag-token text
@@ -42,6 +43,7 @@ pub(crate) struct PostParts<'body> {
 }
 
 pub(crate) struct MetaParts<'body> {
+    pub prev_meta_hash: [u8; 32],
     pub meta: &'body [u8],
     pub tokens: Vec<String>,
 }
@@ -64,7 +66,11 @@ pub(crate) fn decode_post(bytes: &[u8]) -> Result<PostParts<'_>, Error> {
 }
 
 pub(crate) fn decode_meta(bytes: &[u8]) -> Result<MetaParts<'_>, Error> {
-    let mut i = 0;
+    if bytes.len() < 32 {
+        return Err(Error::BadRequest("truncated body".into()));
+    }
+    let prev_meta_hash = bytes[..32].try_into().expect("32 bytes");
+    let mut i = 32;
     let meta = read_chunk(bytes, &mut i, MAX_META)?;
     let tags = read_chunk(bytes, &mut i, MAX_TOKEN_TEXT)?;
     if i != bytes.len() {
@@ -73,6 +79,7 @@ pub(crate) fn decode_meta(bytes: &[u8]) -> Result<MetaParts<'_>, Error> {
     let tags =
         std::str::from_utf8(tags).map_err(|_| Error::BadRequest("tags are not utf-8".into()))?;
     Ok(MetaParts {
+        prev_meta_hash,
         meta,
         tokens: parse_tokens(tags)?,
     })
@@ -149,7 +156,7 @@ mod tests {
         let metadata = vec![1; MAX_META];
         let content = vec![1; MAX_CONTENT];
         let post = encode_post(&metadata, &content, "");
-        let put = encode_meta(&metadata, "");
+        let put = encode_meta(&[0; 32], &metadata, "");
         let post_info = allocation_counter::measure(|| {
             let parts = decode_post(black_box(&post)).unwrap();
             black_box(parts);
@@ -212,8 +219,9 @@ mod tests {
         let mut extra = body.clone();
         extra.push(0);
         assert!(decode_post(&extra).is_err());
-        let meta_body = encode_meta(b"meta", &token);
+        let meta_body = encode_meta(&[0; 32], b"meta", &token);
         let meta = decode_meta(&meta_body).unwrap();
+        assert_eq!(meta.prev_meta_hash, [0; 32]);
         assert_eq!(meta.meta, b"meta");
         assert_eq!(meta.tokens, vec![token.clone()]);
         let other = "B".repeat(43);

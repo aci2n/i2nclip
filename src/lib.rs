@@ -38,7 +38,7 @@ pub(crate) const MAX_TOKEN_TEXT: usize = 4096;
 /// One page of the library list. The next page starts after the last row.
 pub(crate) const PAGE: usize = 24;
 pub(crate) const MAX_BODY: usize = 4 + MAX_META + 4 + MAX_CONTENT + 4 + MAX_TOKEN_TEXT;
-pub(crate) const MAX_META_BODY: usize = 4 + MAX_META + 4 + MAX_TOKEN_TEXT;
+pub(crate) const MAX_META_BODY: usize = 32 + 4 + MAX_META + 4 + MAX_TOKEN_TEXT;
 /// `POST /api/register-key` accepts a small JSON object only.
 pub(crate) const MAX_REGISTER_BODY: usize = 4096;
 pub(crate) const SKEW_SECS: u64 = 300;

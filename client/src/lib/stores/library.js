@@ -144,17 +144,20 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 		} else media.updateItem(item);
 		return media;
 	}
-	function updateTags(id, metadata, tokens) {
+	function updateItem(id, changes) {
 		if (!disposed)
 			state.update((value) => ({
 				...value,
 				items: value.items.map((item) => {
 					if (item.id !== id) return item;
-					const updated = { ...item, metadata, tokens };
+					const updated = { ...item, ...changes };
 					mediaItems.get(id)?.updateItem(updated);
 					return updated;
 				}),
 			}));
+	}
+	function updateTags(id, metadata, tokens) {
+		updateItem(id, { metadata, tokens });
 	}
 	return {
 		subscribe: state.subscribe,
@@ -165,6 +168,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 		},
 		more: () => load(true),
 		query: () => get(state).query,
+		updateItem,
 		updateTags,
 		media,
 		async reveal(id, opener) {
@@ -208,7 +212,11 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 			const target = mediaItems.get(id);
 			const result = await target?.retag(tags);
 			if (!result || disposed || mediaItems.get(id) !== target) return false;
-			updateTags(id, result.metadata, result.tokens);
+			if (result.conflict) {
+				if (result.item) updateItem(id, result.item);
+				return false;
+			}
+			updateItem(id, result);
 			return true;
 		},
 		upload: batch.upload,

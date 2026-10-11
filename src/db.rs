@@ -52,6 +52,11 @@ pub(crate) struct Item {
     pub tokens: Vec<String>,
 }
 
+pub(crate) enum MetadataUpdate {
+    Updated(Item),
+    Conflict(Item),
+}
+
 impl Database {
     /// Request-policy tests use a closed pool so accidental SQL fails immediately.
     #[cfg(test)]
@@ -304,35 +309,60 @@ impl Database {
         owner: [u8; 32],
         id: &str,
         body: &[u8],
-    ) -> Result<Item, Error> {
+    ) -> Result<MetadataUpdate, Error> {
         let id = frame::parse_id(id)?;
         let parts = frame::decode_meta(body)?;
         crypto::check_blob(parts.meta, MAX_META)?;
         let mut tx = self.pool.begin().await?;
-        // UPDATE locks the authorized row until the tag replacement commits.
-        // Concurrent metadata changes cannot mix one update's metadata with another's tags.
-        let (bytes, created_at) = sqlx::query_as::<_, (i64, i64)>(
+        // Lock before comparing so concurrent replacements serialize. Under
+        // READ COMMITTED this sees the preceding transaction's committed row.
+        let current = sqlx::query(
             r#"
-            UPDATE files SET meta = $1
-            WHERE id = $2 AND owner = $3
-            RETURNING octet_length(content)::bigint AS bytes, created_at
+            SELECT meta, octet_length(content)::bigint AS bytes, created_at
+            FROM files
+            WHERE id = $1 AND owner = $2
+            FOR UPDATE
             "#,
         )
-        .bind(parts.meta)
         .bind(&id)
         .bind(owner.as_slice())
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(Error::NotFound)?;
+        let current_meta: Vec<u8> = current.try_get("meta")?;
+        let bytes: i64 = current.try_get("bytes")?;
+        let created_at: i64 = current.try_get("created_at")?;
+        if crypto::body_hash_bytes(&current_meta) != parts.prev_meta_hash {
+            let tokens = sqlx::query_scalar::<_, String>(
+                "SELECT token FROM tags WHERE file_id = $1 ORDER BY token",
+            )
+            .bind(&id)
+            .fetch_all(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            return Ok(MetadataUpdate::Conflict(Item {
+                id,
+                meta: current_meta,
+                bytes,
+                created_at,
+                tokens,
+            }));
+        }
+        sqlx::query("UPDATE files SET meta = $1 WHERE id = $2 AND owner = $3")
+            .bind(parts.meta)
+            .bind(&id)
+            .bind(owner.as_slice())
+            .execute(&mut *tx)
+            .await?;
         replace_tokens(&mut tx, &id, &parts.tokens).await?;
         tx.commit().await?;
-        Ok(Item {
+        Ok(MetadataUpdate::Updated(Item {
             id,
             meta: parts.meta.to_vec(),
             bytes,
             created_at,
             tokens: parts.tokens,
-        })
+        }))
     }
 
     /// Delete the authorized file; the foreign key cascades deletion to its tags.

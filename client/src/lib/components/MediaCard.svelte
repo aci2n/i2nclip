@@ -80,7 +80,7 @@ const summary = $derived(
 		<TagEditor
 			tags={$media.metadata.tags || []}
 			{name}
-			disabled={$media.busy || $media.deleted}
+			disabled={$media.busy || $media.deleted || $media.metadataUnavailable}
 			onsave={(tags) => library.retag(item.id, tags)}
 		/>
 	{/if}

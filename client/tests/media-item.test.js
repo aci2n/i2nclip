@@ -10,6 +10,7 @@ const item = {
 	metadata: { name: "sample.png", content_type: "image/png", tags: [] },
 	tokens: [],
 	thumb: new Uint8Array([1]),
+	metaHash: "00".repeat(32),
 };
 const credentials = {
 	serverUrl: "https://clip.example",
@@ -40,7 +41,7 @@ test("a pending tag save prevents another save or delete", async (t) => {
 	await media.remove();
 	assert.equal(updates, 1);
 	assert.equal(deletes, 0);
-	job.resolve({ tokens: ["one"] });
+	job.resolve({ tokens: ["one"], metaHash: "11".repeat(32), conflict: false });
 	await first;
 	assert.deepEqual(get(media).metadata.tags, ["one"]);
 	assert.equal(get(media).busy, false);

@@ -79,6 +79,61 @@ test("tag edits preserve the preview and remain searchable", async ({
 	await expect(card).toHaveCount(0);
 });
 
+test("stale metadata edits refresh tags and preserve the draft for retry", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
+	await page
+		.locator("#files")
+		.setInputFiles({ name: "dot.png", mimeType: "image/png", buffer: png });
+	const firstCard = page.locator(".card");
+	await expect(firstCard).toHaveCount(1);
+	const { session } = await page.evaluate(async () => ({
+		session: await browser.storage.session.get(null),
+	}));
+	const other = await page.context().newPage();
+	await other.addInitScript((saved) => {
+		sessionStorage.setItem("i2nclip-e2e", JSON.stringify(saved));
+	}, session);
+	await other.goto(`${app.web.origin}/client/dist/extension/library.html`);
+	const otherCard = other.locator(".card");
+	await expect(otherCard).toHaveCount(1);
+
+	let continuePut;
+	const heldPut = new Promise((resolve) => (continuePut = resolve));
+	let putStarted;
+	const startedPut = new Promise((resolve) => (putStarted = resolve));
+	await other.route("**/api/media/*", async (route) => {
+		if (route.request().method() === "PUT") {
+			putStarted();
+			await heldPut;
+		}
+		await route.continue();
+	});
+	await otherCard.getByRole("button", { name: "Add tag to dot.png" }).click();
+	await otherCard.locator(".tags input").fill("second");
+	await otherCard.getByRole("button", { name: "Save tag", exact: true }).click();
+	await startedPut;
+
+	await firstCard.getByRole("button", { name: "Add tag to dot.png" }).click();
+	await firstCard.locator(".tags input").fill("first");
+	await firstCard.getByRole("button", { name: "Save tag", exact: true }).click();
+	await expect(firstCard.locator(".tag-text")).toHaveText(["first"]);
+	continuePut();
+	await expect(otherCard.locator("output")).toContainText(
+		"This file changed in another page",
+	);
+	await expect(otherCard.locator(".tag-text")).toHaveText(["first"]);
+	await expect(otherCard.locator(".tags input")).toHaveValue("second");
+	await otherCard.getByRole("button", { name: "Save tag", exact: true }).click();
+	await expect(otherCard.locator(".tag-text")).toHaveText(["first", "second"]);
+	await other.close();
+	await page.reload();
+	await expect(page.locator(".card .tag-text")).toHaveText(["first", "second"]);
+});
+
 test("a failed content fetch can be retried", async ({ page, app }) => {
 	await createLibrary(page, app);
 	await page.goto(`${app.web.origin}/client/dist/extension/library.html`);

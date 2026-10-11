@@ -152,15 +152,41 @@ export function createMediaItem(
 					...options,
 					metadata,
 					thumb: item.thumb,
+					prevMetaHash: value.metaHash,
 				});
 				signal.throwIfAborted();
+				if (result.conflict) {
+					if (result.item.metadata) {
+						item = { ...item, ...result.item };
+						state.update((current) => ({
+							...current,
+							...result.item,
+							metadataUnavailable: false,
+							message:
+								"This file changed in another page. Latest tags loaded; review and try again.",
+							error: true,
+						}));
+						return { conflict: true, item: { ...result.item } };
+					}
+					state.update((current) => ({
+						...current,
+						metadataUnavailable: true,
+						message:
+							"This file changed in another page, but its metadata could not be opened. Your draft is preserved.",
+						error: true,
+					}));
+					return { conflict: true, item: null };
+				}
+				item = { ...item, tokens: result.tokens, metaHash: result.metaHash, metadata };
 				state.update((current) => ({
 					...current,
 					metadata,
 					tokens: result.tokens,
+					metaHash: result.metaHash,
+					metadataUnavailable: false,
 					message: "",
 				}));
-				return { metadata, tokens: result.tokens };
+				return { metadata, tokens: result.tokens, metaHash: result.metaHash };
 			}),
 		remove: () =>
 			run(async () => {

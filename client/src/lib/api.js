@@ -2,7 +2,7 @@
 // HTTP requests contain signatures and ciphertext, never the private key.
 
 import { sniffContentType } from "./media/metadata.js";
-import { b64ToBytes } from "./protocol/bytes.js";
+import { b64ToBytes, hexToBytes } from "./protocol/bytes.js";
 import {
 	authorizationHeader,
 	bodyHash,
@@ -69,7 +69,7 @@ export async function upload({
 		onProgress,
 		signal,
 	);
-	return { ...saved, metadata };
+	return { ...saved, metadata, metaHash: await bodyHash(meta) };
 }
 
 export async function list({ serverUrl, privateKey, tags, after, signal }) {
@@ -123,13 +123,18 @@ export async function updateMetadata({
 	id,
 	metadata,
 	thumb,
+	prevMetaHash,
 	signal,
 }) {
 	const key = await loadKey(privateKey);
 	const tokens = await tagTokens(key, metadata.tags ?? []);
 	const meta = await sealedMetadata(key, id, metadata, thumb);
-	const body = encodeMeta({ meta, tags: tokens.join("\n") });
-	return send(
+	const body = encodeMeta({
+		prevMetaHash: hexToBytes(prevMetaHash),
+		meta,
+		tags: tokens.join("\n"),
+	});
+	const response = await signedFetch(
 		serverUrl,
 		key,
 		"PUT",
@@ -138,6 +143,19 @@ export async function updateMetadata({
 		undefined,
 		signal,
 	);
+	if (response.status === 409) {
+		const payload = await response.json();
+		if (payload.code === "metadata_conflict" && payload.media) {
+			const item = await openMeta(key, payload.media);
+			return {
+				conflict: true,
+				item: { ...item, metaHash: item.metaHash, tokens: payload.media.tokens },
+			};
+		}
+	}
+	if (!response.ok) throw await responseError(response);
+	const saved = await response.json();
+	return { conflict: false, tokens: saved.tokens, metaHash: await bodyHash(meta) };
 }
 
 export async function remove({ serverUrl, privateKey, id, signal }) {
@@ -188,8 +206,10 @@ export async function isKeyRegistered({ serverUrl, privateKey, signal }) {
 }
 
 async function openMeta(key, item) {
+	const encrypted = b64ToBytes(item.meta);
+	const metaHash = await bodyHash(encrypted);
 	try {
-		const plain = await decrypt(key, metaAad(item.id), b64ToBytes(item.meta));
+		const plain = await decrypt(key, metaAad(item.id), encrypted);
 		const { metadata, thumb } = decodeMetaPlain(plain);
 		return {
 			id: item.id,
@@ -197,6 +217,7 @@ async function openMeta(key, item) {
 			bytes: item.bytes,
 			metadata,
 			thumb,
+			metaHash,
 		};
 	} catch {
 		return {
@@ -205,6 +226,7 @@ async function openMeta(key, item) {
 			bytes: item.bytes,
 			metadata: null,
 			thumb: null,
+			metaHash,
 		};
 	}
 }

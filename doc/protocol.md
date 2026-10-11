@@ -63,6 +63,7 @@ POST /api/media:
     chunk(UTF8(tokens joined by LF))
 
 PUT /api/media/{id}:
+    raw SHA-256 of the previously read encrypted metadata (32 bytes)
     chunk(encrypted_metadata)
     chunk(UTF8(tokens joined by LF))
 ```
@@ -76,12 +77,12 @@ Token parsing trims lines, ignores empty lines, and removes duplicates. Each tok
 | Encrypted metadata | 65,536 |
 | Token text field | 4,096 |
 | Total authenticated request body | 33,624,140 |
-| Metadata PUT request body | 69,640 |
+| Metadata PUT request body | 69,672 |
 | Media GET/DELETE request body | 0 |
 | Registration HTTP body | 4,096 |
 | Registration code text | 512 |
 
-After header authentication, each media handler selects its byte cap: POST allows 33,624,140 bytes, PUT allows 69,640 bytes (two prefixes, encrypted metadata, and token text), and GET/DELETE require an empty body. Both the early Content-Length check and the streaming reader use that cap; missing or dishonest length headers cannot bypass the byte count. Nonempty GET/DELETE bodies return `413`. Authentication still happens before body reads and early size rejection, so authenticated oversized requests spend their nonce. Registration retains its separate 4,096-byte streaming cap. The server does not enforce request Content-Type. Upload admission has four slots and download admission has sixteen slots per router. There is no storage or account quota.
+After header authentication, each media handler selects its byte cap: POST allows 33,624,140 bytes, PUT allows 69,672 bytes (the 32-byte hash, two chunk lengths, encrypted metadata, and token text), and GET/DELETE require an empty body. Both the early Content-Length check and the streaming reader use that cap; missing or dishonest length headers cannot bypass the byte count. Nonempty GET/DELETE bodies return `413`. Authentication still happens before body reads and early size rejection, so authenticated oversized requests spend their nonce. Registration retains its separate 4,096-byte streaming cap. The server does not enforce request Content-Type. Upload admission has four slots and download admission has sixteen slots per router. There is no storage or account quota.
 
 Complete body reads have total deadlines: 120 seconds for media POST, 30 seconds for PUT, and 10 seconds for media GET/DELETE and registration. The clock starts when body reading begins, after media authentication and early Content-Length checks, and never resets on chunks. Timeout drops the body and partial buffer and returns `408`, `{"error":"request body timed out"}`, with `Cache-Control: no-store`. Authentication nonces are already spent; timed-out registrations do not consume invitation codes. The deadline does not cover headers, authentication, subsequent hashing, or storage operations.
 
@@ -97,7 +98,7 @@ DELETE removes the authorized row and cascading tags in one statement. Downloads
 
 An exact sealed-payload retry gets `409` after success. The application prepares fresh ciphertext when a failed upload is retried, so re-encryption normally creates a new hash and another item. After a lost successful response, refresh the library before retrying to avoid creating another copy. No nonce reuse or cached replay body is introduced.
 
-PUT updates the authorized file row and replaces its tags in one transaction; sealed content, size, and creation time remain unchanged. The update locks the row until commit. Lists fetch metadata and sorted tags in one SQL statement without selecting content, preserving owner filtering, AND tag matching, and cursor ordering. Different sealed content uses a different URL, subject to SHA-256 collision resistance. The initial schema is updated directly without migration versions or import tooling.
+PUT locks the authorized file row and compares the submitted prior metadata hash with the stored ciphertext hash. A mismatch returns `409` with code `metadata_conflict` and the current encrypted media object, including its tags; it makes no changes. A matching hash replaces metadata and tags in one transaction; sealed content, size, and creation time remain unchanged. Lists fetch metadata and sorted tags in one SQL statement without selecting content, preserving owner filtering, AND tag matching, and cursor ordering. Different sealed content uses a different URL, subject to SHA-256 collision resistance. The initial schema is updated directly without migration versions or import tooling.
 
 Upload POSTs share four slots across owners in one server router. After authentication and early size checks, requests wait for an available slot before reading the body. Slot saturation does not return `503`. Authentication has already spent the nonce; any new request must use a fresh signature and nonce. The upload body deadline starts after admission and does not bound queue time. Slots cover body reading, hashing, frame decoding, and storage, until the async request completes or is cancelled. Other endpoints do not consume upload slots.
 
