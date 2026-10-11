@@ -46,7 +46,7 @@ stop_server() {
 
 case "${1:-}" in
     dev)
-        podman build --network="${CONTAINER_NETWORK:-host}" \
+        podman build \
             --tag "$image" --file Containerfile .
         start_database
         if podman container exists "$server"; then

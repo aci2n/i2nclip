@@ -4,8 +4,6 @@ IMAGE ?= i2nclip
 TAG ?= latest
 PORT ?= 8080
 HOST ?= deploy@example.com
-# Avoid rootless pasta's /dev/net/tun requirement during image builds.
-CONTAINER_NETWORK ?= host
 DEV_PORT ?= 8080
 DEV_ORIGIN ?= http://localhost:$(DEV_PORT)
 SMOKE_SERVER ?= https://clip.i2n.duckdns.org
@@ -31,8 +29,7 @@ run:
 # Local containers: only the web/API port is published, on loopback.
 .PHONY: dev dev-db dev-down dev-otc
 dev dev-db dev-down dev-otc:
-	DEV_PORT="$(DEV_PORT)" DEV_ORIGIN="$(DEV_ORIGIN)" \
-	  CONTAINER_NETWORK="$(CONTAINER_NETWORK)" sh scripts/dev.sh $@
+	DEV_PORT="$(DEV_PORT)" DEV_ORIGIN="$(DEV_ORIGIN)" sh scripts/dev.sh $@
 
 # Tests and verification. Install toolchains and client dependencies first.
 .PHONY: test test-client test-packages test-extension-pairing test-db test-profile test-e2e test-smoke test-all
@@ -58,7 +55,6 @@ test-extension-pairing:
 # Rust PostgreSQL API/protocol tests using isolated databases; TEST_ARGS adds filters.
 # Provisions PostgreSQL through Docker/Podman unless I2N_TEST_DATABASE_URL is set.
 test-db:
-	I2N_TEST_CONTAINER_NETWORK="$(CONTAINER_NETWORK)" \
 	DOCKER_HOST="$${DOCKER_HOST:-unix://$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/podman/podman.sock}" \
 	  cargo run --quiet --features test-containers --example postgres-tests -- \
 	  cargo test --features postgres-tests $(TEST_ARGS)
@@ -68,7 +64,6 @@ test-db:
 test-profile:
 	cargo build --release
 	cargo build --example test-database
-	I2N_TEST_CONTAINER_NETWORK="$(CONTAINER_NETWORK)" \
 	DOCKER_HOST="$${DOCKER_HOST:-unix://$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/podman/podman.sock}" \
 	  env -u I2N_TEST_DATABASE_URL cargo run --quiet --features test-containers --example postgres-tests -- \
 	  $(MAKE) -C client test-profile
@@ -76,7 +71,6 @@ test-profile:
 # Firefox UI and packaged CLI flows against the real local API and isolated databases.
 # Provisions PostgreSQL; installs npm dependencies and Firefox when needed.
 test-e2e:
-	I2N_TEST_CONTAINER_NETWORK="$(CONTAINER_NETWORK)" \
 	DOCKER_HOST="$${DOCKER_HOST:-unix://$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/podman/podman.sock}" \
 	  cargo run --quiet --features test-containers --example postgres-tests -- \
 	  $(MAKE) -C client test-e2e
@@ -121,7 +115,7 @@ smoketest: test-smoke
 
 # Container build and deployment.
 container:
-	podman build --network=$(CONTAINER_NETWORK) -t $(IMAGE):$(TAG) -f Containerfile .
+	podman build -t $(IMAGE):$(TAG) -f Containerfile .
 	@echo "podman run --rm -p $(PORT):8080 -e I2N_ORIGIN=https://clip.example.com -e I2N_DATABASE_URL localhost/$(IMAGE):$(TAG)"
 
 # Build the image and load it on the remote Podman host over SSH (set HOST).

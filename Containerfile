@@ -1,4 +1,4 @@
-# Build:  podman build --network=host -t i2nclip -f Containerfile .
+# Build:  podman build -t i2nclip -f Containerfile .
 # Run with I2N_ORIGIN and either I2N_DATABASE_URL or I2N_DATABASE_URL_FILE.
 # PostgreSQL owns persistent storage.
 

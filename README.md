@@ -53,7 +53,7 @@ Podman is required on the host. Rerun `make dev` after source changes to rebuild
 
 The server and database share the `i2nclip-dev` bridge network. Only the server
 publishes a port, bound to host loopback; PostgreSQL has no host port. Image builds
-use `CONTAINER_NETWORK=host` by default, independently of the runtime network.
+use Podman's default network.
 Runtime requires working Podman bridge networking. If rootless Pasta reports a
 missing `/dev/net/tun`, fix the host's rootless networking configuration; changing
 the build network does not fix container startup.
@@ -130,7 +130,7 @@ make test-db
 
 The target defaults `DOCKER_HOST` to the rootless Podman socket under `XDG_RUNTIME_DIR` (or `/run/user/<uid>`). Set `DOCKER_HOST` to use another Docker-compatible runtime. You do not need to start PostgreSQL yourself. Pass test filters or flags with `TEST_ARGS`, for example `make test-db TEST_ARGS="-- --nocapture"`.
 
-If Podman's default network cannot use `/dev/net/tun`, run `I2N_TEST_CONTAINER_NETWORK=host make test-db`. This local-runtime fallback binds PostgreSQL only to `127.0.0.1` on a randomly selected port. Set `I2N_TEST_DATABASE_RESTART=1` to additionally stop/start the owned container and check persistence and reconnection through an existing SQLx pool. Restart verification requires container provisioning.
+Set `I2N_TEST_DATABASE_RESTART=1` to additionally stop/start the owned container and check persistence and reconnection through an existing SQLx pool. Restart verification requires container provisioning.
 
 The same runner can provision PostgreSQL for Firefox:
 
@@ -138,7 +138,7 @@ The same runner can provision PostgreSQL for Firefox:
 DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock cargo run --quiet --features test-containers --example postgres-tests -- npm run e2e --prefix client
 ```
 
-Use Node from `client/.nvmrc`; the host-network fallback also applies to this command.
+Use Node from `client/.nvmrc`.
 
 To use an existing disposable server, set `I2N_TEST_DATABASE_URL` to an administrator URL with database-creation rights; `make test-db` will skip container provisioning. Direct `cargo test --features postgres-tests` and Firefox E2E require this explicit URL. Never point test tooling at production.
 

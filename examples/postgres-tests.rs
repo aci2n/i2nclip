@@ -28,27 +28,7 @@ async fn run() -> Result<()> {
         getrandom::getrandom(&mut secret)
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         let password = i2nclip::crypto::body_hash(&secret);
-        let host_network = match std::env::var("I2N_TEST_CONTAINER_NETWORK") {
-            Ok(network) if network == "host" => true,
-            Ok(_) => return Err(
-                "I2N_TEST_CONTAINER_NETWORK supports only host; unset it for the default network"
-                    .into(),
-            ),
-            Err(std::env::VarError::NotPresent) => false,
-            Err(error) => return Err(error.into()),
-        };
-        let host_port = if host_network {
-            // Host networking is an opt-in fallback for Podman without /dev/net/tun.
-            // Bind PostgreSQL only to loopback and select an unused local port.
-            Some(
-                std::net::TcpListener::bind(("127.0.0.1", 0))?
-                    .local_addr()?
-                    .port(),
-            )
-        } else {
-            None
-        };
-        let mut request = GenericImage::new("docker.io/library/postgres", "18")
+        let request = GenericImage::new("docker.io/library/postgres", "18")
             .with_exposed_port(5432.tcp())
             // The temporary bootstrap server is socket-only. Wait for initialization
             // to finish, then check the final TCP listener below.
@@ -57,20 +37,6 @@ async fn run() -> Result<()> {
             ))
             .with_env_var("POSTGRES_PASSWORD", &password)
             .with_env_var("POSTGRES_HOST_AUTH_METHOD", "scram-sha-256");
-        if let Some(port) = host_port {
-            request = request
-                .with_host_config_modifier(|config| {
-                    config.network_mode = Some("host".to_owned());
-                    config.port_bindings = None;
-                })
-                .with_cmd([
-                    "postgres".to_owned(),
-                    "-p".to_owned(),
-                    port.to_string(),
-                    "-c".to_owned(),
-                    "listen_addresses=127.0.0.1".to_owned(),
-                ]);
-        }
         let postgres = request.start()
             .await
             .map_err(|error| {
@@ -78,14 +44,8 @@ async fn run() -> Result<()> {
                     "testcontainers could not start PostgreSQL: {error}. Enable the Podman API socket or set DOCKER_HOST"
                 ))
             })?;
-        let (host, port) = if let Some(port) = host_port {
-            ("127.0.0.1".to_owned(), port)
-        } else {
-            (
-                postgres.get_host().await?.to_string(),
-                postgres.get_host_port_ipv4(5432.tcp()).await?,
-            )
-        };
+        let host = postgres.get_host().await?.to_string();
+        let port = postgres.get_host_port_ipv4(5432.tcp()).await?;
         // URL parsing handles IPv6 hosts; generated passwords are lowercase hex.
         let mut url = url::Url::parse("postgresql://postgres@localhost/postgres?sslmode=disable")?;
         url.set_host(Some(&host))?;

@@ -44,4 +44,4 @@ Use Linux, Node from `client/.nvmrc`, and the local rootless Podman API socket. 
 make test-profile
 ```
 
-The target always provisions its own PostgreSQL container, independently of `I2N_TEST_DATABASE_URL`. The host-network fallback binds PostgreSQL only to loopback; omit `I2N_TEST_CONTAINER_NETWORK` when the default container network works. PostgreSQL process inspection requires local Podman access. Output contains resource counters and timings, not database credentials.
+The target always provisions its own PostgreSQL container, independently of `I2N_TEST_DATABASE_URL`. PostgreSQL process inspection requires local Podman access. Output contains resource counters and timings, not database credentials.
