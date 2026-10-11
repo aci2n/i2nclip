@@ -101,6 +101,21 @@ test("uploads are serialized and a library change cancels the remaining batch", 
 	assert.equal(get(library).uploading, false);
 });
 
+test("restoring the same identity invalidates requests and uploads from its previous generation", async (t) => {
+	const { session, library, calls, uploads } = setup(t);
+	const upload = library.upload([{ name: "one" }, { name: "two" }]);
+	session.set({ ...identity, identityGeneration: "restored" });
+	assert.equal(calls[0].options.signal.aborted, true);
+	assert.equal(uploads[0].signal.aborted, true);
+	uploads[0].resolve();
+	await upload;
+	assert.equal(uploads.length, 1);
+	calls[1].resolve({ items: [{ id: "restored" }], next: null });
+	calls[0].resolve({ items: [{ id: "stale" }], next: null });
+	await tick();
+	assert.deepEqual(get(library).items, [{ id: "restored" }]);
+});
+
 test("a failed file does not stop a batch and retry sends only failed files", async (t) => {
 	const { library, calls, uploads } = setup(t);
 	calls[0].resolve({ items: [], next: null });

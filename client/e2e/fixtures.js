@@ -193,10 +193,10 @@ function installBrowser() {
 			storage.setItem("i2nclip-e2e", JSON.stringify(next));
 			notify(all, next, area);
 		},
-		async remove(key) {
+		async remove(keys) {
 			const all = JSON.parse(storage.getItem("i2nclip-e2e") || "{}");
 			const next = { ...all };
-			delete next[key];
+			for (const key of Array.isArray(keys) ? keys : [keys]) delete next[key];
 			storage.setItem("i2nclip-e2e", JSON.stringify(next));
 			notify(all, next, area);
 		},

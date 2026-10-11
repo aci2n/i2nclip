@@ -89,6 +89,16 @@ test("owner cancellation covers preparation before transfer and prevents sending
 	);
 });
 
+test("a new generation cancels uploads even when the key and server are unchanged", async (t) => {
+	const { task, state } = fixture(t);
+	const transfer = deferred();
+	const sending = task.send({}, () => transfer.promise);
+	state.update((value) => ({ ...value, identityGeneration: "restored" }));
+	assert.equal(task.signal.aborted, true);
+	transfer.resolve();
+	await assert.rejects(sending, { name: "AbortError" });
+});
+
 test("library changes during pending-ID cleanup suppress completion and notification", async (t) => {
 	const { task, state } = fixture(t);
 	let removed;

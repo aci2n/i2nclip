@@ -52,13 +52,18 @@ export function createPendingUpload(
 	const unsubscribe = session.subscribe((value) => {
 		sessionState = value;
 		const nextContext = value.ready
-			? { serverUrl: value.serverUrl, publicKey: value.publicKey }
+			? {
+					serverUrl: value.serverUrl,
+					publicKey: value.publicKey,
+					identityGeneration: value.identityGeneration,
+				}
 			: null;
 		const changed =
 			context &&
 			nextContext &&
 			(context.serverUrl !== nextContext.serverUrl ||
-				context.publicKey !== nextContext.publicKey);
+				context.publicKey !== nextContext.publicKey ||
+				context.identityGeneration !== nextContext.identityGeneration);
 		if (nextContext) context = nextContext;
 		if (changed) {
 			contextChanged = true;

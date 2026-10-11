@@ -14,38 +14,62 @@ export function createSession(platform) {
 		serverUrl: DEFAULT_SERVER_URL,
 		wrappedKey: null,
 		pendingRegistration: null,
+		identityGeneration: null,
 		privateKey: "",
 		busy: false,
 		error: "",
 	});
-	let revision = 0;
 	let disposed = false;
 	const controller = new AbortController();
 	const active = () => controller.signal.throwIfAborted();
+	const coordinated = (action) => {
+		const locks = globalThis.navigator?.locks;
+		if (!locks)
+			throw new Error("Session coordination is unavailable. Try again.");
+		return locks.request(
+			"i2nclip-session",
+			{ signal: controller.signal },
+			action,
+		);
+	};
 
 	async function refresh() {
-		const version = ++revision;
 		try {
-			const [local, session] = await Promise.all([
-				platform.local.get([
-					"serverUrl",
-					"wrappedKey",
-					"publicKey",
-					"pendingRegistration",
-				]),
-				platform.session.get("privateKey"),
-			]);
-			let privateKey = "";
-			if (local.wrappedKey && session.privateKey) {
-				try {
-					const loaded = await loadKey(session.privateKey);
-					if (loaded.registrationKey === local.publicKey)
-						privateKey = session.privateKey;
-				} catch {
-					/* A stale or damaged session must stay locked. */
+			await coordinated(async () => {
+				active();
+				const [local, session] = await Promise.all([
+					platform.local.get([
+						"serverUrl",
+						"wrappedKey",
+						"publicKey",
+						"identityGeneration",
+						"pendingRegistration",
+					]),
+					platform.session.get(["privateKey", "sessionGeneration"]),
+				]);
+				let privateKey = "";
+				if (
+					local.wrappedKey &&
+					session.privateKey &&
+					typeof local.identityGeneration === "string" &&
+					local.identityGeneration &&
+					session.sessionGeneration === local.identityGeneration
+				) {
+					try {
+						const loaded = await loadKey(session.privateKey);
+						if (loaded.registrationKey === local.publicKey)
+							privateKey = session.privateKey;
+					} catch {
+						/* A stale or damaged session must stay locked. */
+					}
 				}
-			}
-			if (!disposed && version === revision)
+				active();
+				// Reads and cleanup share the mutation lock: a queued refresh cannot
+				// remove a key written by a later unlock using an earlier snapshot.
+				if (!privateKey && (session.privateKey || session.sessionGeneration)) {
+					await platform.session.remove(["privateKey", "sessionGeneration"]);
+					active();
+				}
 				state.update((value) => ({
 					...value,
 					...local,
@@ -57,11 +81,13 @@ export function createSession(platform) {
 							DEFAULT_SERVER_URL,
 					pendingRegistration: local.pendingRegistration || null,
 					wrappedKey: local.wrappedKey || null,
+					identityGeneration: local.identityGeneration || null,
 					privateKey,
 					error: "",
 				}));
+			});
 		} catch (error) {
-			if (!disposed && version === revision)
+			if (!disposed)
 				state.update((value) => ({
 					...value,
 					ready: true,
@@ -78,20 +104,13 @@ export function createSession(platform) {
 		state.update((value) => ({ ...value, busy: true, error: "" }));
 		try {
 			// One settings mutation across all open pages, including password derivation.
-			const lock = globalThis.navigator?.locks;
-			const guarded = async () => {
-				await ready;
+			// Initial refresh also acquires this lock; await it before queueing.
+			await ready;
+			await coordinated(async () => {
 				active();
 				await action();
 				active();
-			};
-			await (lock
-				? lock.request(
-						"i2nclip-session",
-						{ signal: controller.signal },
-						guarded,
-					)
-				: guarded());
+			});
 			await refresh();
 			return true;
 		} catch (error) {
@@ -107,15 +126,20 @@ export function createSession(platform) {
 
 	async function saveIdentity(serverUrl, privateKey, wrappedKey) {
 		const loaded = await loadKey(privateKey);
+		const identityGeneration = crypto.randomUUID();
 		active();
 		await platform.local.set({
 			serverUrl,
 			wrappedKey,
 			publicKey: loaded.registrationKey,
+			identityGeneration,
 			pendingRegistration: null,
 		});
 		active();
-		await platform.session.set({ privateKey });
+		await platform.session.set({
+			privateKey,
+			sessionGeneration: identityGeneration,
+		});
 	}
 
 	return {
@@ -206,13 +230,27 @@ export function createSession(platform) {
 			}),
 		unlock: (password) =>
 			mutate(async () => {
-				const { wrappedKey } = await platform.local.get("wrappedKey");
+				const { wrappedKey, identityGeneration } = await platform.local.get([
+					"wrappedKey",
+					"identityGeneration",
+				]);
 				if (!wrappedKey)
 					throw new Error("Create or restore your library in Settings.");
 				const privateKey = await unwrapPrivateKey(wrappedKey, password);
 				await loadKey(privateKey);
 				active();
-				await platform.session.set({ privateKey });
+				const generation =
+					typeof identityGeneration === "string" && identityGeneration
+						? identityGeneration
+						: crypto.randomUUID();
+				if (generation !== identityGeneration) {
+					await platform.local.set({ identityGeneration: generation });
+					active();
+				}
+				await platform.session.set({
+					privateKey,
+					sessionGeneration: generation,
+				});
 			}),
 		setServer: (serverUrl) =>
 			mutate(async () => {
@@ -231,9 +269,9 @@ export function createSession(platform) {
 			}),
 		reset: () =>
 			mutate(async () => {
-				await platform.session.clear();
-				active();
 				await platform.local.clear();
+				active();
+				await platform.session.clear();
 			}),
 		backup: () =>
 			mutate(async () => {
@@ -252,14 +290,13 @@ export function createSession(platform) {
 			}),
 		credentials() {
 			active();
-			const { serverUrl, privateKey } = get(state);
+			const { serverUrl, privateKey, identityGeneration } = get(state);
 			if (!privateKey) throw new Error("Unlock before uploading.");
-			return { serverUrl, privateKey };
+			return { serverUrl, privateKey, identityGeneration };
 		},
 		dispose() {
 			disposed = true;
 			controller.abort();
-			revision++;
 			unsubscribe();
 		},
 	};

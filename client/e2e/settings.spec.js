@@ -566,7 +566,13 @@ for (const submit of ["click", "Enter"]) {
 		);
 		await expectConfigured(page);
 		const restored = await storage(page);
-		expect(restored.local).toEqual(created.local);
+		expect(restored.local).toEqual({
+			...created.local,
+			identityGeneration: restored.local.identityGeneration,
+		});
+		expect(restored.local.identityGeneration).not.toBe(
+			created.local.identityGeneration,
+		);
 		expect(restored.session.privateKey).toBe(created.session.privateKey);
 		await page.reload();
 		await expectConfigured(page);
@@ -632,6 +638,34 @@ for (const password of ["wrong-password", PASSWORD]) {
 		expect((await storage(page)).local).toEqual(before.local);
 	});
 }
+
+test("legacy extension sessions relock and migrate after one password entry", async ({
+	page,
+	app,
+}) => {
+	const created = await createLibrary(page, app);
+	await page.evaluate(async () => {
+		await browser.storage.local.remove("identityGeneration");
+		await browser.storage.session.remove("sessionGeneration");
+	});
+	await page.goto(`${app.web.origin}/client/dist/extension/library.html`);
+	await expect(page.locator("#unlock")).toBeVisible();
+	expect((await storage(page)).session.privateKey).toBeUndefined();
+	expect((await storage(page)).session.sessionGeneration).toBeUndefined();
+	await page.locator("#pass").fill(PASSWORD);
+	await page.locator("#pass").press("Enter");
+	await expect(page.locator("#unlock")).toBeHidden();
+	const migrated = await storage(page);
+	expect(migrated.session.privateKey).toBe(created.session.privateKey);
+	expect(migrated.local.wrappedKey).toEqual(created.local.wrappedKey);
+	expect(migrated.local.identityGeneration).toBeTruthy();
+	expect(migrated.session.sessionGeneration).toBe(
+		migrated.local.identityGeneration,
+	);
+	await page.reload();
+	await expect(page.locator("#unlock")).toBeHidden();
+	await expect(page.locator("#files")).toBeAttached();
+});
 
 test("setup errors stay beside the active form on narrow screens", async ({
 	page,

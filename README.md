@@ -10,6 +10,11 @@ Download your **recovery file** before uploading. It contains your encrypted lib
 
 The password encrypts the identity in your Firefox profile and recovery file. It is never stored or sent to the server. Firefox asks for it once each session; the unlocked identity stays in session storage until Firefox exits. Restore accepts only i2nclip recovery files and is available when no library is configured. To switch libraries, download your recovery file, then click **Reset everything**. Reset clears the browser's saved settings and session; uploads on the server stay saved. You can then create a library or restore a recovery file.
 
+Reset also invalidates unlocked web sessions in other tabs. Restoring the same
+library does not unlock those tabs; enter the password in each tab again. Existing
+unlocked sessions from before this change require one password entry after
+upgrading. Saved identities and recovery files remain compatible.
+
 Registration happens automatically during creation. The encrypted identity is saved before sending the request, but the library becomes available only after registration is confirmed. If registration fails, keep the original password and retry; the pending creation survives closing the page. A signed check detects a registration whose response was lost, so retrying does not require another invitation. If your code was rejected, enter a valid code and retry with the same password. Discarding a pending creation requires confirmation because its invitation may already have been spent.
 
 Admin (with `I2N_DATABASE_URL` set, or inside the running application container):

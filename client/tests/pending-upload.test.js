@@ -321,44 +321,49 @@ test("notification failure leaves a successful upload successful", async (t) => 
 	assert.equal(closed, true);
 });
 
-test("changing the library during popup preparation requires explicit submission", async (t) => {
-	const state = writable({ ...credentials, ready: true, publicKey: "first" });
-	const preparation = deferred();
-	let sends = 0;
-	const pending = createPendingUpload(
-		{ subscribe: state.subscribe, credentials: () => get(state) },
-		{
-			session: {
-				get: async () => ({ "upload:one": { name: "one" } }),
-				remove: async () => {},
+for (const change of [
+	{ serverUrl: "https://other.example" },
+	{ identityGeneration: "restored" },
+]) {
+	test(`changing the library ${Object.keys(change)[0]} during popup preparation requires explicit submission`, async (t) => {
+		const state = writable({ ...credentials, ready: true, publicKey: "first" });
+		const preparation = deferred();
+		let sends = 0;
+		const pending = createPendingUpload(
+			{ subscribe: state.subscribe, credentials: () => get(state) },
+			{
+				session: {
+					get: async () => ({ "upload:one": { name: "one" } }),
+					remove: async () => {},
+				},
+				notify: async () => {},
+				close() {},
 			},
-			notify: async () => {},
-			close() {},
-		},
-		"one",
-		{
-			prepareMedia: () => preparation.promise,
-			sendUpload: async () => {
-				sends++;
+			"one",
+			{
+				prepareMedia: () => preparation.promise,
+				sendUpload: async () => {
+					sends++;
+				},
 			},
-		},
-		{ auto: true },
-	);
-	t.after(pending.dispose);
-	state.set({
-		...credentials,
-		ready: true,
-		serverUrl: "https://other.example",
-		publicKey: "first",
+			{ auto: true },
+		);
+		t.after(pending.dispose);
+		state.set({
+			...credentials,
+			ready: true,
+			...change,
+			publicKey: "first",
+		});
+		preparation.resolve({ name: "one", blob: new Blob(["file"]) });
+		await pending.ready;
+		await tick();
+		assert.equal(sends, 0);
+		assert.equal(get(pending).status, "Library changed. Try again.");
+		await pending.send("");
+		assert.equal(sends, 1);
 	});
-	preparation.resolve({ name: "one", blob: new Blob(["file"]) });
-	await pending.ready;
-	await tick();
-	assert.equal(sends, 0);
-	assert.equal(get(pending).status, "Library changed. Try again.");
-	await pending.send("");
-	assert.equal(sends, 1);
-});
+}
 
 test("preparation failure retries in the same popup, preserves its source, and rejects duplicate clicks", async (t) => {
 	const state = writable(credentials);

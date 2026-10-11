@@ -18,9 +18,9 @@ const storage = (area) => ({
 			fn();
 		});
 	},
-	async remove(key) {
+	async remove(keys) {
 		const values = await this.get(null);
-		delete values[key];
+		for (const key of Array.isArray(keys) ? keys : [keys]) delete values[key];
 		area.setItem("i2nclip", JSON.stringify(values));
 		listeners.forEach((fn) => {
 			fn();
@@ -39,6 +39,17 @@ window.addEventListener("storage", () =>
 		fn();
 	}),
 );
+// A restored or suspended page may have missed the shared-storage events.
+const resume = () => {
+	listeners.forEach((fn) => {
+		fn();
+	});
+};
+window.addEventListener("pageshow", resume);
+window.addEventListener("focus", resume);
+document.addEventListener("visibilitychange", () => {
+	if (document.visibilityState === "visible") resume();
+});
 export const webPlatform = {
 	confirm: (message) => globalThis.confirm(message),
 	local: storage(localStorage),

@@ -123,11 +123,16 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 	const unsubscribe = session.subscribe((value) => {
 		const next =
 			value.ready && value.wrappedKey && value.privateKey
-				? { serverUrl: value.serverUrl, privateKey: value.privateKey }
+				? {
+						serverUrl: value.serverUrl,
+						privateKey: value.privateKey,
+						identityGeneration: value.identityGeneration,
+					}
 				: null;
 		if (
 			next?.serverUrl === credentials?.serverUrl &&
-			next?.privateKey === credentials?.privateKey
+			next?.privateKey === credentials?.privateKey &&
+			next?.identityGeneration === credentials?.identityGeneration
 		)
 			return;
 		invalidate();

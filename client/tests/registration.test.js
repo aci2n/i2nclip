@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import { get } from "svelte/store";
 import { createSession } from "../src/lib/stores/session.js";
+import { installSessionLocks } from "./helpers.js";
+
+beforeEach(installSessionLocks);
 
 const creation = {
 	serverUrl: "https://clip.example",

@@ -12,7 +12,8 @@ export function createUploadTask({ session, signal, onInvalidated }) {
 		if (
 			!controller.signal.aborted &&
 			(value.privateKey !== credentials.privateKey ||
-				value.serverUrl !== credentials.serverUrl)
+				value.serverUrl !== credentials.serverUrl ||
+				value.identityGeneration !== credentials.identityGeneration)
 		) {
 			controller.abort(
 				new DOMException("Library changed. Try again.", "AbortError"),
