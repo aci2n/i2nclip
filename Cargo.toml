@@ -60,4 +60,5 @@ required-features = ["postgres-tests"]
 
 [[example]]
 name = "postgres-tests"
+path = "examples/postgres-tests.rs"
 required-features = ["test-containers"]

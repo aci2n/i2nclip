@@ -96,7 +96,8 @@ For separate release-server, Node-client, and PostgreSQL process measurements, s
 its static HTML/JS/CSS into the final Rust server image. Rust serves the web
 client at `/` and its assets at `/assets/`, alongside the existing `/api/` routes.
 The image runs one process as uid 10001; Node and npm are absent at runtime.
-Its health check verifies both API health and the web entry page.
+The image has no built-in health check; deployment monitoring can check
+`/api/health` and the web entry page at `/`.
 
 `I2N_WEB_DIR` selects the directory of built web files. The image sets it to
 `/usr/local/share/i2nclip/web`; source execution defaults to `client/dist/web`
