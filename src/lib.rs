@@ -55,6 +55,7 @@ pub(crate) struct AppState {
     pub(crate) upload_slots: Arc<tokio::sync::Semaphore>,
     pub(crate) download_slots: Arc<tokio::sync::Semaphore>,
     pub(crate) pairings: Arc<std::sync::Mutex<pairing::Pairings>>,
+    pub(crate) pairing_body_slots: Arc<tokio::sync::Semaphore>,
     /// Public origin named in request signatures, such as `https://clip.example.com`.
     origin: Arc<str>,
 }
@@ -67,6 +68,7 @@ impl AppState {
             upload_slots: Arc::new(tokio::sync::Semaphore::new(UPLOAD_SLOTS)),
             download_slots: Arc::new(tokio::sync::Semaphore::new(DOWNLOAD_SLOTS)),
             pairings: Arc::new(std::sync::Mutex::new(pairing::Pairings::default())),
+            pairing_body_slots: Arc::new(tokio::sync::Semaphore::new(pairing::BODY_SLOTS)),
         }
     }
 
@@ -168,12 +170,15 @@ pub async fn run() -> Result<(), Error> {
     let (stop, receiver) = tokio::sync::watch::channel(false);
     let stop_shutdown = stop.clone();
     let maintenance = tokio::spawn(maintenance::run(state.db.clone(), receiver));
-    let served = axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            let _ = stop_shutdown.send(true);
-        })
-        .await;
+    let served = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        shutdown_signal().await;
+        let _ = stop_shutdown.send(true);
+    })
+    .await;
     // Also stop maintenance if serving exits with an error.
     let _ = stop.send(true);
     if let Err(err) = maintenance.await {

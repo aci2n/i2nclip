@@ -11,6 +11,7 @@ export function createMediaItem(
 	credentials,
 	platform,
 	api = { getContent, remove, updateMetadata },
+	{ validate } = {},
 ) {
 	let item = initialItem;
 	const urls = new Set();
@@ -66,6 +67,8 @@ export function createMediaItem(
 			error: false,
 		}));
 		try {
+			if (validate) await validate();
+			signal.throwIfAborted();
 			return await action();
 		} catch (error) {
 			if (!disposed)

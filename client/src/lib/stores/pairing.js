@@ -1,6 +1,5 @@
 import { get, writable } from "svelte/store";
 import { pairingRelay, pairingWorker } from "../pairing/service.js";
-import { loadKey } from "../protocol/crypto.js";
 import {
 	formatPairingCode,
 	PAIRING_TTL_MS,
@@ -35,17 +34,10 @@ export function createPairing(session, services = {}) {
 		if (now() >= current.deadline || Date.now() >= current.wallDeadline)
 			throw new Error("Pairing expired. Create a new code.");
 	}
-	function identity(value) {
-		return [
-			value.serverUrl,
-			value.privateKey,
-			value.identityGeneration,
-			Boolean(value.wrappedKey),
-			Boolean(value.pendingRegistration),
-		];
-	}
+
 	function cleanup(current, remove) {
 		clearInterval(current.timer);
+		current.operation?.dispose();
 		current.worker?.dispose();
 		current.controller.abort(canceled());
 		current.approve?.();
@@ -71,11 +63,7 @@ export function createPairing(session, services = {}) {
 			error: false,
 		});
 	}
-	const unsubscribe = session.subscribe((value) => {
-		if (!task || task.saving) return;
-		if (identity(value).some((part, index) => part !== task.identity[index]))
-			stop("Library or server changed. Start pairing again.");
-	});
+
 	async function wait(current) {
 		check(current);
 		await new Promise((resolve, reject) => {
@@ -147,8 +135,6 @@ export function createPairing(session, services = {}) {
 			controller: new AbortController(),
 			deadline: now() + PAIRING_TTL_MS,
 			wallDeadline: Date.now() + PAIRING_TTL_MS,
-			identity: identity(get(session)),
-			saving: false,
 			saved: false,
 		};
 		task = current;
@@ -162,6 +148,11 @@ export function createPairing(session, services = {}) {
 			error: false,
 		});
 		try {
+			current.operation = session.operation({
+				signal: current.controller.signal,
+				onInvalidated: () =>
+					stop("Library or server changed. Start pairing again."),
+			});
 			current.server = pairingOrigin(server);
 			current.relay = relayFactory(current.server, current.controller.signal);
 			current.worker = workerFactory();
@@ -237,7 +228,11 @@ export function createPairing(session, services = {}) {
 		send() {
 			const value = get(session);
 			return run("sender", value.serverUrl, async (current) => {
-				const credentials = session.credentials();
+				const credentials = await session.withIdentity(
+					current.operation,
+					(identity) => identity,
+				);
+				check(current);
 				const room = await current.relay.create(credentials.privateKey);
 				attach(current, room, room.id);
 				const secret = pairingSecret();
@@ -267,16 +262,15 @@ export function createPairing(session, services = {}) {
 				current.approve = null;
 				check(current);
 				update({ approval: false, status: "Sending library…" });
-				const loaded = await loadKey(credentials.privateKey);
-				const packet = await call(current, "transfer", {
-					value: {
-						v: 1,
-						serverUrl: current.server,
-						privateKey: credentials.privateKey,
-						publicKey: loaded.registrationKey,
+				await session.withIdentity(
+					current.operation,
+					async ({ privateKey, publicKey }) => {
+						const packet = await call(current, "transfer", {
+							value: { v: 1, serverUrl: current.server, privateKey, publicKey },
+						});
+						await submit(current, 4, packet);
 					},
-				});
-				await submit(current, 4, packet);
+				);
 				update({ status: "Waiting for the new device to save the library…" });
 				await call(current, "verifyAcknowledgment", {
 					message: await step(current, 5),
@@ -314,28 +308,23 @@ export function createPairing(session, services = {}) {
 					typeof value.publicKey !== "string"
 				)
 					throw new Error("Invalid paired identity.");
-				current.saving = true;
+				current.operation.dispose();
 				update({ status: "Saving your encrypted library…" });
-				const saved = await session.importPairing({
+				const savedOperation = await session.importPairing({
 					...value,
 					password,
 					signal: current.controller.signal,
+					onInvalidated: () =>
+						stop("Library or server changed. Start pairing again."),
 				});
-				current.saving = false;
-				current.identity = identity(get(session));
-				if (!saved)
+				if (!savedOperation)
 					throw new Error(get(session).error || "Could not save the library.");
 				current.saved = true;
-				const installed = get(session);
-				if (
-					installed.privateKey !== value.privateKey ||
-					installed.publicKey !== value.publicKey ||
-					installed.serverUrl !== current.server ||
-					!installed.identityGeneration
-				)
-					throw new Error("Library changed before pairing completed.");
-				check(current);
-				await submit(current, 5, await call(current, "acknowledge"));
+				current.operation = savedOperation;
+				await session.withIdentity(current.operation, async () => {
+					check(current);
+					await submit(current, 5, await call(current, "acknowledge"));
+				});
 			});
 		},
 		approve() {
@@ -348,7 +337,6 @@ export function createPairing(session, services = {}) {
 		dispose() {
 			stop();
 			disposed = true;
-			unsubscribe();
 		},
 	};
 }

@@ -4,6 +4,7 @@ import { get, writable } from "svelte/store";
 import { createPairingCrypto } from "../src/lib/pairing/crypto.js";
 import { readPairingResponse } from "../src/lib/pairing/service.js";
 import { bytesToB64url } from "../src/lib/protocol/bytes.js";
+import { loadKey } from "../src/lib/protocol/crypto.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
 import {
 	formatPairingCode,
@@ -17,7 +18,13 @@ import {
 	sealPairing,
 } from "../src/lib/protocol/pairing.js";
 import { createPairing } from "../src/lib/stores/pairing.js";
-import { deferred, tick } from "./helpers.js";
+import { createSession } from "../src/lib/stores/session.js";
+import {
+	deferred,
+	installSessionLocks,
+	tick,
+	workflowSession,
+} from "./helpers.js";
 
 const room = {
 	v: 1,
@@ -199,32 +206,60 @@ function fixture(t, receiverImport, options = {}) {
 		},
 	});
 	const worker = () => ({ call: createPairingCrypto(), dispose() {} });
-	const senderState = writable({
-		serverUrl: origin,
-		identityGeneration: "sender",
-		wrappedKey: {},
-		privateKey: "",
-		ready: true,
-	});
+	const senderState =
+		options.senderSession ||
+		writable({
+			serverUrl: origin,
+			identityGeneration: "sender",
+			wrappedKey: {},
+			privateKey: "",
+			ready: true,
+		});
 	const receiverState = writable({ serverUrl: origin, ready: true });
-	const session = (state) => ({
-		...state,
-		credentials: () => get(state),
-		async importPairing(value) {
-			if (receiverImport) return receiverImport(value, state);
-			value.signal.throwIfAborted();
-			state.set({
-				...get(state),
-				serverUrl: value.serverUrl,
-				privateKey: value.privateKey,
-				publicKey: value.publicKey,
-				wrappedKey: {},
-				identityGeneration: "receiver",
-			});
-			return true;
-		},
-	});
-	const sender = createPairing(session(senderState), {
+	const session = (state) => {
+		const workflow = workflowSession(state);
+		return {
+			...workflow,
+			async withIdentity(operation, action) {
+				operation.signal.throwIfAborted();
+				const expected = await workflow.withIdentity(
+					operation,
+					(identity) => identity,
+				);
+				const loaded = await loadKey(expected.privateKey);
+				return action({
+					privateKey: expected.privateKey,
+					publicKey: loaded.registrationKey,
+				});
+			},
+			async importPairing(value) {
+				if (receiverImport) {
+					const saved = await receiverImport(value, state);
+					return (
+						saved &&
+						workflow.operation({
+							signal: value.signal,
+							onInvalidated: value.onInvalidated,
+						})
+					);
+				}
+				value.signal.throwIfAborted();
+				state.set({
+					...get(state),
+					serverUrl: value.serverUrl,
+					privateKey: value.privateKey,
+					publicKey: value.publicKey,
+					wrappedKey: {},
+					identityGeneration: "receiver",
+				});
+				return workflow.operation({
+					signal: value.signal,
+					onInvalidated: value.onInvalidated,
+				});
+			},
+		};
+	};
+	const sender = createPairing(options.senderSession || session(senderState), {
 		relay,
 		worker,
 		pollMs: 1,
@@ -302,7 +337,8 @@ test("pairing requires explicit approval and reports success only after durable 
 
 test("identity changes cancel authenticated pairing before any identity transfer", async (t) => {
 	const f = fixture(t);
-	f.senderState.update((value) => ({ ...value, privateKey: "identity" }));
+	const key = await generatePrivateKey();
+	f.senderState.update((value) => ({ ...value, ...key }));
 	const sending = f.sender.send();
 	await until(() => Boolean(get(f.sender).code));
 	const receiving = f.receiver.receive(
@@ -323,24 +359,102 @@ test("identity changes cancel authenticated pairing before any identity transfer
 	assert(f.removed() >= 1);
 });
 
+for (const mutation of ["reset", "setServer"]) {
+	test(`${mutation} immediately cancels authenticated pairing while storage is stalled`, async (t) => {
+		installSessionLocks(t);
+		const key = await generatePrivateKey();
+		let local = {
+			serverUrl: origin,
+			wrappedKey: {},
+			publicKey: key.publicKey,
+			identityGeneration: "sender",
+		};
+		let cached = { privateKey: key.privateKey, sessionGeneration: "sender" };
+		const entered = deferred(),
+			finish = deferred();
+		let changed = () => {};
+		const senderSession = createSession({
+			local: {
+				get: async () => ({ ...local }),
+				clear: async () => {
+					local = {};
+					changed();
+				},
+				set: async (value) => {
+					entered.resolve();
+					await finish.promise;
+					local = { ...local, ...value };
+					changed();
+				},
+			},
+			session: {
+				get: async () => ({ ...cached }),
+				clear: async () => {
+					entered.resolve();
+					await finish.promise;
+					cached = {};
+					changed();
+				},
+				remove: async () => {
+					cached = {};
+				},
+			},
+			subscribe: (fn) => {
+				changed = fn;
+				return () => {};
+			},
+		});
+		t.after(() => {
+			finish.resolve();
+			senderSession.dispose();
+		});
+		await senderSession.ready;
+		const f = fixture(t, undefined, { senderSession });
+		const sending = f.sender.send();
+		await until(() => Boolean(get(f.sender).code));
+		const receiving = f.receiver.receive(
+			get(f.sender).code,
+			"new-password",
+			origin,
+		);
+		await until(() => get(f.sender).approval);
+		const changing =
+			mutation === "reset"
+				? senderSession.reset()
+				: senderSession.setServer("https://other.example");
+		await entered.promise;
+		assert.equal(get(senderSession).privateKey, "");
+		assert.equal(get(f.sender).approval, false);
+		f.sender.approve();
+		assert.equal(await sending, false);
+		assert.equal(f.transcript.length, 3);
+		f.receiver.cancel();
+		assert.equal(await receiving, false);
+		finish.resolve();
+		assert.equal(await changing, true);
+	});
+}
+
 test("cancellation during room creation removes a late room without publishing its code", async (t) => {
 	const create = deferred();
+	const entered = deferred();
 	let removed = 0;
 	const session = writable({ serverUrl: origin, privateKey: "identity" });
-	const pairing = createPairing(
-		{ ...session, credentials: () => get(session) },
-		{
-			worker: () => ({ call: async () => {}, dispose() {} }),
-			relay: () => ({
-				create: () => create.promise,
-				cancel: async () => {
-					removed++;
-				},
-			}),
-		},
-	);
+	const pairing = createPairing(workflowSession(session), {
+		worker: () => ({ call: async () => {}, dispose() {} }),
+		relay: () => ({
+			create: () => {
+				entered.resolve();
+				return create.promise;
+			},
+			cancel: async () => {
+				removed++;
+			},
+		}),
+	});
 	t.after(pairing.dispose);
 	const sending = pairing.send();
+	await entered.promise;
 	pairing.cancel();
 	create.resolve({ ...room, capability: "s".repeat(43) });
 	assert.equal(await sending, false);
@@ -352,7 +466,8 @@ test("cancellation during room creation removes a late room without publishing i
 test("expired pairing cannot transfer a key even when the relay still offers approval", async (t) => {
 	let elapsed = 0;
 	const f = fixture(t, undefined, { now: () => elapsed });
-	f.senderState.update((value) => ({ ...value, privateKey: "identity" }));
+	const key = await generatePrivateKey();
+	f.senderState.update((value) => ({ ...value, ...key }));
 	const sending = f.sender.send();
 	await until(() => Boolean(get(f.sender).code));
 	const receiving = f.receiver.receive(

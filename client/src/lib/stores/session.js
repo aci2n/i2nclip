@@ -3,17 +3,19 @@ import { isKeyRegistered, registerKey } from "../api.js";
 import { loadKey } from "../protocol/crypto.js";
 import { generatePrivateKey } from "../protocol/identity.js";
 import { parseRecoveryFile, recoveryFile } from "../protocol/recovery.js";
-import { checkServer } from "../protocol/server.js";
+import { checkServer, DEFAULT_SERVER_URL } from "../protocol/server.js";
 import { unwrapPrivateKey, wrapPrivateKey } from "../protocol/vault.js";
+import { createSessionContext } from "./session-context.js";
+import { createSessionStorage } from "./session-storage.js";
 
-export const DEFAULT_SERVER_URL = "https://clip.i2n.duckdns.org";
+export { DEFAULT_SERVER_URL } from "../protocol/server.js";
 
 export function createSession(platform) {
-	const defaultServerUrl = ["http:", "https:"].includes(
-		globalThis.location?.protocol,
-	)
-		? globalThis.location.origin
-		: DEFAULT_SERVER_URL;
+	const defaultServerUrl =
+		platform.defaultServerUrl ||
+		(["http:", "https:"].includes(globalThis.location?.protocol)
+			? globalThis.location.origin
+			: DEFAULT_SERVER_URL);
 	const state = writable({
 		ready: false,
 		serverUrl: defaultServerUrl,
@@ -21,75 +23,79 @@ export function createSession(platform) {
 		pendingRegistration: null,
 		identityGeneration: null,
 		privateKey: "",
+		publicKey: "",
 		busy: false,
 		error: "",
 	});
 	let disposed = false;
 	const controller = new AbortController();
 	const active = () => controller.signal.throwIfAborted();
-	const coordinated = (action) => {
-		const locks = globalThis.navigator?.locks;
-		if (!locks)
-			throw new Error("Session coordination is unavailable. Try again.");
-		return locks.request(
-			"i2nclip-session",
-			{ signal: controller.signal },
-			action,
-		);
-	};
+	const storage = createSessionStorage(platform, controller.signal);
+	const context = createSessionContext(state);
+
+	function publish(snapshot) {
+		state.update((value) => ({
+			...value,
+			...snapshot,
+			ready: true,
+			error: "",
+		}));
+	}
+
+	async function readIdentity(tx) {
+		const [local, session] = await Promise.all([
+			tx.local.get([
+				"serverUrl",
+				"wrappedKey",
+				"publicKey",
+				"identityGeneration",
+				"pendingRegistration",
+			]),
+			tx.session.get(["privateKey", "sessionGeneration"]),
+		]);
+		let privateKey = "";
+		if (
+			local.wrappedKey &&
+			session.privateKey &&
+			typeof local.identityGeneration === "string" &&
+			local.identityGeneration &&
+			session.sessionGeneration === local.identityGeneration
+		) {
+			try {
+				const loaded = await loadKey(session.privateKey);
+				if (loaded.registrationKey === local.publicKey)
+					privateKey = session.privateKey;
+			} catch {
+				/* A stale or damaged session must stay locked. */
+			}
+		}
+		active();
+		// Reads and cleanup share the mutation lock: a queued refresh cannot
+		// remove a key written by a later unlock using an earlier snapshot.
+		if (!privateKey && (session.privateKey || session.sessionGeneration)) {
+			await tx.session.remove(["privateKey", "sessionGeneration"]);
+			active();
+		}
+		return {
+			...local,
+			privateKey,
+			publicKey: local.publicKey || "",
+			serverUrl:
+				local.pendingRegistration?.serverUrl ||
+				local.serverUrl ||
+				defaultServerUrl,
+			wrappedKey: local.wrappedKey || null,
+			pendingRegistration: local.pendingRegistration || null,
+			identityGeneration: local.identityGeneration || null,
+		};
+	}
 
 	async function refresh() {
 		try {
-			await coordinated(async () => {
+			await storage.transaction(async (tx) => {
 				active();
-				const [local, session] = await Promise.all([
-					platform.local.get([
-						"serverUrl",
-						"wrappedKey",
-						"publicKey",
-						"identityGeneration",
-						"pendingRegistration",
-					]),
-					platform.session.get(["privateKey", "sessionGeneration"]),
-				]);
-				let privateKey = "";
-				if (
-					local.wrappedKey &&
-					session.privateKey &&
-					typeof local.identityGeneration === "string" &&
-					local.identityGeneration &&
-					session.sessionGeneration === local.identityGeneration
-				) {
-					try {
-						const loaded = await loadKey(session.privateKey);
-						if (loaded.registrationKey === local.publicKey)
-							privateKey = session.privateKey;
-					} catch {
-						/* A stale or damaged session must stay locked. */
-					}
-				}
-				active();
-				// Reads and cleanup share the mutation lock: a queued refresh cannot
-				// remove a key written by a later unlock using an earlier snapshot.
-				if (!privateKey && (session.privateKey || session.sessionGeneration)) {
-					await platform.session.remove(["privateKey", "sessionGeneration"]);
-					active();
-				}
-				state.update((value) => ({
-					...value,
-					...local,
-					ready: true,
-					serverUrl: local.wrappedKey
-						? local.serverUrl || defaultServerUrl
-						: local.pendingRegistration?.serverUrl ||
-							local.serverUrl ||
-							defaultServerUrl,
-					pendingRegistration: local.pendingRegistration || null,
-					wrappedKey: local.wrappedKey || null,
-					identityGeneration: local.identityGeneration || null,
-					privateKey,
-					error: "",
-				}));
+				const snapshot = await readIdentity(tx);
+				publish(snapshot);
 			});
 		} catch (error) {
 			if (!disposed)
@@ -104,20 +110,33 @@ export function createSession(platform) {
 	const unsubscribe = platform.subscribe(refresh);
 	const ready = refresh();
 
-	async function mutate(action) {
+	async function mutate(
+		action,
+		{ changesIdentity = true, operationOptions } = {},
+	) {
 		if (get(state).busy || disposed) return false;
-		state.update((value) => ({ ...value, busy: true, error: "" }));
+		state.update((value) => ({
+			...value,
+			busy: true,
+			error: "",
+			...(changesIdentity ? { privateKey: "" } : {}),
+		}));
+		if (changesIdentity) context.invalidate();
 		try {
 			// One settings mutation across all open pages, including password derivation.
 			// Initial refresh also acquires this lock; await it before queueing.
 			await ready;
-			await coordinated(async () => {
+			let result = true;
+			await storage.transaction(async (tx) => {
 				active();
-				await action();
+				const identity = await readIdentity(tx);
+				await action(tx, identity);
 				active();
+				const snapshot = await readIdentity(tx);
+				publish(snapshot);
+				if (operationOptions) result = context.operation(operationOptions);
 			});
-			await refresh();
-			return true;
+			return result;
 		} catch (error) {
 			if (!disposed) {
 				await refresh();
@@ -129,12 +148,12 @@ export function createSession(platform) {
 		}
 	}
 
-	async function saveIdentity(serverUrl, privateKey, wrappedKey, signal) {
+	async function saveIdentity(tx, serverUrl, privateKey, wrappedKey, signal) {
 		const loaded = await loadKey(privateKey);
 		const identityGeneration = crypto.randomUUID();
 		active();
 		signal?.throwIfAborted();
-		await platform.local.set({
+		await tx.local.set({
 			serverUrl,
 			wrappedKey,
 			publicKey: loaded.registrationKey,
@@ -142,7 +161,7 @@ export function createSession(platform) {
 			pendingRegistration: null,
 		});
 		active();
-		await platform.session.set({
+		await tx.session.set({
 			privateKey,
 			sessionGeneration: identityGeneration,
 		});
@@ -152,38 +171,98 @@ export function createSession(platform) {
 		subscribe: state.subscribe,
 		ready,
 		refresh,
-		importPairing: ({ serverUrl, privateKey, publicKey, password, signal }) =>
-			mutate(async () => {
-				signal.throwIfAborted();
-				checkServer(serverUrl);
-				const local = await platform.local.get([
-					"wrappedKey",
-					"pendingRegistration",
-				]);
-				if (local.wrappedKey || local.pendingRegistration)
-					throw new Error(
-						"A library or pending creation is already configured.",
+		observeIdentity: context.observe,
+		operation(options) {
+			active();
+			return context.operation(options);
+		},
+		async withIdentity(operation, action) {
+			if (!context.owns(operation))
+				throw new Error("Invalid session operation.");
+			await ready;
+			operation.signal.throwIfAborted();
+			return storage.transaction(async (tx) => {
+				const snapshot = await readIdentity(tx);
+				operation.signal.throwIfAborted();
+				// A missed storage event must update the render snapshot too, so
+				// owners can dispose stale work and start again with the new identity.
+				if (!context.matches(get(state), snapshot)) publish(snapshot);
+				if (
+					!context.matches(context.expected(operation), snapshot) ||
+					!snapshot.privateKey
+				) {
+					operation.abort(
+						new DOMException("Library changed. Try again.", "AbortError"),
 					);
-				if (password.length < 8)
-					throw new Error("Password must be at least 8 characters.");
-				if ((await loadKey(privateKey)).registrationKey !== publicKey)
-					throw new Error("Invalid paired identity.");
-				const wrappedKey = await wrapPrivateKey(privateKey, password);
-				signal.throwIfAborted();
-				await saveIdentity(serverUrl, privateKey, wrappedKey, signal);
-			}),
+					throw new Error("Library or server changed. Start again.");
+				}
+				operation.signal.throwIfAborted();
+				return action(
+					Object.freeze({
+						serverUrl: snapshot.serverUrl,
+						privateKey: snapshot.privateKey,
+						publicKey: snapshot.publicKey,
+						identityGeneration: snapshot.identityGeneration,
+					}),
+				);
+			}, operation.signal);
+		},
+		pending: Object.freeze({
+			get: (id) =>
+				storage.transaction(
+					async (tx) => (await tx.session.get(`upload:${id}`))[`upload:${id}`],
+				),
+			put: (id, value) =>
+				storage.transaction((tx) =>
+					tx.session.set({ [`upload:${id}`]: value }),
+				),
+			remove: (id) =>
+				storage.transaction((tx) => tx.session.remove(`upload:${id}`)),
+			fail: (id, error) =>
+				storage.transaction(async (tx) => {
+					const key = `upload:${id}`;
+					const stored = (await tx.session.get(key))[key];
+					if (!stored) return false;
+					await tx.session.set({ [key]: { ...stored, error } });
+					return true;
+				}),
+		}),
+		importPairing: ({
+			serverUrl,
+			privateKey,
+			publicKey,
+			password,
+			signal,
+			onInvalidated,
+		}) =>
+			mutate(
+				async (tx, identity) => {
+					signal.throwIfAborted();
+					checkServer(serverUrl);
+					if (identity.wrappedKey || identity.pendingRegistration)
+						throw new Error(
+							"A library or pending creation is already configured.",
+						);
+					if (password.length < 8)
+						throw new Error("Password must be at least 8 characters.");
+					if ((await loadKey(privateKey)).registrationKey !== publicKey)
+						throw new Error("Invalid paired identity.");
+					const wrappedKey = await wrapPrivateKey(privateKey, password);
+					signal.throwIfAborted();
+					await saveIdentity(tx, serverUrl, privateKey, wrappedKey, signal);
+				},
+				{ operationOptions: { signal, onInvalidated } },
+			),
 		create: ({ serverUrl, password, otc }) =>
-			mutate(async () => {
+			mutate(async (tx, identity) => {
 				checkServer(serverUrl);
-				if ((await platform.local.get("wrappedKey")).wrappedKey)
+				if (identity.wrappedKey)
 					throw new Error("A library is already configured.");
 				if (password.length < 8)
 					throw new Error("Password must be at least 8 characters.");
 				if (!otc.trim())
 					throw new Error("Enter an invitation code from the admin.");
-				let { pendingRegistration: pending } = await platform.local.get(
-					"pendingRegistration",
-				);
+				let { pendingRegistration: pending } = identity;
 				const retry = Boolean(pending);
 				let privateKey;
 				if (pending) {
@@ -204,7 +283,7 @@ export function createSession(platform) {
 					};
 					active();
 					// Never send registration until the encrypted identity is durable.
-					await platform.local.set({ pendingRegistration: pending });
+					await tx.local.set({ pendingRegistration: pending });
 				}
 				active();
 				try {
@@ -229,17 +308,15 @@ export function createSession(platform) {
 						`${error.message === "registration failed" ? "Registration failed." : `Registration failed: ${error.message}.`} Your encrypted identity is saved. Check your invitation code and retry with the original password.`,
 					);
 				}
-				await saveIdentity(serverUrl, privateKey, pending.wrappedKey);
+				await saveIdentity(tx, serverUrl, privateKey, pending.wrappedKey);
 			}),
 		restore: (file, password) =>
-			mutate(async () => {
-				if ((await platform.local.get("wrappedKey")).wrappedKey)
+			mutate(async (tx, identity) => {
+				if (identity.wrappedKey)
 					throw new Error("A library is already configured.");
 				if (!file || file.size > 16_384)
 					throw new Error("Invalid recovery file.");
-				if (
-					(await platform.local.get("pendingRegistration")).pendingRegistration
-				)
+				if (identity.pendingRegistration)
 					throw new Error(
 						"Finish or discard the pending creation before restoring a library.",
 					);
@@ -249,17 +326,15 @@ export function createSession(platform) {
 					password,
 				);
 				await saveIdentity(
+					tx,
 					recovered.serverUrl,
 					privateKey,
 					recovered.wrappedKey,
 				);
 			}),
 		unlock: (password) =>
-			mutate(async () => {
-				const { wrappedKey, identityGeneration } = await platform.local.get([
-					"wrappedKey",
-					"identityGeneration",
-				]);
+			mutate(async (tx, identity) => {
+				const { wrappedKey, identityGeneration } = identity;
 				if (!wrappedKey)
 					throw new Error("Create or restore your library in Settings.");
 				const privateKey = await unwrapPrivateKey(wrappedKey, password);
@@ -270,58 +345,53 @@ export function createSession(platform) {
 						? identityGeneration
 						: crypto.randomUUID();
 				if (generation !== identityGeneration) {
-					await platform.local.set({ identityGeneration: generation });
+					await tx.local.set({ identityGeneration: generation });
 					active();
 				}
-				await platform.session.set({
+				await tx.session.set({
 					privateKey,
 					sessionGeneration: generation,
 				});
 			}),
 		setServer: (serverUrl) =>
-			mutate(async () => {
+			mutate(async (tx, identity) => {
 				checkServer(serverUrl);
-				if (
-					(await platform.local.get("pendingRegistration")).pendingRegistration
-				)
+				if (identity.pendingRegistration)
 					throw new Error(
 						"Finish or discard the pending creation before changing servers.",
 					);
-				return platform.local.set({ serverUrl });
+				return tx.local.set({ serverUrl });
 			}),
 		discardCreation: () =>
-			mutate(async () => {
-				await platform.local.remove("pendingRegistration");
+			mutate(async (tx) => {
+				await tx.local.remove("pendingRegistration");
 			}),
 		reset: () =>
-			mutate(async () => {
-				await platform.local.clear();
+			mutate(async (tx) => {
+				await tx.local.clear();
 				active();
-				await platform.session.clear();
+				await tx.session.clear();
 			}),
 		backup: () =>
-			mutate(async () => {
-				const file = recoveryFile(
-					await platform.local.get(["serverUrl", "wrappedKey", "publicKey"]),
-				);
-				active();
-				const url = URL.createObjectURL(
-					new Blob([file], { type: "application/json" }),
-				);
-				try {
-					await platform.download(url, "i2nclip-recovery.json");
-				} finally {
-					setTimeout(() => URL.revokeObjectURL(url), 60_000);
-				}
-			}),
-		credentials() {
-			active();
-			const { serverUrl, privateKey, identityGeneration } = get(state);
-			if (!privateKey) throw new Error("Unlock before uploading.");
-			return { serverUrl, privateKey, identityGeneration };
-		},
+			mutate(
+				async (_tx, identity) => {
+					const file = recoveryFile(identity);
+					active();
+					const url = URL.createObjectURL(
+						new Blob([file], { type: "application/json" }),
+					);
+					try {
+						await platform.download(url, "i2nclip-recovery.json");
+					} finally {
+						setTimeout(() => URL.revokeObjectURL(url), 60_000);
+					}
+				},
+				{ changesIdentity: false },
+			),
+
 		dispose() {
 			disposed = true;
+			context.invalidate();
 			controller.abort();
 			unsubscribe();
 		},

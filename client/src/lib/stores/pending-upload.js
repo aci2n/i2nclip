@@ -29,7 +29,7 @@ export function createPendingUpload(
 	let preview = "";
 	let sessionState;
 	let autoStarted = false;
-	let context;
+	let initialContext = true;
 	let contextChanged = false;
 	function maybeSend() {
 		if (
@@ -51,30 +51,23 @@ export function createPendingUpload(
 	// This observer controls automatic-send policy, not active transfer cancellation.
 	const unsubscribe = session.subscribe((value) => {
 		sessionState = value;
-		const nextContext = value.ready
-			? {
-					serverUrl: value.serverUrl,
-					publicKey: value.publicKey,
-					identityGeneration: value.identityGeneration,
-				}
-			: null;
-		const changed =
-			context &&
-			nextContext &&
-			(context.serverUrl !== nextContext.serverUrl ||
-				context.publicKey !== nextContext.publicKey ||
-				context.identityGeneration !== nextContext.identityGeneration);
-		if (nextContext) context = nextContext;
-		if (changed) {
-			contextChanged = true;
-			update({ status: "Library changed. Try again." });
-		}
+
 		maybeSend();
 	});
+	const unsubscribeContext = session.observeIdentity(
+		() => {
+			if (!initialContext) {
+				contextChanged = true;
+				update({ status: "Library changed. Try again." });
+			}
+			initialContext = false;
+		},
+		{ includeUnlocked: false },
+	);
+
 	async function prepare(signal) {
 		if (!source) {
-			const stored = await platform.session.get(`upload:${id}`);
-			source = stored[`upload:${id}`];
+			source = await session.pending.get(id);
 			if (!source) throw new Error("Nothing to upload.");
 		}
 		const result =
@@ -178,6 +171,7 @@ export function createPendingUpload(
 			preparation.abort();
 			activeTask?.dispose();
 			unsubscribe();
+			unsubscribeContext();
 			if (preview) URL.revokeObjectURL(preview);
 		},
 	};

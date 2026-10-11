@@ -22,7 +22,12 @@ async fn main() {
     let addr = listener.local_addr().expect("local addr");
     println!("ready {addr}");
     let _ = std::io::Write::flush(&mut std::io::stdout());
-    axum::serve(listener, app).await.expect("serve");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .expect("serve");
 }
 
 async fn allow_browser(request: Request, next: Next) -> Response {

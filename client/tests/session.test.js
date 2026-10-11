@@ -4,6 +4,7 @@ import { get } from "svelte/store";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
 import { recoveryFile } from "../src/lib/protocol/recovery.js";
 import { wrapPrivateKey } from "../src/lib/protocol/vault.js";
+import { createLibrary } from "../src/lib/stores/library.js";
 import { createSession } from "../src/lib/stores/session.js";
 import { deferred, installSessionLocks, tick } from "./helpers.js";
 
@@ -42,7 +43,7 @@ test("paired identities use a new local password and generation without register
 	const session = open(t, local, cached);
 	await session.ready;
 	const signal = new AbortController().signal;
-	assert.equal(
+	assert.ok(
 		await session.importPairing({
 			serverUrl: saved.serverUrl,
 			privateKey,
@@ -50,7 +51,6 @@ test("paired identities use a new local password and generation without register
 			password: "new-device-password",
 			signal,
 		}),
-		true,
 	);
 	assert.notEqual(
 		(await local.get()).identityGeneration,
@@ -80,7 +80,7 @@ test("competing paired imports serialize and cannot replace an existing library"
 		first.importPairing(value),
 		second.importPairing(value),
 	]);
-	assert.deepEqual(outcomes.sort(), [false, true]);
+	assert.deepEqual(outcomes.map(Boolean).sort(), [false, true]);
 	assert.equal((await local.get()).publicKey, saved.publicKey);
 });
 
@@ -158,6 +158,90 @@ function open(t, local, cached) {
 	return store;
 }
 
+test("pairing transfer queued behind another page's reset rejects stale credentials", async (t) => {
+	const { saved, privateKey } = await identityFixture();
+	const local = area(saved);
+	const unlocked = { privateKey, sessionGeneration: saved.identityGeneration };
+	const cleanup = area(unlocked);
+	const first = open(t, local, cleanup);
+	const second = open(t, local, area(unlocked));
+	await Promise.all([first.ready, second.ready]);
+	const expected = second.operation();
+	const entered = deferred(),
+		finish = deferred();
+	cleanup.clear = async () => {
+		entered.resolve();
+		await finish.promise;
+	};
+	const resetting = first.reset();
+	await entered.promise;
+	assert.deepEqual(await local.get(), {});
+	let transferred = false;
+	const exporting = second.withIdentity(expected, async () => {
+		transferred = true;
+	});
+	const rejected = assert.rejects(
+		exporting,
+		/Library or server changed|Library changed/,
+	);
+	await tick();
+	assert.equal(transferred, false);
+	finish.resolve();
+	assert.equal(await resetting, true);
+	await rejected;
+	assert.equal(transferred, false);
+});
+
+test("pairing transfer rejects changed persisted server or generation without a refresh event", async (t) => {
+	const { saved, privateKey } = await identityFixture();
+	const local = area(saved);
+	const session = open(
+		t,
+		local,
+		area({ privateKey, sessionGeneration: saved.identityGeneration }),
+	);
+	await session.ready;
+	for (const change of [
+		{ serverUrl: "https://other.example" },
+		{ identityGeneration: "replacement" },
+	]) {
+		const expected = session.operation();
+		await local.set({ ...saved, ...change });
+		await assert.rejects(
+			session.withIdentity(expected, async () =>
+				assert.fail("stale identity exported"),
+			),
+			/Library or server changed|Library changed/,
+		);
+	}
+});
+
+test("pairing holds the session lock through submission before another page changes server", async (t) => {
+	const { saved, privateKey } = await identityFixture();
+	const local = area(saved);
+	const unlocked = { privateKey, sessionGeneration: saved.identityGeneration };
+	const first = open(t, local, area(unlocked));
+	const second = open(t, local, area(unlocked));
+	await Promise.all([first.ready, second.ready]);
+	const entered = deferred(),
+		finish = deferred();
+	const exporting = first.withIdentity(first.operation(), async (value) => {
+		assert.equal(value.privateKey, privateKey);
+		assert.equal(value.publicKey, saved.publicKey);
+		entered.resolve();
+		await finish.promise;
+		assert.equal((await local.get()).serverUrl, saved.serverUrl);
+	});
+	await entered.promise;
+	const changing = second.setServer("https://other.example");
+	await tick();
+	assert.equal((await local.get()).serverUrl, saved.serverUrl);
+	finish.resolve();
+	await exporting;
+	assert.equal(await changing, true);
+	assert.equal((await local.get()).serverUrl, "https://other.example");
+});
+
 test("reset clears a second tab's key and restoring the same identity cannot unlock it", async (t) => {
 	const { saved, privateKey, file } = await identityFixture();
 	const local = area(saved);
@@ -198,7 +282,12 @@ test("a tab that misses reset and restoration events rejects its old session gen
 	assert.equal(await first.restore(file, "password123"), true);
 	assert.equal((await cached.get()).privateKey, privateKey);
 	await second.refresh();
-	assert.throws(second.credentials, /Unlock/);
+	await assert.rejects(
+		second.withIdentity(second.operation(), () =>
+			assert.fail("locked identity exported"),
+		),
+		/Library or server changed|Storage unavailable/,
+	);
 	assert.deepEqual(await cached.get(), {});
 });
 
@@ -209,7 +298,12 @@ test("legacy unlocked sessions relock once and encrypted identities migrate on u
 	const cached = area({ privateKey });
 	const session = open(t, local, cached);
 	await session.ready;
-	assert.throws(session.credentials, /Unlock/);
+	await assert.rejects(
+		session.withIdentity(session.operation(), () =>
+			assert.fail("locked identity exported"),
+		),
+		/Library or server changed|Storage unavailable/,
+	);
 	assert.deepEqual(await cached.get(), {});
 	assert.equal(await session.unlock("wrong password"), false);
 	assert.deepEqual(await local.get(), saved);
@@ -384,7 +478,12 @@ test("refresh locks an unlocked key belonging to a different saved library", asy
 	local = { ...local, publicKey: second.publicKey };
 	await session.refresh();
 	assert.equal(get(session).privateKey, "");
-	assert.throws(session.credentials, /Unlock/);
+	await assert.rejects(
+		session.withIdentity(session.operation(), () =>
+			assert.fail("locked identity exported"),
+		),
+		/Library or server changed|Storage unavailable/,
+	);
 	assert.deepEqual(cached, {});
 });
 
@@ -496,9 +595,174 @@ test("failed storage verification locks the session until a successful refresh",
 	await session.refresh();
 	assert.equal(get(session).privateKey, "");
 	assert.equal(get(session).error, "Storage unavailable");
-	assert.throws(session.credentials, /Unlock/);
+	await assert.rejects(
+		session.withIdentity(session.operation(), () =>
+			assert.fail("locked identity exported"),
+		),
+		/Library or server changed|Storage unavailable/,
+	);
 	failed = false;
 	await session.refresh();
 	assert.equal(get(session).privateKey, identity.privateKey);
 	assert.equal(get(session).error, "");
+});
+
+test("identity operations cannot be forged, borrowed from another service, or reused after disposal", async (t) => {
+	const { saved, privateKey } = await identityFixture();
+	const local = area(saved);
+	const cached = { privateKey, sessionGeneration: saved.identityGeneration };
+	const first = open(t, local, area(cached));
+	const second = open(t, local, area(cached));
+	await Promise.all([first.ready, second.ready]);
+	const operation = first.operation();
+	assert.equal("expected" in operation, false);
+	assert.equal(Object.isFrozen(operation), true);
+	for (const invalid of [
+		{ signal: new AbortController().signal },
+		second.operation(),
+	])
+		await assert.rejects(
+			first.withIdentity(invalid, () =>
+				assert.fail("foreign identity operation"),
+			),
+			/Invalid session operation/,
+		);
+	operation.dispose();
+	await assert.rejects(
+		first.withIdentity(operation, () =>
+			assert.fail("disposed identity operation"),
+		),
+		/Invalid session operation/,
+	);
+});
+
+test("reset immediately invalidates all identity operations, including a callback holding the mutex", async (t) => {
+	const { saved, privateKey } = await identityFixture();
+	const local = area(saved);
+	const session = open(
+		t,
+		local,
+		area({ privateKey, sessionGeneration: saved.identityGeneration }),
+	);
+	await session.ready;
+	const operation = session.operation();
+	const entered = deferred(),
+		finish = deferred();
+	const held = session.withIdentity(operation, async () => {
+		entered.resolve();
+		await finish.promise;
+	});
+	const rejected = assert.rejects(held, { name: "AbortError" });
+	await entered.promise;
+	const resetting = session.reset();
+	assert.equal(operation.signal.aborted, true);
+	assert.equal(get(session).privateKey, "");
+	assert.equal((await local.get()).wrappedKey != null, true);
+	finish.resolve();
+	await rejected;
+	assert.equal(await resetting, true);
+	assert.deepEqual(await local.get(), {});
+});
+
+test("pending upload error updates queued behind reset cannot recreate discarded work", async (t) => {
+	const local = area({});
+	const cached = area({ "upload:one": { name: "one" } });
+	const session = open(t, local, cached);
+	await session.ready;
+	const entered = deferred(),
+		finish = deferred();
+	const clear = cached.clear;
+	cached.clear = async () => {
+		entered.resolve();
+		await finish.promise;
+		await clear();
+	};
+	const resetting = session.reset();
+	await entered.promise;
+	const failed = session.pending.fail("one", "offline");
+	finish.resolve();
+	assert.equal(await resetting, true);
+	assert.equal(await failed, false);
+	assert.equal(await session.pending.get("one"), undefined);
+});
+
+test("a missed storage notification refreshes the identity and lets library search recover", async (t) => {
+	const { saved, privateKey } = await identityFixture();
+	const local = area(saved);
+	// open deliberately delivers no storage notifications.
+	const session = open(
+		t,
+		local,
+		area({ privateKey, sessionGeneration: saved.identityGeneration }),
+	);
+	await session.ready;
+	const servers = [];
+	const initialListed = deferred();
+	const library = createLibrary(
+		session,
+		{},
+		{
+			list: async ({ serverUrl }) => {
+				servers.push(serverUrl);
+				initialListed.resolve();
+				return { items: [], next: null };
+			},
+		},
+	);
+	t.after(library.dispose);
+	await initialListed.promise;
+	await tick();
+	assert.deepEqual(servers, [saved.serverUrl]);
+
+	const serverUrl = "https://changed.example";
+	await local.set({ serverUrl });
+	await library.search("new");
+	await tick();
+	await library.search("retry");
+	await tick();
+
+	assert.equal(get(session).serverUrl, serverUrl);
+	assert.equal(servers.at(-1), serverUrl);
+	assert.equal(get(library).loading, false);
+	assert.equal(get(library).status, "");
+});
+
+test("an explicit platform default takes precedence over the page origin", async (t) => {
+	const previous = Object.getOwnPropertyDescriptor(globalThis, "location");
+	Object.defineProperty(globalThis, "location", {
+		configurable: true,
+		value: new URL("http://localhost:8080"),
+	});
+	t.after(() => {
+		if (previous) Object.defineProperty(globalThis, "location", previous);
+		else delete globalThis.location;
+	});
+	const session = createSession({
+		defaultServerUrl: "https://extension.example",
+		local: area(),
+		session: area(),
+		subscribe: () => () => {},
+	});
+	t.after(session.dispose);
+	await session.ready;
+	assert.equal(get(session).serverUrl, "https://extension.example");
+});
+
+test("invalidation callbacks cannot start a second mutation inside the first one", async (t) => {
+	const { saved, privateKey } = await identityFixture();
+	const session = open(
+		t,
+		area(saved),
+		area({ privateKey, sessionGeneration: saved.identityGeneration }),
+	);
+	await session.ready;
+	let reentrant;
+	const operation = session.operation({
+		onInvalidated: () => {
+			reentrant = session.setServer("https://other.example");
+		},
+	});
+	t.after(operation.dispose);
+	assert.equal(await session.reset(), true);
+	assert.equal(await reentrant, false);
 });

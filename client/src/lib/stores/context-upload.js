@@ -17,11 +17,10 @@ export async function submitContextUpload(
 		return;
 	}
 	const pending = { ...source, id: crypto.randomUUID() };
-	const storageKey = `upload:${pending.id}`;
 	const session = services.createSession(platform);
 	let task;
 	try {
-		await platform.session.set({ [storageKey]: pending });
+		await session.pending.put(pending.id, pending);
 		await session.ready;
 		if (withTags || !get(session).privateKey) {
 			await platform.openUpload(pending.id, withTags ? "upload" : "unlock");
@@ -38,11 +37,7 @@ export async function submitContextUpload(
 				? "Library changed. Upload cancelled."
 				: error.message || "Upload failed.";
 		// Reset may have cleared this entry; do not recreate discarded work.
-		const stored = await platform.session.get(storageKey);
-		if (stored[storageKey]) {
-			await platform.session.set({
-				[storageKey]: { ...stored[storageKey], error: message },
-			});
+		if (await session.pending.fail(pending.id, message)) {
 			await platform.openUpload(pending.id, "upload");
 		}
 		await platform.notify(message);

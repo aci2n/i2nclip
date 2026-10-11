@@ -37,8 +37,16 @@ a successful save; the receiver reports that distinction.
 
 Pairing state, passwords, setup, and capability tokens are memory-only. Reset,
 identity/server changes, cancellation, expiry, and page disposal terminate the
-worker and release references. This does not guarantee erasure of JavaScript
-strings from process memory. HTTPS is required except for `localhost`,
+worker and release references. Starting reset or a server change invalidates
+pairing immediately, before asynchronous storage cleanup. The shared [session service](session.md) owns invalidation and storage access.
+Before sending the identity, its general `withIdentity` operation acquires the session Web Lock, rereads the persisted server,
+identity generation and unlocked key, and validates their agreement with the
+original pairing. It holds that lock through encrypted identity submission,
+including bounded retries, but releases it before waiting for acknowledgment.
+Transfers and mutations from other pages therefore run in order even if storage
+notifications have not arrived. A transfer already submitted cannot be recalled.
+This does not guarantee erasure of JavaScript strings from process memory.
+HTTPS is required except for `localhost`,
 `127.0.0.1`, and `::1`. The design protects against relay observation and message
 substitution, assuming trusted client builds; a compromised web client can access
 an unlocked identity. An attacker can still disrupt pairing by claiming a room
@@ -51,6 +59,32 @@ registered library and five creations per library per minute. Rooms expire after
 120 seconds without extension. Expired rooms and rate records are pruned on
 requests. Server restart abandons all rooms. Multiple server processes require
 sticky routing; shared relay storage is outside this version.
+
+Anonymous joins allow ten requests per TCP peer IP and 120 requests globally in
+a rolling sixty-second window per server process. Failed participant requests
+(polling, submission, and cancellation with invalid capabilities or missing
+rooms) share this budget so those endpoints cannot evade room-enumeration
+limits. Authenticated participant requests do not spend that budget.
+Invalid room IDs, malformed
+JSON, and requests whose body reads stall or find all read slots occupied count
+toward these limits. Rate-limit rejection returns `429` with `Retry-After: 60`
+before reading the body. Rate records are bounded by the global admission limit
+and expire without extending the window on rejection.
+
+Source limits use connection metadata, ignoring `Forwarded` and
+`X-Forwarded-For`; these headers must not let callers evade the limit. Behind a
+reverse proxy, users share that proxy's peer-IP budget. Apply additional
+per-client limits at the proxy. Hosts embedding the public router should serve
+it with Axum's `into_make_service_with_connect_info::<SocketAddr>()`; absent
+connection metadata shares one source bucket.
+
+Join and message submission bodies share sixteen read slots. Saturation returns
+`503` immediately without buffering or queueing another body. Submission checks
+the participant capability before taking a slot or reading bytes. Slots are
+released on success, failure, cancellation, and the ten-second body deadline;
+polling and cancellation remain available while the body slots are occupied.
+The twelve-character code format is unchanged. Rate limits reduce room guessing
+and claiming; knowledge of a room ID still permits disruption without the secret.
 
 | Endpoint | Authorization | Payload/result |
 | --- | --- | --- |
@@ -91,8 +125,11 @@ Unit tests cover the real OPAQUE exchange, wrong secrets, session bindings,
 tampering, direction separation, replay rejection, bounded reads, sender approval,
 durable-save acknowledgment, cancellation, and serialized identity import.
 Rust tests cover role capabilities, ordering/idempotency, room/rate/body limits,
-and expiry. Firefox tests use independent browser contexts and the real Rust API
-for every web/extension direction, new-password unlock, wrong codes, and reset
+source spoofing, saturated read admission, permit release, and expiry. Client
+regressions cover stalled reset/server changes, stale persisted credentials,
+and session-lock ordering across pages. Firefox tests use independent browser
+contexts and the real Rust API for every web/extension direction, new-password
+unlock, wrong codes, and reset
 cancellation. The extension needs packaged WASM enabled by its narrowly scoped
 `wasm-unsafe-eval` CSP permission.
 

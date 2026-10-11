@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import test, { beforeEach } from "node:test";
 import { get, writable } from "svelte/store";
-import { createPendingUpload } from "../src/lib/stores/pending-upload.js";
-
-import { deferred, installUploadLocks, tick } from "./helpers.js";
+import { createPendingUpload as implementation } from "../src/lib/stores/pending-upload.js";
+import {
+	deferred,
+	installUploadLocks,
+	tick,
+	workflowSession,
+} from "./helpers.js";
 
 beforeEach(installUploadLocks);
 
@@ -404,6 +408,7 @@ test("preparation failure retries in the same popup, preserves its source, and r
 	assert.equal(get(pending).available, true);
 	const retry = pending.send("saved draft");
 	await pending.send("duplicate");
+	await tick();
 	assert.equal(prepares, 2);
 	assert.equal(get(pending).status, "Preparing file…");
 	assert.equal(removed, 0);
@@ -513,3 +518,7 @@ test("a server change aborts preparation retry before any upload can start", asy
 	assert.equal(get(pending).status, "Library changed. Try again.");
 	assert.equal(get(pending).busy, false);
 });
+
+function createPendingUpload(session, platform, ...args) {
+	return implementation(workflowSession(session, platform), platform, ...args);
+}

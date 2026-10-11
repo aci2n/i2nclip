@@ -2,10 +2,15 @@ import assert from "node:assert/strict";
 import test, { beforeEach } from "node:test";
 import { get, writable } from "svelte/store";
 import {
-	createUploadTask,
-	sendPendingUpload,
+	createUploadTask as implementation,
+	sendPendingUpload as pendingImplementation,
 } from "../src/lib/media/upload-workflow.js";
-import { deferred, installUploadLocks, tick } from "./helpers.js";
+import {
+	deferred,
+	installUploadLocks,
+	tick,
+	workflowSession,
+} from "./helpers.js";
 
 beforeEach(installUploadLocks);
 
@@ -264,4 +269,44 @@ test("successful cleanup releases ownership before notification finishes", async
 	);
 	notice.resolve();
 	assert.equal(await sending, "uploaded");
+});
+
+function createUploadTask({ session, ...options }) {
+	return implementation({ ...options, session: workflowSession(session) });
+}
+
+function sendPendingUpload(options, upload) {
+	return pendingImplementation(
+		{
+			...options,
+			task: {
+				...options.task,
+				pending: workflowSession({}, options.platform).pending,
+			},
+		},
+		upload,
+	);
+}
+
+test("invalidation after credential validation still prevents starting the upload", async (t) => {
+	const state = writable({
+		privateKey: "key",
+		serverUrl: "https://clip.example",
+	});
+	const session = workflowSession(state);
+	const task = implementation({
+		session: {
+			...session,
+			async withIdentity(operation, action) {
+				const credentials = await session.withIdentity(operation, action);
+				state.update((value) => ({ ...value, privateKey: "" }));
+				return credentials;
+			},
+		},
+	});
+	t.after(task.dispose);
+	await assert.rejects(
+		task.send({}, () => assert.fail("invalidated upload started")),
+		{ name: "AbortError" },
+	);
 });

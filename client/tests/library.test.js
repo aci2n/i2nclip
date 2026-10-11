@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get, writable } from "svelte/store";
-import { createLibrary } from "../src/lib/stores/library.js";
-
-import { deferred, tick } from "./helpers.js";
+import { createLibrary as implementation } from "../src/lib/stores/library.js";
+import { deferred, tick, workflowSession } from "./helpers.js";
 
 const identity = {
 	ready: true,
@@ -12,7 +11,7 @@ const identity = {
 	privateKey: "first",
 };
 
-function setup(t) {
+async function setup(t) {
 	const session = writable(identity);
 	session.credentials = () => {
 		const { serverUrl, privateKey } = get(session);
@@ -37,12 +36,14 @@ function setup(t) {
 		},
 	);
 	t.after(library.dispose);
+	await tick();
 	return { session, calls, uploads, library };
 }
 
 test("a stale search cannot replace the latest results, even if cancellation is ignored", async (t) => {
-	const { library, calls } = setup(t);
+	const { library, calls } = await setup(t);
 	const search = library.search("new");
+	await tick();
 	assert.equal(calls[0].options.signal.aborted, true);
 	calls[1].resolve({ items: [{ id: "new" }], next: null });
 	await search;
@@ -53,11 +54,13 @@ test("a stale search cannot replace the latest results, even if cancellation is 
 });
 
 test("pagination uses the submitted tags and allows only one request at a time", async (t) => {
-	const { library, calls } = setup(t);
+	const { library, calls } = await setup(t);
 	const search = library.search("vacation");
+	await tick();
 	calls[1].resolve({ items: [{ id: "first" }], next: "cursor" });
 	await search;
 	const more = library.more();
+	await tick();
 	await library.more();
 	assert.equal(calls.length, 3);
 	assert.equal(calls[2].options.tags, "vacation");
@@ -71,8 +74,9 @@ test("pagination uses the submitted tags and allows only one request at a time",
 });
 
 test("changing identity clears results and invalidates pending requests", async (t) => {
-	const { session, library, calls } = setup(t);
+	const { session, library, calls } = await setup(t);
 	session.set({ ...identity, privateKey: "second" });
+	await tick();
 	assert.equal(calls[0].options.signal.aborted, true);
 	calls[1].resolve({ items: [{ id: "second-library" }], next: null });
 	await tick();
@@ -80,20 +84,23 @@ test("changing identity clears results and invalidates pending requests", async 
 	await tick();
 	assert.deepEqual(get(library).items, [{ id: "second-library" }]);
 	session.set({ ...identity, privateKey: "" });
+	await tick();
 	assert.deepEqual(get(library).items, []);
 });
 
 test("uploads are serialized and a library change cancels the remaining batch", async (t) => {
-	const { session, library, calls, uploads } = setup(t);
+	const { session, library, calls, uploads } = await setup(t);
 	calls[0].resolve({ items: [], next: null });
 	await tick();
 	const upload = library.upload([{ name: "one" }, { name: "two" }]);
+	await tick();
 	await library.upload([{ name: "duplicate" }]);
 	assert.equal(uploads.length, 1);
 	uploads[0].resolve();
 	await tick();
 	assert.equal(uploads.length, 2);
 	session.set({ ...identity, privateKey: "" });
+	await tick();
 	assert.equal(uploads[1].signal.aborted, true);
 	uploads[1].reject(new DOMException("cancelled", "AbortError"));
 	await upload;
@@ -102,9 +109,11 @@ test("uploads are serialized and a library change cancels the remaining batch", 
 });
 
 test("restoring the same identity invalidates requests and uploads from its previous generation", async (t) => {
-	const { session, library, calls, uploads } = setup(t);
+	const { session, library, calls, uploads } = await setup(t);
 	const upload = library.upload([{ name: "one" }, { name: "two" }]);
+	await tick();
 	session.set({ ...identity, identityGeneration: "restored" });
+	await tick();
 	assert.equal(calls[0].options.signal.aborted, true);
 	assert.equal(uploads[0].signal.aborted, true);
 	uploads[0].resolve();
@@ -117,12 +126,13 @@ test("restoring the same identity invalidates requests and uploads from its prev
 });
 
 test("a failed file does not stop a batch and retry sends only failed files", async (t) => {
-	const { library, calls, uploads } = setup(t);
+	const { library, calls, uploads } = await setup(t);
 	calls[0].resolve({ items: [], next: null });
 	await tick();
 	const first = { name: "failed" },
 		second = { name: "saved" };
 	const batch = library.upload([first, second]);
+	await tick();
 	assert.deepEqual(get(library).uploadProgress, {
 		name: "failed",
 		index: 1,
@@ -143,6 +153,7 @@ test("a failed file does not stop a batch and retry sends only failed files", as
 	uploads[0].progress(80);
 	assert.equal(get(library).uploadProgress, null);
 	const retry = library.retryUploads();
+	await tick();
 	uploads[1].progress(90);
 	assert.equal(get(library).uploadProgress.name, "failed");
 	assert.equal(uploads[2].source.blob, first);
@@ -157,11 +168,13 @@ test("a failed file does not stop a batch and retry sends only failed files", as
 });
 
 test("server changes clear failed files and ignore late upload completion", async (t) => {
-	const { session, library, calls, uploads } = setup(t);
+	const { session, library, calls, uploads } = await setup(t);
 	calls[0].resolve({ items: [], next: null });
 	await tick();
 	const batch = library.upload([{ name: "old" }, { name: "never-sent" }]);
+	await tick();
 	session.set({ ...identity, serverUrl: "https://new.example" });
+	await tick();
 	calls[1].resolve({ items: [], next: null });
 	uploads[0].resolve();
 	await batch;
@@ -218,10 +231,11 @@ test("replacing results disposes media and prevents a stale save dialog", async 
 });
 
 test("progress from a finished file cannot overwrite the next file in the same batch", async (t) => {
-	const { library, calls, uploads } = setup(t);
+	const { library, calls, uploads } = await setup(t);
 	calls[0].resolve({ items: [], next: null });
 	await tick();
 	const batch = library.upload([{ name: "first" }, { name: "second" }]);
+	await tick();
 	uploads[0].resolve();
 	await tick();
 	uploads[1].progress(25);
@@ -235,10 +249,11 @@ test("progress from a finished file cannot overwrite the next file in the same b
 });
 
 test("overlapping pagination entries produce only one card per media ID", async (t) => {
-	const { library, calls } = setup(t);
+	const { library, calls } = await setup(t);
 	calls[0].resolve({ items: [{ id: "one" }], next: "cursor" });
 	await tick();
 	const more = library.more();
+	await tick();
 	calls[1].resolve({ items: [{ id: "one" }, { id: "two" }], next: null });
 	await more;
 	assert.deepEqual(
@@ -249,7 +264,7 @@ test("overlapping pagination entries produce only one card per media ID", async 
 });
 
 test("leaving the library prevents a late image reveal from opening its preview", async (t) => {
-	const { library, calls } = setup(t);
+	const { library, calls } = await setup(t);
 	const item = { id: "one", metadata: { content_type: "image/png" } };
 	calls[0].resolve({ items: [item], next: null });
 	await tick();
@@ -263,14 +278,19 @@ test("leaving the library prevents a late image reveal from opening its preview"
 });
 
 test("overlapping cursor pages cannot overwrite tags saved while pagination was pending", async (t) => {
-	const { library, calls } = setup(t);
+	const { library, calls } = await setup(t);
 	const item = { id: "one", metadata: { tags: ["old"] } };
 	calls[0].resolve({ items: [item], next: "cursor" });
 	await tick();
 	const more = library.more();
+	await tick();
 	library.updateTags("one", { tags: ["new"] }, ["new-token"]);
 	calls[1].resolve({ items: [item], next: null });
 	await more;
 	assert.deepEqual(get(library).items[0].metadata.tags, ["new"]);
 	assert.deepEqual(get(get(library).cards[0].media).metadata.tags, ["new"]);
 });
+
+function createLibrary(session, platform, ...args) {
+	return implementation(workflowSession(session, platform), platform, ...args);
+}

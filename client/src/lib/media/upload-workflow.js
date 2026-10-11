@@ -2,29 +2,22 @@ import { sendUpload } from "./upload.js";
 
 // One task spans preparation, transfers, and completion. Its owner disposes it.
 export function createUploadTask({ session, signal, onInvalidated }) {
-	const credentials = session.credentials();
-	const controller = new AbortController();
-	const current = signal
-		? AbortSignal.any([signal, controller.signal])
-		: controller.signal;
-	let disposed = false;
-	const unsubscribe = session.subscribe((value) => {
-		if (
-			!controller.signal.aborted &&
-			(value.privateKey !== credentials.privateKey ||
-				value.serverUrl !== credentials.serverUrl ||
-				value.identityGeneration !== credentials.identityGeneration)
-		) {
-			controller.abort(
-				new DOMException("Library changed. Try again.", "AbortError"),
-			);
-			onInvalidated?.();
-		}
-	});
+	const operation = session.operation({ signal, onInvalidated });
+	if (!operation.unlocked) {
+		operation.dispose();
+		throw new Error("Unlock before uploading.");
+	}
+	const current = operation.signal;
 	return {
 		signal: current,
+		pending: session.pending,
 		assertCurrent: () => current.throwIfAborted(),
 		async send(options, upload = sendUpload) {
+			current.throwIfAborted();
+			const credentials = await session.withIdentity(
+				operation,
+				(identity) => identity,
+			);
 			current.throwIfAborted();
 			let transferring = true;
 			try {
@@ -42,12 +35,7 @@ export function createUploadTask({ session, signal, onInvalidated }) {
 				transferring = false;
 			}
 		},
-		dispose() {
-			if (disposed) return;
-			disposed = true;
-			controller.abort();
-			unsubscribe();
-		},
+		dispose: operation.dispose,
 	};
 }
 
@@ -74,14 +62,13 @@ export async function sendPendingUpload(
 		async (lock) => {
 			task.assertCurrent();
 			if (!lock) return "busy";
-			const key = `upload:${id}`;
-			const stored = await platform.session.get(key);
+			const stored = await task.pending.get(id);
 			task.assertCurrent();
-			if (!stored[key]) return "missing";
+			if (!stored) return "missing";
 			const prepared = prepareSource ? await prepareSource() : source;
 			task.assertCurrent();
 			await task.send({ source: prepared, platform, tags, onProgress }, upload);
-			await platform.session.remove(key);
+			await task.pending.remove(id);
 			task.assertCurrent();
 			onUploaded?.();
 			return "uploaded";

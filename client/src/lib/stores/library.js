@@ -17,6 +17,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 		status: "",
 	});
 	let credentials = null;
+	let identityOperation;
 	let revision = 0;
 	let request;
 	let disposed = false;
@@ -38,6 +39,9 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 
 	function invalidate() {
 		revision++;
+		identityOperation?.dispose();
+		identityOperation = null;
+		credentials = null;
 		request?.abort();
 		batch.reset();
 		clearMediaItems();
@@ -66,7 +70,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 			clearMediaItems();
 		}
 		const version = revision;
-		const captured = credentials;
+		const operation = identityOperation;
 		const controller = new AbortController();
 		request = controller;
 		const after = more ? get(state).next : null;
@@ -82,6 +86,11 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 			status: "Loading…",
 		}));
 		try {
+			const captured = await session.withIdentity(
+				operation,
+				(identity) => identity,
+			);
+			controller.signal.throwIfAborted();
 			const page = await api.list({
 				...captured,
 				tags: query,
@@ -120,7 +129,7 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 		}
 	}
 
-	const unsubscribe = session.subscribe((value) => {
+	const unsubscribe = session.observeIdentity((value) => {
 		const next =
 			value.ready && value.wrappedKey && value.privateKey
 				? {
@@ -129,22 +138,23 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 						identityGeneration: value.identityGeneration,
 					}
 				: null;
-		if (
-			next?.serverUrl === credentials?.serverUrl &&
-			next?.privateKey === credentials?.privateKey &&
-			next?.identityGeneration === credentials?.identityGeneration
-		)
-			return;
+
 		invalidate();
 		credentials = next;
-		if (credentials) load();
+		if (credentials) {
+			identityOperation = session.operation({ onInvalidated: invalidate });
+			load();
+		}
 	});
 
 	function media(item) {
 		if (disposed || !credentials) return null;
 		let media = mediaItems.get(item.id);
 		if (!media) {
-			media = createMediaItem(item, credentials, platform);
+			media = createMediaItem(item, credentials, platform, undefined, {
+				validate: () =>
+					session.withIdentity(identityOperation, (identity) => identity),
+			});
 			mediaItems.set(item.id, media);
 		} else media.updateItem(item);
 		return media;

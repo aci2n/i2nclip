@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import test, { beforeEach } from "node:test";
 import { get, writable } from "svelte/store";
-import { submitContextUpload } from "../src/lib/stores/context-upload.js";
+import { submitContextUpload as implementation } from "../src/lib/stores/context-upload.js";
 import { createPendingUpload } from "../src/lib/stores/pending-upload.js";
-import { deferred, installUploadLocks, tick } from "./helpers.js";
+import {
+	deferred,
+	installUploadLocks,
+	tick,
+	workflowSession,
+} from "./helpers.js";
 
 beforeEach(installUploadLocks);
 
@@ -69,16 +74,21 @@ test("failed immediate uploads retain independent sources and retry explicitly",
 	assert.equal(new Set(setup.opened.map(({ id }) => id)).size, 2);
 	assert.ok(setup.opened.every(({ page }) => page === "upload"));
 	const { id } = setup.opened[0];
-	const pending = createPendingUpload(setup.session, setup.platform, id, {
-		prepareMedia: async (stored) => ({
-			...stored,
-			name: "photo.png",
-			blob: new Blob(["photo"]),
-		}),
-		sendUpload: async () => {
-			sends++;
+	const pending = createPendingUpload(
+		workflowSession(setup.session, setup.platform),
+		setup.platform,
+		id,
+		{
+			prepareMedia: async (stored) => ({
+				...stored,
+				name: "photo.png",
+				blob: new Blob(["photo"]),
+			}),
+			sendUpload: async () => {
+				sends++;
+			},
 		},
-	});
+	);
 	t.after(pending.dispose);
 	await pending.ready;
 	await tick();
@@ -164,3 +174,11 @@ test("tagged and locked context uploads persist a source before opening their po
 		assert.equal(setup.disposed(), 1);
 	}
 });
+
+function submitContextUpload(source, tags, platform, services) {
+	const original = services.createSession;
+	return implementation(source, tags, platform, {
+		...services,
+		createSession: (...args) => workflowSession(original(...args), platform),
+	});
+}

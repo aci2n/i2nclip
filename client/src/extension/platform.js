@@ -1,7 +1,9 @@
+import { DEFAULT_SERVER_URL } from "../lib/protocol/server.js";
 import { fetchMedia } from "./fetch-media.js";
 import { notify } from "./notify.js";
 
 export const platform = {
+	defaultServerUrl: DEFAULT_SERVER_URL,
 	confirm: (message) => globalThis.confirm(message),
 	local: browser.storage.local,
 	session: browser.storage.session,
