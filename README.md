@@ -40,12 +40,21 @@ For authentication troubleshooting, temporarily set `RUST_LOG=i2nclip::auth=debu
 
 Install client dependencies with `npm ci --prefix client`, using Node from `client/.nvmrc`.
 
-```sh
-make test                 # client tests/checker and Rust tests without a database
-make test-db              # testcontainers starts and cleans up PostgreSQL 18
-make e2e                  # Firefox against the real Rust API
-make extension
-```
+The root Makefile groups verification commands by required access:
+
+| Access | Targets | Requirements |
+| --- | --- | --- |
+| Local processes and files | `test`, `client-test`, `lint`, `format-check`, `test-packages` | Installed toolchains and client dependencies; package checks also need zip, unzip, and GNU tar |
+| Local database/container | `test-db` | Disposable PostgreSQL administrator connection, or Docker/Podman API access to provision one; image pulls may use the network |
+| Browser and local servers/database | `e2e` | Firefox launch, loopback HTTP/TCP, and `I2N_TEST_DATABASE_URL`; also downloads npm dependencies and Firefox |
+| External network, read-only | `audit` | Installed cargo-audit and access to vulnerability advisories |
+| External network, deployment writes | `smoketest` | Private test credentials; creates an identity and uploads, edits, and deletes test media |
+
+`make test-packages` builds all three client archives and checks their contents
+and the extracted CLI. Local checks need no running database or browser; initial
+toolchain/dependency downloads still require network access. `make e2e` does not
+provision PostgreSQL itself; use the testcontainers runner below or provide a
+disposable database administrator URL.
 
 `make test` runs client tests/checker and Rust tests that need no database. `make test-db` uses [testcontainers](https://docs.rs/testcontainers/0.28.0/testcontainers/) to start PostgreSQL 18, wait for readiness, run the database tests, and remove the container afterward, including when tests fail. Each fixture creates and cleans up an isolated database. Testcontainers is an optional tooling dependency; ordinary builds and tests do not enable it.
 
@@ -150,6 +159,47 @@ import { generatePrivateKey, registerKey, upload, list } from "./client/src/lib/
 
 A tag is stored as `HMAC-SHA256` of the normalized word, keyed from the private key. The server can match the fingerprint. It never receives the word. The readable tags sit inside the encrypted metadata. Normalization is trim, Unicode NFC, then lowercase, so `Vacation` and `vacation` match.
 
+## Live deployment smoke test
+
+After deploying, run `make smoketest` against the public server
+(`https://clip.i2n.duckdns.org`). It uses the Node version in `client/.nvmrc` and
+needs no frontend build or installed npm dependencies. Override the executable
+with `NODE=/path/to/node` when needed.
+
+Put the testing invitation in `client/smoke/otc` and its password in
+`client/smoke/pw`; use private files with mode 0600. The password must have at
+least eight characters. Both files and `client/smoke/recovery.json` are ignored
+by Git. The first run saves an encrypted recovery file before registration and
+consumes the invitation. Subsequent runs reuse that identity and check its
+registration without spending another code. Keep the recovery file and original
+password when retrying a failed registration.
+
+```sh
+make smoketest
+make smoketest SMOKE_SERVER=https://clip.example.com SMOKE_DIR=/private/test-credentials
+```
+
+An existing recovery file must match the selected server origin. Use a separate
+credential directory for another deployment. `SMOKE_DIR` defaults to
+`client/smoke` and must already contain `otc` and `pw`; it is independent of the
+normal CLI's XDG recovery location.
+
+The test uploads random 1 KiB, 1 MiB, and 32 MiB files individually, checks
+metadata and tag searches, verifies downloaded bytes, exercises tag replacement
+and normalized add/remove, deletes its files, and checks that deleted metadata
+returns HTTP 404. Expect approximately 66 MiB of upload/download traffic per run.
+It exercises the dedicated GET/PUT metadata routes and fails against a server
+that has not deployed them.
+
+Node connection attempts allow one second before trying another address family.
+Each command has a 120-second timeout. Ctrl-C cancels the active request and
+starts cleanup with an independent 30-second budget. Cleanup deletes only IDs
+created by this run or found under its unique run tag, including uploads whose
+response was lost. Local temporary files are removed; the encrypted recovery
+file is retained. A failed cleanup causes a nonzero exit and reports known
+remaining IDs or the run tag to inspect. Passwords, invitations, keys, and file
+contents are never printed.
+
 ## Client packages
 
 After installing dependencies with `npm ci --prefix client` using the Node version
@@ -182,6 +232,6 @@ Packages contain only their runtime files. Extension update metadata remains in
 `client/public/updates.json` and is not copied into the build or XPI. Each build
 cleans its own directory, and each archive is recreated to remove stale entries.
 JavaScript and CSS remain unminified. Packaging uses system `zip` and GNU `tar`.
-Run `npm run test:packages --prefix client` after `make packages` to check archive
-contents and the extracted CLI. Browser E2E tests also package the CLI and exercise
+Run `make test-packages` to build the archives and check their contents and the
+extracted CLI. Browser E2E tests also package the CLI and exercise
 that extracted executable against the real API.

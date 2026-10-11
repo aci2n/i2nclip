@@ -303,7 +303,9 @@ async function responseError(response) {
 	try {
 		message = JSON.parse(text).error || response.statusText;
 	} catch {}
-	return new Error(message);
+	const error = new Error(message);
+	error.status = response.status;
+	return error;
 }
 
 async function readBody(response, onProgress, signal) {

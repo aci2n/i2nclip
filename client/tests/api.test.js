@@ -290,3 +290,18 @@ test("Node uploads with progress callbacks fall back to fetch", async (t) => {
 	});
 	assert.equal(calls, 1);
 });
+
+test("HTTP failures expose status without changing their error message", async (t) => {
+	const { privateKey } = await generatePrivateKey();
+	t.mock.method(globalThis, "fetch", async () =>
+		Response.json({ error: "not found" }, { status: 404 }),
+	);
+	await assert.rejects(
+		getMetadata({
+			serverUrl: "https://clip.example",
+			privateKey,
+			id: "a".repeat(64),
+		}),
+		(error) => error.status === 404 && error.message === "not found",
+	);
+});

@@ -43,6 +43,7 @@
 ## Verification
 
 - Install dependencies with `npm ci --prefix client`; use the Node version in `client/.nvmrc`.
+- The root Makefile groups all test/verification targets by required access. `make test-packages` builds the client archives and runs package checks without a browser or database.
 - `make test` runs client tests, the Svelte checker, and Rust tests. `make -C client test` checks only the client.
 - `npm run e2e --prefix client` rebuilds the extension and runs Firefox tests. `make e2e` also installs dependencies and Firefox.
 - E2E tests use a real local Rust API and a Firefox API shim. Screenshots go to ignored `client/e2e/shots/`; inspect them with the image-viewing tool.

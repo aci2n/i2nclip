@@ -231,5 +231,5 @@ The current source boundaries are retained: `src/main.js` is the web entry point
 `src/lib/index.js` remains the shared public API. No runtime protocol changes
 are made by bundling.
 
-Run `npm run test:packages` after packaging. See the repository README's
+Run `make test-packages` to build and check all packages. See the repository README's
 Client packages section for hosting requirements and CLI extraction instructions.
