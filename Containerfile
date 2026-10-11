@@ -5,7 +5,10 @@
 FROM docker.io/library/node:22.23.3-bookworm-slim AS web
 WORKDIR /client
 COPY client/package.json client/package-lock.json ./
-RUN npm ci
+# Match the smoke CLI's allowance for remote TCP handshakes before trying another address.
+# Keep registry failures visible; the final npm exit-handler error can hide them.
+RUN NODE_OPTIONS=--network-family-autoselection-attempt-timeout=1000 \
+    npm ci --no-audit --no-fund --no-update-notifier --loglevel=verbose
 COPY client/index.html client/vite.config.js ./
 COPY client/src ./src
 RUN npm run build:web
