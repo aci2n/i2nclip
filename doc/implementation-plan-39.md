@@ -39,4 +39,4 @@ Run focused library tests, client checks and Firefox/Chromium upload E2E. Inspec
 
 ## Implementation notes
 
-Record the deliberate change from batch to per-job retention and timing/error-path results.
+Implemented independent five-second deadlines for completed jobs. Cleanup re-reads current rows, guards runtime context and uses a bounded retry delay after failed persistence. A new `visibleUploadJobs` projection renders queued/preparing/uploading/completed rows even after uploading ends; completion is always 100%. Failed/context jobs retain their dedicated flows, and manual clear still targets completed IDs only. Replaced the whole-batch-retention unit expectation. Combined verification deferred until the end of TODOs 37–46.

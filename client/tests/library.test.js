@@ -5,7 +5,7 @@ import { createLibrary } from "../src/lib/stores/library.js";
 import { deferred, tick } from "./helpers.js";
 import { engineClient, serviceFixture, until } from "./service-helpers.js";
 
-test("all clients see per-file progress and only fully successful batches expire", async (t) => {
+test("all clients see per-file progress and completed jobs expire even beside failures", async (t) => {
 	const transfer = deferred();
 	let attempt = 0;
 	const f = await serviceFixture(t, {
@@ -36,10 +36,11 @@ test("all clients see per-file progress and only fully successful batches expire
 	assert.equal(get(b).uploadJobs[1].status, "queued");
 	transfer.resolve();
 	await until(() => get(b).uploadFailures.length === 1);
-	await new Promise((resolve) => setTimeout(resolve, 65));
-	assert.equal(get(b).uploadCompleted.length, 1);
+	await until(() => get(b).uploadCompleted.length === 0);
+	assert.equal(get(b).uploadFailures.length, 1);
+	assert.equal((await f.repository.jobs()).length, 1);
 	await b.retryUploads();
-	await until(() => get(b).uploadCompleted.length === 2);
+	await until(() => get(b).uploadCompleted.length === 1);
 	await until(
 		() => get(a).uploadJobs.length === 0 && get(b).uploadJobs.length === 0,
 	);

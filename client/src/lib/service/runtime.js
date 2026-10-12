@@ -116,64 +116,41 @@ export function createLibraryRuntime({
 		}
 		broadcast("uploads", uploadState());
 		clearTimeout(completionTimer);
-		const batches = new Map();
-		for (const job of jobs.values()) {
-			if (!batches.has(job.batchId)) {
-				batches.set(job.batchId, []);
-			}
-			batches.get(job.batchId).push(job);
-		}
-		const complete = [...batches.values()].filter((batch) =>
-			batch.every((job) => job.status === "completed"),
+		const completed = [...jobs.values()].filter(
+			(job) => job.status === "completed",
 		);
-		if (!complete.length || disposed) {
+		if (!completed.length) {
 			return;
 		}
-		const deadline = Math.min(
-			...complete.map(
-				(batch) =>
-					Math.max(
-						...batch.map(
-							(job) => job.completedAt || job.createdAt || Date.now(),
-						),
-					) + completedRetentionMs,
-			),
-		);
+		const expires = (job) =>
+			(job.completedAt || job.createdAt || 0) + completedRetentionMs;
+		const deadline = Math.min(...completed.map(expires));
+		const epoch = identity.epoch;
 		completionTimer = setTimeout(
 			() => {
 				void enqueue(async () => {
-					if (disposed) {
+					if (disposed || epoch !== identity.epoch) {
 						return;
 					}
-					for (const batch of complete) {
-						if (
-							batch.some(
-								(job) => jobs.get(job.id) !== job || job.status !== "completed",
-							)
-						) {
+					for (const job of [...jobs.values()]) {
+						if (job.status !== "completed" || expires(job) > Date.now()) {
 							continue;
 						}
-						if (
-							Math.max(
-								...batch.map(
-									(job) => job.completedAt || job.createdAt || Date.now(),
-								),
-							) +
-								completedRetentionMs >
-							Date.now()
-						) {
-							continue;
+						await repository.removeJob(job.id);
+						if (disposed || epoch !== identity.epoch) {
+							return;
 						}
-						for (const job of batch) {
-							await repository.removeJob(job.id);
-							jobs.delete(job.id);
-						}
+						jobs.delete(job.id);
 					}
 					publishUploads();
 				}).catch((error) => {
-					if (!disposed) {
+					if (!disposed && epoch === identity.epoch) {
 						traceEvent("upload.cleanup.failed", errorDetails(error));
-						completionTimer = setTimeout(publishUploads, completedRetentionMs);
+						broadcast("uploads", uploadState());
+						completionTimer = setTimeout(
+							publishUploads,
+							Math.max(250, completedRetentionMs),
+						);
 					}
 				});
 			},

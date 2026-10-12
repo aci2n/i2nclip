@@ -19,10 +19,10 @@ let { library } = $props();
 		{#if $library.uploadStatus}
 			<p role="status">{$library.uploadStatus}</p>
 		{/if}
-		{#if $library.uploading}
+		{#if $library.visibleUploadJobs.length}
 			<section class="upload-progress" aria-label="Upload progress">
 				<ul class="upload-list">
-					{#each $library.uploadJobs as job (job.id)}
+					{#each $library.visibleUploadJobs as job (job.id)}
 						{@const percent =
 							job.status === "completed" ? 100 : job.progress || 0}
 						<li>
@@ -80,7 +80,7 @@ let { library } = $props();
 			</p>
 		{/if}
 
-		{#if !$library.uploading &&
+		{#if !$library.visibleUploadJobs.length &&
 			!$library.uploadFailures.length &&
 			!$library.uploadCompleted.length &&
 			!$library.uploadStatus}
