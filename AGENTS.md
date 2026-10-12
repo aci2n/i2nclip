@@ -1,5 +1,15 @@
 # Project conventions
 
+## Change discipline
+
+- Before implementing future changes, require a detailed written specification, such as `doc/simplification_plan.md`. It must state the goal, scope, explicit exclusions, affected interfaces and ownership, persistence and lifecycle behavior, failure/cancellation cases, and acceptance checks. Resolve facts by inspecting the repository; ask only about missing decisions. An unambiguous authorized request plus documented repository facts can supply the specification; do not add another approval gate to work already authorized.
+- Strictly preserve the simplification principles: do the minimal thing that achieves the specified goal, organize code for human readers, and keep responsibilities isolated. Do not add speculative abstractions, capabilities, state persistence, compatibility layers, or dependencies.
+- The client is one web app with one unnamed library. Views are the containers for components. Every component must have one presentation responsibility, use only ordinary props/callbacks, and have no store access, storage access, or async application workflow. Local presentation state is allowed. HTML IDs are forbidden everywhere.
+- Stores own asynchronous workflows, cancellation, and resources. Keep protocol functions independent of rendering. Preserve root-owned work across navigation and dispose it when the owning session ends.
+- Treat data formats and schema as greenfield. Implement the current specification directly; do not invent migrations or legacy fallback behavior.
+- Make small frequent commits after cohesive changes build without warnings. Focus on refactoring before running the final test suites. Tests must cover meaningful behavior and invariants rather than mirror implementation details. Test quality is mandatory.
+- Every test must isolate its mutable state and resources. Bind test listeners atomically to loopback port 0, use isolated databases and browser contexts, and clean up owned resources on success and failure. Verification commands must work from a fresh clone with documented toolchain/system prerequisites; never rely on developer-specific paths or existing build artifacts.
+
 ## Layout and commands
 
 - The server image includes only the web client build, served by Rust on port 8080 alongside the API. `I2N_WEB_DIR` defaults to `client/dist/web` locally and is set to `/usr/local/share/i2nclip/web` in the image.
@@ -7,7 +17,7 @@
 - `client/` is a Svelte 5 + Vite web project. Reusable crypto, API, media, stores, and components live in `client/src/lib/`.
 - Keep one npm project: package.json, lockfile, .nvmrc, and Playwright configuration belong in `client/`.
 - The root Makefile delegates frontend commands with `$(MAKE) -C client`; do not include the client Makefile. `make build` builds server and frontend; `make client` builds frontend.
-- `make web` and `make packages` package the web client as `client/dist/i2nclip-web.zip`. All outputs stay in `client/dist/`.
+- `make web` packages the web client as `client/dist/i2nclip-web.zip`. All outputs stay in `client/dist/`.
 - Do not minify JavaScript or CSS unless explicitly needed. The Vite build disables minification. ZIP compression is fine.
 
 ## Database policy
@@ -41,9 +51,9 @@
 
 ## Verification
 
-- Install dependencies with `npm ci --prefix client`; use the Node version in `client/.nvmrc`.
+- Use Node from `client/.nvmrc` on PATH. Client Makefile targets prepare locked dependencies automatically; `npm ci --prefix client` is also available for direct npm commands.
 - The root Makefile groups all test/verification targets by required access. `make test-packages` builds the web archive and runs package checks without a browser or database.
 - `make test` runs client tests, the Svelte checker, and Rust tests. `make -C client test` checks only the client.
-- `npm run e2e --prefix client` rebuilds the web app and runs Firefox/Chromium tests. `make test-e2e` also installs dependencies and Firefox.
-- E2E tests use the real local Rust web/API listener without runtime shims. Screenshots go to ignored `client/e2e/shots/`; inspect them with the image-viewing tool.
+- `npm run e2e --prefix client` rebuilds the web app and runs Firefox/Chromium tests. `make test-e2e` also installs dependencies, Firefox/Chromium, and builds the helper executables.
+- E2E tests use the real local Rust web/API listener without runtime shims. Screenshots use per-test directories under ignored `client/e2e/shots/`; inspect them with the image-viewing tool.
 - Browser tests need permission to launch Firefox and communicate with local servers. If sandboxing blocks them, rerun with the appropriate escalation.
