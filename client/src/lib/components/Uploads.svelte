@@ -5,8 +5,6 @@ let {
 	failures = [],
 	completed = [],
 	status,
-	onretry,
-	ondiscard,
 	ondismiss,
 } = $props();
 </script>
@@ -41,18 +39,6 @@ let {
 					<li class="error">{failure.name}: {failure.error}</li>
 				{/each}
 			</ul>
-			<div class="bar">
-				<button type="button" disabled={uploading} onclick={onretry}>
-					Retry failed files
-				</button><button
-					type="button"
-					class="secondary"
-					disabled={uploading}
-					onclick={ondiscard}
-				>
-					Discard failed files
-				</button>
-			</div>
 		{/if}
 		{#if status}
 			<p role="status">{status}</p>

@@ -8,7 +8,7 @@ The session owns the decrypted identity, encryption key through its persistence 
 
 Only the encrypted identity, server URL, and password derivation material are persisted in one atomic localStorage record. A failed write preserves the previous record and identity. Recovery independently encrypts one identity and is validated before saving. There are no migrations.
 
-The library owns searches and sequential upload batches across navigation. Cancellation and revision checks suppress stale searches. Pagination uses the submitted query and permits one request at a time. Failed files remain for retry; reloading or changing the identity discards all transient upload state.
+The library owns searches and sequential upload batches across navigation. Cancellation and revision checks suppress stale searches. Pagination uses the submitted query and permits one request at a time. Only failure messages remain; users select failed files again through Upload; reloading or changing the identity discards all transient upload state.
 
 Media items own bytes, requests, URLs, and mutation busy state. Disposal aborts requests and revokes URLs. Late results cannot create previews or save dialogs. Metadata conflicts refresh the server tags while the editor retains failed drafts for retry.
 

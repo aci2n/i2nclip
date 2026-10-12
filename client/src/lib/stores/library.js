@@ -34,7 +34,6 @@ export function createLibrary(
 	let uploadRevision = 0;
 	let previewRevision = 0;
 	let lastEpoch = session.epoch;
-	let failures = [];
 	let batchActive = false;
 	function publishCards() {
 		state.update((v) => ({
@@ -70,7 +69,6 @@ export function createLibrary(
 		previewRevision++;
 		searchController?.abort();
 		clearCards();
-		failures = [];
 		batchActive = false;
 		state.update((v) => ({
 			...v,
@@ -186,6 +184,7 @@ export function createLibrary(
 			...v,
 			uploading: true,
 			uploadStatus: "",
+			uploadFailures: [],
 			uploadCompleted: [],
 		}));
 		const failed = [];
@@ -238,7 +237,7 @@ export function createLibrary(
 				}
 			} catch (error) {
 				if (!disposed && !signal.aborted && own === uploadRevision) {
-					failed.push({ file, error: error.message });
+					failed.push({ name: file.name, error: error.message });
 				}
 			} finally {
 				finished = true;
@@ -247,18 +246,14 @@ export function createLibrary(
 		if (disposed || signal.aborted || own !== uploadRevision) {
 			return false;
 		}
-		failures = [...failures, ...failed];
 		batchActive = false;
 		state.update((v) => ({
 			...v,
 			uploading: false,
 			uploadProgress: null,
-			uploadFailures: failures.map(({ file, error }) => ({
-				name: file.name,
-				error,
-			})),
+			uploadFailures: failed,
 			uploadStatus: failed.length
-				? `${failed.length} file(s) failed. Retry the failed files.`
+				? `${failed.length} file(s) failed. Select the failed files again through Upload.`
 				: "Upload complete.",
 		}));
 		await search(get(state).query);
@@ -270,21 +265,6 @@ export function createLibrary(
 		search,
 		more: () => search(get(state).query, true),
 		upload,
-		retryUploads() {
-			if (batchActive) {
-				return false;
-			}
-			const files = failures.map((v) => v.file);
-			failures = [];
-			state.update((v) => ({ ...v, uploadFailures: [] }));
-			return upload(files);
-		},
-		discardUploads() {
-			if (!batchActive) {
-				failures = [];
-				state.update((v) => ({ ...v, uploadFailures: [], uploadStatus: "" }));
-			}
-		},
 		dismissCompleted: () =>
 			state.update((v) => ({
 				...v,
@@ -320,6 +300,7 @@ export function createLibrary(
 			if (
 				!row ||
 				row.value.busy ||
+				row.value.deleted ||
 				!confirm(
 					`Delete ${row.value.metadata?.name || id}? This cannot be undone.`,
 				)
@@ -327,15 +308,8 @@ export function createLibrary(
 				return false;
 			}
 			if (await row.media.remove()) {
-				row.unsubscribe();
-				row.media.dispose();
-				cards.delete(id);
-				publishCards();
-				state.update((v) => ({
-					...v,
-					selected: null,
-					empty: cards.size ? null : v.query.trim() ? "search" : "library",
-				}));
+				previewRevision++;
+				state.update((v) => ({ ...v, selected: null }));
 				return true;
 			}
 			return false;

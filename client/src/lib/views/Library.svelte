@@ -54,8 +54,6 @@ let filesInput = $state();
 		failures={$library.uploadFailures}
 		completed={$library.uploadCompleted}
 		status={$library.uploadStatus}
-		onretry={library.retryUploads}
-		ondiscard={library.discardUploads}
 		ondismiss={library.dismissCompleted}
 	/>
 	{#if $library.empty}

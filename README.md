@@ -12,7 +12,7 @@ To connect another device, open **Connect another device** in Settings on the un
 
 Each browser profile saves one password-protected library identity in localStorage. Reloading requires unlocking again. Only one tab per app origin may run; additional tabs show a retry screen. **Lock** cancels active work and releases decrypted state. **Forget library** removes the local identity while keeping the master password; resetting a locked client removes all its saved state. Neither action deletes server files.
 
-Uploads run sequentially and continue after individual failures. Failed files can be retried while the page remains open, including after navigating to Settings and back. Uploads and retries are not saved across reloads. After an uncertain upload response, check the library before retrying to avoid duplicate copies.
+Uploads run sequentially and continue after individual failures. Failures show status messages; select failed files again through Upload to try again. Upload status survives navigation but is not saved across reloads. After an uncertain upload response, check the library before retrying to avoid duplicate copies.
 
 The project is greenfield; there are no client data or recovery-format migrations.
 
