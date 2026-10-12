@@ -340,3 +340,114 @@ test("retag reconciles normalized multi-tag queries and survives stale paginatio
 	assert.deepEqual(get(card).metadata.tags, ["New"]);
 	assert.equal(lists, before);
 });
+
+test("token verification finishing after a tag edit cannot publish stale metadata", async (t) => {
+	const { tagTokens } = await import("../src/lib/protocol/crypto.js");
+	const verification = deferred();
+	let held = false;
+	const item = {
+		id: "file",
+		metadata: { name: "file.txt", tags: ["Old"] },
+		metaHash: "a",
+	};
+	const f = await serviceFixture(t, {
+		api: {
+			list: async () => ({ items: [structuredClone(item)], next: null }),
+			updateMetadata: async ({ metadata, privateKey }) => ({
+				tokens: await tagTokens(privateKey, metadata.tags),
+				metaHash: "b",
+				conflict: false,
+			}),
+		},
+	});
+	item.tokens = await tagTokens(f.key.privateKey, item.metadata.tags);
+	const a = createLibrary(f.client, {});
+	t.after(a.dispose);
+	await until(() => get(a).cards.length);
+	const sign = crypto.subtle.sign.bind(crypto.subtle);
+	t.mock.method(crypto.subtle, "sign", async (algorithm, key, data) => {
+		if (
+			!held &&
+			(algorithm === "HMAC" || algorithm.name === "HMAC") &&
+			new TextDecoder().decode(data) === "tag\nold"
+		) {
+			held = true;
+			await verification.promise;
+		}
+		return sign(algorithm, key, data);
+	});
+	const b = createLibrary(f.client, {});
+	t.after(b.dispose);
+	await until(() => held);
+	await a.retag("file", ["New"]);
+	verification.resolve();
+	await until(() => !get(b).loading);
+	assert.deepEqual(get(a).items[0].metadata.tags, ["New"]);
+	assert.deepEqual(get(b).items[0].metadata.tags, ["New"]);
+});
+
+test("a metadata conflict preserves the filtered card and reports authoritative tags without listing", async (t) => {
+	const { tagTokens } = await import("../src/lib/protocol/crypto.js");
+	let lists = 0;
+	const item = {
+		id: "file",
+		metadata: { name: "file.txt", tags: ["Old"] },
+		metaHash: "a",
+	};
+	const f = await serviceFixture(t, {
+		api: {
+			list: async () => {
+				lists++;
+				return { items: [item], next: "cursor" };
+			},
+			updateMetadata: async ({ privateKey }) => ({
+				conflict: true,
+				item: {
+					...item,
+					metadata: { ...item.metadata, tags: ["Other"] },
+					tokens: await tagTokens(privateKey, ["Other"]),
+					metaHash: "remote",
+				},
+			}),
+		},
+	});
+	item.tokens = await tagTokens(f.key.privateKey, item.metadata.tags);
+	const library = createLibrary(f.client, {}, { query: "Old" });
+	t.after(library.dispose);
+	await until(() => get(library).cards.length);
+	const card = get(library).cards[0].media;
+	assert.equal(await library.retag("file", ["Rejected"]), false);
+	assert.equal(get(library).cards[0].media, card);
+	assert.deepEqual(get(card).metadata.tags, ["Other"]);
+	assert.match(get(card).message, /review and try again/);
+	assert.equal(get(library).next, "cursor");
+	assert.equal(lists, 1);
+});
+
+test("completed rows expire independently while the next upload is held", async (t) => {
+	const transfer = deferred();
+	const f = await serviceFixture(t, {
+		completedRetentionMs: 40,
+		upload: async ({ source }) => {
+			if (source.name === "second.txt") {
+				await transfer.promise;
+			}
+			return { id: source.name };
+		},
+	});
+	const library = createLibrary(f.client, {});
+	t.after(library.dispose);
+	await library.upload([
+		new File(["a"], "first.txt"),
+		new File(["b"], "second.txt"),
+	]);
+	await until(() => get(library).uploadCompleted.length === 1);
+	assert.equal(get(library).visibleUploadJobs.length, 2);
+	await until(() => get(library).uploadCompleted.length === 0);
+	assert.equal(get(library).visibleUploadJobs[0].name, "second.txt");
+	assert.equal(get(library).uploading, true);
+	transfer.resolve();
+	await until(() => get(library).uploadCompleted.length === 1);
+	await library.dismissCompleted();
+	assert.equal(get(library).uploadJobs.length, 0);
+});

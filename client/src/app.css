@@ -173,5 +173,6 @@
 
 /* Hidden semantics must survive unlayered component grid/flex declarations. */
 [hidden] {
+	/* biome-ignore lint/complexity/noImportantStyles: Hidden semantics must override unlayered component display rules. */
 	display: none !important;
 }
