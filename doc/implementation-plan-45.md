@@ -42,4 +42,6 @@ Run client tests/checker/lint and extension build; focused Firefox/Chromium pair
 
 ## Implementation notes
 
-Record the final plain prop/callback contract, other-component inventory, ownership retained and acceptance results.
+Pairing now accepts plain `state`, `configured`, `busy`, `server`, `embedded`, `idPrefix` and explicit send/receive/approve/reject/cancel callbacks. Settings subscribes to root/setup pairing/session snapshots and binds the correct facade; Setup passes these plain values/actions through without subscribing to a pairing store. Input/disclosure state remains local; service workflows remain in the store/owner.
+
+Inventory retained for later work: Uploads reads library upload projections (parent Library); MediaCard reads per-media stores and owns rendered resource actions (parent Library); RecoveryImport constructs its recovery workflow store (parent Settings/VaultScreen); RecoveryExport and VaultSettings own async form feedback around vault actions (parent Settings/ManageLibraries); ContextDestination reads app and owns local submission feedback (parent App). These changes are outside this bounded Pairing conversion. Added plain-prop server-render coverage; browser callback verification is deferred to the combined end-of-batch run.

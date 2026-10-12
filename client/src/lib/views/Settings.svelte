@@ -20,6 +20,8 @@ onMount(() => {
 		setup.start();
 	}
 });
+const setupSession = $derived(setup.session);
+const setupPairing = $derived(setup.pairing);
 const feedback = $derived($settings.feedback);
 const feedbackAt = $derived(
 	$session.configured && ["create", "restore"].includes(feedback.scope)
@@ -52,7 +54,12 @@ const feedbackAt = $derived(
 			<Setup
 				session={setup.session}
 				settings={setup.settings}
-				pairing={setup.pairing}
+				pairingState={$setupPairing}
+				pairingBusy={$setupSession.busy}
+				onReceive={setup.pairing.receive}
+				onApprove={setup.pairing.approve}
+				onRejectVerification={setup.pairing.rejectVerification}
+				onCancel={setup.pairing.cancel}
 				{vault}
 				{onRestore}
 			/>
@@ -74,8 +81,14 @@ const feedbackAt = $derived(
 	{/if}
 	{#if $session.configured}
 		<Pairing
-			{session}
-			{pairing}
+			state={$pairing}
+			configured={$session.configured}
+			busy={$session.busy}
+			onSend={pairing.send}
+			onReceive={pairing.receive}
+			onApprove={pairing.approve}
+			onRejectVerification={pairing.rejectVerification}
+			onCancel={pairing.cancel}
 			server={$session.serverUrl}
 			idPrefix="pairing"
 		/>
@@ -101,7 +114,12 @@ const feedbackAt = $derived(
 				<Setup
 					session={setup.session}
 					settings={setup.settings}
-					pairing={setup.pairing}
+					pairingState={$setupPairing}
+					pairingBusy={$setupSession.busy}
+					onReceive={setup.pairing.receive}
+					onApprove={setup.pairing.approve}
+					onRejectVerification={setup.pairing.rejectVerification}
+					onCancel={setup.pairing.cancel}
 					{vault}
 					{onRestore}
 					additional

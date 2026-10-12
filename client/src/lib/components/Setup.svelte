@@ -7,12 +7,17 @@ import RecoveryImport from "./RecoveryImport.svelte";
 let {
 	session,
 	settings,
-	pairing,
+	pairingState,
+	pairingBusy,
+	onReceive,
+	onApprove,
+	onRejectVerification,
+	onCancel,
 	vault,
 	onRestore,
 	additional = false,
 } = $props();
-const mode = $derived($pairing.active ? "pair" : $settings.mode);
+const mode = $derived(pairingState.active ? "pair" : $settings.mode);
 const authorizers = $derived(eligibleAuthorizers($session.catalog));
 const tabs = $derived([
 	["create", "OTC"],
@@ -23,7 +28,7 @@ const tabs = $derived([
 const authorizer = $derived(
 	authorizers.find((row) => row.id === $settings.authorizerLibraryId),
 );
-const blocked = $derived($session.busy || $pairing.active);
+const blocked = $derived($session.busy || pairingState.active);
 </script>
 
 {#snippet notice(
@@ -209,8 +214,13 @@ const blocked = $derived($session.busy || $pairing.active);
 			>
 		</div>
 		<Pairing
-			{session}
-			{pairing}
+			state={pairingState}
+			busy={pairingBusy}
+			configured={false}
+			{onReceive}
+			{onApprove}
+			{onRejectVerification}
+			{onCancel}
 			idPrefix={additional ? "setup-pairing" : "initial-pairing"}
 			server={$settings.pairServer || $settings.server}
 			embedded

@@ -1,15 +1,26 @@
 <script>
-let { session, pairing, server, idPrefix, embedded = false } = $props();
+let {
+	state,
+	server,
+	configured = false,
+	busy = false,
+	idPrefix,
+	embedded = false,
+	onSend,
+	onReceive,
+	onApprove,
+	onRejectVerification,
+	onCancel,
+} = $props();
 const id = (suffix) => `${idPrefix}-${suffix}`;
 let code = $state("");
 let open = $state(false);
-const configured = $derived(!embedded && Boolean($session.configured));
-const disabled = $derived($pairing.active || $session.busy);
+const disabled = $derived(state.active || busy);
 async function connect(event) {
 	event.preventDefault();
 	const entered = code;
 	code = "";
-	await pairing.receive(entered, server.trim());
+	await onReceive(entered, server.trim());
 }
 </script>
 
@@ -24,18 +35,13 @@ async function connect(event) {
 		<h2>Connect existing library</h2>
 	{/if}
 	<div class="pairing" class:embedded>
-		{#if !$pairing.active}
+		{#if !state.active}
 			{#if configured}
 				<p>
 					Give another device full access to this library using a temporary
 					code.
 				</p>
-				<button
-					type="button"
-					id={id("start")}
-					{disabled}
-					onclick={pairing.send}
-				>
+				<button type="button" id={id("start")} {disabled} onclick={onSend}>
 					Create pairing code
 				</button>
 			{:else}
@@ -73,48 +79,48 @@ async function connect(event) {
 				{/if}
 			{/if}
 		{:else}
-			{#if $pairing.code}
-				<output id={id("code")} class="code">{$pairing.code}</output>
+			{#if state.code}
+				<output id={id("code")} class="code">{state.code}</output>
 			{/if}
-			{#if $pairing.verificationCode}
+			{#if state.verificationCode}
 				<div class="verification">
 					<label for={id("verification-code")}>Verification code</label>
 					<output id={id("verification-code")} class="code"
-						>{$pairing.verificationCode}</output
+						>{state.verificationCode}</output
 					>
 				</div>
 			{/if}
-			<p class="address">Server: {$pairing.server}</p>
-			<p>Expires in {$pairing.remaining} seconds.</p>
+			<p class="address">Server: {state.server}</p>
+			<p>Expires in {state.remaining} seconds.</p>
 			<div class="actions">
-				{#if $pairing.approval && $pairing.verificationCode}
-					<button type="button" id={id("approve")} onclick={pairing.approve}>
+				{#if state.approval && state.verificationCode}
+					<button type="button" id={id("approve")} onclick={onApprove}>
 						Codes match — send library
 					</button>
 				{/if}
-				{#if $pairing.verificationCode}
+				{#if state.verificationCode}
 					<button
 						type="button"
 						id={id("mismatch")}
 						class="secondary"
-						onclick={pairing.rejectVerification}
+						onclick={onRejectVerification}
 					>
 						Codes don’t match
 					</button>
 				{/if}
-				<button type="button" class="secondary" onclick={pairing.cancel}>
+				<button type="button" class="secondary" onclick={onCancel}>
 					Cancel pairing
 				</button>
 			</div>
 		{/if}
-		{#if $pairing.status}
+		{#if state.status}
 			<p
 				id={id("status")}
 				class="feedback"
-				class:error={$pairing.error}
-				role={$pairing.error ? "alert" : "status"}
+				class:error={state.error}
+				role={state.error ? "alert" : "status"}
 			>
-				{$pairing.status}
+				{state.status}
 			</p>
 		{/if}
 	</div>
