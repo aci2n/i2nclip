@@ -36,7 +36,7 @@ Work through these in order. Details and reproductions are in [the audit report]
 
 19. [x] Deletion broadcasts the disabled, grayed-out card without refreshing any view; an explicit search removes it. Shared-view unit regression and all 12 targeted Firefox/Chromium scenarios pass.
 
-20. dont refresh on upload: on batch uploads refreshing after every upload is jarring
+20. [x] Upload results populate canonical media directly and append cards to matching searches across clients, preserving card owners, pagination and uploads completed during older search requests. Thumbnails reflect the actual encrypted metadata. No per-file list refresh. Client tests (148), Rust checks and all 44 Firefox/Chromium scenarios pass.
 
 21. rename assets/worker.js assets/pairing-worker.js (if stil exists)
 

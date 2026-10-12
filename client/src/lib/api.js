@@ -53,7 +53,12 @@ export async function upload({
 	if (image && Object.keys(image).length > 0) metadata.image = image;
 	const content = await encrypt(key, contentAad(), bytes);
 	const mediaId = await bodyHash(content);
-	const meta = await sealedMetadata(key, mediaId, metadata, thumb);
+	const { meta, storedThumb } = await sealedMetadata(
+		key,
+		mediaId,
+		metadata,
+		thumb,
+	);
 	const tokens = await tagTokens(key, plainTags);
 	const body = encodePost({
 		meta,
@@ -69,7 +74,14 @@ export async function upload({
 		onProgress,
 		signal,
 	);
-	return { ...saved, metadata, metaHash: await bodyHash(meta) };
+	return {
+		...saved,
+		createdAt: saved.created_at,
+		metadata,
+		thumb: storedThumb,
+		tokens,
+		metaHash: await bodyHash(meta),
+	};
 }
 
 export async function list({ serverUrl, privateKey, tags, after, signal }) {
@@ -142,7 +154,7 @@ export async function updateMetadata({
 }) {
 	const key = await loadKey(privateKey);
 	const tokens = await tagTokens(key, metadata.tags ?? []);
-	const meta = await sealedMetadata(key, id, metadata, thumb);
+	const { meta } = await sealedMetadata(key, id, metadata, thumb);
 	const body = encodeMeta({
 		prevMetaHash: hexToBytes(prevMetaHash),
 		meta,
@@ -309,10 +321,13 @@ async function sendBytes(
 }
 
 async function sealedMetadata(key, id, metadata, thumb) {
-	let plain = encodeMetaPlain(metadata, thumb ?? null);
-	if (plain.length > MAX_META_PLAINTEXT)
+	let storedThumb = thumb ?? null;
+	let plain = encodeMetaPlain(metadata, storedThumb);
+	if (plain.length > MAX_META_PLAINTEXT) {
+		storedThumb = null;
 		plain = encodeMetaPlain(metadata, null);
-	return encrypt(key, metaAad(id), plain);
+	}
+	return { meta: await encrypt(key, metaAad(id), plain), storedThumb };
 }
 
 async function responseError(response) {

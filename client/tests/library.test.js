@@ -5,6 +5,62 @@ import { createLibrary } from "../src/lib/stores/library.js";
 import { deferred, tick } from "./helpers.js";
 import { engineClient, serviceFixture, until } from "./service-helpers.js";
 
+test("uploads append matching cards without list refresh and survive older search results", async (t) => {
+	const { tagTokens } = await import("../src/lib/protocol/crypto.js");
+	const stale = deferred();
+	let lists = 0;
+	const f = await serviceFixture(t, {
+		api: {
+			list: async ({ tags, after }) => {
+				lists++;
+				return tags === "ONE"
+					? stale.promise
+					: {
+							items: after ? [{ id: "old2" }] : [{ id: "old" }],
+							next: after ? null : "cursor",
+						};
+			},
+		},
+		upload: async ({ credentials }) => ({
+			id: "new",
+			metadata: { name: "new.txt", tags: ["One"] },
+			tokens: await tagTokens(credentials.privateKey, ["One"]),
+			metaHash: "hash",
+		}),
+	});
+	const a = createLibrary(f.client, {});
+	t.after(a.dispose);
+	await until(() => get(a).cards.length === 1);
+	const card = get(a).cards[0].media;
+	const second = engineClient(f.engine);
+	t.after(second.dispose);
+	await second.ready;
+	const b = createLibrary(second, {}, { query: "ONE" });
+	t.after(b.dispose);
+	await until(() => get(b).loading);
+	const before = lists;
+	await a.upload([new File(["bytes"], "new.txt")]);
+	await until(() => get(a).cards.length === 2 && get(b).cards.length === 1);
+	assert.equal(lists, before);
+	assert.equal(get(a).cards[0].media, card);
+	assert.deepEqual(
+		get(a).items.map((item) => item.id),
+		["old", "new"],
+	);
+	assert.equal(get(a).next, "cursor");
+	stale.resolve({ items: [], next: null });
+	await until(() => !get(b).loading);
+	assert.deepEqual(
+		get(b).items.map((item) => item.id),
+		["new"],
+	);
+	await a.more();
+	assert.deepEqual(
+		get(a).items.map((item) => item.id),
+		["old", "new", "old2"],
+	);
+});
+
 test("deletion preserves cards in all views without refreshing until an explicit search", async (t) => {
 	let lists = 0,
 		deleted = false;

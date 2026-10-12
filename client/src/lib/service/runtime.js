@@ -3,7 +3,7 @@ import * as api from "../api.js";
 import { audioArt } from "../media/audio-art.js";
 import { checkFileSize, prepareMedia, sendUpload } from "../media/upload.js";
 import { thumbnail } from "../media/thumbnail.js";
-import { splitTags, tagTokens } from "../protocol/crypto.js";
+import { normalizeTag, splitTags, tagTokens } from "../protocol/crypto.js";
 import { uniqueTags } from "../protocol/tags.js";
 import { createIdentity } from "./identity.js";
 import { createPairing } from "./pairing.js";
@@ -230,6 +230,7 @@ export function createLibraryRuntime({
 			status: "Loading…",
 			empty: null,
 		});
+		if (!more) view.additions = new Set();
 		if (!more && !refresh) Object.assign(view, { ids: [], next: null });
 		publishView(view);
 		try {
@@ -250,6 +251,7 @@ export function createLibraryRuntime({
 					...page.items
 						.filter((item) => !media.get(item.id)?.deleted)
 						.map((item) => item.id),
+					...[...view.additions].filter((id) => !media.get(id)?.deleted),
 				]),
 			];
 			Object.assign(view, {
@@ -274,6 +276,19 @@ export function createLibraryRuntime({
 	function refreshViews() {
 		for (const view of views.values())
 			void search(view, view.query, false, true).catch(() => {});
+	}
+	async function publishUpload(item, epoch, signal) {
+		if (!item?.id) return;
+		await updateEntity(item, epoch, signal);
+		const tags = new Set((item.metadata?.tags || []).map(normalizeTag));
+		for (const view of views.values()) {
+			if (!splitTags(view.query).every((tag) => tags.has(normalizeTag(tag))))
+				continue;
+			view.additions.add(item.id);
+			if (!view.ids.includes(item.id)) view.ids.push(item.id);
+			view.empty = null;
+			publishView(view);
+		}
 	}
 	function ownedView(client, id) {
 		const view = views.get(id);
@@ -587,7 +602,7 @@ export function createLibraryRuntime({
 						broadcast("uploads", uploadState());
 					});
 					mutationRevision++;
-					refreshViews();
+					await publishUpload(result, epoch, signal);
 					if (job.context)
 						void Promise.resolve(platform.notify?.("Uploaded.")).catch(
 							() => {},
@@ -706,6 +721,7 @@ export function createLibraryRuntime({
 					clientId: client.id,
 					query: payload.query || "",
 					ids: [],
+					additions: new Set(),
 					next: null,
 					loading: false,
 					status: "",
