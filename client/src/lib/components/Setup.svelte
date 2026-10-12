@@ -84,24 +84,24 @@ const blocked = $derived($session.busy || pairingState.active);
 			{@render notice("create")}
 		{/if}
 	</form>
-  {/snippet}
-  	{#snippet libraryName() }
-		<div class="field">
-			<label for={additional ? "new-library-name" : "library-name"}
-				>Library name</label
-			>
-			<input
-				id={additional ? "new-library-name" : "library-name"}
-				required
-				maxlength="80"
-				bind:value={
-					() => $settings.libraryName,
-					(value) => settings.edit("libraryName", value)
-				}
-				disabled={blocked}
-			>
-		</div>
-	{/snippet}
+{/snippet}
+{#snippet libraryName()}
+	<div class="field">
+		<label for={additional ? "new-library-name" : "library-name"}
+			>Library name</label
+		>
+		<input
+			id={additional ? "new-library-name" : "library-name"}
+			required
+			maxlength="80"
+			bind:value={
+				() => $settings.libraryName,
+				(value) => settings.edit("libraryName", value)
+			}
+			disabled={blocked}
+		>
+	</div>
+{/snippet}
 
 <div class="stack">
 	{#if additional}
@@ -147,7 +147,7 @@ const blocked = $derived($session.busy || pairingState.active);
 		hidden={mode !== "create"}
 	>
 		<p>Create a new library with a one-time invitation code.</p>
-    {@render libraryName()}
+		{@render libraryName()}
 		<div class="field">
 			<label for={additional ? "setup-server" : "server"}>Server</label>
 			<input
@@ -201,9 +201,9 @@ const blocked = $derived($session.busy || pairingState.active);
 		role="tabpanel"
 		aria-labelledby="pair-tab"
 		hidden={mode !== "pair"}
-	  >
-    <p>Pair an existing library from another device.</p>
-    {@render libraryName()}
+	>
+		<p>Pair an existing library from another device.</p>
+		{@render libraryName()}
 		<div class="field">
 			<label for="pair-server">Pairing server</label>
 			<input
