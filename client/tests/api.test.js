@@ -4,6 +4,7 @@ import test from "node:test";
 import {
 	getContent,
 	getMetadata,
+	isKeyRegistered,
 	list,
 	MAX_FILE_BYTES,
 	registerKey,
@@ -22,6 +23,32 @@ import {
 } from "../src/lib/protocol/crypto.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
 import { encodeMetaPlain } from "../src/lib/protocol/meta-plain.js";
+
+test("registration checks use a signed empty ping, distinguish unauthorized keys and propagate server failures", async (t) => {
+	const key = await generatePrivateKey();
+	let status = 204;
+	t.mock.method(globalThis, "fetch", async (url, options) => {
+		assert.equal(String(url), "https://clip.example/api/ping");
+		assert.equal(options.method, "GET");
+		assert(options.headers.authorization);
+		assert.equal(options.body, undefined);
+		return status === 503
+			? new Response(JSON.stringify({ error: "unavailable" }), { status })
+			: new Response(null, { status });
+	});
+	const credentials = {
+		serverUrl: "https://clip.example",
+		privateKey: key.privateKey,
+	};
+	assert.equal(await isKeyRegistered(credentials), true);
+	status = 401;
+	assert.equal(await isKeyRegistered(credentials), false);
+	status = 503;
+	await assert.rejects(
+		isKeyRegistered(credentials),
+		(error) => error.status === 503,
+	);
+});
 
 for (const [body, contentType, message] of [
 	['{"error":"permission denied"}', "application/json", "permission denied"],

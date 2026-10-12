@@ -30,7 +30,7 @@ test("lost registration response retries the durable encrypted identity without 
 			throw new Error("response lost");
 		}
 		assert.ok(options.headers.authorization);
-		return new Response('{"media":[]}', { status: 200 });
+		return new Response(null, { status: 204 });
 	});
 	const first = open(t, repository);
 	await assert.rejects(first.create(creation), /encrypted identity is saved/);
@@ -75,7 +75,7 @@ test("a final save failure retains pending identity and retry verifies registrat
 			posts++;
 			return new Response(null, { status: 204 });
 		}
-		return new Response('{"media":[]}', { status: 200 });
+		return new Response(null, { status: 204 });
 	});
 	const identity = open(t, repository);
 	await assert.rejects(identity.create(creation), /disk full/);

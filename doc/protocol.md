@@ -13,6 +13,7 @@ The client generates its identity locally. The server registers only the public 
 | Method and path | Authentication/body | Success |
 | --- | --- | --- |
 | `GET /api/health` | None | `200`, `{"ok":true}` |
+| `GET /api/ping` | Signed; empty body, registered key, fresh nonce | `204`, empty response; `401` if unauthorized |
 | `POST /api/register-key` | No signature; JSON `{"otc":"…","public_key":"…"}` | `204` |
 | `GET /api/media` | Signed; client sends no body | `200`, `{"media":[…],"next":null}` or a cursor |
 | `POST /api/media` | Signed POST frame | `201`, one media object |

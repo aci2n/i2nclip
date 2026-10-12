@@ -20,6 +20,76 @@ mod reference_crypto;
 
 static N: AtomicU64 = AtomicU64::new(0);
 
+#[tokio::test]
+async fn authenticated_ping_checks_registered_signatures_empty_bodies_and_replay() {
+    let owner = new_identity();
+    let stranger = new_identity();
+    let (_db, app) = app(&[&owner]).await;
+    assert_eq!(
+        call(&app, &owner, "GET", "/api/ping", vec![]).await,
+        (StatusCode::NO_CONTENT, vec![])
+    );
+    assert_eq!(
+        call(&app, &stranger, "GET", "/api/ping", vec![]).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&app, &owner, "GET", "/api/ping", vec![1]).await.0,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    let header = client_crypto::authorization(
+        &owner,
+        "http://i2nclip.test",
+        crypto::now_secs(),
+        &client_crypto::fresh_nonce(),
+        "GET",
+        "/api/ping",
+        b"",
+    );
+    for expected in [StatusCode::NO_CONTENT, StatusCode::UNAUTHORIZED] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/ping")
+                    .header("authorization", &header)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+    }
+    for (origin, path, body) in [
+        ("http://wrong.test", "/api/ping", b"".as_slice()),
+        ("http://i2nclip.test", "/api/media", b"".as_slice()),
+        ("http://i2nclip.test", "/api/ping", b"different".as_slice()),
+    ] {
+        let header = client_crypto::authorization(
+            &owner,
+            origin,
+            crypto::now_secs(),
+            &client_crypto::fresh_nonce(),
+            "GET",
+            path,
+            body,
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/ping")
+                    .header("authorization", header)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+}
+
 fn raw_hash(bytes: &[u8]) -> [u8; 32] {
     let encoded = crypto::body_hash(bytes);
     std::array::from_fn(|index| u8::from_str_radix(&encoded[index * 2..index * 2 + 2], 16).unwrap())

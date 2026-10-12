@@ -98,7 +98,11 @@ export async function traceRequest(method, path, request) {
 		? raw.replace(/\/media\/[^/]+/, "/media/:id")
 		: raw.startsWith("/api/pairings")
 			? raw.replace(/\/pairings\/[^/]+/, "/pairings/:id")
-			: ["/api/register-key", "/api/register-key/authenticated"].includes(raw)
+			: [
+						"/api/ping",
+						"/api/register-key",
+						"/api/register-key/authenticated",
+					].includes(raw)
 				? raw
 				: "[remote source]";
 	const requestId = `http-${++requestSerial}`;

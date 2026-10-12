@@ -249,15 +249,15 @@ export async function isKeyRegistered({ serverUrl, privateKey, signal }) {
 		serverUrl,
 		await loadKey(privateKey),
 		"GET",
-		"/api/media",
+		"/api/ping",
 		new Uint8Array(),
 		undefined,
 		signal,
 	);
-	if (response.status !== 200 && response.status !== 401)
+	if (response.status !== 204 && response.status !== 401)
 		throw await responseError(response);
 	await response.body?.cancel();
-	return response.status === 200;
+	return response.status === 204;
 }
 
 async function openMeta(key, item) {

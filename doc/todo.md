@@ -63,7 +63,7 @@ VM21:1 Uncaught ReferenceError: Worker is not defined
 
 29. [x] Show every queued/active file with its own progress bar; the service removes successful batch history five seconds after the last completion, with immediate manual clearing retained. Failed batches remain retryable. Shared-client regression and both-browser timing scenarios pass; narrow Firefox screenshots inspected. Original request: While uploads are in progress, should all of them with a % bar next to the file name. When all are complete, automatically discard automatically after 5 seconds (leave the user option to clear immediately).
 
-30. For key auth checks, we are doing /api/media API calls I believe. Let's have a authed ping endpoint in the server that can be used for this purpose.
+30. [x] Added signed GET /api/ping with registered-key, nonce/replay, empty-body and no-store policies. Browser and CLI registration checks use it instead of listing media. Client/Rust checks, 26 PostgreSQL API tests, all 50 browser scenarios and installed-extension verification pass. Original request: For key auth checks, we are doing /api/media API calls I believe. Let's have a authed ping endpoint in the server that can be used for this purpose.
 
 PRIORITY (highest prio first): 14, 22, 23, 18+19+20+21, 27, 25, 26, 28, 29, 30
 

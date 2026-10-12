@@ -20,6 +20,7 @@ pub(crate) const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
 pub(crate) fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
+        .route("/api/ping", get(ping))
         .route("/api/register-key", post(register_key))
         .route(
             "/api/register-key/authenticated",
@@ -65,6 +66,37 @@ async fn read_body_with_limit(mut body: Body, max: usize) -> Result<Vec<u8>, Box
 
 async fn health() -> Response {
     json_response(StatusCode::OK, json!({ "ok": true }))
+}
+
+async fn ping(State(state): State<AppState>, request: Request) -> Response {
+    let verified = match auth::verify_request(
+        &state,
+        request.method(),
+        request.uri(),
+        request.headers(),
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => return fail(error),
+    };
+    if request
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok())
+        .is_some_and(|size| size > 0)
+    {
+        return too_large();
+    }
+    let bytes = match read_body_with_deadline(request.into_body(), 0, SHORT_BODY_DEADLINE).await {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    match auth::verify_body(&verified, &bytes).await {
+        Ok(_) => empty(StatusCode::NO_CONTENT),
+        Err(error) => fail(error),
+    }
 }
 
 #[derive(Deserialize)]
@@ -285,6 +317,7 @@ mod request_tests {
         let item = format!("/api/media/{}", "a".repeat(64));
         let meta = format!("{item}/meta");
         for (method, path) in [
+            ("GET", "/api/ping"),
             ("GET", "/api/media"),
             ("POST", "/api/media"),
             ("GET", item.as_str()),
