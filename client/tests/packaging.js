@@ -31,7 +31,8 @@ test("web ZIP contains only its entry page and bundled assets", async () => {
 	assert(names.includes("index.html"));
 	assert(names.includes("favicon.ico"));
 	assert(names.includes("assets/web-worker.js"));
-	assert(names.includes("assets/worker.js"));
+	assert(!names.includes("assets/worker.js"));
+	assert(names.some((name) => /^assets\/crypto-.*\.js$/.test(name)));
 	assert(names.some((name) => /^assets\/.*\.js$/.test(name)));
 	assert(names.some((name) => /^assets\/.*\.css$/.test(name)));
 	assert(

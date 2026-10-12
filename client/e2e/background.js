@@ -3,6 +3,11 @@ import { DEFAULT_SERVER_URL } from "../src/lib/protocol/server.js";
 import { createServiceEngine } from "../src/lib/service/engine.js";
 import { createRepository } from "../src/lib/service/repository.js";
 const repository = createRepository();
+// Exercise the capability fallback used by SharedWorkers without nested Worker.
+Object.defineProperty(globalThis, "Worker", {
+	value: undefined,
+	configurable: true,
+});
 const engine = createServiceEngine({
 	repository,
 	defaultServerUrl: DEFAULT_SERVER_URL,

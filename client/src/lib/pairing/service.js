@@ -8,39 +8,64 @@ import { pairingContext, pairingOrigin } from "../protocol/pairing.js";
 
 const MAX_BODY = 16_384;
 
-export function pairingWorker() {
-	const worker = new Worker(new URL("./worker.js", import.meta.url), {
-		type: "module",
-	});
-	let sequence = 0;
-	const pending = new Map();
-	let disposed = false;
-	worker.onmessage = ({ data }) => {
-		const job = pending.get(data.id);
-		if (!job) return;
-		pending.delete(data.id);
-		if (data.error) job.reject(new Error(data.error));
-		else job.resolve(data.value);
-	};
-	const stop = () => {
-		if (disposed) return;
-		disposed = true;
-		worker.terminate();
-		for (const job of pending.values())
-			job.reject(new DOMException("Pairing ended.", "AbortError"));
-		pending.clear();
-	};
-	worker.onerror = stop;
+// Each service-owned adapter executes one isolated, disposable PAKE attempt.
+export function pairingCrypto() {
+	let disposed = false,
+		running = false,
+		execute,
+		pending;
+	const ended = () => new DOMException("Pairing ended.", "AbortError");
 	return {
 		call(action, args = {}) {
-			if (disposed) return Promise.reject(new Error("Pairing is unavailable."));
+			if (disposed) return Promise.reject(ended());
+			if (running) return Promise.reject(new Error("Pairing is busy."));
+			running = true;
 			return new Promise((resolve, reject) => {
-				const id = ++sequence;
-				pending.set(id, { resolve, reject });
-				worker.postMessage({ id, action, args });
+				const job = { reject };
+				pending = job;
+				let currentExecute;
+				(async () => {
+					const { createPairingCrypto } = await import("./crypto.js");
+					if (disposed) throw ended();
+					execute ||= createPairingCrypto();
+					currentExecute = execute;
+					return currentExecute(action, args);
+				})()
+					.then(
+						(value) => {
+							if (pending === job) {
+								pending = null;
+								running = false;
+							}
+							if (disposed) reject(ended());
+							else resolve(value);
+						},
+						() => {
+							if (pending === job) {
+								pending = null;
+								running = false;
+							}
+							reject(
+								disposed
+									? ended()
+									: new Error(
+											"Pairing authentication failed. Create a new code.",
+										),
+							);
+						},
+					)
+					.finally(() => {
+						if (disposed) currentExecute?.dispose();
+					});
 			});
 		},
-		dispose: stop,
+		dispose() {
+			disposed = true;
+			execute?.dispose();
+			execute = null;
+			pending?.reject(ended());
+			pending = null;
+		},
 	};
 }
 

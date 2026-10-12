@@ -40,7 +40,7 @@ Work through these in order. Details and reproductions are in [the audit report]
 
 21. rename assets/worker.js assets/pairing-worker.js
 
-22. figure out why pairing Worker does not work in brave: Worker is not defined in the SharedWorker context
+22. [x] Pairing uses one crypto implementation directly in the service owner, with no nested workers or client crypto helpers. Disposable per-attempt executors clear secrets, reject cancelled calls immediately, and mask third-party errors. Real Chromium pairing, shared-tab and multi-library scenarios, crypto regressions, installed-extension CSP verification and package checks pass. Original reproduction: Worker is not defined in the SharedWorker context
 VM21:1 Uncaught ReferenceError: Worker is not defined
     at eval (eval at pairingWorker (web-worker.js:1547:17), <anonymous>:1:1)
     at pairingWorker (web-worker.js:1547:17)
@@ -48,7 +48,7 @@ VM21:1 Uncaught ReferenceError: Worker is not defined
     at Object.receive (web-worker.js:1922:11)
     at dispatch (web-worker.js:2734:63)
     at async Object.receive (web-worker.js:2798:21)
- 
+
 23. consider adding chrome as a target for e2e tests next to firefox. Reuse test code as much as possible. If needed create browser-specific interfaces to abstract implementation details, and use the interfaces in shared tests. Do not check browser type in specific tests.
 
 24. consider moving the "status" section in the library page, and in general all "status" sections in the settings page too, to a shared toast-notification stack. Considerations: some notifications can be dismissed automatically after X ms, some should be persistent until dismissed by the user, like the "uploaded X files" notification. Consider using native <dialog> elements for this. Notifications should live in the service engine layer and be shared across clients. The service should let clients say where to spawn the notification, default to top right.

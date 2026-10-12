@@ -1,5 +1,5 @@
 import { get, writable } from "svelte/store";
-import { pairingRelay, pairingWorker } from "../pairing/service.js";
+import { pairingRelay, pairingCrypto } from "../pairing/service.js";
 import {
 	formatPairingCode,
 	PAIRING_TTL_MS,
@@ -12,7 +12,7 @@ import {
 const canceled = () => new DOMException("Pairing canceled.", "AbortError");
 
 export function createPairing(session, services = {}) {
-	const workerFactory = services.worker || pairingWorker;
+	const cryptoFactory = services.crypto || pairingCrypto;
 	const relayFactory = services.relay || pairingRelay;
 	const now = services.now || (() => performance.now());
 	const state = writable({
@@ -39,7 +39,7 @@ export function createPairing(session, services = {}) {
 	function cleanup(current, remove) {
 		clearInterval(current.timer);
 		current.operation?.dispose();
-		current.worker?.dispose();
+		current.crypto?.dispose();
 		current.controller.abort(canceled());
 		current.approve?.();
 		current.approve = null;
@@ -111,7 +111,7 @@ export function createPairing(session, services = {}) {
 	}
 	async function call(current, action, args) {
 		check(current);
-		const result = await current.worker.call(action, args);
+		const result = await current.crypto.call(action, args);
 		check(current);
 		return result;
 	}
@@ -169,7 +169,7 @@ export function createPairing(session, services = {}) {
 			});
 			current.server = pairingOrigin(server);
 			current.relay = relayFactory(current.server, current.controller.signal);
-			current.worker = workerFactory();
+			current.crypto = cryptoFactory();
 			current.timer = setInterval(() => {
 				if (task !== current) return;
 				try {
@@ -182,7 +182,7 @@ export function createPairing(session, services = {}) {
 					});
 				} catch (error) {
 					current.controller.abort(error);
-					current.worker.dispose();
+					current.crypto.dispose();
 					current.approve?.();
 				}
 			}, 250);

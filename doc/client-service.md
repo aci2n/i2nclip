@@ -29,7 +29,7 @@ names stay local to each installation.
 | Password inputs and selected recovery file | Page | UI; command payload only |
 | Playback, modal selection, focus, object URLs | Page | UI |
 | Source-frame fetch controllers | Extension adapter | Request |
-| Pairing crypto worker | Service | Pairing attempt |
+| Pairing crypto adapter | Service | Pairing attempt |
 
 The client interface is `ready`, `command(name, payload)`, `subscribe(listener)`,
 and `dispose()`. Commands are requests, never direct access to service storage or
@@ -92,7 +92,7 @@ fresh snapshot. The shared JSDoc wire types are in `service/contract.js`.
 | `pairing.approve`, `rejectVerification`, `cancel` | shared service controls |
 | `snapshot` | resynchronize all shared state and the requesting client's views |
 
-The stable `/assets/web-worker.js` and crypto-worker entry revalidate instead of
+The stable `/assets/web-worker.js` entry revalidates instead of
 using immutable caching. Hashed page assets retain their existing cache policy;
 no API or server database changes are needed.
 
@@ -104,3 +104,7 @@ entry and saves its wrapped identity before acknowledgment.
 
 Extension context menus list named library destinations. Jobs permanently retain
 that destination, and upload windows resolve their library from the job ID.
+
+Pairing executes the single `createPairingCrypto` implementation directly in the
+service. There are no nested workers or client crypto helpers. Each attempt owns
+a separate executor; disposal clears its secrets and rejects unfinished calls.

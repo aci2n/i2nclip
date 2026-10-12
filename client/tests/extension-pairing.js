@@ -1,5 +1,5 @@
 // Explicit browser verification: node --test tests/extension-pairing.js.
-// Installs a temporary copy of the built add-on and exercises its actual Worker
+// Installs a temporary copy of the built add-on and exercises its actual service crypto
 // under the manifest CSP. It never uses an existing Firefox profile or identity.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -23,7 +23,7 @@ import { recoveryFile } from "../src/lib/protocol/recovery.js";
 
 const client = fileURLToPath(new URL("../", import.meta.url));
 
-test("installed Firefox add-on runs OPAQUE and shares a background owner through binary ports across restart", {
+test("installed Firefox add-on runs service-owned OPAQUE and shares a background owner through binary ports across restart", {
 	timeout: 60_000,
 }, async () => {
 	const directory = await mkdtemp(join(tmpdir(), "i2nclip-pairing-addon-"));
@@ -76,30 +76,17 @@ test("installed Firefox add-on runs OPAQUE and shares a background owner through
 		);
 		manifest.background.scripts.push("pairing-smoke.js");
 		await writeFile(join(addon, "manifest.json"), JSON.stringify(manifest));
-		const worker = (await readdir(join(addon, "chunks"))).find((name) =>
-			/^worker-.*\.js$/.test(name),
+		const cryptoChunk = (await readdir(join(addon, "chunks"))).find((name) =>
+			/^crypto-.*\.js$/.test(name),
 		);
-		assert(worker, "Packaged worker missing");
+		assert(cryptoChunk, "Packaged service crypto missing");
 		await writeFile(
 			join(addon, "pairing-smoke.js"),
 			`
-const workers = [];
+const executors = [];
+const {createPairingCrypto} = await import(browser.runtime.getURL(${JSON.stringify(`chunks/${cryptoChunk}`)}));
 function endpoint() {
-  const worker = new Worker(browser.runtime.getURL(${JSON.stringify(`chunks/${worker}`)}), {type: "module"});
-  workers.push(worker);
-  let sequence = 0;
-  const pending = new Map();
-  worker.onmessage = ({data}) => {
-    const job = pending.get(data.id);
-    pending.delete(data.id);
-    if (data.error) job.reject(new Error(data.error)); else job.resolve(data.value);
-  };
-  worker.onerror = () => { for (const job of pending.values()) job.reject(new Error("Packaged worker failed")); };
-  return (action, args = {}) => new Promise((resolve, reject) => {
-    const id = ++sequence;
-    pending.set(id, {resolve, reject});
-    worker.postMessage({id, action, args});
-  });
+ const execute = createPairingCrypto(); executors.push(execute); return execute;
 }
 try {
   const sender = endpoint(), receiver = endpoint();
@@ -112,15 +99,15 @@ try {
   const verification = await sender("verificationCode");
   if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(verification)) throw new Error("Invalid verification code");
   if (await receiver("verificationCode") !== verification) throw new Error("Verification codes differ");
-  const packet = await sender("transfer", {value: {v: 1, test: "packaged-worker"}});
+  const packet = await sender("transfer", {value: {v: 1, test: "packaged-service"}});
   const value = await receiver("receive", {message: packet});
-  if (value.test !== "packaged-worker") throw new Error("Incorrect transfer");
+  if (value.test !== "packaged-service") throw new Error("Incorrect transfer");
   const ack = await receiver("acknowledge");
   await sender("verifyAcknowledgment", {message: ack});
   await browser.tabs.create({url: browser.runtime.getURL("service-smoke.html")});
 } catch (error) {
   await fetch(${JSON.stringify(endpoint)}, {method: "POST", body: JSON.stringify({error: error.message})});
-} finally { for (const worker of workers) worker.terminate(); }
+} finally { for (const execute of executors) execute.dispose(); }
 `,
 		);
 		const key = await generatePrivateKey();

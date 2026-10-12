@@ -14,7 +14,7 @@ The alphabet is `23456789ABCDEFGHJKLMNPQRSTUVWXYZ`. Input is case-insensitive an
 ignores spaces and hyphens. The secret never appears in a request or URL.
 
 The sending device creates a temporary OPAQUE setup and registration record
-locally. `@serenity-kit/opaque` 1.1.0 performs the PAKE in packaged Web Workers;
+locally. `@serenity-kit/opaque` 1.1.0 performs the PAKE in the client service;
 its default memory-constrained Argon2 configuration is used. The receiver is the
 OPAQUE client and the sending device is the OPAQUE server. The Rust relay is
 neither endpoint and never receives the OPAQUE setup or registration record.
@@ -158,7 +158,7 @@ cancellation. The extension needs packaged WASM enabled by its narrowly scoped
 `wasm-unsafe-eval` CSP permission.
 
 `make test-extension-pairing` builds the add-on, installs a temporary copy in a
-fresh headless Firefox profile, and runs the packaged OPAQUE Workers under the
+fresh headless Firefox profile, and runs the packaged service-owned OPAQUE executors under the
 actual manifest CSP, including verification-code derivation and agreement.
 It needs a Firefox version accepted by the manifest;
 `I2N_TEST_FIREFOX` overrides the default `/usr/bin/firefox`. It does not access

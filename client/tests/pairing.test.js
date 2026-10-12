@@ -511,7 +511,7 @@ for (const role of ["sender", "receiver"]) {
 
 test("a malformed worker verification code fails closed before approval", async (t) => {
 	const f = fixture(t, undefined, {
-		worker: () => {
+		crypto: () => {
 			const execute = createPairingCrypto();
 			return {
 				call: (action, args) =>
@@ -618,7 +618,7 @@ test("cancellation during room creation removes a late room without publishing i
 	let removed = 0;
 	const session = writable({ serverUrl: origin, privateKey: "identity" });
 	const pairing = createPairing(workflowSession(session), {
-		worker: () => ({ call: async () => {}, dispose() {} }),
+		crypto: () => ({ call: async () => {}, dispose() {} }),
 		relay: () => ({
 			create: () => {
 				entered.resolve();

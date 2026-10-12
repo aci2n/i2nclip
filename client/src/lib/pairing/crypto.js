@@ -1,7 +1,7 @@
 import * as opaque from "@serenity-kit/opaque";
 import { openPairing, pairingKeys, sealPairing } from "../protocol/pairing.js";
 
-// Each worker owns exactly one PAKE attempt. OPAQUE's server is the sending
+// Each service executor owns exactly one PAKE attempt. OPAQUE's server is the sending
 // device; its setup and password file never leave that device.
 export function createPairingCrypto() {
 	let phase = "initial";
@@ -13,8 +13,10 @@ export function createPairingCrypto() {
 	function expect(expected) {
 		if (phase !== expected) throw new Error("Invalid pairing step.");
 	}
-	return async function execute(action, args) {
+	const execute = async function execute(action, args) {
 		await opaque.ready;
+		if (phase === "disposed")
+			throw new DOMException("Pairing ended.", "AbortError");
 		switch (action) {
 			case "senderSetup": {
 				expect("initial");
@@ -128,4 +130,9 @@ export function createPairingCrypto() {
 				throw new Error("Invalid pairing action.");
 		}
 	};
+	execute.dispose = () => {
+		phase = "disposed";
+		context = setup = record = loginState = secret = keys = undefined;
+	};
+	return execute;
 }
