@@ -477,13 +477,46 @@ async fn replace_tokens(
 mod tests {
     use super::*;
 
-    async fn fixture() -> (Database, PgPool, String) {
+    // Own the temporary database even if a test assertion or initialization panics.
+    struct FixtureDatabase {
+        name: String,
+        admin_url: String,
+        removed: bool,
+    }
+
+    impl Drop for FixtureDatabase {
+        fn drop(&mut self) {
+            if self.removed {
+                return;
+            }
+            let name = self.name.clone();
+            let admin_url = self.admin_url.clone();
+            std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async move {
+                        let admin = PgPool::connect(&admin_url).await.unwrap();
+                        sqlx::query(&format!("DROP DATABASE {name} WITH (FORCE)"))
+                            .execute(&admin)
+                            .await
+                            .unwrap();
+                        admin.close().await;
+                    });
+            })
+            .join()
+            .unwrap();
+        }
+    }
+
+    async fn fixture() -> (Database, PgPool, FixtureDatabase) {
         let (db, admin, name) = empty_fixture().await;
         db.initialize().await.unwrap();
         (db, admin, name)
     }
 
-    async fn empty_fixture() -> (Database, PgPool, String) {
+    async fn empty_fixture() -> (Database, PgPool, FixtureDatabase) {
         let base = std::env::var("I2N_TEST_DATABASE_URL")
             .expect("set I2N_TEST_DATABASE_URL; real PostgreSQL is required");
         let admin = PgPool::connect(&base)
@@ -504,16 +537,42 @@ mod tests {
             .unwrap();
         let mut url = url::Url::parse(&base).unwrap();
         url.set_path(&name);
+        let guard = FixtureDatabase {
+            name,
+            admin_url: base,
+            removed: false,
+        };
         let db = Database::connect(url.as_str()).await.unwrap();
-        (db, admin, name)
+        (db, admin, guard)
     }
 
-    async fn dispose(db: Database, admin: PgPool, name: String) {
+    async fn dispose(db: Database, admin: PgPool, mut fixture: FixtureDatabase) {
         db.close().await;
-        sqlx::query(&format!("DROP DATABASE {name} WITH (FORCE)"))
+        sqlx::query(&format!("DROP DATABASE {} WITH (FORCE)", fixture.name))
             .execute(&admin)
             .await
             .unwrap();
+        fixture.removed = true;
+        admin.close().await;
+    }
+
+    #[tokio::test]
+    async fn fixture_cleanup_survives_a_panicking_test() {
+        let (db, admin, fixture) = empty_fixture().await;
+        let name = fixture.name.clone();
+        let failed = std::panic::catch_unwind(move || {
+            let _owned = fixture;
+            panic!("simulated test assertion failure");
+        });
+        assert!(failed.is_err());
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM pg_database WHERE datname = $1")
+                .bind(name)
+                .fetch_one(&admin)
+                .await
+                .unwrap();
+        assert_eq!(remaining, 0);
+        db.close().await;
         admin.close().await;
     }
 
@@ -900,7 +959,7 @@ mod tests {
             WHERE datname = $1 AND pid <> pg_backend_pid()
             "#,
         )
-        .bind(&name)
+        .bind(&name.name)
         .execute(&admin)
         .await
         .unwrap();

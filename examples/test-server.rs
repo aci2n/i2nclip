@@ -4,16 +4,13 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() {
-    let mut args = std::env::args().skip(1);
     let database_url = i2nclip::database_url_from_env().expect("database URL");
-    let origin = args.next().expect("origin");
-    let listen = args.next().expect("listen address");
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let origin = format!("http://{}", listener.local_addr().expect("local addr"));
     let app = i2nclip::router(&database_url, &origin)
         .await
         .expect("router");
-    let listener = TcpListener::bind(&listen).await.expect("bind");
-    let addr = listener.local_addr().expect("local addr");
-    println!("ready {addr}");
+    println!("ready {origin}");
     let _ = std::io::Write::flush(&mut std::io::stdout());
     axum::serve(
         listener,

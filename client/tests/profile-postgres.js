@@ -1,11 +1,9 @@
 // Explicit Linux-only resource profile; never runs as part of npm test.
 import assert from "node:assert/strict";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
 	authorizationHeader,
@@ -19,23 +17,17 @@ import {
 import { encodePost } from "../src/lib/protocol/frame.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
 
-const root = path.resolve(
-	path.dirname(fileURLToPath(import.meta.url)),
-	"../..",
-);
+import {
+	database as fixture,
+	issueOtc,
+	startServer,
+	stopServer,
+} from "./process.js";
+
 const exec = promisify(execFile);
-const origin = "http://127.0.0.1:8080";
-const binary = path.join(root, "target/release/i2nclip");
-const helper = path.join(root, "target/debug/examples/test-database");
+let origin;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const heldResponses = new Set();
-
-async function fixture(operation, databaseUrl) {
-	const { stdout } = await exec(helper, [operation], {
-		env: { ...process.env, I2N_DATABASE_URL: databaseUrl },
-	});
-	return stdout.trim();
-}
 
 async function status(pid) {
 	const [text, stat] = await Promise.all([
@@ -164,13 +156,6 @@ async function receive(response, id, expectedContent) {
 }
 
 async function run() {
-	// Refuse to accidentally probe an already-running application on the fixed port.
-	const portCheck = http.createServer();
-	await new Promise((resolve, reject) => {
-		portCheck.once("error", reject);
-		portCheck.listen(8080, "127.0.0.1", resolve);
-	});
-	await new Promise((resolve) => portCheck.close(resolve));
 	const databaseUrl = await fixture("create");
 	let server;
 	let serverError;
@@ -184,14 +169,9 @@ async function run() {
 	};
 	let stop = false;
 	try {
-		server = spawn(binary, [], {
-			env: {
-				...process.env,
-				I2N_DATABASE_URL: databaseUrl,
-				I2N_ORIGIN: origin,
-			},
-			stdio: ["ignore", "ignore", "ignore"],
-		});
+		const started = await startServer(databaseUrl, "release");
+		server = started.child;
+		origin = started.origin;
 		server.on("error", (error) => {
 			serverError = error;
 		});
@@ -213,14 +193,12 @@ async function run() {
 			assert.ok(Date.now() < deadline, "profile server startup timed out");
 			await delay(50);
 		}
-		const { stdout } = await exec(binary, ["otc", "issue"], {
-			env: { ...process.env, I2N_DATABASE_URL: databaseUrl },
-		});
+		const code = await issueOtc(databaseUrl, "release");
 		const identity = await generatePrivateKey();
 		const registration = await fetch(`${origin}/api/register-key`, {
 			method: "POST",
 			body: JSON.stringify({
-				otc: stdout.trim(),
+				otc: code,
 				public_key: identity.publicKey,
 			}),
 		});
@@ -342,11 +320,7 @@ async function run() {
 		for (const response of heldResponses) {
 			response.destroy();
 		}
-		if (server?.pid && server.exitCode === null) {
-			const exited = once(server, "exit");
-			server.kill("SIGTERM");
-			await exited;
-		}
+		await stopServer(server);
 		await fixture("drop", databaseUrl);
 	}
 }

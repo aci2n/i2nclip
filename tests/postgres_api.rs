@@ -139,7 +139,9 @@ impl Drop for TestDatabase {
     fn drop(&mut self) {
         let target = self.0.clone();
         std::thread::spawn(move || {
-            tokio::runtime::Runtime::new()
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
                 .unwrap()
                 .block_on(async move {
                     let base = std::env::var("I2N_TEST_DATABASE_URL").unwrap();

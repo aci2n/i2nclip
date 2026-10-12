@@ -189,12 +189,8 @@ test("upload failures continue through the batch and retry survives navigation",
 	let posts = 0;
 	let fail = true;
 	let releaseSecond;
-	let enteredSecond;
 	const holding = new Promise((resolve) => {
 		releaseSecond = resolve;
-	});
-	const entered = new Promise((resolve) => {
-		enteredSecond = resolve;
 	});
 	await page.route("**/api/media", async (route) => {
 		if (route.request().method() !== "POST") {
@@ -210,7 +206,6 @@ test("upload failures continue through the batch and retry survives navigation",
 			});
 		} else {
 			if (posts === 2) {
-				enteredSecond();
 				await holding;
 			}
 			await route.continue();
@@ -228,12 +223,15 @@ test("upload failures continue through the batch and retry survives navigation",
 			buffer: Buffer.from("save me"),
 		},
 	]);
-	await entered;
-	await page.getByRole("link", { name: "Settings", exact: true }).click();
-	await expect(
-		page.getByRole("heading", { name: "Your library", exact: true }),
-	).toBeVisible();
-	releaseSecond();
+	try {
+		await expect.poll(() => posts).toBe(2);
+		await page.getByRole("link", { name: "Settings", exact: true }).click();
+		await expect(
+			page.getByRole("heading", { name: "Your library", exact: true }),
+		).toBeVisible();
+	} finally {
+		releaseSecond();
+	}
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await expect(
 		page.getByText("failed.txt: Upload unavailable", { exact: true }),
