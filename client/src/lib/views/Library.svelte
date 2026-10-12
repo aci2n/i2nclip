@@ -2,6 +2,7 @@
 import ImageDialog from "../components/ImageDialog.svelte";
 import MediaCard from "../components/MediaCard.svelte";
 import Unlock from "../components/Unlock.svelte";
+import Uploads from "../components/Uploads.svelte";
 import { pickFiles, selectFiles } from "../stores/dom.js";
 
 let { session, library, settingsHref, onsettings } = $props();
@@ -51,60 +52,13 @@ let filesInput = $state();
 <p id="status" role="status">
 	{[
 		$library.status,
-		$session.unlocked ? $library.uploadStatus : "",
 		!$session.configured || $session.unlocked ? $session.error : "",
 	]
 		.filter(Boolean)
 		.join(" | ")}
 </p>
-{#if $session.unlocked && $library.uploadProgress}
-	<section class="upload-progress" aria-label="Upload progress">
-		<p role="status">
-			Uploading {$library.uploadProgress.index} of
-			{$library.uploadProgress.total}: {$library.uploadProgress.name}
-		</p>
-		<progress
-			max="100"
-			value={$library.uploadProgress.percent}
-			aria-label="Current file upload"
-		></progress>
-		<span>{$library.uploadProgress.percent}%</span>
-	</section>
-{/if}
-{#if $session.unlocked && $library.uploadFailures.length}
-	<section class="upload-failures" aria-label="Failed uploads">
-		<h2>Failed uploads</h2>
-		<ul>
-			{#each $library.uploadFailures as failure}
-				<li><strong>{failure.file.name}</strong>: {failure.error}</li>
-			{/each}
-		</ul>
-		<button
-			type="button"
-			class="secondary"
-			disabled={$library.uploading}
-			onclick={library.retryUploads}
-		>
-			Retry retained files
-		</button>
-		<button
-			type="button"
-			class="secondary"
-			disabled={$library.uploading}
-			onclick={library.discardUploads}
-		>
-			Discard retained files
-		</button>
-	</section>
-{/if}
-{#if $session.unlocked && $library.uploadCompleted.length}
-	<p class="upload-history">
-		{$library.uploadCompleted.length}
-		uploaded.
-		<button type="button" class="secondary" onclick={library.dismissCompleted}>
-			Clear completed uploads
-		</button>
-	</p>
+{#if $session.unlocked}
+	<Uploads {library} />
 {/if}
 {#if $session.unlocked && $library.empty}
 	<section id="empty-library" class="panel empty stack">
@@ -191,24 +145,9 @@ let filesInput = $state();
 	grid-template-columns: repeat(auto-fill, minmax(min(17rem, 100%), 1fr));
 	gap: 1rem;
 }
-.upload-progress,
-.upload-failures {
-	margin: 1rem 0;
-	overflow-wrap: anywhere;
-}
-.upload-history {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 0.5rem;
-}
-.upload-progress progress {
-	width: min(24rem, 80%);
-	accent-color: var(--accent);
-	margin-right: 0.5rem;
-}
-.upload-failures ul {
-	padding-left: 1.5rem;
+#status {
+	min-height: 1.5rem;
+	margin: 0 0 0.5rem;
 }
 #more {
 	display: block;

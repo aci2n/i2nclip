@@ -120,6 +120,13 @@ test("realistic mixed media and long tags remain usable at narrow widths in both
 			),
 		).toBe(true);
 	}
+	await page.locator(".uploads summary").click();
+	await shot(page, "service-uploads-320");
+	await expect(
+		page.getByRole("button", { name: "Clear completed uploads" }),
+	).toBeVisible();
+	await page.getByRole("button", { name: "Clear completed uploads" }).click();
+	await expect(page.locator(".uploads")).toContainText("No recent uploads.");
 });
 
 test("a failed remote capture remains available for explicit discard", async ({
@@ -128,6 +135,7 @@ test("a failed remote capture remains available for explicit discard", async ({
 }) => {
 	await createLibrary(page, app);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
+	await page.locator(".uploads summary").click();
 	// A remote source failure is retained independently of the source page's UI.
 	await page.evaluate(() =>
 		window.serviceTest("context", {
