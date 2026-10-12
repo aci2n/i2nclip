@@ -12,8 +12,8 @@ const compiled = compile(source, {
 	generate: "server",
 	filename: "Pairing.svelte",
 });
-const code = compiled.js.code.replaceAll(
-	'"svelte/internal/server"',
+const code = compiled.js.code.replace(
+	/['"]svelte\/internal\/server['"]/g,
 	JSON.stringify(import.meta.resolve("svelte/internal/server")),
 );
 const { default: Pairing } = await import(
@@ -24,7 +24,6 @@ test("Pairing renders ordinary sender/receiver/approval/error values without a s
 	const props = {
 		state: { active: false, status: "" },
 		server: "https://clip.example",
-		idPrefix: "plain",
 		onSend() {},
 		onReceive() {},
 		onApprove() {},
@@ -37,7 +36,7 @@ test("Pairing renders ordinary sender/receiver/approval/error values without a s
 	);
 	assert.match(
 		render(Pairing, { props: { ...props, embedded: true, busy: true } }).body,
-		/id="plain-input"[^>]*disabled/,
+		/<input[^>]*disabled/,
 	);
 	const active = render(Pairing, {
 		props: {
@@ -54,7 +53,8 @@ test("Pairing renders ordinary sender/receiver/approval/error values without a s
 		},
 	}).body;
 	assert.match(active, /Codes match/);
-	assert.match(active, /for="plain-verification-code"/);
+	assert.doesNotMatch(active, /\sid=/);
+	assert.match(active, /<label[^>]*>[\s\S]*Verification code[\s\S]*<output/);
 	assert.match(active, /Expires in 30 seconds/);
 	assert.match(
 		render(Pairing, {

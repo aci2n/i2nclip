@@ -1,4 +1,6 @@
 import {
+	senderPairing,
+	receiverPairing,
 	expect,
 	fillCreation,
 	installBrowser,
@@ -25,7 +27,9 @@ async function receive(page, code, app) {
 	await openSetupServer(page);
 	await page.locator("#server").fill(app.origin);
 	await page.getByRole("tab", { name: "Pair", exact: true }).click();
-	await page.locator("#initial-pairing-input").fill(code);
+	await receiverPairing(page)
+		.getByRole("textbox", { name: "Pairing code", exact: true })
+		.fill(code);
 	await page
 		.getByRole("button", { name: "Connect library", exact: true })
 		.click();
@@ -56,17 +60,34 @@ for (const [from, to] of [
 		try {
 			const receiver = await context.newPage();
 			await receiver.goto(url(to, app));
-			await page.locator("#pairing-settings > summary").click();
-			await page.locator("#pairing-start").click();
-			await expect(page.locator("#pairing-code")).toBeVisible();
-			const code = await page.locator("#pairing-code").textContent();
+			await senderPairing(page).locator("summary").click();
+			await senderPairing(page)
+				.getByRole("button", { name: "Create pairing code", exact: true })
+				.click();
+			await expect(
+				senderPairing(page).getByRole("status", {
+					name: "Pairing code",
+					exact: true,
+				}),
+			).toBeVisible();
+			const code = await senderPairing(page)
+				.getByRole("status", { name: "Pairing code", exact: true })
+				.textContent();
 			await receive(receiver, code.toLowerCase(), app);
-			await expect(page.locator("#pairing-approve")).toBeVisible();
-			const verification = await page
-				.locator("#pairing-verification-code")
+			await expect(
+				senderPairing(page).getByRole("button", {
+					name: "Codes match — send library",
+					exact: true,
+				}),
+			).toBeVisible();
+			const verification = await senderPairing(page)
+				.getByRole("status", { name: "Verification code", exact: true })
 				.textContent();
 			await expect(
-				receiver.locator("#initial-pairing-verification-code"),
+				receiverPairing(receiver).getByRole("status", {
+					name: "Verification code",
+					exact: true,
+				}),
 			).toHaveText(verification);
 			expect(
 				(await receiver.evaluate(() => window.serviceTest("state"))).session
@@ -76,10 +97,15 @@ for (const [from, to] of [
 				await page.setViewportSize({ width: 320, height: 800 });
 				await shot(page, "service-pairing-320");
 			}
-			await page.locator("#pairing-approve").click();
-			await expect(page.locator("#pairing-status")).toContainText(
-				"New device connected",
-			);
+			await senderPairing(page)
+				.getByRole("button", {
+					name: "Codes match — send library",
+					exact: true,
+				})
+				.click();
+			await expect(
+				senderPairing(page).locator(".pairing-status"),
+			).toContainText("New device connected");
 			await expect(receiver.locator("#configured")).toBeVisible();
 			const saved = await receiver.evaluate(() => window.serviceTest("config"));
 			expect(saved.publicKey).toBe(original.publicKey);
@@ -106,61 +132,140 @@ for (const kind of ["web", "extension"]) {
 		await setup(page, kind, app);
 		const follower = await page.context().newPage();
 		await follower.goto(url(kind, app));
-		await page.locator("#pairing-settings > summary").click();
-		await follower.locator("#pairing-settings > summary").click();
-		await page.locator("#pairing-start").click();
-		await expect(page.locator("#pairing-code")).toBeVisible();
-		const firstCode = await page.locator("#pairing-code").textContent();
-		await expect(follower.locator("#pairing-code")).toHaveText(firstCode);
+		await senderPairing(page).locator("summary").click();
+		await senderPairing(follower).locator("summary").click();
+		await senderPairing(page)
+			.getByRole("button", { name: "Create pairing code", exact: true })
+			.click();
+		await expect(
+			senderPairing(page).getByRole("status", {
+				name: "Pairing code",
+				exact: true,
+			}),
+		).toBeVisible();
+		const firstCode = await senderPairing(page)
+			.getByRole("status", { name: "Pairing code", exact: true })
+			.textContent();
+		await expect(
+			senderPairing(follower).getByRole("status", {
+				name: "Pairing code",
+				exact: true,
+			}),
+		).toHaveText(firstCode);
 		await follower
 			.getByRole("button", { name: "Cancel pairing", exact: true })
 			.click();
-		await expect(page.locator("#pairing-status")).toContainText("canceled");
-		await expect(follower.locator("#pairing-status")).toContainText("canceled");
-		await page.locator("#pairing-start").click();
-		await expect(page.locator("#pairing-code")).toBeVisible();
-		const code = await page.locator("#pairing-code").textContent();
-		await expect(follower.locator("#pairing-code")).toHaveText(code);
+		await expect(senderPairing(page).locator(".pairing-status")).toContainText(
+			"canceled",
+		);
+		await expect(
+			senderPairing(follower).locator(".pairing-status"),
+		).toContainText("canceled");
+		await senderPairing(page)
+			.getByRole("button", { name: "Create pairing code", exact: true })
+			.click();
+		await expect(
+			senderPairing(page).getByRole("status", {
+				name: "Pairing code",
+				exact: true,
+			}),
+		).toBeVisible();
+		const code = await senderPairing(page)
+			.getByRole("status", { name: "Pairing code", exact: true })
+			.textContent();
+		await expect(
+			senderPairing(follower).getByRole("status", {
+				name: "Pairing code",
+				exact: true,
+			}),
+		).toHaveText(code);
 		await page.close();
-		await expect(follower.locator("#pairing-code")).toHaveText(code);
+		await expect(
+			senderPairing(follower).getByRole("status", {
+				name: "Pairing code",
+				exact: true,
+			}),
+		).toHaveText(code);
 		const context = await browser.newContext();
 		await context.addInitScript(installBrowser);
 		try {
 			const receiver = await context.newPage();
 			await receiver.goto(url(kind, app));
 			await receive(receiver, code, app);
-			await expect(follower.locator("#pairing-approve")).toBeVisible();
+			await expect(
+				senderPairing(follower).getByRole("button", {
+					name: "Codes match — send library",
+					exact: true,
+				}),
+			).toBeVisible();
 			const observer = await context.newPage();
 			await observer.goto(url(kind, app));
 			await expect(
-				observer.locator("#initial-pairing-verification-code"),
+				receiverPairing(observer).getByRole("status", {
+					name: "Verification code",
+					exact: true,
+				}),
 			).toHaveCount(0);
 			await receiver.close();
-			await follower.locator("#pairing-approve").click();
-			await expect(follower.locator("#pairing-start")).toBeVisible();
-			await expect(follower.locator("#pairing-status")).not.toContainText(
-				"New device connected.",
-			);
+			await senderPairing(follower)
+				.getByRole("button", {
+					name: "Codes match — send library",
+					exact: true,
+				})
+				.click();
+			await expect(
+				senderPairing(follower).getByRole("button", {
+					name: "Create pairing code",
+					exact: true,
+				}),
+			).toBeVisible();
+			await expect(
+				senderPairing(follower).locator(".pairing-status"),
+			).not.toContainText("New device connected.");
 			expect(
 				(await observer.evaluate(() => window.serviceTest("state"))).catalog,
 			).toHaveLength(0);
-			await follower.locator("#pairing-start").click();
-			await expect(follower.locator("#pairing-code")).toBeVisible();
+			await senderPairing(follower)
+				.getByRole("button", { name: "Create pairing code", exact: true })
+				.click();
+			await expect(
+				senderPairing(follower).getByRole("status", {
+					name: "Pairing code",
+					exact: true,
+				}),
+			).toBeVisible();
 			await receive(
 				observer,
-				await follower.locator("#pairing-code").textContent(),
+				await senderPairing(follower)
+					.getByRole("status", { name: "Pairing code", exact: true })
+					.textContent(),
 				app,
 			);
-			await expect(follower.locator("#pairing-approve")).toBeVisible();
 			await expect(
-				observer.locator("#initial-pairing-verification-code"),
+				senderPairing(follower).getByRole("button", {
+					name: "Codes match — send library",
+					exact: true,
+				}),
+			).toBeVisible();
+			await expect(
+				receiverPairing(observer).getByRole("status", {
+					name: "Verification code",
+					exact: true,
+				}),
 			).toHaveText(
-				await follower.locator("#pairing-verification-code").textContent(),
+				await senderPairing(follower)
+					.getByRole("status", { name: "Verification code", exact: true })
+					.textContent(),
 			);
-			await follower.locator("#pairing-approve").click();
-			await expect(follower.locator("#pairing-status")).toContainText(
-				"New device connected.",
-			);
+			await senderPairing(follower)
+				.getByRole("button", {
+					name: "Codes match — send library",
+					exact: true,
+				})
+				.click();
+			await expect(
+				senderPairing(follower).locator(".pairing-status"),
+			).toContainText("New device connected.");
 			await expect(observer.locator("#configured")).toBeVisible();
 		} finally {
 			await context.close();

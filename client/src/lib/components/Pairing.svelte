@@ -1,10 +1,9 @@
 <script>
 let {
-	state,
+	state: pairingState,
 	server,
 	configured = false,
 	busy = false,
-	idPrefix,
 	embedded = false,
 	onSend,
 	onReceive,
@@ -12,10 +11,9 @@ let {
 	onRejectVerification,
 	onCancel,
 } = $props();
-const id = (suffix) => `${idPrefix}-${suffix}`;
 let code = $state("");
 let open = $state(false);
-const disabled = $derived(state.active || busy);
+const disabled = $derived(pairingState.active || busy);
 async function connect(event) {
 	event.preventDefault();
 	const entered = code;
@@ -27,7 +25,7 @@ async function connect(event) {
 <svelte:element
 	this={configured ? "details" : "section"}
 	class={embedded ? "embedded" : "panel"}
-	id={id("settings")}
+	aria-label={configured ? "Connect another device" : "Pair library"}
 >
 	{#if configured}
 		<summary>Connect another device</summary>
@@ -35,13 +33,13 @@ async function connect(event) {
 		<h2>Connect existing library</h2>
 	{/if}
 	<div class="pairing" class:embedded>
-		{#if !state.active}
+		{#if !pairingState.active}
 			{#if configured}
 				<p>
 					Give another device full access to this library using a temporary
 					code.
 				</p>
-				<button type="button" id={id("start")} {disabled} onclick={onSend}>
+				<button type="button" {disabled} onclick={onSend}>
 					Create pairing code
 				</button>
 			{:else}
@@ -59,11 +57,10 @@ async function connect(event) {
 						Connect existing library
 					</button>
 				{:else}
-					<form class="stack" id={id("receive")} onsubmit={connect}>
-						<div class="field">
-							<label for={id("input")}>Pairing code</label>
+					<form class="stack" onsubmit={connect}>
+						<label class="field">
+							<span>Pairing code</span>
 							<input
-								id={id("input")}
 								required
 								maxlength="32"
 								autocomplete="off"
@@ -73,35 +70,34 @@ async function connect(event) {
 								bind:value={code}
 								{disabled}
 							>
-						</div>
+						</label>
 						<button type="submit" {disabled}>Connect library</button>
 					</form>
 				{/if}
 			{/if}
 		{:else}
-			{#if state.code}
-				<output id={id("code")} class="code">{state.code}</output>
+			{#if pairingState.code}
+				<output class="code" aria-label="Pairing code"
+					>{pairingState.code}</output
+				>
 			{/if}
-			{#if state.verificationCode}
-				<div class="verification">
-					<label for={id("verification-code")}>Verification code</label>
-					<output id={id("verification-code")} class="code"
-						>{state.verificationCode}</output
-					>
-				</div>
+			{#if pairingState.verificationCode}
+				<label class="verification">
+					<span>Verification code</span>
+					<output class="code">{pairingState.verificationCode}</output>
+				</label>
 			{/if}
-			<p class="address">Server: {state.server}</p>
-			<p>Expires in {state.remaining} seconds.</p>
+			<p class="address">Server: {pairingState.server}</p>
+			<p>Expires in {pairingState.remaining} seconds.</p>
 			<div class="actions">
-				{#if state.approval && state.verificationCode}
-					<button type="button" id={id("approve")} onclick={onApprove}>
+				{#if pairingState.approval && pairingState.verificationCode}
+					<button type="button" onclick={onApprove}>
 						Codes match — send library
 					</button>
 				{/if}
-				{#if state.verificationCode}
+				{#if pairingState.verificationCode}
 					<button
 						type="button"
-						id={id("mismatch")}
 						class="secondary"
 						onclick={onRejectVerification}
 					>
@@ -113,14 +109,13 @@ async function connect(event) {
 				</button>
 			</div>
 		{/if}
-		{#if state.status}
+		{#if pairingState.status}
 			<p
-				id={id("status")}
-				class="feedback"
-				class:error={state.error}
-				role={state.error ? "alert" : "status"}
+				class="feedback pairing-status"
+				class:error={pairingState.error}
+				role={pairingState.error ? "alert" : "status"}
 			>
-				{state.status}
+				{pairingState.status}
 			</p>
 		{/if}
 	</div>

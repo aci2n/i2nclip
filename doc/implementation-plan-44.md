@@ -4,7 +4,7 @@
 
 Every Pairing instance has unique HTML IDs and matching label/ARIA references, including instances inside closed disclosures or hidden setup tabs. Preserve stable selectors where useful. Follow [the implementation guide](implementation-guide.md).
 
-CSS scoping does not scope document IDs. Use an explicit caller-supplied `idPrefix` rather than a random prefix or a shared default. Configured Pairing can use `pairing` to preserve existing `#pairing-settings`/`#pairing-code`; additional setup uses `setup-pairing`, and first-library setup uses `initial-pairing`. Each caller must give its actual instance a distinct prefix.
+CSS scoping does not scope document IDs. The final user decision is to remove Pairing IDs entirely: labels wrap controls, sender/receiver containers have explicit accessible names, and tests use role/name selectors. No `idPrefix`, suffix helper or random ID remains in Pairing. Setup tab IDs still link meaningful ARIA relationships, and root/setup feedback IDs remain distinct.
 
 ## Code map
 
@@ -17,11 +17,11 @@ CSS scoping does not scope document IDs. Use an explicit caller-supplied `idPref
 ## Implementation sequence
 
 1. Reproduce simultaneous standalone and embedded rendering by opening Add Library's Pair tab while configured Pairing exists. Also inspect DOM with Add Library closed and a hidden Pair panel: hidden nodes count for uniqueness.
-2. Add required `idPrefix`; define a local ID helper such as `id(suffix) => idPrefix + "-" + suffix`. Apply it consistently to every retained ID and every `for`/`aria-labelledby`/`aria-controls` reference. Preserve configured suffixes so its old IDs stay stable; update embedded test selectors explicitly.
+2. Remove all Pairing IDs and prefix props. Wrap the code input and verification output in their labels; name the configured disclosure and embedded receiver section explicitly. Scope tests by container and locate outputs by their accessible status role/name.
 3. Remove IDs that have no accessibility or test purpose and use local classes for styles. The component can use `class:embedded`/a named modifier class for spacing instead of the existing `data-embedded` styling hack. Do not change pairing workflows or store props; their ownership is item 45.
 4. Audit the simultaneously mounted Settings/Setup feedback IDs. Keep a root status ID if needed, but give setup feedback a unique instance ID or use a scoped semantic/class selector. Update affected fixture selectors; never fix a duplicate with `.first()`.
 5. If additional duplicate Setup IDs are exposed by the current rendering after 36, apply its first/additional instance prefix to those conflicting fields/tab panels and their references. Adapt `stores/dom.js::selectTab()` if tab IDs change, using the actual rendered tab descriptors/scoped element lookup rather than its current `#${next}-tab` assumption. Avoid renaming unrelated unique IDs.
-6. Scope E2E locators to the correct pairing container and use semantic actions/labels within it. A full-page selector for the sender must not accidentally target a hidden embedded receiver. Remove test reliance on `data-embedded` once container prefixes provide isolation.
+6. Scope E2E locators to the correct pairing container and use semantic actions/labels within it. A full-page selector for the sender must not accidentally target a hidden embedded receiver. Remove test reliance on `data-embedded`; named containers provide isolation.
 
 ## Acceptance and verification
 
@@ -29,10 +29,10 @@ CSS scoping does not scope document IDs. Use an explicit caller-supplied `idPref
 - Every label's `for` points to its intended input/output; split each ARIA IDREF list on whitespace and verify every referenced target exists. Hidden panel references may resolve to hidden nodes; that is fine, duplicate targets are not.
 - Test both current feedback messages at once (configured message plus setup failure); uniqueness still holds.
 - Keyboard activation, verification/approval/mismatch/cancel and sender/receiver status target the intended instance.
-- Preserve useful configured selectors; new additional/initial prefixes are deterministic.
+- Retain stable accessible control/output names without any Pairing ID or prefix API.
 
 Put the document-ID/reference assertion in an existing E2E helper or focused settings/pairing test and exercise Firefox/Chromium. Run checker/lint/extension build. Inspect Pairing screenshots if replacing the spacing modifier changes the rendered layout.
 
 ## Implementation notes
 
-Pairing now requires deterministic `idPrefix`: configured `pairing`, first receiver `initial-pairing`, additional receiver `setup-pairing`. All IDs and labels use the helper. Removed the data-embedded styling workaround in favor of a scoped modifier class. Setup feedback uses `initial-status` / `setup-status`; the root keeps `status`. First/additional Setup instances are exclusive after 36, so their unique tab IDs need no unrelated renaming; keyboard lookup is already scoped by data-tab. Updated sender/receiver selectors and added whole-document ID/IDREF assertions. Combined verification deferred until the end of TODOs 37–46. Item 45 retains this ID interface.
+Pairing uses no HTML IDs or prefix/suffix API. After the user's follow-up, input and verification output labels wrap their controls, the sender is a native disclosure named “Connect another device,” and the receiver is a section named “Pair library.” Browser tests use those containers, accessible labels/actions and a local status class. Removed the data-embedded styling workaround in favor of a scoped modifier class. Setup feedback uses `initial-status` / `setup-status`; the root keeps `status`. Setup tab IDs remain meaningful ARIA references, and first/additional Setup instances are exclusive after 36. Added whole-document ID/IDREF assertions. Combined verification is recorded in [the batch report](verification-37-46.md). Item 45's plain-prop contract requires no ID plumbing.

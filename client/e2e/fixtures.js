@@ -515,3 +515,8 @@ export async function assertDocumentIds(page) {
 	});
 	expect(problems).toEqual({ duplicates: [], missing: [] });
 }
+
+export const senderPairing = (page) =>
+	page.getByRole("group", { name: "Connect another device", exact: true });
+export const receiverPairing = (page) =>
+	page.getByRole("region", { name: "Pair library", exact: true });

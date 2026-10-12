@@ -221,7 +221,6 @@ const blocked = $derived($session.busy || pairingState.active);
 			{onApprove}
 			{onRejectVerification}
 			{onCancel}
-			idPrefix={additional ? "setup-pairing" : "initial-pairing"}
 			server={$settings.pairServer || $settings.server}
 			embedded
 		/>

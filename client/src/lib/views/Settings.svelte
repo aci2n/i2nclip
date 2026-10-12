@@ -90,7 +90,6 @@ const feedbackAt = $derived(
 			onRejectVerification={pairing.rejectVerification}
 			onCancel={pairing.cancel}
 			server={$session.serverUrl}
-			idPrefix="pairing"
 		/>
 		{@render management?.()}
 	{/if}

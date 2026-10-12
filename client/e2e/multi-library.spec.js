@@ -1,4 +1,6 @@
 import {
+	senderPairing,
+	receiverPairing,
 	assertDocumentIds,
 	expect,
 	fillCreation,
@@ -79,23 +81,49 @@ for (const kind of ["web", "extension"]) {
 			const receiverPersonal = await createPersonal(receiver, kind, app);
 			await upload(receiver, "receiver-private.txt");
 			await add(receiver, "Friends here");
-			await page.locator("#pairing-settings > summary").click();
-			await page.locator("#pairing-start").click();
-			await expect(page.locator("#pairing-code")).toBeVisible();
-			const code = await page.locator("#pairing-code").textContent();
+			await senderPairing(page).locator("summary").click();
+			await senderPairing(page)
+				.getByRole("button", { name: "Create pairing code", exact: true })
+				.click();
+			await expect(
+				senderPairing(page).getByRole("status", {
+					name: "Pairing code",
+					exact: true,
+				}),
+			).toBeVisible();
+			const code = await senderPairing(page)
+				.getByRole("status", { name: "Pairing code", exact: true })
+				.textContent();
 			await receiver.getByRole("tab", { name: "Pair", exact: true }).click();
-			await receiver.locator("#setup-pairing-input").fill(code);
+			await receiverPairing(receiver)
+				.getByRole("textbox", { name: "Pairing code", exact: true })
+				.fill(code);
 			await receiver
 				.getByRole("button", { name: "Connect library", exact: true })
 				.click();
-			await expect(page.locator("#pairing-approve")).toBeVisible();
+			await expect(
+				senderPairing(page).getByRole("button", {
+					name: "Codes match — send library",
+					exact: true,
+				}),
+			).toBeVisible();
 			await assertDocumentIds(receiver);
 			await expect(
-				receiver.locator("#setup-pairing-verification-code"),
+				receiverPairing(receiver).getByRole("status", {
+					name: "Verification code",
+					exact: true,
+				}),
 			).toHaveText(
-				await page.locator("#pairing-verification-code").textContent(),
+				await senderPairing(page)
+					.getByRole("status", { name: "Verification code", exact: true })
+					.textContent(),
 			);
-			await page.locator("#pairing-approve").click();
+			await senderPairing(page)
+				.getByRole("button", {
+					name: "Codes match — send library",
+					exact: true,
+				})
+				.click();
 			await expect
 				.poll(() => new URL(receiver.url()).searchParams.get("library"))
 				.not.toBe(receiverPersonal);
@@ -161,26 +189,52 @@ for (const kind of ["web", "extension"]) {
 			}
 			await add(receiver, "Duplicate draft");
 			await receiver.getByRole("tab", { name: "Pair", exact: true }).click();
-			await page.locator("#pairing-settings > summary").click();
-			await page.locator("#pairing-start").click();
-			await expect(page.locator("#pairing-code")).toBeVisible();
-			await receiver
-				.locator("#setup-pairing-input")
-				.fill(await page.locator("#pairing-code").textContent());
+			await senderPairing(page).locator("summary").click();
+			await senderPairing(page)
+				.getByRole("button", { name: "Create pairing code", exact: true })
+				.click();
+			await expect(
+				senderPairing(page).getByRole("status", {
+					name: "Pairing code",
+					exact: true,
+				}),
+			).toBeVisible();
+			await receiverPairing(receiver)
+				.getByRole("textbox", { name: "Pairing code", exact: true })
+				.fill(
+					await senderPairing(page)
+						.getByRole("status", { name: "Pairing code", exact: true })
+						.textContent(),
+				);
 			await receiver
 				.getByRole("button", { name: "Connect library", exact: true })
 				.click();
-			await expect(page.locator("#pairing-approve")).toBeVisible();
+			await expect(
+				senderPairing(page).getByRole("button", {
+					name: "Codes match — send library",
+					exact: true,
+				}),
+			).toBeVisible();
 			await assertDocumentIds(receiver);
 			await expect(
-				receiver.locator("#setup-pairing-verification-code"),
+				receiverPairing(receiver).getByRole("status", {
+					name: "Verification code",
+					exact: true,
+				}),
 			).toHaveText(
-				await page.locator("#pairing-verification-code").textContent(),
+				await senderPairing(page)
+					.getByRole("status", { name: "Verification code", exact: true })
+					.textContent(),
 			);
-			await page.locator("#pairing-approve").click();
-			await expect(page.locator("#pairing-status")).toContainText(
-				"New device connected",
-			);
+			await senderPairing(page)
+				.getByRole("button", {
+					name: "Codes match — send library",
+					exact: true,
+				})
+				.click();
+			await expect(
+				senderPairing(page).locator(".pairing-status"),
+			).toContainText("New device connected");
 			await expect(receiver.locator("#status")).toContainText(
 				"Existing library selected.",
 			);

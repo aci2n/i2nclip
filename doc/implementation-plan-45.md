@@ -16,7 +16,7 @@ Convert Pairing and the minimum Setup pass-through needed for it. Inventory othe
 
 ## Proposed component contract
 
-Pass a plain `state` snapshot containing `active`, `code`, `verificationCode`, `approval`, `server`, `remaining`, `status`, `error`; explicit `server`, `configured`, `busy`, `embedded`, and `idPrefix`; callbacks `onSend()`, `onReceive(code, serverUrl)`, `onApprove()`, `onRejectVerification()` and `onCancel()`. Preserve any current extra disabled predicate as an explicit boolean if 36 still needs it.
+Pass a plain `state` snapshot containing `active`, `code`, `verificationCode`, `approval`, `server`, `remaining`, `status`, `error`; explicit `server`, `configured`, `busy`, `embedded`; callbacks `onSend()`, `onReceive(code, serverUrl)`, `onApprove()`, `onRejectVerification()` and `onCancel()`. Preserve any current extra disabled predicate as an explicit boolean if 36 still needs it.
 
 Do not pass a store, service client or vault/app object under a different name. The state object is a reactive snapshot replaced by the view; Pairing does not mutate it. Keep callbacks as closures bound to the correct root/setup facade so embedded receive cannot target the configured library.
 
@@ -26,7 +26,7 @@ Do not pass a store, service client or vault/app object under a different name. 
 2. Pass plain Pairing values/actions through Setup to its child. Replace Setup's **pairing-store** read with the supplied plain snapshot for active mode/blocking. Other settings/session subscriptions used by registration can stay for now; do not move them into Pairing or reconstruct a store from the plain snapshot.
 3. Rewrite Pairing's props and every `$session`/`$pairing` expression and method call. Derive disabled from busy/active/explicit block state; preserve cancellation/rejection availability during active pairing and all conditional rendering.
 4. Keep `code` and disclosure `open` local. On Connect, capture input, clear it at the existing point, trim server and invoke `onReceive`. Do not implement relay/network/persistence or error catching inside the component; those remain in the facade. Keep the server displayed during active pairing from its state snapshot, even if an unrelated form draft changes.
-5. Preserve verification-code labels, ARIA references, explicit user approval, status/error placement, countdown and IDs/modifier classes from 44. Keep no workflow subscriptions, store creation, direct Firefox storage or DOM mutation in Pairing.
+5. Preserve verification-code labels, ARIA references, explicit user approval, status/error placement, countdown and accessible names/modifier classes from 44. Keep no workflow subscriptions, store creation, direct Firefox storage or DOM mutation in Pairing.
 6. Review other components with `rg` for store imports, `$store` reads and `create*` workflow constructors. Record component, store/workflow and suitable parent view in implementation notes. Do not convert media URL ownership or root upload-store lifetime to satisfy an architectural style rule.
 
 ## Acceptance and verification
@@ -42,6 +42,6 @@ Run client tests/checker/lint and extension build; focused Firefox/Chromium pair
 
 ## Implementation notes
 
-Pairing now accepts plain `state`, `configured`, `busy`, `server`, `embedded`, `idPrefix` and explicit send/receive/approve/reject/cancel callbacks. Settings subscribes to root/setup pairing/session snapshots and binds the correct facade; Setup passes these plain values/actions through without subscribing to a pairing store. Input/disclosure state remains local; service workflows remain in the store/owner.
+Pairing now accepts plain `state`, `configured`, `busy`, `server`, `embedded` and explicit send/receive/approve/reject/cancel callbacks. Settings subscribes to root/setup pairing/session snapshots and binds the correct facade; Setup passes these plain values/actions through without subscribing to a pairing store. The plain `state` prop is aliased locally to avoid Svelte `$state` ambiguity. Input/disclosure state remains local; service workflows remain in the store/owner.
 
-Inventory retained for later work: Uploads reads library upload projections (parent Library); MediaCard reads per-media stores and owns rendered resource actions (parent Library); RecoveryImport constructs its recovery workflow store (parent Settings/VaultScreen); RecoveryExport and VaultSettings own async form feedback around vault actions (parent Settings/ManageLibraries); ContextDestination reads app and owns local submission feedback (parent App). These changes are outside this bounded Pairing conversion. Added plain-prop server-render coverage; browser callback verification is deferred to the combined end-of-batch run.
+Inventory retained for later work: Uploads reads library upload projections (parent Library); MediaCard reads per-media stores and owns rendered resource actions (parent Library); RecoveryImport constructs its recovery workflow store (parent Settings/VaultScreen); RecoveryExport and VaultSettings own async form feedback around vault actions (parent Settings/ManageLibraries); ContextDestination reads app and owns local submission feedback (parent App). These changes are outside this bounded Pairing conversion. Added plain-prop server-render coverage; browser callback verification is recorded in [the batch report](verification-37-46.md).
