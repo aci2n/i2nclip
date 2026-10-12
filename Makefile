@@ -9,16 +9,14 @@ DEV_PORT ?= 8080
 DEV_DB_PORT ?= 5432
 DEV_ORIGIN ?= http://localhost:$(DEV_PORT)
 DEV_DB_URL ?= postgresql://i2nclip:i2nclip-dev@127.0.0.1:$(DEV_DB_PORT)/i2nclip?sslmode=disable
-SMOKE_SERVER ?= https://clip.i2n.duckdns.org
-SMOKE_DIR ?= $(HOME)/.config/i2nclip/smoke
 export DOCKER_HOST ?= unix://$(or $(XDG_RUNTIME_DIR),/run/user/$(shell id -u))/podman/podman.sock
 
 -include local.mk
 
 .DEFAULT_GOAL := build
-.PHONY: build client web extension cli packages dev-extension run
+.PHONY: build client web packages run
 .PHONY: dev dev-db dev-down dev-otc test test-client test-packages
-.PHONY: test-extension-pairing test-db test-profile test-e2e test-smoke test-all
+.PHONY: test-db test-profile test-e2e test-all
 .PHONY: lint format-check format-write pre-commit audit
 .PHONY: container push
 
@@ -28,7 +26,7 @@ build: client
 client:
 	$(MAKE) -C client build
 
-web extension cli packages dev-extension:
+web packages:
 	$(MAKE) -C client $@
 
 run:
@@ -57,18 +55,14 @@ dev-otc:
 test: test-client
 	cargo test
 
-# Shared libraries, CLI, and smoke-runner unit tests, plus the Svelte checker.
+# Client unit tests, plus the Svelte checker.
 test-client:
 	$(MAKE) -C client test
 
-# Build all three archives; verify their contents and run the extracted CLI.
-# Requires zip, unzip, and GNU tar.
+# Build the web archive and verify its contents.
+# Requires zip and unzip.
 test-packages:
 	$(MAKE) -C client test-packages
-
-# Installs the built add-on in an isolated Firefox profile to verify Worker/WASM CSP.
-test-extension-pairing:
-	$(MAKE) -C client test-extension-pairing
 
 # Rust PostgreSQL API/protocol tests using isolated databases; TEST_ARGS adds filters.
 # Provisions PostgreSQL through Docker/Podman unless I2N_TEST_DATABASE_URL is set.
@@ -84,18 +78,13 @@ test-profile:
 	env -u I2N_TEST_DATABASE_URL cargo run --quiet --features test-containers --example postgres-tests -- \
 	  $(MAKE) -C client test-profile
 
-# Firefox UI and packaged CLI flows against the real local API and isolated databases.
+# Firefox and Chromium web flows against the real local API and isolated databases.
 # Provisions PostgreSQL; installs npm dependencies and Firefox when needed.
 test-e2e:
 	cargo run --quiet --features test-containers --example postgres-tests -- \
 	  $(MAKE) -C client test-e2e
 
-# Live deployment: register/restore, upload random blobs, edit tags, verify downloads,
-# and delete test media. Requires private invitation/password/recovery files.
-test-smoke:
-	$(MAKE) -C client test-smoke SMOKE_SERVER="$(SMOKE_SERVER)" SMOKE_DIR="$(abspath $(SMOKE_DIR))"
-
-# Run every suite, including the transfer/resource profile and live deployment test.
+# Run every suite, including the transfer/resource profile.
 # test-db runs all Rust tests once, including those covered by standalone test.
 # Recursive recipes run sequentially even with make -j, avoiding shared build races.
 test-all:
@@ -105,7 +94,6 @@ test-all:
 	$(MAKE) test-db
 	$(MAKE) test-profile
 	$(MAKE) test-e2e
-	$(MAKE) test-smoke
 
 # Rust/JavaScript static analysis and all formatting checks.
 lint:

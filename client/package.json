@@ -10,23 +10,16 @@
 	"exports": "./src/lib/index.js",
 	"scripts": {
 		"dev": "vite",
-		"build": "npm run build:web && npm run build:extension && npm run build:cli",
+		"build": "npm run build:web",
 		"check": "svelte-check --fail-on-warnings",
 		"lint": "biome lint",
 		"format:check": "biome check",
 		"format:write": "biome check --write",
 		"test": "node --test tests/*.test.js",
-		"build:extension": "vite build --config vite.extension.config.js",
-		"build:extension:debug": "vite build --config vite.extension.config.js --mode debug",
-		"dev:extension": "npm run build:extension:debug -- --watch",
-		"e2e": "npm run build:web && npm run build:extension && npm run pack:cli && vite build --config vite.e2e.config.js && playwright test",
-		"pack:extension": "npm run build:extension && rm -f dist/i2nclip.xpi && cd dist/extension && zip -q -r ../i2nclip.xpi .",
-		"cli": "node cli/index.js",
+		"e2e": "npm run build:web && playwright test",
 		"build:web": "vite build",
 		"build:web:debug": "vite build --mode debug",
-		"build:cli": "vite build --config vite.cli.config.js",
 		"pack:web": "npm run build:web && rm -f dist/i2nclip-web.zip && cd dist/web && zip -q -r ../i2nclip-web.zip .",
-		"pack:cli": "npm run build:cli && rm -f dist/i2nclip-cli.tar.gz && tar -czf dist/i2nclip-cli.tar.gz --transform=s,^cli,i2nclip-cli, -C dist cli",
 		"test:packages": "node --test tests/packaging.js"
 	},
 	"dependencies": {
@@ -38,7 +31,6 @@
 		"@playwright/test": "1.56.1",
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
 		"svelte-check": "^4.3.0",
-		"vite": "^8.3.4",
-		"web-ext": "10.7.0"
+		"vite": "^8.3.4"
 	}
 }
