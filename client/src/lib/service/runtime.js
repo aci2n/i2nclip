@@ -1134,7 +1134,14 @@ export function createLibraryRuntime({
 	return {
 		ready,
 		instanceId,
-		registrationServer: () => credentials().serverUrl,
+		registrationServer() {
+			if (get(pairing).active) {
+				throw new Error(
+					"Authorizing library is pairing. Try again after it finishes.",
+				);
+			}
+			return credentials().serverUrl;
+		},
 		pairingDestination(options) {
 			const operation = identity.operation(options);
 			return {

@@ -1,4 +1,5 @@
 import { get, writable } from "svelte/store";
+import { eligibleAuthorizers } from "./authorizers.js";
 import { defaultLibraryName } from "./library-name.js";
 import { createPairing } from "./pairing.js";
 import { createSession } from "./session.js";
@@ -24,6 +25,7 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 		const catalog = (value.catalog || []).map((row) => ({
 			...row,
 			...value.libraries?.[row.id]?.session,
+			pairingActive: Boolean(value.libraries?.[row.id]?.pairing.active),
 		}));
 		const scoped = id && value.setup?.id === id ? value.setup : null;
 		projection.set({
@@ -31,6 +33,7 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 			connected: value.connected,
 			instanceId: `${value.instanceId}:${generation}`,
 			libraryId: `draft:${generation}`,
+			selectedLibraryId: currentLibrary(),
 			catalog,
 			pairing: scoped?.pairing || lastPairing || { active: false, status: "" },
 			session: scoped?.session || {
@@ -152,15 +155,16 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 		generation++;
 		publish();
 		const catalog = get(projection).catalog;
+		const eligible = eligibleAuthorizers(catalog);
 		settings.resetDraft({
 			libraryName: defaultLibraryName(catalog),
 			server: get(projection).session.serverUrl,
 			pairServer: "",
 			otc: "",
-			mode: catalog.length ? "authorize" : "create",
+			mode: eligible.length ? "authorize" : "create",
 			authorizerLibraryId:
-				catalog.find((row) => row.id === currentLibrary())?.id ||
-				catalog[0]?.id ||
+				eligible.find((row) => row.id === currentLibrary())?.id ||
+				eligible[0]?.id ||
 				"",
 		});
 		state.set({ open: true });

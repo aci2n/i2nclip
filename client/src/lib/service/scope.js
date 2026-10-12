@@ -51,6 +51,7 @@ export function createLibraryClient(
 		const catalog = (value.catalog || []).map((row) => ({
 			...row,
 			...value.libraries?.[row.id]?.session,
+			pairingActive: Boolean(value.libraries?.[row.id]?.pairing.active),
 		}));
 		const scoped = value.libraries?.[selected];
 		if (scoped) {
@@ -106,6 +107,7 @@ export function createLibraryClient(
 				catalog: get(client).catalog.map((row) => ({
 					...row,
 					...get(client).libraries[row.id]?.session,
+					pairingActive: Boolean(get(client).libraries[row.id]?.pairing.active),
 				})),
 			});
 		},

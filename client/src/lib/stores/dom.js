@@ -66,7 +66,7 @@ export function selectTab(
 							tabs.length
 					];
 	select(next);
-	event.currentTarget.querySelector(`#${next}-tab`).focus();
+	event.currentTarget.querySelector(`[data-tab="${next}"]`)?.focus();
 }
 
 export function validateInput(input, details) {
@@ -87,3 +87,18 @@ export function selectFiles(event, upload) {
 }
 
 export const pickFiles = (input) => input.click();
+
+export function tabFocus(node) {
+	const group = node.closest('[role="tablist"]');
+	return {
+		destroy() {
+			if (node.ownerDocument.activeElement === node) {
+				queueMicrotask(() => {
+					if (group?.isConnected) {
+						group.querySelector('[role="tab"][tabindex="0"]')?.focus();
+					}
+				});
+			}
+		},
+	};
+}

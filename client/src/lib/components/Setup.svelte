@@ -1,5 +1,6 @@
 <script>
-import { selectTab } from "../stores/dom.js";
+import { eligibleAuthorizers } from "../stores/authorizers.js";
+import { selectTab, tabFocus } from "../stores/dom.js";
 import Pairing from "./Pairing.svelte";
 import RecoveryImport from "./RecoveryImport.svelte";
 
@@ -12,8 +13,15 @@ let {
 	additional = false,
 } = $props();
 const mode = $derived($pairing.active ? "pair" : $settings.mode);
+const authorizers = $derived(eligibleAuthorizers($session.catalog));
+const tabs = $derived([
+	["create", "OTC"],
+	...(authorizers.length ? [["authorize", "Authorize"]] : []),
+	["pair", "Pair"],
+	["restore", "Restore"],
+]);
 const authorizer = $derived(
-	$session.catalog?.find((row) => row.id === $settings.authorizerLibraryId),
+	authorizers.find((row) => row.id === $settings.authorizerLibraryId),
 );
 const blocked = $derived($session.busy || $pairing.active);
 </script>
@@ -100,23 +108,20 @@ const blocked = $derived($session.busy || $pairing.active);
 		aria-label="Library setup"
 		onkeydown={(event) => {
 			if (!blocked) {
-				selectTab(event, mode, (next) => settings.edit("mode", next), [
-					"create",
-					"authorize",
-					"pair",
-					"restore",
-				]);
+				selectTab(
+					event,
+					mode,
+					(next) => settings.edit("mode", next),
+					tabs.map(([key]) => key),
+				);
 			}
 		}}
 	>
-		{#each [
-			["create", "OTC"],
-			["authorize", "Authorize"],
-			["pair", "Pair"],
-			["restore", "Restore"],
-		] as [key, label]}
+		{#each tabs as [key, label]}
 			<button
 				id={`${key}-tab`}
+				data-tab={key}
+				use:tabFocus
 				type="button"
 				role="tab"
 				aria-selected={mode === key}
@@ -151,20 +156,15 @@ const blocked = $derived($session.busy || $pairing.active);
 		</div>
 		{@render registration("create")}
 	</div>
-	<div
-		id="authorize-panel"
-		role="tabpanel"
-		aria-labelledby="authorize-tab"
-		hidden={mode !== "authorize"}
-	>
-		<p>Create an independent library using an existing registered library.</p>
-		{#if !$session.catalog?.length}
-			<p>
-				Create your first library using an invitation code, pair from another
-				device, or restore a recovery file.
-			</p>
-		{:else}
-			{#if $session.catalog.length === 1 && authorizer}
+	{#if authorizers.length}
+		<div
+			id="authorize-panel"
+			role="tabpanel"
+			aria-labelledby="authorize-tab"
+			hidden={mode !== "authorize"}
+		>
+			<p>Create an independent library using an existing registered library.</p>
+			{#if authorizers.length === 1 && authorizer}
 				<p>Authorizing library: {authorizer.name}</p>
 			{:else}
 				<div class="field">
@@ -177,7 +177,7 @@ const blocked = $derived($session.busy || $pairing.active);
 						}
 						disabled={blocked}
 					>
-						{#each $session.catalog as row}
+						{#each authorizers as row}
 							<option value={row.id}>{row.name} — {row.serverUrl}</option>
 						{/each}
 					</select>
@@ -187,8 +187,8 @@ const blocked = $derived($session.busy || $pairing.active);
 				<p class="address">Server: {authorizer.serverUrl}</p>
 				{@render registration("authorize")}
 			{/if}
-		{/if}
-	</div>
+		</div>
+	{/if}
 	<div
 		id="pair-panel"
 		role="tabpanel"

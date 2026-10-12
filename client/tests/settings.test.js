@@ -55,3 +55,43 @@ test("successful setup clears secrets, external server changes update the form, 
 	await backup;
 	assert.deepEqual(get(settings), before);
 });
+
+test("authorizer eligibility and idle fallback preserve explicit Pair/Restore choices", async () => {
+	const { eligibleAuthorizers, normalizeAuthorizer } = await import(
+		"../src/lib/stores/authorizers.js"
+	);
+	const eligible = {
+		id: "saved",
+		configured: true,
+		unlocked: true,
+		busy: false,
+	};
+	const catalog = [
+		eligible,
+		{ ...eligible, id: "busy", busy: true },
+		{ ...eligible, id: "pairing", pairingActive: true },
+		{ id: "missing" },
+	];
+	assert.deepEqual(
+		eligibleAuthorizers(catalog).map((row) => row.id),
+		["saved"],
+	);
+	assert.deepEqual(
+		normalizeAuthorizer(
+			{ mode: "authorize", authorizerLibraryId: "missing" },
+			catalog,
+			"saved",
+		),
+		{ mode: "authorize", authorizerLibraryId: "saved" },
+	);
+	assert.deepEqual(
+		normalizeAuthorizer(
+			{ mode: "authorize", authorizerLibraryId: "saved" },
+			[],
+		),
+		{ mode: "create", authorizerLibraryId: "" },
+	);
+	for (const mode of ["pair", "restore"]) {
+		assert.equal(normalizeAuthorizer({ mode }, []).mode, mode);
+	}
+});

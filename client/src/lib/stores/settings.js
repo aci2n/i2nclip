@@ -1,4 +1,5 @@
 import { get, writable } from "svelte/store";
+import { eligibleAuthorizers, normalizeAuthorizer } from "./authorizers.js";
 import { defaultLibraryName } from "./library-name.js";
 
 export function createSettings(
@@ -31,8 +32,10 @@ export function createSettings(
 			running = false;
 			state.set({
 				...initial,
-				mode: value.catalog?.length ? "authorize" : "create",
-				authorizerLibraryId: value.catalog?.[0]?.id || "",
+				mode: eligibleAuthorizers(value.catalog).length
+					? "authorize"
+					: "create",
+				authorizerLibraryId: eligibleAuthorizers(value.catalog)[0]?.id || "",
 				libraryName:
 					value.configured && value.libraryName
 						? value.libraryName
@@ -41,6 +44,16 @@ export function createSettings(
 				server: value.serverUrl,
 			});
 			serverUrl = value.serverUrl;
+		}
+		if (!running && !value.busy) {
+			state.update((draft) => ({
+				...draft,
+				...normalizeAuthorizer(
+					draft,
+					value.catalog,
+					value.selectedLibraryId || value.libraryId,
+				),
+			}));
 		}
 		if (serverUrl !== value.serverUrl) {
 			serverUrl = value.serverUrl;
@@ -109,13 +122,16 @@ export function createSettings(
 		create() {
 			const { server, otc, authorizerLibraryId, mode, libraryName } =
 				get(state);
-			const authorizer = get(session).catalog?.find(
+			const authorizer = eligibleAuthorizers(get(session).catalog).find(
 				(row) => row.id === authorizerLibraryId,
 			);
 			return action(
 				"create",
-				() =>
-					session.create({
+				() => {
+					if (mode === "authorize" && !authorizer) {
+						throw new Error("Choose an available authorizing library.");
+					}
+					return session.create({
 						serverUrl:
 							mode === "authorize" ? authorizer?.serverUrl : server.trim(),
 
@@ -123,7 +139,8 @@ export function createSettings(
 						authorizerLibraryId:
 							mode === "authorize" ? authorizerLibraryId : undefined,
 						libraryName,
-					}),
+					});
+				},
 				"Library created. Download your recovery file before uploading.",
 				"Creating library…",
 				{ otc: "" },

@@ -351,6 +351,9 @@ export function createServiceEngine(options) {
 			vaultGuard(epoch);
 			requireUnlocked();
 			attempt.controller.signal.throwIfAborted();
+			if (authorizer && authorizer.registrationServer() !== serverUrl) {
+				throw new Error("Authorizing library changed. Try again.");
+			}
 			if (client.setup !== attempt || !clients.has(client.id)) {
 				throw new Error("Setup context ended. Try again.");
 			}

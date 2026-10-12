@@ -21,6 +21,7 @@ export function createSession(client) {
 		state.set({
 			...value.session,
 			catalog: value.catalog || [],
+			selectedLibraryId: value.selectedLibraryId,
 			libraryId: value.libraryId,
 			libraryName: value.libraryName,
 			error: localError || value.session.error,

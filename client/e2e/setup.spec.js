@@ -72,20 +72,16 @@ test("setup remains compact and restores a named library using its recovery serv
 	await page.goto(`${app.web.origin}/client/dist/extension/options.html`);
 	await master(page);
 	await expect(page.locator("#library-name")).toHaveValue("Personal 1");
-	await expect(page.getByRole("tab")).toHaveText([
-		"OTC",
-		"Authorize",
-		"Pair",
-		"Restore",
-	]);
+	await expect(page.getByRole("tab")).toHaveText(["OTC", "Pair", "Restore"]);
+	await expect(page.locator("#authorize-panel")).toHaveCount(0);
 	await expect(page.locator("#add-library-settings")).toHaveCount(0);
 	await expect(page.locator("#settings > :last-child")).toHaveAttribute(
 		"id",
 		"reset-settings",
 	);
 	await page.locator("#create-tab").press("ArrowRight");
-	await expect(page.locator("#authorize-tab")).toBeFocused();
-	await page.locator("#authorize-tab").press("End");
+	await expect(page.locator("#pair-tab")).toBeFocused();
+	await page.locator("#pair-tab").press("End");
 	await expect(page.locator("#restore-tab")).toBeFocused();
 	await page.setViewportSize({ width: 320, height: 800 });
 	await shot(page, "setup-first-320");
