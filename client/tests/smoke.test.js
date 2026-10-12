@@ -27,10 +27,13 @@ async function fixture(t, { create = false, origin = serverUrl } = {}) {
 	let privateKey;
 	if (!create) {
 		privateKey = (await library.generatePrivateKey()).privateKey;
-		const wrappedKey = await library.wrapPrivateKey(privateKey, password, 1);
 		await writeFile(
 			join(directory, "recovery.json"),
-			library.recoveryFile({ serverUrl: origin, wrappedKey }),
+			await library.exportRecovery(
+				[{ name: "Library", serverUrl: origin, privateKey }],
+				password,
+				"library",
+			),
 		);
 	}
 	const state = {

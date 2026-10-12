@@ -2,9 +2,7 @@ import { get, writable } from "svelte/store";
 import { isKeyRegistered, registerKey } from "../api.js";
 import { loadKey } from "../protocol/crypto.js";
 import { generatePrivateKey } from "../protocol/identity.js";
-import { parseRecoveryFile, recoveryFile } from "../protocol/recovery.js";
 import { checkServer } from "../protocol/server.js";
-import { unwrapPrivateKey, wrapPrivateKey } from "../protocol/vault.js";
 import { createSessionContext } from "./identity-context.js";
 import { errorDetails, traceEvent } from "./trace.js";
 
@@ -27,7 +25,7 @@ export function createIdentity(
 		serverUrl: defaultServerUrl,
 		privateKey: "",
 		publicKey: "",
-		wrappedKey: null,
+		configured: false,
 		pendingRegistration: null,
 		identityGeneration: null,
 		epoch,
@@ -44,7 +42,7 @@ export function createIdentity(
 				config.serverUrl ||
 				defaultServerUrl,
 			publicKey: config.publicKey || "",
-			wrappedKey: config.wrappedKey || null,
+			configured: Boolean(config.privateKey),
 			pendingRegistration: config.pendingRegistration || null,
 			identityGeneration: config.identityGeneration || null,
 			privateKey,
@@ -54,6 +52,7 @@ export function createIdentity(
 	}
 	const ready = repository.getConfig().then((value) => {
 		config = value;
+		privateKey = config.privateKey || "";
 		publish({ ready: true });
 	});
 	function queue(action) {
@@ -93,7 +92,7 @@ export function createIdentity(
 					mutation: id,
 					...errorDetails(error),
 				});
-				config = await repository.getConfig();
+				if (!disposed) config = await repository.getConfig();
 				if (id === mutation) publish({ error: error.message });
 				throw error;
 			} finally {
@@ -101,12 +100,12 @@ export function createIdentity(
 			}
 		});
 	}
-	async function save(serverUrl, key, wrappedKey, signal) {
+	async function save(serverUrl, key, signal) {
 		const loaded = await loadKey(key);
 		signal.throwIfAborted();
 		const next = {
 			serverUrl,
-			wrappedKey,
+			privateKey: key,
 			publicKey: loaded.registrationKey,
 			identityGeneration: crypto.randomUUID(),
 			pendingRegistration: null,
@@ -147,13 +146,11 @@ export function createIdentity(
 				return action(identity.credentials());
 			});
 		},
-		create: ({ serverUrl, password, otc = "", authorizerLibraryId }) =>
+		create: ({ serverUrl, otc = "", authorizerLibraryId }) =>
 			mutate(async (signal) => {
 				checkServer(serverUrl);
-				if (config.wrappedKey)
+				if (config.privateKey)
 					throw new Error("A library is already configured.");
-				if (password.length < 8)
-					throw new Error("Password must be at least 8 characters.");
 				if (!otc.trim() && !authorizerLibraryId)
 					throw new Error("Enter an invitation code from the admin.");
 				let pending = config.pendingRegistration;
@@ -164,7 +161,7 @@ export function createIdentity(
 						throw new Error(
 							"Retry creation on its original server, or discard the pending creation first.",
 						);
-					key = await unwrapPrivateKey(pending.wrappedKey, password);
+					key = pending.privateKey;
 					if ((await loadKey(key)).registrationKey !== pending.publicKey)
 						throw new Error("Invalid pending identity.");
 				} else {
@@ -173,7 +170,7 @@ export function createIdentity(
 					pending = {
 						serverUrl,
 						publicKey: created.publicKey,
-						wrappedKey: await wrapPrivateKey(key, password),
+						privateKey: key,
 						method: authorizerLibraryId ? "authorize" : "create",
 						authorizerLibraryId: authorizerLibraryId || "",
 					};
@@ -211,38 +208,10 @@ export function createIdentity(
 				} catch (error) {
 					signal.throwIfAborted();
 					throw new Error(
-						`Registration failed: ${error.message}. Your encrypted identity is saved. Check your registration method and retry with the original password.`,
+						`Registration failed: ${error.message}. Your encrypted identity is saved. Check your registration method and retry registration.`,
 					);
 				}
-				await save(serverUrl, key, pending.wrappedKey, signal);
-			}),
-		restore: (file, password) =>
-			mutate(async (signal) => {
-				if (config.wrappedKey)
-					throw new Error("A library is already configured.");
-				if (config.pendingRegistration)
-					throw new Error(
-						"Finish or discard the pending creation before restoring a library.",
-					);
-				if (!file || file.size > 16_384)
-					throw new Error("Invalid recovery file.");
-				const recovered = parseRecoveryFile(await file.text());
-				await save(
-					recovered.serverUrl,
-					await unwrapPrivateKey(recovered.wrappedKey, password),
-					recovered.wrappedKey,
-					signal,
-				);
-			}),
-		unlock: (password) =>
-			mutate(async (signal) => {
-				if (!config.wrappedKey)
-					throw new Error("Create or restore your library in Settings.");
-				const key = await unwrapPrivateKey(config.wrappedKey, password);
-				if ((await loadKey(key)).registrationKey !== config.publicKey)
-					throw new Error("Invalid saved identity.");
-				signal.throwIfAborted();
-				privateKey = key;
+				await save(serverUrl, key, signal);
 			}),
 		setServer: (serverUrl) =>
 			mutate(async (signal) => {
@@ -257,6 +226,7 @@ export function createIdentity(
 				);
 				signal.throwIfAborted();
 				config = { ...config, serverUrl };
+				privateKey = config.privateKey || "";
 			}),
 		discardCreation: () =>
 			mutate(async () => {
@@ -272,37 +242,24 @@ export function createIdentity(
 				},
 				{ reset: true },
 			),
-		backup: async () => {
-			await ready;
-			return new Blob([recoveryFile(config)], { type: "application/json" });
-		},
 		importPairing: async ({
 			serverUrl,
 			privateKey: key,
 			publicKey,
-			password,
 			signal,
 			onInvalidated,
 		}) => {
 			await mutate(async (ownSignal) => {
 				signal.throwIfAborted();
 				checkServer(serverUrl);
-				if (config.wrappedKey || config.pendingRegistration)
+				if (config.privateKey || config.pendingRegistration)
 					throw new Error(
 						"A library or pending creation is already configured.",
 					);
-				if (password.length < 8)
-					throw new Error("Password must be at least 8 characters.");
 				if ((await loadKey(key)).registrationKey !== publicKey)
 					throw new Error("Invalid paired identity.");
-				const wrappedKey = await wrapPrivateKey(key, password);
 				signal.throwIfAborted();
-				await save(
-					serverUrl,
-					key,
-					wrappedKey,
-					AbortSignal.any([ownSignal, signal]),
-				);
+				await save(serverUrl, key, AbortSignal.any([ownSignal, signal]));
 			});
 			return context.operation({ signal, onInvalidated });
 		},
@@ -310,6 +267,8 @@ export function createIdentity(
 			disposed = true;
 			invalidate();
 			privateKey = "";
+			config = {};
+			publish({ ready: false, busy: false, error: "" });
 		},
 	};
 	return identity;

@@ -1,7 +1,7 @@
 import { get, writable } from "svelte/store";
 
 // A render projection and command facade. Only the service owns identity state.
-export function createSession(client, platform) {
+export function createSession(client) {
 	const state = writable({
 		ready: false,
 		configured: false,
@@ -63,36 +63,8 @@ export function createSession(client, platform) {
 			await renameForSetup(payload.libraryName);
 			return action("create", payload);
 		},
-		restore: async (file, password, libraryName) => {
-			await renameForSetup(libraryName);
-			return action("restore", { file, password });
-		},
-		unlock: (password) => action("unlock", { password }),
 		setServer: (serverUrl) => action("setServer", { serverUrl }),
 		discardCreation: () => action("discardCreation"),
-		reset: async () => {
-			if (!get(client).libraryId) return action("reset");
-			await client.rootCommand("libraries.reset");
-			return true;
-		},
-		async backup() {
-			const instance = get(client).instanceId;
-			const epoch = get(client).session.epoch;
-			const blob = await client.command("identity.backup");
-			if (
-				disposed ||
-				get(client).instanceId !== instance ||
-				get(client).session.epoch !== epoch
-			)
-				return false;
-			const url = URL.createObjectURL(blob);
-			try {
-				await platform.download(url, "i2nclip-recovery.json");
-				return true;
-			} finally {
-				setTimeout(() => URL.revokeObjectURL(url), 60_000);
-			}
-		},
 		dispose() {
 			disposed = true;
 			unsubscribe();

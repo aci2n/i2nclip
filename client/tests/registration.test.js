@@ -24,7 +24,7 @@ test("lost registration response retries the durable encrypted identity without 
 			publicKey = JSON.parse(options.body).public_key;
 			const pending = (await repository.getConfig()).pendingRegistration;
 			assert.equal(pending.publicKey, publicKey);
-			assert.equal(pending.privateKey, undefined);
+			assert.equal(typeof pending.privateKey, "string");
 			assert.equal(pending.password, undefined);
 			assert.equal(pending.otc, undefined);
 			throw new Error("response lost");
@@ -42,8 +42,8 @@ test("lost registration response retries the durable encrypted identity without 
 	assert.equal(posts, 1);
 	assert.equal(get(second).publicKey, publicKey);
 	assert.deepEqual(
-		(await repository.getConfig()).wrappedKey,
-		pending.wrappedKey,
+		(await repository.getConfig()).privateKey,
+		pending.privateKey,
 	);
 	assert.equal(get(second).pendingRegistration, null);
 });
@@ -67,7 +67,7 @@ test("a final save failure retains pending identity and retry verifies registrat
 	let fail = true,
 		posts = 0;
 	repository.setConfig = async (value) => {
-		if (value.wrappedKey && fail) throw new Error("disk full");
+		if (value.privateKey && fail) throw new Error("disk full");
 		return save(value);
 	};
 	t.mock.method(globalThis, "fetch", async (_url, options) => {
@@ -86,7 +86,7 @@ test("a final save failure retains pending identity and retry verifies registrat
 	assert.equal(get(identity).publicKey, pending.publicKey);
 });
 
-test("pending creation rejects a different password/server and can be discarded", async (t) => {
+test("pending creation rejects a different server and can be discarded", async (t) => {
 	const repository = memoryRepository();
 	let calls = 0;
 	t.mock.method(globalThis, "fetch", async () => {
@@ -96,7 +96,6 @@ test("pending creation rejects a different password/server and can be discarded"
 	const identity = open(t, repository);
 	await assert.rejects(identity.create(creation));
 	const before = await repository.getConfig();
-	await assert.rejects(identity.create({ ...creation, password: "wrongpass" }));
 	await assert.rejects(
 		identity.create({ ...creation, serverUrl: "https://other.example" }),
 	);

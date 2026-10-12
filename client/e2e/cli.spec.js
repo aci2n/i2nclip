@@ -73,9 +73,10 @@ test("CLI and extension share a recovery identity and edit the same library", as
 		await chooseRestore(page);
 		await page.locator("#file").setInputFiles(created.recovery);
 		await page.locator("#restore-pass").fill(PASSWORD);
-		await page.locator("#restore-pass").press("Enter");
+		await page.locator("#preview-recovery").click();
+		await page.locator("#restore").click();
 		await expect(page.locator("#status")).toHaveText(
-			"Library restored and unlocked.",
+			"Restored 1 libraries. 0 already saved.",
 		);
 		await page.getByRole("link", { name: "Library" }).click();
 		const card = page.locator(".card");

@@ -39,7 +39,7 @@ browser.action.onClicked.addListener(() =>
 browser.contextMenus.onClicked.addListener((info, tab) => {
 	if (!info.srcUrl) return notify("Nothing to upload.");
 	const [action, libraryId] = String(info.menuItemId).split(":");
-	if (!libraryId || !["upload", "tags"].includes(action)) return;
+	if (!["upload", "tags"].includes(action)) return;
 	return engine
 		.contextUpload(
 			{
@@ -59,6 +59,17 @@ function rebuildMenus(rows) {
 	menuTail = menuTail
 		.then(async () => {
 			await browser.contextMenus.removeAll();
+			if (!rows.length) {
+				for (const [id, title] of [
+					["upload", "Unlock to upload"],
+					["tags", "Unlock to upload with tags"],
+				])
+					browser.contextMenus.create({
+						id,
+						title,
+						contexts: ["image", "video", "audio"],
+					});
+			}
 			for (const row of rows) {
 				const parentId = `library:${row.id}`;
 				browser.contextMenus.create({

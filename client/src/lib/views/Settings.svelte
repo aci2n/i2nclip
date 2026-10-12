@@ -1,9 +1,10 @@
 <script>
-import Unlock from "../components/Unlock.svelte";
+import VaultSettings from "../components/VaultSettings.svelte";
 import Setup from "../components/Setup.svelte";
 import Pairing from "../components/Pairing.svelte";
 
-let { session, settings, pairing, management, setup } = $props();
+let { session, settings, pairing, management, setup, vault, onRestore } =
+	$props();
 let serverInput = $state();
 let serverDetails = $state();
 const savedServer = $derived($session.serverUrl);
@@ -77,7 +78,7 @@ const feedbackAt = $derived(
 			<h2>Your encrypted library</h2>
 			<p>Files are encrypted in your browser before upload.</p>
 			{@render notice("setup")}
-			<Setup {session} {settings} {pairing} unlockSource={setup.unlockSource} />
+			<Setup {session} {settings} {pairing} {vault} {onRestore} />
 		</section>
 	{:else}
 		<section id="configured" class="panel stack">
@@ -86,25 +87,10 @@ const feedbackAt = $derived(
 				{$session.libraryName}
 				· {$session.serverUrl}
 			</p>
-			{#if !$session.unlocked}
-				<Unlock
-					{session}
-					id="library-unlock"
-					statusId="library-unlock-status"
-				/>
-			{/if}
 			<p>
-				Keep a recovery file and remember your password. You need both to
-				restore your library.
+				Keep recovery files and their recovery passwords safe. Your master
+				password protects this client.
 			</p>
-			<button
-				id="backup"
-				type="button"
-				disabled={$session.busy || !$session.unlocked}
-				onclick={settings.backup}
-			>
-				Download recovery file
-			</button>
 			{@render notice("library")}
 			{@render notice("backup")}
 		</section>
@@ -140,7 +126,8 @@ const feedbackAt = $derived(
 					session={setup.session}
 					settings={setup.settings}
 					pairing={setup.pairing}
-					unlockSource={setup.unlockSource}
+					{vault}
+					{onRestore}
 					additional
 				/>
 				<button type="button" class="secondary" onclick={setup.discard}>
@@ -149,6 +136,7 @@ const feedbackAt = $derived(
 			</div>
 		</details>
 	{/if}
+	<VaultSettings {vault} />
 	<details id="reset-settings" class="panel">
 		<summary class="danger">Reset Browser</summary>
 		<div class="stack disclosure-body">
@@ -158,7 +146,7 @@ const feedbackAt = $derived(
 				type="button"
 				class="secondary danger"
 				disabled={$session.busy}
-				onclick={settings.reset}
+				onclick={vault.reset}
 			>
 				Reset everything
 			</button>

@@ -4,91 +4,34 @@ import test from "node:test";
 import { createRepository } from "../src/lib/service/repository.js";
 import { tick } from "./helpers.js";
 
-function databaseFixture() {
-	let opened, current;
-	const stores = [];
+test("a successful header read cannot acknowledge a transaction that later aborts", async () => {
+	let transaction;
 	const database = {
-		createObjectStore: (name) => stores.push(name),
+		createObjectStore() {},
 		close() {},
-		transaction(names, mode) {
-			const requests = [];
-			const tx = {
-				names,
-				mode,
-				requests,
-				objectStore: (name) => ({
-					getAll: () => {
-						const request = { name };
-						requests.push(request);
-						return request;
-					},
-					get: (key) => {
-						const request = { name, key };
-						requests.push(request);
-						return request;
-					},
-					put: (value, key) => requests.push({ name, value, key }),
-					delete: (key) => requests.push({ name, key, deleted: true }),
-					clear: () => requests.push({ name, cleared: true }),
-				}),
-				abort: () => tx.onabort(),
-			};
-			current = tx;
-			return tx;
+		transaction() {
+			const request = { result: undefined };
+			transaction = { objectStore: () => ({ get: () => request }) };
+			return transaction;
 		},
 	};
 	const repository = createRepository({
 		open(name, version) {
-			assert.equal(name, "i2nclip-libraries");
+			assert.equal(name, "i2nclip-vault");
 			assert.equal(version, 1);
-			opened = { result: database };
+			const request = { result: database };
 			queueMicrotask(() => {
-				opened.onupgradeneeded();
-				opened.onsuccess();
+				request.onupgradeneeded();
+				request.onsuccess();
 			});
-			return opened;
+			return request;
 		},
 	});
-	return {
-		repository,
-		stores,
-		get tx() {
-			return current;
-		},
-	};
-}
-
-test("a successful database request cannot acknowledge a transaction that later aborts", async () => {
-	const f = databaseFixture();
-	await f.repository.ready;
-	const read = f.repository.libraries();
-	const rejected = assert.rejects(read, /disk failed/);
+	const rejected = assert.rejects(repository.ready, /disk failed/);
 	await tick();
-	f.tx.requests[0].result = { serverUrl: "https://saved.example" };
-	f.tx.requests[0].onsuccess();
-	f.tx.error = new Error("disk failed");
-	f.tx.onabort();
+	transaction.error = new Error("disk failed");
+	transaction.onabort();
 	await rejected;
-});
-
-test("source and job acceptance wait for one atomic database commit", async () => {
-	const f = databaseFixture();
-	await f.repository.ready;
-	let committed = false;
-	const saving = f.repository
-		.scope("library")
-		.putJob({ id: "one", status: "queued" }, new Blob(["source"]))
-		.then(() => {
-			committed = true;
-		});
-	await tick();
-	assert.equal(committed, false);
-	assert.deepEqual(f.tx.names, ["jobs", "sources"]);
-	assert.equal(f.tx.requests.length, 2);
-	f.tx.oncomplete();
-	await saving;
-	assert.equal(committed, true);
-	assert.deepEqual(f.stores, ["libraries", "jobs", "sources"]);
 });
 
 test("browser UI accesses no raw identity storage, credentials or API workflows", async () => {

@@ -1,34 +1,22 @@
 <script>
+import RecoveryImport from "./RecoveryImport.svelte";
 import Pairing from "./Pairing.svelte";
 import { selectTab } from "../stores/dom.js";
-let { session, settings, pairing, unlockSource, additional = false } = $props();
+let {
+	session,
+	settings,
+	pairing,
+	vault,
+	onRestore,
+	additional = false,
+} = $props();
 const mode = $derived($pairing.active ? "pair" : $settings.mode);
 const authorizer = $derived(
 	$session.catalog?.find((row) => row.id === $settings.authorizerLibraryId),
 );
-let sourcePassword = $state("");
-let sourceError = $state("");
-let unlocking = $state(false);
 const blocked = $derived(
-	$session.busy ||
-		$pairing.active ||
-		unlocking ||
-		Boolean($session.pendingRegistration),
+	$session.busy || $pairing.active || Boolean($session.pendingRegistration),
 );
-async function unlock(event) {
-	event.preventDefault();
-	const password = sourcePassword;
-	sourcePassword = "";
-	unlocking = true;
-	sourceError = "";
-	try {
-		await unlockSource(authorizer.id, password);
-	} catch (error) {
-		sourceError = error.message;
-	} finally {
-		unlocking = false;
-	}
-}
 </script>
 
 {#snippet notice(
@@ -57,9 +45,8 @@ async function unlock(event) {
 	>
 		{#if $session.pendingRegistration}
 			<p id="pending-creation">
-				Your encrypted identity is saved. Retry registration with the original
-				password and chosen registration method. You can close this page and
-				return later.
+				Your encrypted identity is saved. Retry registration with your chosen
+				registration method. You can close this page and return later.
 			</p>
 		{/if}
 		{#if method === "create"}
@@ -79,31 +66,6 @@ async function unlock(event) {
 				>
 			</div>
 		{/if}
-		<div class="field">
-			<label for={method === "create" ? "pass" : "authorize-pass"}
-				>Unlock password</label
-			>
-			<input
-				id={method === "create" ? "pass" : "authorize-pass"}
-				aria-describedby="create-password-hint"
-				type="password"
-				required
-				minlength="8"
-				autocomplete="new-password"
-				bind:value={
-					() =>
-						method === "create"
-							? $settings.password
-							: $settings.authorizePassword,
-					(value) => settings.edit(method === "create" ? "password" : "authorizePassword", value)
-				}
-				disabled={$session.busy}
-			>
-			<p id="create-password-hint">
-				Use at least 8 characters. Your password is never stored or sent to the
-				server.
-			</p>
-		</div>
 		<button
 			id={method === "create" ? "create-library" : "authorize-library"}
 			type="submit"
@@ -228,7 +190,7 @@ async function unlock(event) {
 							() => $settings.authorizerLibraryId,
 							(value) => settings.edit("authorizerLibraryId", value)
 						}
-						disabled={blocked || unlocking}
+						disabled={blocked}
 					>
 						{#each $session.catalog as row}
 							<option value={row.id}>{row.name} — {row.serverUrl}</option>
@@ -238,28 +200,6 @@ async function unlock(event) {
 			{/if}
 			{#if authorizer}
 				<p class="address">Server: {authorizer.serverUrl}</p>
-				{#if !authorizer.unlocked}
-					<form id="authorizer-unlock" class="stack" onsubmit={unlock}>
-						<p>Unlock {authorizer.name} to authorize this library.</p>
-						<div class="field">
-							<label for="authorizer-password">Unlock password</label>
-							<input
-								id="authorizer-password"
-								type="password"
-								autocomplete="current-password"
-								required
-								bind:value={sourcePassword}
-								disabled={unlocking}
-							>
-						</div>
-						<button type="submit" disabled={unlocking}>
-							{unlocking ? "Unlocking…" : "Unlock"}
-						</button>
-						{#if sourceError}
-							<p role="alert">{sourceError}</p>
-						{/if}
-					</form>
-				{/if}
 				{@render registration("authorize")}
 			{/if}
 		{/if}
@@ -296,51 +236,7 @@ async function unlock(event) {
 		aria-labelledby="restore-tab"
 		hidden={mode !== "restore"}
 	>
-		<p>The recovery file determines this library’s server.</p>
-		<form
-			class="stack"
-			id="restore-settings"
-			onsubmit={(event) => {
-				event.preventDefault();
-				settings.restore();
-			}}
-		>
-			<p>Choose your recovery file and enter its password.</p>
-			<div class="field">
-				<label for="file">Recovery file</label>
-				<input
-					id="file"
-					type="file"
-					required
-					accept=".json,application/json"
-					bind:files={
-						() => $settings.recoveryFiles,
-						(value) => settings.edit("recoveryFiles", value)
-					}
-					disabled={$session.busy}
-				>
-			</div>
-			<div class="field">
-				<label for="restore-pass">Recovery password</label>
-				<input
-					id="restore-pass"
-					type="password"
-					required
-					autocomplete="current-password"
-					bind:value={
-						() => $settings.restorePassword,
-						(value) => settings.edit("restorePassword", value)
-					}
-					disabled={$session.busy}
-				>
-			</div>
-			<button id="restore" type="submit" disabled={$session.busy}>
-				Restore library
-			</button>
-			{#if mode === "restore"}
-				{@render notice("restore")}
-			{/if}
-		</form>
+		<RecoveryImport {vault} onComplete={onRestore} />
 	</div>
 </div>
 <style>

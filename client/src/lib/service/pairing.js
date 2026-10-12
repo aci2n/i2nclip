@@ -318,15 +318,13 @@ export function createPairing(session, services = {}) {
 				});
 			});
 		},
-		receive(code, password, server) {
+		receive(code, server) {
 			return run("receiver", server, async (current) => {
 				const local = get(session);
-				if (local.wrappedKey || local.pendingRegistration)
+				if (local.configured || local.pendingRegistration)
 					throw new Error(
 						"Reset or discard pending creation before connecting a library.",
 					);
-				if (password.length < 8)
-					throw new Error("Password must be at least 8 characters.");
 				const { id, secret } = parsePairingCode(code);
 				const initial = await call(current, "receiverStart", { secret });
 				attach(current, await current.relay.join(id, initial), id);
@@ -357,7 +355,6 @@ export function createPairing(session, services = {}) {
 				});
 				const savedOperation = await session.importPairing({
 					...value,
-					password,
 					signal: current.controller.signal,
 					onInvalidated: () =>
 						stop("Library or server changed. Start pairing again."),

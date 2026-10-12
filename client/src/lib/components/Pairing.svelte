@@ -1,9 +1,6 @@
 <script>
-import Unlock from "./Unlock.svelte";
-
 let { session, pairing, server, embedded = false } = $props();
 let code = $state("");
-let password = $state("");
 let open = $state(false);
 const configured = $derived(!embedded && Boolean($session.configured));
 const disabled = $derived(
@@ -11,11 +8,9 @@ const disabled = $derived(
 );
 async function connect(event) {
 	event.preventDefault();
-	const secret = password;
 	const entered = code;
-	password = "";
 	code = "";
-	await pairing.receive(entered, secret, server.trim());
+	await pairing.receive(entered, server.trim());
 }
 </script>
 
@@ -32,27 +27,18 @@ async function connect(event) {
 	<div class="pairing">
 		{#if !$pairing.active}
 			{#if configured}
-				{#if !$session.unlocked}
-					<p>Unlock this browser before connecting another device.</p>
-					<Unlock
-						{session}
-						id="pairing-unlock"
-						statusId="pairing-unlock-status"
-					/>
-				{:else}
-					<p>
-						Give another device full access to this library using a temporary
-						code.
-					</p>
-					<button
-						type="button"
-						id="pairing-start"
-						{disabled}
-						onclick={pairing.send}
-					>
-						Create pairing code
-					</button>
-				{/if}
+				<p>
+					Give another device full access to this library using a temporary
+					code.
+				</p>
+				<button
+					type="button"
+					id="pairing-start"
+					{disabled}
+					onclick={pairing.send}
+				>
+					Create pairing code
+				</button>
 			{:else}
 				<p>
 					Use a code from an unlocked device. Both devices must use the same
@@ -82,23 +68,6 @@ async function connect(event) {
 								bind:value={code}
 								{disabled}
 							>
-						</div>
-						<div class="field">
-							<label for="pairing-password">Password for this device</label>
-							<input
-								id="pairing-password"
-								aria-describedby="pairing-password-hint"
-								type="password"
-								required
-								minlength="8"
-								autocomplete="new-password"
-								bind:value={password}
-								{disabled}
-							>
-							<p id="pairing-password-hint">
-								Use at least 8 characters. This password protects the key saved
-								in this browser.
-							</p>
 						</div>
 						<button type="submit" {disabled}>Connect library</button>
 					</form>

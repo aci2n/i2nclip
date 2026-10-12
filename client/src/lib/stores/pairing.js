@@ -26,8 +26,7 @@ export function createPairing(client, { beforeReceive } = {}) {
 	return {
 		subscribe: state.subscribe,
 		send: () => action("send"),
-		receive: (code, password, serverUrl) =>
-			action("receive", { code, password, serverUrl }),
+		receive: (code, serverUrl) => action("receive", { code, serverUrl }),
 		approve: () => action("approve"),
 		cancel: () => action("cancel"),
 		rejectVerification: () => action("rejectVerification"),

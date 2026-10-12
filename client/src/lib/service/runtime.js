@@ -63,7 +63,7 @@ export function createLibraryRuntime({
 		const value = get(identity);
 		return {
 			ready: value.ready,
-			configured: Boolean(value.wrappedKey),
+			configured: value.configured,
 			unlocked: Boolean(value.privateKey) && !value.busy,
 			serverUrl: value.serverUrl,
 			publicKey: value.publicKey,
@@ -789,14 +789,11 @@ export function createLibraryRuntime({
 			send(client, { type: "snapshot", value: snapshot(client) });
 			return true;
 		}
-		if (name === "identity.backup") return identity.backup();
 		if (name.startsWith("identity.")) {
 			guard(payload.epoch);
 			const action = name.slice(9);
 			const args = {
 				create: [payload],
-				restore: [payload.file, payload.password],
-				unlock: [payload.password],
 				setServer: [payload.serverUrl],
 				reset: [],
 				discardCreation: [],
@@ -965,7 +962,6 @@ export function createLibraryRuntime({
 					? pairing.send()
 					: pairing.receive(
 							payload.code,
-							payload.password,
 							payload.serverUrl || sessionState().serverUrl,
 						);
 			}
@@ -1076,7 +1072,7 @@ export function createLibraryRuntime({
 				disconnect: () => disconnect(client.id),
 			};
 		},
-		async contextUpload(source, withTags) {
+		async contextUpload(source, withTags, openWindow = true) {
 			await ready;
 			const client = { id: "background" };
 			const result = await submit(client, [source], {
@@ -1090,8 +1086,9 @@ export function createLibraryRuntime({
 				);
 				return;
 			}
-			if (withTags || !sessionState().unlocked)
+			if (openWindow && (withTags || !sessionState().unlocked))
 				await platform.openUpload?.(id, withTags ? "upload" : "unlock");
+			return id;
 		},
 		dispose() {
 			disposed = true;
@@ -1101,6 +1098,11 @@ export function createLibraryRuntime({
 			identity.dispose();
 			unsubscribeIdentity();
 			unsubscribePairing();
+			jobs.clear();
+			media.clear();
+			views.clear();
+			downloads.clear();
+			helpers.clear();
 			repository.close?.();
 		},
 	};

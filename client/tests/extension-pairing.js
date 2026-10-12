@@ -18,8 +18,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
-import { wrapPrivateKey } from "../src/lib/protocol/vault.js";
-import { recoveryFile } from "../src/lib/protocol/recovery.js";
+import { exportRecovery } from "../src/lib/protocol/recovery.js";
 
 const client = fileURLToPath(new URL("../", import.meta.url));
 
@@ -111,10 +110,7 @@ try {
 `,
 		);
 		const key = await generatePrivateKey();
-		const recovery = recoveryFile({
-			serverUrl: new URL(endpoint).origin,
-			wrappedKey: await wrapPrivateKey(key.privateKey, "service-password", 1),
-		});
+        const recovery = await exportRecovery([{name: "Service library", serverUrl: new URL(endpoint).origin, privateKey: key.privateKey}], "recovery-password", "library");
 		await writeFile(
 			join(addon, "service-smoke.html"),
 			'<!doctype html><script type="module" src="service-smoke.js"></script>',
@@ -128,7 +124,7 @@ function connect() {
  const pending = new Map();
  let resolveReady; const ready = new Promise(resolve => { resolveReady = resolve; });
  port.onMessage.addListener(message => {
-  if (message.type === "snapshot") { state = {...message, value: message.value.libraries[(message.value.catalog[0] || message.value.setups[0]).id], libraryId: (message.value.catalog[0] || message.value.setups[0]).id}; resolveReady(); }
+  if (message.type === "snapshot") { const row = message.value.catalog[0] || message.value.setups[0]; state = {...message, value: {...(message.value.libraries[row?.id] || message.value), vault: message.value.vault}, libraryId: row?.id}; resolveReady(); }
   if (message.type === "state") {
    if (message.topic === "library" && message.value.id === state.libraryId) state.value = message.value.state;
    if (message.topic === "uploads") state.value.uploads = message.value;
@@ -140,10 +136,11 @@ function connect() {
 async function until(check) { const end = Date.now() + 15000; while (!check()) { if (Date.now() > end) throw new Error("Service state did not settle"); await new Promise(resolve => setTimeout(resolve, 10)); } }
 try {
  const first = connect(), second = connect(); await Promise.all([first.ready, second.ready]);
- if (!first.state.session.configured) {
-  await first.command("identity.restore", {file: new Blob([${JSON.stringify(recovery)}], {type: "application/json"}), password: "service-password"});
+ if (first.state.vault.status === "uninitialized") {
+  await first.command("vault.initialize", {password: "service-password"});
+  await first.command("vault.importRecovery", {file: new Blob([${JSON.stringify(recovery)}], {type: "application/json"}), password: "recovery-password"});
   await until(() => second.state.session.unlocked);
-  const backup = await second.command("identity.backup");
+  const backup = await second.command("vault.export", {password: "export-password"});
   if (!(backup instanceof Blob) || !(await backup.text()).includes("i2nclip-recovery")) throw new Error("Binary reply did not cross runtime.Port");
   if (JSON.stringify(second.state).includes("privateKey")) throw new Error("Private key leaked to client");
   const sources = [{blob: new Blob([new Uint8Array(65536)]), name: "retained.bin", preview: null}, {blob: new Blob(["queued"]), name: "queued.txt", preview: null}];
@@ -153,11 +150,11 @@ try {
   browser.runtime.reload();
  } else {
   if (first.state.session.unlocked) throw new Error("Restart restored plaintext key");
+  await first.command("vault.unlock", {password: "service-password"});
   if (!first.state.uploads.some(job => job.status === "interrupted") || !first.state.uploads.some(job => job.status === "paused")) throw new Error("Restart lost unfinished jobs");
-  await first.command("identity.unlock", {password: "service-password"});
-  await second.command("uploads.retry", {ids: first.state.uploads.map(job => job.id)});
+    await second.command("uploads.retry", {ids: first.state.uploads.map(job => job.id)});
   await until(() => second.state.uploads.every(job => job.status === "completed"));
-  await first.command("identity.reset"); await until(() => !second.state.session.configured);
+  await first.command("vault.reset"); await until(() => !second.state.session.configured);
   await fetch(${JSON.stringify(endpoint)}, {method: "POST", body: JSON.stringify({ok: true})});
   first.close(); second.close();
  }

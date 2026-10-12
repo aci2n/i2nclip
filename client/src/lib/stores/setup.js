@@ -86,12 +86,7 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 		subscribe: projection.subscribe,
 		ready: root.ready,
 		async command(name, payload = {}, options) {
-			if (
-				!id &&
-				!["identity.create", "identity.restore", "pairing.receive"].includes(
-					name,
-				)
-			)
+			if (!id && !["identity.create", "pairing.receive"].includes(name))
 				return true;
 			if (!id) {
 				starting ||= root
@@ -141,11 +136,7 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 				get(root).libraries[currentLibrary()]?.session.serverUrl || "",
 			);
 			settings.edit("pairServer", "");
-			settings.edit("password", "");
-			settings.edit("authorizePassword", "");
 			settings.edit("otc", "");
-			settings.edit("recoveryFiles", undefined);
-			settings.edit("restorePassword", "");
 			settings.edit("feedback", { scope: "setup", text: "", error: false });
 			settings.edit(
 				"authorizerLibraryId",
@@ -206,16 +197,6 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 					error: true,
 				});
 			}
-		},
-		async unlockSource(libraryId, password) {
-			const source = get(root).libraries[libraryId];
-			if (!source) throw new Error("Authorizing library is no longer saved.");
-			await root.command("identity.unlock", {
-				libraryId,
-				password,
-				epoch: source.session.epoch,
-				runtimeId: source.runtimeId,
-			});
 		},
 		dispose() {
 			disposed = true;

@@ -1,7 +1,6 @@
 <script>
 import ImageDialog from "../components/ImageDialog.svelte";
 import MediaCard from "../components/MediaCard.svelte";
-import Unlock from "../components/Unlock.svelte";
 import Uploads from "../components/Uploads.svelte";
 import { pickFiles, selectFiles } from "../stores/dom.js";
 
@@ -20,7 +19,7 @@ let filesInput = $state();
 		</p>
 	</section>
 {:else if !$session.unlocked}
-	<Unlock {session} />
+	<p role="status">Library operation in progress…</p>
 {:else}
 	<form
 		id="find"

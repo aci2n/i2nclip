@@ -1,4 +1,6 @@
 <script>
+import ContextDestination from "./lib/components/ContextDestination.svelte";
+import VaultScreen from "./lib/components/VaultScreen.svelte";
 import { onDestroy, untrack } from "svelte";
 import ManageLibraries from "./lib/components/ManageLibraries.svelte";
 import AboutDialog from "./lib/components/AboutDialog.svelte";
@@ -11,6 +13,7 @@ import "./app.css";
 let { platform, page: initialPage } = $props();
 const app = untrack(() => createApplication(platform, initialPage));
 const session = app.session;
+const vault = app.vault;
 const page = $derived($app.page);
 const library = $derived($app.library);
 let aboutOpen = $state(false);
@@ -18,52 +21,59 @@ onDestroy(app.dispose);
 </script>
 
 <main class:compact={page === "upload" || page === "unlock"}>
-	<header>
-		<a
-			class="brand"
-			href={app.href("library", $app.libraryId)}
-			onclick={(event) => app.navigate(event, "library")}
-			>i2nclip</a
-		>
-		{#if !$app.popupPage && $app.catalog.length > 1}
-			<select
-				id="library-selector"
-				aria-label="Library"
-				value={$app.libraryId}
-				onchange={(event) => app.selectLibrary(event.currentTarget.value)}
-			>
-				{#each $app.catalog as saved}
-					<option value={saved.id}>{saved.name}</option>
-				{/each}
-			</select>
-		{/if}
-		<nav aria-label="Main navigation">
-			{#if $app.popupPage}
-				<a
-					href={app.href($app.popupPage, $app.libraryId)}
-					aria-current={page === "upload" || page === "unlock"
-						? "page"
-						: undefined}
-					onclick={(event) => app.navigate(event, $app.popupPage)}
-					>Upload</a
-				>
-			{/if}
+	{#if $vault.status === "unlocked"}
+		<header>
 			<a
+				class="brand"
 				href={app.href("library", $app.libraryId)}
-				aria-current={page === "library" ? "page" : undefined}
 				onclick={(event) => app.navigate(event, "library")}
-				>Library</a
+				>i2nclip</a
 			>
-			<a
-				href={app.href("options", $app.libraryId)}
-				aria-current={page === "options" ? "page" : undefined}
-				onclick={(event) => app.navigate(event, "options")}
-				>Settings</a
-			>
-			<button type="button" onclick={() => (aboutOpen = true)}>About</button>
-		</nav>
-	</header>
-	{#if !$session.ready}
+			{#if !$app.popupPage && $app.catalog.length > 1}
+				<select
+					id="library-selector"
+					aria-label="Library"
+					value={$app.libraryId}
+					onchange={(event) => app.selectLibrary(event.currentTarget.value)}
+				>
+					{#each $app.catalog as saved}
+						<option value={saved.id}>{saved.name}</option>
+					{/each}
+				</select>
+			{/if}
+			<nav aria-label="Main navigation">
+				{#if $app.popupPage}
+					<a
+						href={app.href($app.popupPage, $app.libraryId)}
+						aria-current={page === "upload" || page === "unlock"
+							? "page"
+							: undefined}
+						onclick={(event) => app.navigate(event, $app.popupPage)}
+						>Upload</a
+					>
+				{/if}
+				<a
+					href={app.href("library", $app.libraryId)}
+					aria-current={page === "library" ? "page" : undefined}
+					onclick={(event) => app.navigate(event, "library")}
+					>Library</a
+				>
+				<a
+					href={app.href("options", $app.libraryId)}
+					aria-current={page === "options" ? "page" : undefined}
+					onclick={(event) => app.navigate(event, "options")}
+					>Settings</a
+				>
+				<button type="button" onclick={() => void vault.lock()}>Lock</button>
+				<button type="button" onclick={() => (aboutOpen = true)}>About</button>
+			</nav>
+		</header>
+	{/if}
+	{#if $vault.status !== "unlocked"}
+		<VaultScreen {vault} />
+	{:else if $app.transientUpload}
+		<ContextDestination {app} />
+	{:else if !$session.ready}
 		<p role="status">Loading…</p>
 	{:else if page === "options"}
 		{#key $app.libraryId}
@@ -72,12 +82,15 @@ onDestroy(app.dispose);
 				settings={app.settings}
 				pairing={app.pairing}
 				setup={app.setup}
+				{vault}
+				onRestore={app.restoredLibrary}
 			>
 				{#snippet management(
 					serverControls,
 				)}
 					<ManageLibraries
 						{app}
+						{vault}
 						{serverControls}
 						catalog={$app.catalog}
 						libraryId={$app.libraryId}

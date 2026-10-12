@@ -16,7 +16,7 @@ async function createPersonal(page, kind, app) {
 	await openServer(page);
 	await page.locator("#server").fill(app.origin);
 	await fillCreation(page, await issueOtc(app.data));
-	await page.locator("#pass").press("Enter");
+	await page.locator("#create-library").click();
 	await expect(page.locator("#configured")).toBeVisible();
 	await expect(page.locator("#library-selector")).toHaveCount(0);
 	return new URL(page.url()).searchParams.get("library");
@@ -49,8 +49,7 @@ for (const kind of ["web", "extension"]) {
 		await other.goto(url(kind, app, "library"));
 		await expect(other.locator(".card-title")).toHaveText("private.txt");
 		await add(page, "Team");
-		await page.locator("#authorize-pass").fill("team-password");
-		await page.locator("#authorize-pass").press("Enter");
+		await page.locator("#authorize-library").click();
 		await expect
 			.poll(() => new URL(page.url()).searchParams.get("library"))
 			.not.toBe(personal);
@@ -84,9 +83,6 @@ for (const kind of ["web", "extension"]) {
 			const code = await page.locator("#pairing-code").textContent();
 			await receiver.getByRole("tab", { name: "Pair", exact: true }).click();
 			await receiver.locator("#pairing-input").fill(code);
-			await receiver
-				.locator("#pairing-password")
-				.fill("receiver-team-password");
 			await receiver
 				.getByRole("button", { name: "Connect library", exact: true })
 				.click();

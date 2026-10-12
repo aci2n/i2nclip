@@ -65,6 +65,30 @@ VM21:1 Uncaught ReferenceError: Worker is not defined
 
 30. [x] Added signed GET /api/ping with registered-key, nonce/replay, empty-body and no-store policies. Browser and CLI registration checks use it instead of listing media. Client/Rust checks, 26 PostgreSQL API tests, all 50 browser scenarios and installed-extension verification pass. Original request: For key auth checks, we are doing /api/media API calls I believe. Let's have a authed ping endpoint in the server that can be used for this purpose.
 
-PRIORITY (highest prio first): 14, 22, 23, 18+19+20+21, 27, 25, 26, 28, 29, 30
+31. Master password and single vault.
+
+32. Default name for new library "Personal N (either index or random number)"
+
+33. strict rules for JS linter
+
+34. Image compression before upload. Not sure what's the best way to approach this, so it requires some planning. Consider converting all images to webp where possible, and compress while preserving quality reasonably. Maybe this could be a user setting "compress images" with some tunable parameters. Not sure what browser support is like for this operation.
+
+35. "This library is already saved. Select its existing entry." while pairing within the same page. Any reason why that wouldn't work?
+
+36. Remove "resume setup" functionality in Add Library. Keep that state in the client, no need for it to be shared, and no need to have resumable setups. Remove "Cancel Setup" too. Same for the "discard pending creation" flow. If registration fails, just show an error message. Keep this one simple, only commit to the vault identities that succeed registration.
+
+37. Move "Forget this library" to the bottom of the page, above "Reset this browser". Same "warning" text color.
+
+38. Server URL should not be editable in "Manage Library". Only OTC/Pair should receive server URLs
+
+39. The automatic upload cleanup after N seconds should keep showing all individual jobs until the cleanup. Right now it removes the jobs immediately and keeps only the "N uploaded [Clear completed uploads]" text
+
+40. Updating tags should not trigger a reload of the library page.
+
+41. Uploaded files should be inserted into the beginning current library page.
+
+42. Do not show "Authorize" tab if there are no authorizing libraries available.
+
+PRIORITY (highest prio first): 31, 32, 33, 35, 36, 34, 35, 36, 37, 38, 39, 40, 41, 42
 
 DEFERRED: 15, 16, 24

@@ -1,6 +1,4 @@
 <script>
-import Unlock from "../components/Unlock.svelte";
-
 let { session, pending, auto = false, settingsHref } = $props();
 const tags = $derived(pending.tags);
 </script>
@@ -24,7 +22,7 @@ const tags = $derived(pending.tags);
 			before uploading.
 		</p>
 	{:else if !$session.unlocked}
-		<Unlock {session} id={auto ? "form" : "unlock"} />
+		<p role="status">Library operation in progress…</p>
 	{:else}
 		<form
 			class="stack"

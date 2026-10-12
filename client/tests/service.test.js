@@ -3,7 +3,6 @@ import test from "node:test";
 import { get } from "svelte/store";
 import { createLibraryRuntime } from "../src/lib/service/runtime.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
-import { wrapPrivateKey } from "../src/lib/protocol/vault.js";
 import { deferred, tick } from "./helpers.js";
 import { engineClient, memoryRepository, until } from "./service-helpers.js";
 
@@ -12,7 +11,7 @@ async function fixture(t, options = {}) {
 	const repository = memoryRepository({
 		serverUrl: "https://clip.example",
 		publicKey: key.publicKey,
-		wrappedKey: await wrapPrivateKey(key.privateKey, "password123", 1),
+		privateKey: key.privateKey,
 		identityGeneration: "identity",
 	});
 	const engine = createLibraryRuntime({
@@ -32,8 +31,7 @@ async function fixture(t, options = {}) {
 
 test("one owner broadcasts unlock and reset without exposing private credentials", async (t) => {
 	const f = await fixture(t);
-	assert.equal(get(f.first).session.unlocked, false);
-	await f.first.command("identity.unlock", { password: "password123" });
+	assert.equal(get(f.first).session.unlocked, true);
 	assert.equal(get(f.second).session.unlocked, true);
 	assert.equal(JSON.stringify(get(f.second)).includes(f.key.privateKey), false);
 	assert.equal("privateKey" in get(f.first).session, false);
@@ -49,7 +47,6 @@ test("one owner broadcasts unlock and reset without exposing private credentials
 
 test("identity acknowledgment waits for durable commit, including reset queued behind a stalled write", async (t) => {
 	const f = await fixture(t);
-	await f.first.command("identity.unlock", { password: "password123" });
 	const entered = deferred(),
 		finish = deferred();
 	const save = f.repository.setConfig;
@@ -82,7 +79,6 @@ test("independent searches reject stale results and pagination is single flight"
 			},
 		},
 	});
-	await f.first.command("identity.unlock", { password: "password123" });
 	await f.first.command("view.open", { id: "a" });
 	await f.second.command("view.open", { id: "b" });
 	await until(() => calls.length === 2);
@@ -115,7 +111,6 @@ test("uploads from multiple clients are sequential, survive disconnect, and retr
 			return job.promise;
 		},
 	});
-	await f.first.command("identity.unlock", { password: "password123" });
 	const source = (name) => ({ blob: new Blob([name]), name, preview: null });
 	await f.first.command("uploads.submit", {
 		sources: [source("a"), source("b")],
@@ -148,10 +143,9 @@ test("uploads from multiple clients are sequential, survive disconnect, and retr
 	assert.equal(await f.repository.getSource(failed.id), undefined);
 });
 
-test("restart locks the identity and retains interrupted and queued sources without automatic replay", async (t) => {
+test("runtime activation after vault unlock retains interrupted and queued sources without automatic replay", async (t) => {
 	const active = deferred();
 	const f = await fixture(t, { upload: () => active.promise });
-	await f.first.command("identity.unlock", { password: "password123" });
 	await f.first.command("uploads.submit", {
 		sources: ["a", "b"].map((name) => ({
 			blob: new Blob([name]),
@@ -177,12 +171,11 @@ test("restart locks the identity and retains interrupted and queued sources with
 	const client = engineClient(engine);
 	t.after(client.dispose);
 	await client.ready;
-	assert.equal(get(client).session.unlocked, false);
+	assert.equal(get(client).session.unlocked, true);
 	assert.deepEqual(
 		get(client).uploads.map((job) => job.status),
 		["interrupted", "paused"],
 	);
-	await client.command("identity.unlock", { password: "password123" });
 	await tick();
 	assert.equal(uploads, 0);
 	assert((await f.repository.getSource(stored[0].id)).blob instanceof Blob);
@@ -192,7 +185,6 @@ test("restart locks the identity and retains interrupted and queued sources with
 test("reset suppresses late uploads and removes retained sources", async (t) => {
 	const active = deferred();
 	const f = await fixture(t, { upload: () => active.promise });
-	await f.first.command("identity.unlock", { password: "password123" });
 	await f.first.command("uploads.submit", {
 		sources: [{ blob: new Blob(["a"]), name: "a", preview: null }],
 	});
@@ -208,7 +200,6 @@ test("reset suppresses late uploads and removes retained sources", async (t) => 
 
 test("a quota failure rejects the affected source but does not stop the remaining batch", async (t) => {
 	const f = await fixture(t, { upload: async () => ({ id: "saved" }) });
-	await f.first.command("identity.unlock", { password: "password123" });
 	const put = f.repository.putJob;
 	f.repository.putJob = async (job, source) => {
 		if (source?.name === "full") throw new Error("quota exceeded");
@@ -242,7 +233,6 @@ test("coalesced content requests cancel independently and return content only to
 			},
 		},
 	});
-	await f.first.command("identity.unlock", { password: "password123" });
 	await f.first.command("view.open", { id: "a" });
 	await until(() => get(f.first).media.file);
 	const cancel = new AbortController();

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import {
 	chooseRestore,
+	master,
 	expect,
 	fillCreation,
 	issueOtc,
@@ -15,7 +16,7 @@ async function setup(page, app) {
 	await openServer(page);
 	await page.locator("#server").fill(app.origin);
 	await fillCreation(page, await issueOtc(app.data));
-	await page.locator("#pass").press("Enter");
+	await page.locator("#create-library").click();
 	await expect(page.locator("#status")).toContainText("Library created.");
 }
 
@@ -64,7 +65,7 @@ test("web and extension owners have independent configuration and unlocked scope
 	await setup(page, app);
 	const extension = await page.context().newPage();
 	await extension.goto(`${app.web.origin}/client/dist/extension/library.html`);
-	await expect(extension.locator("#setup")).toBeVisible();
+	await expect(extension.locator("#master-confirmation")).toBeVisible();
 	await expect(page.locator("#configured")).toBeVisible();
 	await extension.close();
 });
@@ -76,7 +77,10 @@ test("web recovery can restore another browser context and survives page navigat
 }) => {
 	await setup(page, app);
 	const download = page.waitForEvent("download");
-	await page.getByRole("button", { name: "Download recovery file" }).click();
+	await page.locator("#rename-library-settings > summary").click();
+	await page.locator("#library-recovery-password").fill(PASSWORD);
+	await page.locator("#library-recovery-confirm").fill(PASSWORD);
+	await page.locator("#backup").click();
 	const recovery = await readFile(await (await download).path());
 	const context = await browser.newContext();
 	try {
@@ -89,9 +93,10 @@ test("web recovery can restore another browser context and survives page navigat
 			buffer: recovery,
 		});
 		await other.locator("#restore-pass").fill(PASSWORD);
-		await other.locator("#restore-pass").press("Enter");
-		await expect(other.locator("#status")).toHaveText(
-			"Library restored and unlocked.",
+		await other.locator("#preview-recovery").click();
+		await other.locator("#restore").click();
+		await expect(other.getByRole("status")).toHaveText(
+			"Restored 1 libraries. 0 already saved.",
 		);
 		await other.getByRole("link", { name: "Library", exact: true }).click();
 		await expect(other.locator("#files")).toBeAttached();

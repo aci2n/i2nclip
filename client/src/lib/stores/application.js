@@ -1,3 +1,4 @@
+import { createVault } from "./vault.js";
 import { createLibraryClient } from "../service/scope.js";
 import { get, writable } from "svelte/store";
 import { createLibrary } from "./library.js";
@@ -10,6 +11,7 @@ import { createSetup } from "./setup.js";
 // The application owns workflows across view changes; views only render them.
 export function createApplication(platform, initialPage, browser = window) {
 	const root = platform.createService();
+	const vault = createVault(root, platform);
 	const initialLibrary = new URLSearchParams(browser.location.search).get(
 		"library",
 	);
@@ -92,7 +94,23 @@ export function createApplication(platform, initialPage, browser = window) {
 			library.dispose();
 		}
 	}
-	const unsubscribeCatalog = root.subscribe(() => {
+	let vaultWasUnlocked = false;
+	const unsubscribeCatalog = root.subscribe((value) => {
+		const isUnlocked = !value.vault || value.vault.status === "unlocked";
+		if (vaultWasUnlocked && !isUnlocked) {
+			disposeLibrary();
+			library = null;
+			searchDrafts.clear();
+			settings.resetDraft();
+		}
+		if (
+			!vaultWasUnlocked &&
+			isUnlocked &&
+			!library &&
+			["library", "options"].includes(get(state).page)
+		)
+			library = newLibrary();
+		vaultWasUnlocked = isUnlocked;
 		const id = client.id();
 		if (id !== lastSelection && lastSelection) {
 			disposeLibrary();
@@ -106,6 +124,9 @@ export function createApplication(platform, initialPage, browser = window) {
 			library,
 			catalog: get(root).catalog || [],
 			libraryId: id,
+			transientUpload: (get(root).transientUploads || []).find(
+				(entry) => entry.id === params.get("id"),
+			),
 		}));
 	});
 	let disposed = false;
@@ -161,12 +182,25 @@ export function createApplication(platform, initialPage, browser = window) {
 	browser.addEventListener("popstate", restore);
 	return {
 		subscribe: state.subscribe,
+		vault,
+		root,
 		session,
 		pairing,
 		settings,
 		setup,
 		href,
 		selectLibrary,
+        restoredLibrary(id, result) {
+         selectLibrary(id);
+         settings.edit("feedback", {scope: "library", text: `Restored ${result.imported.length} libraries. ${result.skipped} already saved.`, error: false});
+        },
+			async acceptContextUpload(libraryId) {
+			await root.command("vault.contextUpload", {
+				libraryId,
+				id: params.get("id"),
+			});
+			selectLibrary(libraryId);
+		},
 		async renameLibrary(name) {
 			await root.command("libraries.rename", { libraryId: client.id(), name });
 		},
@@ -205,6 +239,7 @@ export function createApplication(platform, initialPage, browser = window) {
 			session.dispose();
 			unsubscribeCatalog();
 			client.dispose();
+			vault.dispose();
 			root.dispose();
 		},
 	};

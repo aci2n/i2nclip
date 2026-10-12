@@ -25,14 +25,19 @@ async function fixture(t) {
 	const identity = await library.generatePrivateKey();
 	const recovery = join(dir, "recovery.json");
 	const passwordFile = join(dir, "password");
-	const wrappedKey = await library.wrapPrivateKey(
-		identity.privateKey,
-		password,
-		1,
-	);
 	await writeFile(
 		recovery,
-		library.recoveryFile({ serverUrl: "http://localhost:8080", wrappedKey }),
+		await library.exportRecovery(
+			[
+				{
+					name: "Library",
+					serverUrl: "http://localhost:8080",
+					privateKey: identity.privateKey,
+				},
+			],
+			password,
+			"library",
+		),
 	);
 	await writeFile(passwordFile, `${password}\r\n`);
 	let output = "";
@@ -166,13 +171,10 @@ test("creation saves a protected recovery before registration and retries the sa
 		...library,
 		registerKey: async (options) => {
 			publicKey = options.publicKey;
-			const recovered = library.parseRecoveryFile(
-				await readFile(saved, "utf8"),
-			);
-			const privateKey = await library.unwrapPrivateKey(
-				recovered.wrappedKey,
-				password,
-			);
+			const recovered = (
+				await library.openRecovery(await readFile(saved, "utf8"), password)
+			).libraries[0];
+			const privateKey = recovered.privateKey;
 			assert.equal(
 				(await library.loadKey(privateKey)).registrationKey,
 				publicKey,
@@ -595,12 +597,13 @@ test("authenticated CLI creation and retry use a separate authorizing recovery a
 			calls++;
 			publicKey = options.publicKey;
 			assert.equal(options.privateKey, f.identity.privateKey);
-			const saved = library.parseRecoveryFile(
-				await readFile(destination, "utf8"),
-			);
-			const key = await library.loadKey(
-				await library.unwrapPrivateKey(saved.wrappedKey, "team-password"),
-			);
+			const saved = (
+				await library.openRecovery(
+					await readFile(destination, "utf8"),
+					"team-password",
+				)
+			).libraries[0];
+			const key = await library.loadKey(saved.privateKey);
 			assert.equal(key.registrationKey, publicKey);
 			if (calls === 1) throw new Error("lost response");
 		},
@@ -622,11 +625,17 @@ test("authenticated CLI creation and retry use a separate authorizing recovery a
 		run(["register", ...flags, "--otc", "invite"], { ...f.options, api }),
 		/exactly one/,
 	);
-	const other = library.recoveryFile({
-		serverUrl: "https://other.example",
-		wrappedKey: library.parseRecoveryFile(await readFile(f.recovery, "utf8"))
-			.wrappedKey,
-	});
+	const other = await library.exportRecovery(
+		[
+			{
+				name: "Other",
+				serverUrl: "https://other.example",
+				privateKey: f.identity.privateKey,
+			},
+		],
+		password,
+		"library",
+	);
 	await writeFile(f.recovery, other);
 	await assert.rejects(
 		run(["register", ...flags], { ...f.options, api }),

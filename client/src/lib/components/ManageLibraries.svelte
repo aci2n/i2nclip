@@ -1,6 +1,7 @@
 <script>
+import RecoveryExport from "./RecoveryExport.svelte";
 import { untrack } from "svelte";
-let { app, catalog, libraryId, serverControls } = $props();
+let { app, catalog, libraryId, serverControls, vault } = $props();
 let name = $state("");
 let savedName = "";
 $effect(() => {
@@ -64,6 +65,7 @@ async function run(action, scope = "rename") {
 		{#if error && errorAt === "rename"}
 			<p role="alert">{error}</p>
 		{/if}
+		<RecoveryExport {vault} {libraryId} />
 		{@render serverControls?.()}
 	</fieldset>
 </details>

@@ -54,6 +54,23 @@ export function createLibraryClient(
 				libraryName: entries.find((row) => row.id === selected)?.name,
 				catalog,
 			});
+		else if (value.vault)
+			state.set({
+				...value,
+				session: {
+					ready: value.vault.ready,
+					configured: false,
+					unlocked: false,
+					serverUrl: "",
+					epoch: value.vault.epoch,
+					busy: value.vault.busy,
+					error: value.vault.error,
+				},
+				uploads: [],
+				views: {},
+				media: {},
+				pairing: { active: false },
+			});
 		else if (value.session) state.set(value); // Internal single-runtime test adapter.
 	});
 	return {

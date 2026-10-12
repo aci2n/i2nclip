@@ -43,14 +43,6 @@ self.onconnect = ({ ports: [port] }) => {
 			});
 			return;
 		}
-		if (data.type === "test.config") {
-			port.postMessage({
-				type: "test.reply",
-				requestId: data.requestId,
-				value: await engine.config(data.libraryId),
-			});
-			return;
-		}
 		if (data.type === "test.context") {
 			await engine.contextUpload(data.source, data.withTags, data.libraryId);
 			port.postMessage({

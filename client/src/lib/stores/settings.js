@@ -8,13 +8,9 @@ export function createSettings(
 	const initial = {
 		mode: "create",
 		libraryName: "Personal",
-		authorizePassword: "",
 		server: "",
-		password: "",
 		otc: "",
 		authorizerLibraryId: "",
-		restorePassword: "",
-		recoveryFiles: undefined,
 		feedback: { scope: "setup", text: "", error: false },
 	};
 	const state = writable(initial);
@@ -100,15 +96,8 @@ export function createSettings(
 				state.update((current) => ({ ...current, [field]: value }));
 		},
 		create() {
-			const {
-				server,
-				password,
-				authorizePassword,
-				otc,
-				authorizerLibraryId,
-				mode,
-				libraryName,
-			} = get(state);
+			const { server, otc, authorizerLibraryId, mode, libraryName } =
+				get(state);
 			const authorizer = get(session).catalog?.find(
 				(row) => row.id === authorizerLibraryId,
 			);
@@ -118,7 +107,7 @@ export function createSettings(
 					session.create({
 						serverUrl:
 							mode === "authorize" ? authorizer?.serverUrl : server.trim(),
-						password: mode === "authorize" ? authorizePassword : password,
+
 						otc: mode === "authorize" ? "" : otc,
 						authorizerLibraryId:
 							mode === "authorize" ? authorizerLibraryId : undefined,
@@ -126,7 +115,7 @@ export function createSettings(
 					}),
 				"Library created. Download your recovery file before uploading.",
 				"Creating library…",
-				{ password: "", authorizePassword: "", otc: "" },
+				{ otc: "" },
 			);
 		},
 		discardCreation() {
@@ -144,55 +133,15 @@ export function createSettings(
 				session.discardCreation,
 				"Pending creation discarded.",
 				"Discarding…",
-				{ password: "", otc: "" },
+				{ otc: "" },
 			);
 		},
-		restore() {
-			const { recoveryFiles, restorePassword, libraryName } = get(state);
-			return action(
-				"restore",
-				() => session.restore(recoveryFiles?.[0], restorePassword, libraryName),
-				"Library restored and unlocked.",
-				"Restoring library…",
-				{ restorePassword: "", recoveryFiles: undefined },
-			);
-		},
-		backup: () =>
-			action(
-				"backup",
-				session.backup,
-				"Recovery download started. Keep the file and your password somewhere safe.",
-			),
 		setServer: () =>
 			action(
 				"server",
 				() => session.setServer(get(state).server.trim()),
 				"Server URL updated.",
 			),
-		reset() {
-			if (
-				disposed ||
-				get(session).busy ||
-				running ||
-				!platform.confirm(
-					"Reset everything in this browser? Keep a recovery file first. Uploads on the server will stay saved.",
-				)
-			)
-				return;
-			return action(
-				"reset",
-				session.reset,
-				"Browser settings reset. Create a library or restore from a recovery file.",
-				"Working…",
-				{
-					mode: "create",
-					password: "",
-					otc: "",
-					restorePassword: "",
-					recoveryFiles: undefined,
-				},
-			);
-		},
 		dispose() {
 			disposed = true;
 			unsubscribe();

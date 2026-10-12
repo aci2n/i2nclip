@@ -179,12 +179,21 @@ export async function run(
 		throw new UsageError(error.message);
 	}
 	const path = values.recovery ?? recoveryPath(env, home);
-	const recovery =
+	const recoveryText =
 		command === "create"
 			? null
-			: api.parseRecoveryFile(
-					(await readFileBounded(path, 65536, signal)).toString("utf8"),
+			: (await readFileBounded(path, api.MAX_RECOVERY_BYTES, signal)).toString(
+					"utf8",
 				);
+	async function singleRecovery(text, secret) {
+		const manifest = await api.openRecovery(text, secret);
+		if (manifest.scope !== "library")
+			throw new Error(
+				"CLI requires an individual-library recovery file. Export one from Manage Library.",
+			);
+		return manifest.libraries[0];
+	}
+
 	const password = values["password-file"]
 		? await passwordFromFile(values["password-file"], signal)
 		: await prompt("Password: ", signal);
@@ -192,20 +201,20 @@ export async function run(
 	async function register(publicKey, serverUrl) {
 		if (!values["authorize-with"])
 			return api.registerKey({ serverUrl, publicKey, otc: values.otc, signal });
-		const authorizer = api.parseRecoveryFile(
-			(await readFileBounded(values["authorize-with"], 65536, signal)).toString(
-				"utf8",
-			),
-		);
-		if (new URL(authorizer.serverUrl).origin !== new URL(serverUrl).origin)
-			throw new UsageError("Authorizing library must use the same server.");
+		const authorizerText = (
+			await readFileBounded(
+				values["authorize-with"],
+				api.MAX_RECOVERY_BYTES,
+				signal,
+			)
+		).toString("utf8");
 		const secret = values["authorizer-password-file"]
 			? await passwordFromFile(values["authorizer-password-file"], signal)
 			: await prompt("Authorizing library password: ", signal);
-		const authorizerKey = await api.unwrapPrivateKey(
-			authorizer.wrappedKey,
-			secret,
-		);
+		const authorizer = await singleRecovery(authorizerText, secret);
+		if (new URL(authorizer.serverUrl).origin !== new URL(serverUrl).origin)
+			throw new UsageError("Authorizing library must use the same server.");
+		const authorizerKey = authorizer.privateKey;
 		return api.registerAuthenticatedKey({
 			serverUrl,
 			publicKey,
@@ -222,10 +231,19 @@ export async function run(
 		)
 			throw new Error("Passwords do not match.");
 		const identity = await api.generatePrivateKey();
-		const wrappedKey = await api.wrapPrivateKey(identity.privateKey, password);
 		await saveRecovery(
 			path,
-			api.recoveryFile({ serverUrl: values.server, wrappedKey }),
+			await api.exportRecovery(
+				[
+					{
+						name: "Library",
+						serverUrl: values.server,
+						privateKey: identity.privateKey,
+					},
+				],
+				password,
+				"library",
+			),
 			values.recovery === undefined,
 			signal,
 		);
@@ -240,7 +258,8 @@ export async function run(
 		emit({ recovery: path, publicKey: identity.publicKey, registered: true });
 		return;
 	}
-	const privateKey = await api.unwrapPrivateKey(recovery.wrappedKey, password);
+	const recovery = await singleRecovery(recoveryText, password);
+	const privateKey = recovery.privateKey;
 	const key = await api.loadKey(privateKey);
 	signal?.throwIfAborted();
 	const credentials = { serverUrl: recovery.serverUrl, privateKey, signal };

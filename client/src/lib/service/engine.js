@@ -1,3 +1,9 @@
+import { loadKey } from "../protocol/crypto.js";
+import {
+	exportRecovery,
+	openRecovery,
+	MAX_RECOVERY_BYTES,
+} from "../protocol/recovery.js";
 import { checkServer } from "../protocol/server.js";
 import { createLibraryRuntime } from "./runtime.js";
 import { serviceTracing, traceEvent, traceMessage } from "./trace.js";
@@ -70,12 +76,30 @@ export function createServiceEngine(options) {
 		uploadLane = uploadScheduler();
 	const configured = new Map();
 	let catalogRevision = 0;
+	let vaultEpoch = 0;
+	let vault = {
+		ready: false,
+		status: "locked",
+		busy: false,
+		error: "",
+		epoch: vaultEpoch,
+	};
+	const transientUploads = new Map();
+	const unlocked = () => vault.status === "unlocked";
+	function requireUnlocked() {
+		if (!unlocked()) throw new Error("Unlock the client first.");
+	}
+	function vaultGuard(epoch) {
+		if (epoch !== vaultEpoch || disposed)
+			throw new Error("Vault context ended. Try again.");
+	}
+
 	async function notifyCatalog() {
 		const revision = ++catalogRevision;
-		const records = await repository.libraries();
+		const records = unlocked() ? await repository.libraries() : [];
 		if (!disposed && revision === catalogRevision)
 			options.platform?.onCatalog?.(
-				records.filter((row) => row.identity?.wrappedKey),
+				records.filter((row) => row.identity?.privateKey).map(({id, name}) => ({id, name})),
 			);
 	}
 	let disposed = false,
@@ -102,12 +126,25 @@ export function createServiceEngine(options) {
 		}
 	}
 	function snapshot(client) {
+		if (!unlocked())
+			return {
+				vault,
+				catalog: [],
+				setups: [],
+				libraries: {},
+				session: { ...empty("").session, ready: vault.ready },
+			};
 		const entries = [...rows.values()].map(({ id, name, setup }) => ({
 			id,
 			name,
 			setup,
 		}));
 		return {
+			vault,
+			transientUploads: [...transientUploads].map(([id, entry]) => ({
+				id,
+				withTags: entry.withTags,
+			})),
 			catalog: entries.filter(
 				(row) => client.states.get(row.id)?.session.configured,
 			),
@@ -124,7 +161,10 @@ export function createServiceEngine(options) {
 	}
 	function publish() {
 		for (const client of clients.values()) {
-			if ([...rows.keys()].some((id) => !client.states.get(id)?.session.ready))
+			if (
+				unlocked() &&
+				[...rows.keys()].some((id) => !client.states.get(id)?.session.ready)
+			)
 				continue;
 			send(client, { type: "snapshot", value: snapshot(client) });
 		}
@@ -154,6 +194,7 @@ export function createServiceEngine(options) {
 				else if (message.topic === "mediaReset") state.media = {};
 				else state[message.topic] = message.value;
 				client.states.set(id, state);
+				if (!unlocked()) return;
 				send(client, { type: "state", topic: "library", value: { id, state } });
 				if (message.topic === "session") {
 					if (configured.get(id) !== message.value.configured) {
@@ -162,7 +203,7 @@ export function createServiceEngine(options) {
 					}
 					publish();
 				}
-			} else send(client, { ...message, libraryId: id });
+			} else if (unlocked()) send(client, { ...message, libraryId: id });
 		});
 		client.connections.set(id, connection);
 	}
@@ -170,7 +211,7 @@ export function createServiceEngine(options) {
 		traceEvent("library.install", { libraryId: row.id });
 		if (disposed) throw new Error("Service ended.");
 		rows.set(row.id, row);
-		configured.set(row.id, Boolean(row.identity?.wrappedKey));
+		configured.set(row.id, Boolean(row.identity?.privateKey));
 		const runtime = createLibraryRuntime({
 			...options,
 			repository: repository.scope(row.id),
@@ -220,15 +261,213 @@ export function createServiceEngine(options) {
 		publish();
 		return row.id;
 	}
-	const ready = (async () => {
+	async function activate() {
+		const captured = vaultEpoch;
 		const stored = await repository.libraries();
 		const jobs = await repository.jobs();
+		vaultGuard(captured);
+		// Validate every identity before exposing any library to pages.
+		for (const row of stored) {
+			for (const value of [row.identity, row.identity?.pendingRegistration]) {
+				if (
+					value?.privateKey &&
+					(await loadKey(value.privateKey)).registrationKey !== value.publicKey
+				)
+					throw new Error("Invalid saved identity.");
+				vaultGuard(captured);
+			}
+		}
 		order = Math.max(0, ...jobs.map((job) => job.order || 0));
 		for (const row of stored) install(row);
 		if (!stored.length) await add("Personal");
 		await Promise.all([...runtimes.values()].map((runtime) => runtime.ready));
+	}
+	function clearRuntimes() {
+		for (const runtime of runtimes.values()) runtime.dispose();
+		runtimes.clear();
+		rows.clear();
+		configured.clear();
+		for (const client of clients.values()) {
+			for (const connection of client.connections.values())
+				connection.disconnect();
+			client.connections.clear();
+			client.states.clear();
+		}
+	}
+	function lockVault() {
+		vaultEpoch++;
+		vault = {
+			...vault,
+			status: repository.initialized ? "locked" : "uninitialized",
+			busy: false,
+			error: "",
+			epoch: vaultEpoch,
+		};
+		clearRuntimes();
+		repository.lock();
+		publish();
+		void notifyCatalog().catch(() => {});
+	}
+	const ready = (async () => {
+		await repository.ready;
+		vault = {
+			...vault,
+			ready: true,
+			status: repository.initialized ? "locked" : "uninitialized",
+		};
+		if (repository.unlocked) {
+			vault.status = "unlocked";
+			await activate();
+		}
 		await notifyCatalog();
 	})();
+	async function vaultCommand(name, payload) {
+		const epoch = vaultEpoch;
+		if (name === "vault.initialize" || name === "vault.unlock") {
+			if (unlocked()) return true;
+			vault = { ...vault, busy: true, error: "" };
+			publish();
+			try {
+				await repository[name.slice(6)](payload.password);
+				vaultGuard(epoch);
+				// Keep snapshots hidden until activation completes.
+				await activate();
+				vaultGuard(epoch);
+				vault = { ...vault, status: "unlocked", busy: false };
+				await notifyCatalog();
+				publish();
+				return true;
+			} catch (error) {
+                clearRuntimes(); repository.lock();
+				if (epoch === vaultEpoch) {
+					vault = {
+						...vault,
+						status: repository.initialized ? "locked" : "uninitialized",
+						busy: false,
+						error: error.message,
+					};
+					publish();
+				}
+				throw error;
+			}
+		}
+		if (name === "vault.reset") {
+			await repository.resetVault();
+			vaultGuard(epoch);
+			transientUploads.clear();
+			vault = { ...vault, status: "uninitialized", busy: false, error: "" };
+			publish();
+			return true;
+		}
+		requireUnlocked();
+		if (name === "vault.changePassword") {
+			await repository.changePassword(
+				payload.currentPassword,
+				payload.password,
+			);
+			vaultGuard(epoch);
+			return true;
+		}
+		if (name === "vault.export") {
+			const records = (await repository.libraries()).filter(
+				(row) =>
+					row.identity?.privateKey &&
+					(!payload.libraryId || row.id === payload.libraryId),
+			);
+			const text = await exportRecovery(
+				records.map((row) => ({
+					name: row.name,
+					serverUrl: row.identity.serverUrl,
+					privateKey: row.identity.privateKey,
+				})),
+				payload.password,
+				payload.libraryId ? "library" : "vault",
+			);
+			vaultGuard(epoch);
+			return new Blob([text], { type: "application/json" });
+		}
+		if (name === "vault.previewRecovery" || name === "vault.importRecovery") {
+			if (!payload.file || payload.file.size > MAX_RECOVERY_BYTES)
+				throw new Error("Invalid recovery file.");
+			const manifest = await openRecovery(
+				await payload.file.text(),
+				payload.password,
+			);
+			vaultGuard(epoch);
+			if (name === "vault.previewRecovery")
+				return manifest.libraries.map(({ name, serverUrl }) => ({
+					name,
+					serverUrl,
+				}));
+			const existing = await repository.libraries();
+			const records = [];
+			for (const row of manifest.libraries) {
+				const publicKey = (await loadKey(row.privateKey)).registrationKey;
+				if (
+					existing.some(
+						(item) =>
+							item.identity?.publicKey === publicKey &&
+							new URL(item.identity.serverUrl).origin ===
+								new URL(row.serverUrl).origin,
+					)
+				)
+					continue;
+				let name = row.name.trim(),
+					suffix = 2;
+				while (
+					[...existing, ...records].some(
+						(item) => item.name.toLowerCase() === name.toLowerCase(),
+					)
+				)
+					name = `${row.name.trim().slice(0, 70)} (${suffix++})`;
+				records.push({
+					id: crypto.randomUUID(),
+					name,
+					identity: {
+						serverUrl: row.serverUrl,
+						publicKey,
+						privateKey: row.privateKey,
+						identityGeneration: crypto.randomUUID(),
+						pendingRegistration: null,
+					},
+				});
+			}
+			vaultGuard(epoch);
+			await repository.importLibraries(records);
+			vaultGuard(epoch);
+			for (const row of records) await install(row).ready;
+			await notifyCatalog();
+			publish();
+			return {
+				imported: records.map((row) => row.id),
+				skipped: manifest.libraries.length - records.length,
+			};
+		}
+		if (name === "vault.contextUpload") {
+			const entry = transientUploads.get(payload.id);
+			if (!entry)
+				throw new Error(
+					"Upload request expired. Invoke the context menu again.",
+				);
+			const runtime = runtimes.get(payload.libraryId);
+			if (!runtime || !getConfigured(payload.libraryId))
+				throw new Error("Choose a destination library.");
+			const result = await runtime.contextUpload(
+				{ ...entry.source, id: payload.id },
+				entry.withTags,
+				false,
+			);
+			vaultGuard(epoch);
+			transientUploads.delete(payload.id);
+			publish();
+			return result;
+		}
+		throw new Error("Unknown vault command.");
+	}
+	function getConfigured(id) {
+		return Boolean(rows.get(id)?.identity?.privateKey) || configured.get(id);
+	}
+
 	function disconnect(id) {
 		traceEvent("client.disconnect", { clientId: id });
 		const client = clients.get(id);
@@ -264,7 +503,7 @@ export function createServiceEngine(options) {
 		}
 		if (name === "libraries.discardSetup") {
 			const config = await repository.scope(payload.libraryId).getConfig();
-			if (config.wrappedKey)
+			if (config.privateKey)
 				throw new Error(
 					"Setup completed. Keep the saved library and its recovery file.",
 				);
@@ -317,19 +556,26 @@ export function createServiceEngine(options) {
 		instanceId,
 		async catalog() {
 			await ready;
+			if (!unlocked()) return [];
 			return (await repository.libraries())
-				.filter((row) => row.identity?.wrappedKey)
+				.filter((row) => row.identity?.privateKey)
 				.map(({ id, name }) => ({ id, name }));
-		},
-		async config(id) {
-			await ready;
-			return repository.scope(id || rows.keys().next().value).getConfig();
 		},
 		async contextUpload(source, withTags, libraryId) {
 			await ready;
+			if (!unlocked()) {
+				const id = crypto.randomUUID();
+				transientUploads.set(id, { source, withTags });
+				await options.platform?.openUpload?.(
+					id,
+					withTags ? "upload" : "unlock",
+					"",
+				);
+				return id;
+			}
 			if (!libraryId) {
 				const registered = (await repository.libraries()).filter(
-					(row) => row.identity?.wrappedKey,
+					(row) => row.identity?.privateKey,
 				);
 				if (registered.length !== 1)
 					throw new Error("Choose a destination library.");
@@ -387,10 +633,34 @@ export function createServiceEngine(options) {
 							});
 							return;
 						}
+						if (message.name === "vault.lock" || message.name === "vault.reset")
+							lockVault();
+						if (message.name?.startsWith("vault.")) {
+							if (
+								message.name !== "vault.lock" &&
+								message.name !== "vault.reset" &&
+								message.payload?.vaultEpoch !== undefined &&
+								message.payload.vaultEpoch !== vaultEpoch
+							)
+								throw new Error("Vault context ended. Try again.");
+							const value =
+								message.name === "vault.lock"
+									? true
+									: await serialize(() =>
+											vaultCommand(message.name, message.payload || {}),
+										);
+							send(client, {
+								type: "reply",
+								requestId: message.requestId,
+								value,
+							});
+							return;
+						}
+						requireUnlocked();
+                        const commandEpoch = vaultEpoch;
+                        if (message.payload?.vaultEpoch !== undefined) vaultGuard(message.payload.vaultEpoch);
 						if (message.name?.startsWith("libraries.")) {
-							const value = await serialize(() =>
-								catalogCommand(message.name, message.payload || {}),
-							);
+							const value = await serialize(async () => {vaultGuard(commandEpoch); requireUnlocked(); const result = await catalogCommand(message.name, message.payload || {}); vaultGuard(commandEpoch); return result;});
 							send(client, {
 								type: "reply",
 								requestId: message.requestId,

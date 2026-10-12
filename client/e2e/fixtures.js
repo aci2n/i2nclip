@@ -48,15 +48,25 @@ const test = base.extend({
 const PASSWORD = "test-pass-1";
 const DEFAULT_SERVER = "https://clip.i2n.duckdns.org";
 
+async function master(page, password = PASSWORD) {
+	await expect(page.locator("#master-password, header").first()).toBeVisible();
+	if (await page.locator("#master-password").isVisible()) {
+		await page.locator("#master-password").fill(password);
+		if (await page.locator("#master-confirmation").isVisible())
+			await page.locator("#master-confirmation").fill(password);
+		await page.locator("#unlock-vault").click();
+		await expect(page.locator("#master-password")).toBeHidden();
+	}
+}
 async function options(page, app) {
 	await page.goto(`${app.web.origin}/client/dist/extension/options.html`);
+	await master(page);
 	await openServer(page);
 	await page.locator("#server").fill(app.origin);
 }
 
 async function fillCreation(page, code) {
 	await page.locator("#otc").fill(code);
-	await page.locator("#pass").fill(PASSWORD);
 }
 
 async function storage(page) {
@@ -78,6 +88,7 @@ async function expectSetup(page) {
 }
 
 async function openServer(page) {
+	await master(page);
 	const details = page.locator("#server-details");
 	if (!(await details.count())) return;
 	if (!(await details.isVisible()))
@@ -93,6 +104,7 @@ async function openReset(page) {
 }
 
 async function chooseRestore(page) {
+	await master(page);
 	await page.getByRole("tab", { name: "Restore", exact: true }).click();
 	await expect(page.locator("#restore-settings")).toBeVisible();
 	await expect(page.locator("#create")).toBeHidden();
@@ -110,15 +122,20 @@ async function createLibrary(page, app) {
 	await options(page, app);
 	const code = await issueOtc(app.data);
 	await fillCreation(page, code);
-	await page.locator("#pass").press("Enter");
+	await page.locator("#create-library").click();
 	await expect(page.locator("#status")).toContainText("Library created.");
 	await expectConfigured(page);
 	return { code, ...(await storage(page)) };
 }
 
 async function downloadRecovery(page) {
-	await page.getByRole("button", { name: "Download recovery file" }).click();
-	await expect(page.locator("#status")).toContainText(
+	const manage = page.locator("#rename-library-settings");
+	if (!(await manage.evaluate((element) => element.open)))
+		await manage.locator("summary").click();
+	await page.locator("#library-recovery-password").fill(PASSWORD);
+	await page.locator("#library-recovery-confirm").fill(PASSWORD);
+	await page.locator("#backup").click();
+	await expect(manage.getByRole("status")).toContainText(
 		"Recovery download started",
 	);
 	return page.evaluate(() => window.lastDownload);
@@ -135,10 +152,7 @@ async function resetLibrary(page, accept = true) {
 	await page
 		.getByRole("button", { name: "Reset everything", exact: true })
 		.click();
-	if (accept)
-		await expect(page.locator("#status")).toContainText(
-			"Browser settings reset",
-		);
+	if (accept) await master(page);
 }
 
 const execFileAsync = promisify(execFile);
@@ -230,35 +244,10 @@ function installBrowser() {
 		},
 	};
 	window.serviceTest = async (name, payload = {}) => {
-		if (name === "config")
-			return new Promise((resolve, reject) => {
-				const opening = indexedDB.open("i2nclip-libraries");
-				opening.onerror = () => reject(opening.error);
-				opening.onsuccess = () => {
-					const db = opening.result;
-					if (!db.objectStoreNames.contains("libraries")) {
-						db.close();
-						resolve({});
-						return;
-					}
-					const tx = db.transaction("libraries");
-					const request = tx.objectStore("libraries").getAll();
-					tx.oncomplete = () => {
-						const lib = new URLSearchParams(location.search).get("library");
-						const value =
-							(
-								request.result.find((row) => row.id === lib) ||
-								request.result[0]
-							)?.identity || {};
-						db.close();
-						resolve(value);
-					};
-					tx.onabort = () => {
-						db.close();
-						reject(tx.error);
-					};
-				};
-			});
+		if (name === "config") {
+			const state = await window.serviceTest("state");
+			return { ...state.session, vault: state.vault };
+		}
 		const port = connect();
 		let instanceId;
 		let epoch;
@@ -278,6 +267,7 @@ function installBrowser() {
 						if (name === "state") {
 							resolve({
 								...selected,
+								vault: message.value.vault,
 								catalog: message.value.catalog,
 								setups: message.value.setups,
 								libraries: message.value.libraries,
@@ -412,6 +402,7 @@ function startWeb() {
 }
 
 export {
+	master,
 	chooseRestore,
 	createLibrary,
 	DEFAULT_SERVER,

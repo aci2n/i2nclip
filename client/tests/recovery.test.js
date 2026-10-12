@@ -9,56 +9,62 @@ import {
 	tagToken,
 } from "../src/lib/protocol/crypto.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
-import {
-	parseRecoveryFile,
-	recoveryFile,
-} from "../src/lib/protocol/recovery.js";
-import { unwrapPrivateKey, wrapPrivateKey } from "../src/lib/protocol/vault.js";
+import { exportRecovery, openRecovery } from "../src/lib/protocol/recovery.js";
 
-test("encrypted recovery preserves decryption, tags and identity", async () => {
-	const created = await generatePrivateKey();
-	const original = await loadKey(created.privateKey);
-	const wrappedKey = await wrapPrivateKey(
-		created.privateKey,
+test("portable recovery preserves content decryption, normalized tags and public identity", async () => {
+	const created = await generatePrivateKey(),
+		original = await loadKey(created.privateKey);
+	const text = await exportRecovery(
+		[
+			{
+				name: "Library",
+				serverUrl: "https://clip.example.com",
+				privateKey: created.privateKey,
+			},
+		],
 		"test password",
-		1000,
+		"library",
 	);
-	const text = recoveryFile({
-		serverUrl: "https://clip.example.com",
-		wrappedKey,
-	});
-	assert.equal(text.includes(JSON.parse(created.privateKey).seed), false);
-	const recovered = parseRecoveryFile(text);
-	await assert.rejects(
-		unwrapPrivateKey(recovered.wrappedKey, "wrong"),
-		/Wrong password/,
-	);
-	const restored = await loadKey(
-		await unwrapPrivateKey(recovered.wrappedKey, "test password"),
-	);
+	assert(!text.includes(JSON.parse(created.privateKey).seed));
+	await assert.rejects(openRecovery(text, "wrong"), /Wrong password/);
+	const recovered = await openRecovery(text, "test password"),
+		restored = await loadKey(recovered.libraries[0].privateKey);
 	assert.equal(restored.registrationKey, original.registrationKey);
 	assert.equal(
 		await tagToken(restored, "vacation"),
 		await tagToken(original, "vacation"),
 	);
-	const aad = contentAad("test");
-	const ciphertext = await encrypt(original, aad, utf8("original upload"));
+	const aad = contentAad("test"),
+		ciphertext = await encrypt(original, aad, utf8("original upload"));
 	assert.equal(
 		new TextDecoder().decode(await decrypt(restored, aad, ciphertext)),
 		"original upload",
 	);
 	for (const changed of [
-		{ v: 2 },
-		{ serverUrl: "javascript:alert(1)" },
-		{ wrappedKey: { ...wrappedKey, v: 2 } },
-		{ wrappedKey: { ...wrappedKey, iterations: 9_000_000 } },
-		{ wrappedKey: { ...wrappedKey, salt: "AAAA" } },
-		{ wrappedKey: { ...wrappedKey, ct: "!!!!" } },
-	]) {
-		assert.throws(
-			() =>
-				parseRecoveryFile(JSON.stringify({ ...JSON.parse(text), ...changed })),
-			/Invalid/,
+		{ v: 1 },
+		{ encrypted: { v: 2 } },
+		{ encrypted: { ...JSON.parse(text).encrypted, iterations: 9_000_000 } },
+		{ encrypted: { ...JSON.parse(text).encrypted, salt: "AAAA" } },
+		{ encrypted: { ...JSON.parse(text).encrypted, iv: "AAAA" } },
+	])
+		await assert.rejects(
+			openRecovery(
+				JSON.stringify({ ...JSON.parse(text), ...changed }),
+				"test password",
+			),
+			/Invalid|Wrong password/,
 		);
-	}
+	await assert.rejects(
+		exportRecovery(
+			[
+				{
+					name: "Bad",
+					serverUrl: "javascript:alert(1)",
+					privateKey: created.privateKey,
+				},
+			],
+			"test password",
+			"library",
+		),
+	);
 });

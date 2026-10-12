@@ -20,7 +20,7 @@ test("setup, recovery export, reset and restoration use durable configuration wi
 	expect(created.session.unlocked).toBe(true);
 	expect(created.session).not.toHaveProperty("privateKey");
 	const recovery = await downloadRecovery(page);
-	expect(JSON.parse(recovery).wrappedKey).toEqual(created.local.wrappedKey);
+	expect(JSON.parse(recovery).v).toBe(2);
 	expect(recovery).not.toContain(PASSWORD);
 	expect(recovery).not.toContain("privateKey");
 	await resetLibrary(page);
@@ -32,15 +32,14 @@ test("setup, recovery export, reset and restoration use durable configuration wi
 		buffer: Buffer.from(recovery),
 	});
 	await page.locator("#restore-pass").fill(PASSWORD);
-	await page.locator("#restore-pass").press("Enter");
-	await expect(page.locator("#status")).toHaveText(
-		"Library restored and unlocked.",
+	await page.locator("#preview-recovery").click();
+	await page.locator("#restore").click();
+	await expect(page.getByRole("status")).toHaveText(
+		"Restored 1 libraries. 0 already saved.",
 	);
 	const restored = await storage(page);
 	expect(restored.local.publicKey).toBe(created.local.publicKey);
-	expect(restored.local.identityGeneration).not.toBe(
-		created.local.identityGeneration,
-	);
+	expect(restored.local.configured).toBe(true);
 });
 
 test("failed registration retains the encrypted identity for retry and keeps errors beside setup", async ({
@@ -51,15 +50,15 @@ test("failed registration retains the encrypted identity for retry and keeps err
 	await openServer(page);
 	await page.locator("#server").fill(app.origin);
 	await fillCreation(page, "invalid-code");
-	await page.locator("#pass").press("Enter");
+	await page.locator("#create-library").click();
 	await expect(page.locator("#status")).toContainText(
 		"Your encrypted identity is saved",
 	);
 	const failed = await storage(page);
-	expect(failed.local.pendingRegistration.wrappedKey).toBeTruthy();
+	expect(failed.local.pendingRegistration.publicKey).toBeTruthy();
 	expect(failed.local.pendingRegistration).not.toHaveProperty("password");
 	await page.locator("#otc").fill(await issueOtc(app.data));
-	await page.locator("#pass").press("Enter");
+	await page.locator("#create-library").click();
 	await expect(page.locator("#status")).toContainText("Library created.");
 	expect((await storage(page)).local.publicKey).toBe(
 		failed.local.pendingRegistration.publicKey,
@@ -84,7 +83,7 @@ test("invalid recovery and invalid server input preserve form drafts and saved c
 		buffer: Buffer.from("{}"),
 	});
 	await page.locator("#restore-pass").fill(PASSWORD);
-	await page.locator("#restore-pass").press("Enter");
-	await expect(page.locator("#status")).toContainText("Invalid recovery");
-	await expect(page.locator("#restore-pass")).toHaveValue(PASSWORD);
+	await page.locator("#preview-recovery").click();
+	await expect(page.getByRole("alert")).toContainText("Invalid recovery");
+	await expect(page.locator("#restore-pass")).toHaveValue("");
 });

@@ -15,12 +15,12 @@
  * status:string, empty:null|'search'|'library'}} ViewSnapshot
  * @typedef {{session:SessionSnapshot, uploads:UploadSnapshot[], pairing:object,
  * media:Record<string, object>, views:Record<string, ViewSnapshot>,runtimeId:string}} LibraryState
- * @typedef {{catalog:Array<{id:string,name:string}>, setups:Array<{id:string,name:string,setup?:{method:string,authorizerLibraryId:string}}>, libraries:Record<string,LibraryState>}} ServiceSnapshot
- * @typedef {'identity.create'|'identity.restore'|'identity.unlock'|'identity.setServer'|
- * 'identity.reset'|'identity.discardCreation'|'identity.backup'|'view.open'|'view.close'|
+ * @typedef {{vault:{ready:boolean,status:"uninitialized"|"locked"|"unlocked",epoch:number,busy:boolean,error:string},catalog:Array<{id:string,name:string}>, setups:Array<{id:string,name:string,setup?:{method:string,authorizerLibraryId:string}}>, libraries:Record<string,LibraryState>}} ServiceSnapshot
+ * @typedef {'identity.create'|'identity.setServer'|
+ * 'identity.reset'|'identity.discardCreation'|'view.open'|'view.close'|
  * 'view.search'|'view.more'|'media.content'|'media.retag'|'media.remove'|'uploads.submit'|
  * 'uploads.retry'|'uploads.discard'|'pending.get'|'pending.send'|'pairing.send'|
- * 'pairing.receive'|'pairing.approve'|'pairing.rejectVerification'|'pairing.cancel'|'libraries.discardSetup'|'libraries.beginSetup'|'libraries.add'|'libraries.rename'|'libraries.forget'|'libraries.reset'|'snapshot'} CommandName
+ * 'pairing.receive'|'pairing.approve'|'pairing.rejectVerification'|'pairing.cancel'|'libraries.discardSetup'|'libraries.beginSetup'|'libraries.add'|'libraries.rename'|'libraries.forget'|'libraries.reset'|'vault.initialize'|'vault.unlock'|'vault.lock'|'vault.reset'|'vault.changePassword'|'vault.export'|'vault.previewRecovery'|'vault.importRecovery'|'vault.contextUpload'|'snapshot'} CommandName
  * @typedef {{type:'command', instanceId:string, requestId:string, name:CommandName,
  * payload:object & {epoch:number,libraryId?:string,runtimeId?:string}}} CommandMessage
  * @typedef {{instanceId:string, clientId:string, sequence:number, type:string,

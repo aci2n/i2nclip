@@ -109,9 +109,14 @@ export async function smoketest({
 		const password = await passwordFromFile(passwordPath, signal);
 		let recovery;
 		try {
-			recovery = api.parseRecoveryFile(
-				(await readFileBounded(recoveryPath, 65536, signal)).toString("utf8"),
-			);
+			recovery = (
+				await api.openRecovery(
+					(
+						await readFileBounded(recoveryPath, api.MAX_RECOVERY_BYTES, signal)
+					).toString("utf8"),
+					password,
+				)
+			).libraries[0];
 		} catch (error) {
 			if (error.code !== "ENOENT") throw error;
 		}
@@ -129,13 +134,18 @@ export async function smoketest({
 		if (recovery) await command(["register", "--otc", otc]);
 		else {
 			await command(["create", "--server", serverUrl, "--otc", otc]);
-			recovery = api.parseRecoveryFile(
-				(await readFileBounded(recoveryPath, 65536, signal)).toString("utf8"),
-			);
+			recovery = (
+				await api.openRecovery(
+					(
+						await readFileBounded(recoveryPath, api.MAX_RECOVERY_BYTES, signal)
+					).toString("utf8"),
+					password,
+				)
+			).libraries[0];
 		}
 		credentials = {
 			serverUrl,
-			privateKey: await api.unwrapPrivateKey(recovery.wrappedKey, password),
+			privateKey: recovery.privateKey,
 		};
 		report("PASS registration (encrypted identity retained for reuse)");
 		stage = "pairing authentication";

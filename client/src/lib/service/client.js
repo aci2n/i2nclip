@@ -8,6 +8,7 @@ export function createServiceClient(
 	{ helper, browser = globalThis.window } = {},
 ) {
 	const initial = () => ({
+		vault: { ready: false, status: "locked", epoch: 0 },
 		catalog: [],
 		libraries: {},
 		connected: false,
@@ -64,7 +65,8 @@ export function createServiceClient(
 		transport?.disconnect();
 		rejectPending();
 		state.update((value) => ({
-			...value,
+			...initial(),
+			vault: { ...value.vault, status: "locked" },
 			connected: false,
 			session: {
 				...value.session,
@@ -243,6 +245,7 @@ export function createServiceClient(
 				name,
 				payload: {
 					...payload,
+					vaultEpoch: get(state).vault?.epoch,
 					runtimeId:
 						payload.runtimeId ??
 						get(state).libraries?.[payload.libraryId]?.runtimeId,
@@ -297,7 +300,8 @@ export function createServiceClient(
 		transport?.disconnect();
 		rejectPending();
 		state.update((value) => ({
-			...value,
+			...initial(),
+			vault: { ...value.vault, status: "locked" },
 			connected: false,
 			media: {},
 			session: { ...value.session, unlocked: false },

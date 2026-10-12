@@ -60,8 +60,7 @@ test("background restart starts locked and retains pending sources for explicit 
 		.not.toBe("");
 	await page.evaluate(() => window.serviceTest("restart"));
 	await page.reload();
-	await page.getByRole("link", { name: "Library", exact: true }).click();
-	await expect(page.locator("#unlock")).toBeVisible();
+	await expect(page.locator("#master-password")).toBeVisible();
 	const popup = await openPopup(
 		page,
 		`${app.web.origin}/client/dist/extension/upload.html?id=retained`,
@@ -69,8 +68,9 @@ test("background restart starts locked and retains pending sources for explicit 
 	await expect(popup.locator("#name")).toBeHidden();
 	await expect(popup.locator("#preview")).toBeHidden();
 	await expect(popup.locator("#send button")).toBeHidden();
-	await page.locator("#pass").fill(PASSWORD);
-	await page.locator("#pass").press("Enter");
+	await page.locator("#master-password").fill(PASSWORD);
+	await page.locator("#unlock-vault").click();
+	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await expect(page.locator("#files")).toBeAttached();
 	expect(
 		(await page.evaluate(() => window.serviceTest("state"))).uploads[0].status,

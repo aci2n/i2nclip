@@ -5,7 +5,6 @@ import { createServiceEngine } from "../src/lib/service/engine.js";
 import { createLibraryClient } from "../src/lib/service/scope.js";
 import { createSetup } from "../src/lib/stores/setup.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
-import { wrapPrivateKey } from "../src/lib/protocol/vault.js";
 import { engineClient, memoryRepository, until } from "./service-helpers.js";
 import { deferred } from "./helpers.js";
 
@@ -24,7 +23,6 @@ test("authorization follows the source server, preserves other drafts, and abort
 	await f.b.command("identity.setServer", {
 		serverUrl: "https://other.example",
 	});
-	await f.b.command("identity.unlock", { password: "password123" });
 	const setup = createSetup(
 		f.root,
 		{ confirm: () => true },
@@ -73,7 +71,6 @@ test("global reset removes provisional setup and clears its form secrets", async
 			},
 		},
 	});
-	await f.a.command("identity.unlock", { password: "password123" });
 	const setup = createSetup(
 		f.root,
 		{ confirm: () => true },
@@ -89,7 +86,7 @@ test("global reset removes provisional setup and clears its form secrets", async
 	await f.root.command("libraries.reset");
 	assert.equal(get(setup).id, undefined);
 	assert.equal(get(setup).open, false);
-	assert.equal(get(setup.settings).authorizePassword, "");
+	assert.equal(get(setup.settings).otc, "");
 	assert.equal(get(f.root).catalog.length, 0);
 });
 
@@ -120,6 +117,9 @@ function catalogRepository(records) {
 		return repo;
 	};
 	return {
+		initialized: true,
+		unlocked: true,
+		lock() {},
 		libraries: async () => structuredClone([...rows.values()]),
 		scope,
 		jobs: async () =>
@@ -149,7 +149,7 @@ async function fixture(t, extra = {}) {
 			identity: {
 				serverUrl: "https://clip.example",
 				publicKey: key.publicKey,
-				wrappedKey: await wrapPrivateKey(key.privateKey, "password123", 1),
+				privateKey: key.privateKey,
 				identityGeneration: `gen-${index}`,
 			},
 		})),
@@ -197,8 +197,6 @@ test("setup keeps a failed registration out of the catalog, resumes its identity
 	t.after(setup.dispose);
 	setup.start();
 	assert.equal(get(setup.settings).mode, "authorize");
-	await assert.rejects(setup.unlockSource("lib-0", "wrong"));
-	await setup.unlockSource("lib-0", "password123");
 	setup.settings.edit("libraryName", "Team");
 	setup.settings.edit("authorizePassword", "new-password");
 	assert.equal(await setup.settings.create(), false);
@@ -228,11 +226,10 @@ test("setup keeps a failed registration out of the catalog, resumes its identity
 		pending.publicKey,
 	);
 });
-test("library selection and unlock are independent; catalog renames retain identity", async (t) => {
+test("library selection is independent and vault unlock applies to all libraries; catalog renames retain identity", async (t) => {
 	const f = await fixture(t);
-	await f.a.command("identity.unlock", { password: "password123" });
 	assert.equal(get(f.a).session.unlocked, true);
-	assert.equal(get(f.b).session.unlocked, false);
+	assert.equal(get(f.b).session.unlocked, true);
 	await f.root.command("libraries.rename", {
 		libraryId: "lib-0",
 		name: "Private",
@@ -247,7 +244,7 @@ test("library selection and unlock are independent; catalog renames retain ident
 		/already used/,
 	);
 	f.a.select("lib-1");
-	assert.equal(get(f.a).session.unlocked, false);
+	assert.equal(get(f.a).session.unlocked, true);
 	assert.equal(get(f.b).libraryId, "lib-1");
 });
 test("switching tabs does not retarget a running upload; the owner has one upload lane", async (t) => {
@@ -265,8 +262,6 @@ test("switching tabs does not retarget a running upload; the owner has one uploa
 			return { id: `media-${seen.length}` };
 		},
 	});
-	await f.a.command("identity.unlock", { password: "password123" });
-	await f.b.command("identity.unlock", { password: "password123" });
 	await f.a.command("uploads.submit", {
 		sources: [
 			{
@@ -300,7 +295,6 @@ test("switching tabs does not retarget a running upload; the owner has one uploa
 });
 test("forgetting one library preserves the other unlocked identity and rejects stale commands", async (t) => {
 	const f = await fixture(t);
-	await f.b.command("identity.unlock", { password: "password123" });
 	await f.root.command("libraries.forget", { libraryId: "lib-0" });
 	assert.equal(get(f.b).session.unlocked, true);
 	await assert.rejects(
@@ -323,7 +317,6 @@ test("an unlocked library can authorize a new independent library on its server"
 			},
 		},
 	});
-	await f.a.command("identity.unlock", { password: "password123" });
 	const id = await f.root.command("libraries.add", { name: "Team" });
 	await f.root.command("identity.create", {
 		libraryId: id,
@@ -338,10 +331,8 @@ test("an unlocked library can authorize a new independent library on its server"
 	assert.equal(get(f.a).session.publicKey, f.keys[0].publicKey);
 });
 
-test("failed catalog removal restores the persisted library locked and leaves other libraries running", async (t) => {
+test("failed catalog removal restores the persisted library unlocked and leaves other libraries running", async (t) => {
 	const f = await fixture(t);
-	await f.a.command("identity.unlock", { password: "password123" });
-	await f.b.command("identity.unlock", { password: "password123" });
 	f.repository.deleteLibraries = async () => {
 		throw new Error("disk failed");
 	};
@@ -351,8 +342,7 @@ test("failed catalog removal restores the persisted library locked and leaves ot
 	);
 	assert.equal(get(f.root).catalog.length, 2);
 	assert.equal(get(f.a).session.configured, true);
-	assert.equal(get(f.a).session.unlocked, false);
+	assert.equal(get(f.a).session.unlocked, true);
 	assert.equal(get(f.b).session.unlocked, true);
-	await f.a.command("identity.unlock", { password: "password123" });
 	assert.equal(get(f.a).session.unlocked, true);
 });

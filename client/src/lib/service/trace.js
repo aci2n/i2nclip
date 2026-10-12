@@ -2,7 +2,7 @@
 export const serviceTracing = typeof self !== "undefined";
 
 const secrets =
-	/^(password|passphrase|privateKey|wrappedKey|publicKey|public_key|code|verificationCode|otc|invitation|secret|capability|authorization|ciphertext|record|loginState|metadata|tags|tokens|query|searchDraft|srcUrl|originalUrl|serverUrl|server|name|error|status|message|content)$/i;
+	/^(password|currentPassword|masterPassword|recoveryPassword|vaultKey|encrypted|libraries|passphrase|privateKey|wrappedKey|publicKey|public_key|code|verificationCode|otc|invitation|secret|capability|authorization|ciphertext|record|loginState|metadata|tags|tokens|query|searchDraft|srcUrl|originalUrl|serverUrl|server|name|error|status|message|content)$/i;
 const traceFields = new Set([
 	"type",
 	"requestId",
@@ -54,7 +54,7 @@ export function summarizeMessage(value, depth = 0) {
 export function traceMessage(direction, clientId, message) {
 	const command =
 		typeof message.name === "string" &&
-		/^(identity|view|media|uploads|pending|pairing|libraries)\.[a-zA-Z]+$/.test(
+		/^(identity|view|media|uploads|pending|pairing|libraries|vault)\.[a-zA-Z]+$/.test(
 			message.name,
 		)
 			? message.name

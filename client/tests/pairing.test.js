@@ -21,7 +21,6 @@ import {
 } from "../src/lib/protocol/pairing.js";
 import { createPairing } from "../src/lib/service/pairing.js";
 import { createIdentity } from "../src/lib/service/identity.js";
-import { wrapPrivateKey } from "../src/lib/protocol/vault.js";
 import { memoryRepository } from "./service-helpers.js";
 import { deferred, tick, workflowSession } from "./helpers.js";
 
@@ -338,7 +337,7 @@ function fixture(t, receiverImport, options = {}) {
 		writable({
 			serverUrl: origin,
 			identityGeneration: "sender",
-			wrappedKey: {},
+			configured: true,
 			privateKey: "",
 			ready: true,
 		});
@@ -376,7 +375,7 @@ function fixture(t, receiverImport, options = {}) {
 					serverUrl: value.serverUrl,
 					privateKey: value.privateKey,
 					publicKey: value.publicKey,
-					wrappedKey: {},
+					configured: true,
 					identityGeneration: "receiver",
 				});
 				return workflow.operation({
@@ -428,7 +427,7 @@ test("pairing requires explicit approval and reports success only after durable 
 		state.set({
 			...get(state),
 			...value,
-			wrappedKey: {},
+			configured: true,
 			identityGeneration: "receiver",
 		});
 		return true;
@@ -440,11 +439,7 @@ test("pairing requires explicit approval and reports success only after durable 
 	assert.equal(get(f.sender).verificationCode, "");
 	f.sender.approve();
 	assert.equal(f.transcript.length, 0);
-	const receiving = f.receiver.receive(
-		get(f.sender).code,
-		"new-password",
-		origin,
-	);
+	const receiving = f.receiver.receive(get(f.sender).code, origin);
 	await until(() => get(f.sender).approval);
 	await until(() => Boolean(get(f.receiver).verificationCode));
 	const verification = get(f.sender).verificationCode;
@@ -481,11 +476,7 @@ for (const role of ["sender", "receiver"]) {
 		f.senderState.update((value) => ({ ...value, ...key }));
 		const sending = f.sender.send();
 		await until(() => Boolean(get(f.sender).code));
-		const receiving = f.receiver.receive(
-			get(f.sender).code,
-			"new-password",
-			origin,
-		);
+		const receiving = f.receiver.receive(get(f.sender).code, origin);
 		await until(
 			() => get(f.sender).approval && Boolean(get(f.receiver).verificationCode),
 		);
@@ -526,11 +517,7 @@ test("a malformed worker verification code fails closed before approval", async 
 	f.senderState.update((value) => ({ ...value, ...key }));
 	const sending = f.sender.send();
 	await until(() => Boolean(get(f.sender).code));
-	const receiving = f.receiver.receive(
-		get(f.sender).code,
-		"new-password",
-		origin,
-	);
+	const receiving = f.receiver.receive(get(f.sender).code, origin);
 	assert.deepEqual(await Promise.all([sending, receiving]), [false, false]);
 	f.sender.approve();
 	assert.equal(get(f.sender).approval, false);
@@ -545,11 +532,7 @@ test("identity changes cancel authenticated pairing before any identity transfer
 	f.senderState.update((value) => ({ ...value, ...key }));
 	const sending = f.sender.send();
 	await until(() => Boolean(get(f.sender).code));
-	const receiving = f.receiver.receive(
-		get(f.sender).code,
-		"new-password",
-		origin,
-	);
+	const receiving = f.receiver.receive(get(f.sender).code, origin);
 	await until(() => get(f.sender).approval);
 	f.senderState.update((value) => ({
 		...value,
@@ -568,22 +551,17 @@ for (const mutation of ["reset", "setServer"]) {
 		const key = await generatePrivateKey();
 		const repository = memoryRepository({
 			serverUrl: origin,
-			wrappedKey: await wrapPrivateKey(key.privateKey, "password123", 1),
+			privateKey: key.privateKey,
 			publicKey: key.publicKey,
 			identityGeneration: "sender",
 		});
 		const senderSession = createIdentity(repository, origin);
 		t.after(senderSession.dispose);
 		await senderSession.ready;
-		await senderSession.unlock("password123");
 		const f = fixture(t, undefined, { senderSession });
 		const sending = f.sender.send();
 		await until(() => Boolean(get(f.sender).code));
-		const receiving = f.receiver.receive(
-			get(f.sender).code,
-			"new-password",
-			origin,
-		);
+		const receiving = f.receiver.receive(get(f.sender).code, origin);
 		await until(() => get(f.sender).approval);
 		const entered = deferred(),
 			finish = deferred();
@@ -647,11 +625,7 @@ test("expired pairing cannot transfer a key even when the relay still offers app
 	f.senderState.update((value) => ({ ...value, ...key }));
 	const sending = f.sender.send();
 	await until(() => Boolean(get(f.sender).code));
-	const receiving = f.receiver.receive(
-		get(f.sender).code,
-		"new-password",
-		origin,
-	);
+	const receiving = f.receiver.receive(get(f.sender).code, origin);
 	await until(() => get(f.sender).approval);
 	elapsed = 120_001;
 	f.sender.approve();
@@ -676,11 +650,7 @@ test("canceling during receiver save prevents acknowledgment and stale completio
 	f.senderState.update((value) => ({ ...value, ...key }));
 	const sending = f.sender.send();
 	await until(() => Boolean(get(f.sender).code));
-	const receiving = f.receiver.receive(
-		get(f.sender).code,
-		"new-password",
-		origin,
-	);
+	const receiving = f.receiver.receive(get(f.sender).code, origin);
 	await until(() => get(f.sender).approval);
 	f.sender.approve();
 	await entered.promise;
@@ -699,11 +669,7 @@ test("lost acknowledgment preserves the saved library without claiming sender su
 	f.senderState.update((value) => ({ ...value, ...key }));
 	const sending = f.sender.send();
 	await until(() => Boolean(get(f.sender).code));
-	const receiving = f.receiver.receive(
-		get(f.sender).code,
-		"new-password",
-		origin,
-	);
+	const receiving = f.receiver.receive(get(f.sender).code, origin);
 	await until(() => get(f.sender).approval);
 	f.sender.approve();
 	assert.equal(await receiving, false);
@@ -725,11 +691,7 @@ for (const step of [2, 3, 4, 5]) {
 		f.senderState.update((value) => ({ ...value, ...key }));
 		const sending = f.sender.send();
 		await until(() => Boolean(get(f.sender).code));
-		const receiving = f.receiver.receive(
-			get(f.sender).code,
-			"new-password",
-			origin,
-		);
+		const receiving = f.receiver.receive(get(f.sender).code, origin);
 		await until(() => get(f.sender).approval);
 		f.sender.approve();
 		assert.equal(await receiving, true);

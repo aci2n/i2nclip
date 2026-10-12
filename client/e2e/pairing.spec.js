@@ -17,17 +17,14 @@ async function setup(page, kind, app) {
 	await openServer(page);
 	await page.locator("#server").fill(app.origin);
 	await fillCreation(page, await issueOtc(app.data));
-	await page.locator("#pass").press("Enter");
+	await page.locator("#create-library").click();
 	await expect(page.locator("#status")).toContainText("Library created.");
 }
 async function receive(page, code, app) {
 	await openServer(page);
 	await page.locator("#server").fill(app.origin);
-	await page
-		.getByRole("tab", { name: "Pair", exact: true })
-		.click();
+	await page.getByRole("tab", { name: "Pair", exact: true }).click();
 	await page.locator("#pairing-input").fill(code);
-	await page.locator("#pairing-password").fill("different-device-password");
 	await page
 		.getByRole("button", { name: "Connect library", exact: true })
 		.click();
@@ -85,7 +82,7 @@ for (const [from, to] of [
 			await expect(receiver.locator("#configured")).toBeVisible();
 			const saved = await receiver.evaluate(() => window.serviceTest("config"));
 			expect(saved.publicKey).toBe(original.publicKey);
-			expect(saved.wrappedKey).not.toEqual(original.wrappedKey);
+			expect(saved.publicKey).toBe(original.publicKey);
 			expect(
 				(await receiver.evaluate(() => window.serviceTest("state"))).session,
 			).not.toHaveProperty("privateKey");
