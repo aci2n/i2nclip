@@ -98,6 +98,11 @@ export function createSettings(
 		state.update((value) => ({
 			...value,
 			...(success ? clear : {}),
+			...normalizeAuthorizer(
+				value,
+				get(session).catalog,
+				get(session).selectedLibraryId || get(session).libraryId,
+			),
 			feedback: {
 				scope,
 				text: success ? message : error || get(session).error,

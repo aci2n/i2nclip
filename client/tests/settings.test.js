@@ -95,3 +95,34 @@ test("authorizer eligibility and idle fallback preserve explicit Pair/Restore ch
 		assert.equal(normalizeAuthorizer({ mode }, []).mode, mode);
 	}
 });
+
+test("a failed captured authorization falls back to a visible action when eligibility disappears", async () => {
+	const job = deferred();
+	const session = writable({
+		libraryId: "draft",
+		busy: false,
+		error: "Authorizer changed",
+		catalog: [
+			{
+				id: "source",
+				name: "Source",
+				configured: true,
+				unlocked: true,
+				serverUrl: "https://clip.example",
+			},
+		],
+	});
+	const settings = createSettings(
+		{ ...session, create: () => job.promise },
+		{},
+	);
+	assert.equal(get(settings).mode, "authorize");
+	const creating = settings.create();
+	session.update((value) => ({ ...value, catalog: [] }));
+	assert.equal(get(settings).mode, "authorize");
+	job.resolve(false);
+	await creating;
+	assert.equal(get(settings).mode, "create");
+	assert.equal(get(settings).feedback.text, "Authorizer changed");
+	settings.dispose();
+});
