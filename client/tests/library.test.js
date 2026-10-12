@@ -5,6 +5,42 @@ import { createLibrary } from "../src/lib/stores/library.js";
 import { deferred, tick } from "./helpers.js";
 import { engineClient, serviceFixture, until } from "./service-helpers.js";
 
+test("deletion preserves cards in all views without refreshing until an explicit search", async (t) => {
+	let lists = 0,
+		deleted = false;
+	const f = await serviceFixture(t, {
+		api: {
+			list: async () => {
+				lists++;
+				return { items: deleted ? [] : [{ id: "file" }], next: null };
+			},
+			remove: async () => {
+				deleted = true;
+			},
+		},
+	});
+	const second = engineClient(f.engine);
+	t.after(second.dispose);
+	await second.ready;
+	const a = createLibrary(f.client, { confirm: () => true }),
+		b = createLibrary(second, {});
+	t.after(a.dispose);
+	t.after(b.dispose);
+	await until(() => get(a).cards.length && get(b).cards.length);
+	const cardA = get(a).cards[0].media,
+		cardB = get(b).cards[0].media;
+	const before = lists;
+	await a.remove("file");
+	assert.equal(lists, before);
+	assert.equal(get(a).cards[0].media, cardA);
+	assert.equal(get(b).cards[0].media, cardB);
+	assert.equal(get(cardA).deleted, true);
+	assert.equal(get(cardB).deleted, true);
+	await a.search("");
+	assert.equal(get(a).cards.length, 0);
+	assert.equal(get(b).cards.length, 1);
+});
+
 test("library projections preserve independent searches and receive shared media changes", async (t) => {
 	const f = await serviceFixture(t, {
 		api: {

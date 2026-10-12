@@ -29,7 +29,8 @@ test("fresh uploads have distinct content hashes and immutable verified download
 	const card = page.locator(".card").filter({ hasText: "first.txt" });
 	page.once("dialog", (dialog) => dialog.accept());
 	await card.locator('[data-act="delete"]').click();
-	await expect(page.locator(".card")).toHaveCount(1);
+	await expect(card).toHaveClass(/deleted/);
+	await expect(page.locator(".card")).toHaveCount(2);
 	expect(
 		await page.evaluate(
 			async (id) =>

@@ -27,6 +27,9 @@ test("extension views share metadata, uploads and deletion while retaining searc
 	await page.bringToFront();
 	page.once("dialog", (dialog) => dialog.accept());
 	await card.locator('[data-act="delete"]').click();
+	await expect(card).toHaveClass(/deleted/);
+	await expect(card.locator('[data-act="delete"]')).toBeDisabled();
+	await page.locator("#tags").press("Enter");
 	await expect(card).toHaveCount(0);
 	await expect(page.locator("#empty-library")).toContainText(
 		"Your library is empty",

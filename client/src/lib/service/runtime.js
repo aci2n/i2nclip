@@ -775,7 +775,6 @@ export function createLibraryRuntime({
 					item.deleted = true;
 					downloads.get(item.id)?.controller.abort();
 					mutationRevision++;
-					refreshViews();
 					return true;
 				});
 			case "uploads.submit":
