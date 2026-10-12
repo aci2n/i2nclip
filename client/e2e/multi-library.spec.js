@@ -3,7 +3,7 @@ import {
 	fillCreation,
 	installBrowser,
 	issueOtc,
-	openServer,
+	openSetupServer,
 	shot,
 	test,
 } from "./fixtures.js";
@@ -14,7 +14,7 @@ const url = (kind, app, page = "options") =>
 		: `${app.web.origin}/client/dist/extension/${page}.html`;
 async function createPersonal(page, kind, app) {
 	await page.goto(url(kind, app));
-	await openServer(page);
+	await openSetupServer(page);
 	await page.locator("#server").fill(app.origin);
 	await fillCreation(page, await issueOtc(app.data));
 	await page.locator("#create-library").click();

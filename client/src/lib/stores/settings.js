@@ -129,12 +129,6 @@ export function createSettings(
 				{ otc: "" },
 			);
 		},
-		setServer: () =>
-			action(
-				"server",
-				() => session.setServer(get(state).server.trim()),
-				"Server URL updated.",
-			),
 		dispose() {
 			disposed = true;
 			unsubscribe();

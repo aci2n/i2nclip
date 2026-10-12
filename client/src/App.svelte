@@ -87,13 +87,10 @@ onDestroy(app.dispose);
 				{vault}
 				onRestore={app.restoredLibrary}
 			>
-				{#snippet management(
-					serverControls,
-				)}
+				{#snippet management()}
 					<ManageLibraries
 						{app}
 						{vault}
-						{serverControls}
 						catalog={$app.catalog}
 						libraryId={$app.libraryId}
 					/>

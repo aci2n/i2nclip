@@ -39,18 +39,16 @@ test("settings retain failed form input and serialize feedback until an action s
 test("successful setup clears secrets, external server changes update the form, and disposal ignores late feedback", async () => {
 	const state = writable({ serverUrl: "https://clip.example", busy: false });
 	const job = deferred();
-	const settings = createSettings(
-		{ ...state, create: async () => true, setServer: () => job.promise },
-		{},
-	);
+	const settings = createSettings({ ...state, create: () => job.promise }, {});
 
 	settings.edit("otc", "invitation");
+	job.resolve(true);
 	await settings.create();
 
 	assert.equal(get(settings).otc, "");
 	state.update((value) => ({ ...value, serverUrl: "https://other.example" }));
 	assert.equal(get(settings).server, "https://other.example");
-	const backup = settings.setServer();
+	const backup = settings.create();
 	const before = get(settings);
 	settings.dispose();
 	job.resolve(true);

@@ -45,7 +45,6 @@ export function createSession(client) {
 		subscribe: state.subscribe,
 		ready: client.ready,
 		create: (payload) => action("create", payload),
-		setServer: (serverUrl) => action("setServer", { serverUrl }),
 		dispose() {
 			disposed = true;
 			unsubscribe();

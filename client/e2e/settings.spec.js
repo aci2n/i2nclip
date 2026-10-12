@@ -5,7 +5,7 @@ import {
 	expect,
 	fillCreation,
 	issueOtc,
-	openServer,
+	openSetupServer,
 	PASSWORD,
 	resetLibrary,
 	storage,
@@ -47,7 +47,7 @@ test("failed registration retains no identity and keeps errors beside setup", as
 	app,
 }) => {
 	await page.goto(`${app.web.origin}/client/dist/extension/options.html`);
-	await openServer(page);
+	await openSetupServer(page);
 	await page.locator("#server").fill(app.origin);
 	await fillCreation(page, "invalid-code");
 	await page.locator("#create-library").click();
@@ -66,15 +66,19 @@ test("failed registration retains no identity and keeps errors beside setup", as
 	expect((await storage(page)).local.publicKey).toBeTruthy();
 });
 
-test("invalid recovery and invalid server input preserve form drafts and saved configuration", async ({
+test("invalid recovery and setup server drafts preserve saved configuration", async ({
 	page,
 	app,
 }) => {
 	const created = await createLibrary(page, app);
-	await openServer(page);
-	await page.locator("#server").fill("https://user:pass@example.com");
-	await page.getByRole("button", { name: "Update URL" }).click();
-	await expect(page.locator("#status")).not.toHaveText("Server URL updated.");
+	await expect(page.locator("#server-details")).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Update URL" })).toHaveCount(0);
+	await expect(page.locator("#configured")).toContainText(
+		created.local.serverUrl,
+	);
+	await page.locator("#add-library-settings > summary").click();
+	await page.locator("#create-tab").click();
+	await page.locator("#setup-server").fill("https://user:pass@example.com");
 	expect((await storage(page)).local.serverUrl).toBe(created.local.serverUrl);
 	await resetLibrary(page);
 	await chooseRestore(page);

@@ -3,7 +3,7 @@ import {
 	fillCreation,
 	installBrowser,
 	issueOtc,
-	openServer,
+	openSetupServer,
 	png,
 	shot,
 	test,
@@ -15,14 +15,14 @@ const url = (kind, app) =>
 		: `${app.web.origin}/client/dist/extension/options.html`;
 async function setup(page, kind, app) {
 	await page.goto(url(kind, app));
-	await openServer(page);
+	await openSetupServer(page);
 	await page.locator("#server").fill(app.origin);
 	await fillCreation(page, await issueOtc(app.data));
 	await page.locator("#create-library").click();
 	await expect(page.locator("#status")).toContainText("Library created.");
 }
 async function receive(page, code, app) {
-	await openServer(page);
+	await openSetupServer(page);
 	await page.locator("#server").fill(app.origin);
 	await page.getByRole("tab", { name: "Pair", exact: true }).click();
 	await page.locator("#pairing-input").fill(code);

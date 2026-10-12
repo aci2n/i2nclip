@@ -20,9 +20,6 @@ onMount(() => {
 		setup.start();
 	}
 });
-let serverInput = $state();
-let serverDetails = $state();
-const savedServer = $derived($session.serverUrl);
 const feedback = $derived($settings.feedback);
 const feedbackAt = $derived(
 	$session.configured && ["create", "restore"].includes(feedback.scope)
@@ -44,43 +41,6 @@ const feedbackAt = $derived(
 			{feedback.text}
 		</p>
 	{/if}
-{/snippet}
-
-{#snippet serverControls()}
-	<details id="server-details" class="server-details" bind:this={serverDetails}>
-		<summary>
-			Server settings <span class="server-address">{savedServer}</span>
-		</summary>
-		<form
-			class="stack server-form"
-			id="server-settings"
-			onsubmit={(event) => {
-				event.preventDefault();
-				settings.setServer();
-			}}
-		>
-			<div class="field">
-				<label for="server">Server URL</label>
-				<div class="bar server-bar">
-					<input
-						id="server"
-						bind:this={serverInput}
-						type="url"
-						required
-						bind:value={
-							() => $settings.server,
-							(value) => settings.edit("server", value)
-						}
-						disabled={$session.busy}
-					>
-					<button id="save-server" type="submit" disabled={$session.busy}>
-						Update URL
-					</button>
-				</div>
-			</div>
-			{@render notice("server")}
-		</form>
-	</details>
 {/snippet}
 
 <div id="settings" class="settings">
@@ -114,7 +74,7 @@ const feedbackAt = $derived(
 	{/if}
 	{#if $session.configured}
 		<Pairing {session} {pairing} server={$session.serverUrl} />
-		{@render management?.(serverControls)}
+		{@render management?.()}
 	{/if}
 
 	{#if $session.configured && $session.catalog.length}
@@ -192,19 +152,10 @@ const feedbackAt = $derived(
 	gap: 1rem;
 	margin: auto;
 }
-.server-form,
 .disclosure-body {
 	margin-top: 1rem;
 }
 .server-address {
 	overflow-wrap: anywhere;
-}
-@media (max-width: 32rem) {
-	.server-bar {
-		flex-wrap: wrap;
-	}
-	.server-bar input {
-		flex-basis: 100%;
-	}
 }
 </style>

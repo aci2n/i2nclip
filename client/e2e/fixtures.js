@@ -62,7 +62,7 @@ async function master(page, password = PASSWORD) {
 async function options(page, app) {
 	await page.goto(`${app.web.origin}/client/dist/extension/options.html`);
 	await master(page);
-	await openServer(page);
+	await openSetupServer(page);
 	await page.locator("#server").fill(app.origin);
 }
 
@@ -88,18 +88,9 @@ async function expectSetup(page) {
 	await expect(page.locator("#reset-settings")).toBeVisible();
 }
 
-async function openServer(page) {
+async function openSetupServer(page) {
 	await master(page);
-	const details = page.locator("#server-details");
-	if (!(await details.count())) {
-		return;
-	}
-	if (!(await details.isVisible())) {
-		await page.locator("#rename-library-settings > summary").click();
-	}
-	if (!(await details.evaluate((element) => element.open))) {
-		await details.locator("summary").click();
-	}
+	await expect(page.locator("#server")).toBeVisible();
 }
 
 async function openReset(page) {
@@ -434,7 +425,7 @@ export {
 	issueOtc,
 	master,
 	openReset,
-	openServer,
+	openSetupServer,
 	options,
 	PASSWORD,
 	png,

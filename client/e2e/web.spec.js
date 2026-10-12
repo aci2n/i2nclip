@@ -4,7 +4,7 @@ import {
 	expect,
 	fillCreation,
 	issueOtc,
-	openServer,
+	openSetupServer,
 	PASSWORD,
 	png,
 	resetLibrary,
@@ -13,7 +13,7 @@ import {
 
 async function setup(page, app) {
 	await page.goto(`${app.origin}/?page=options`);
-	await openServer(page);
+	await openSetupServer(page);
 	await page.locator("#server").fill(app.origin);
 	await fillCreation(page, await issueOtc(app.data));
 	await page.locator("#create-library").click();

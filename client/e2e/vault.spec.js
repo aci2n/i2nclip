@@ -4,7 +4,7 @@ import {
 	installBrowser,
 	issueOtc,
 	master,
-	openServer,
+	openSetupServer,
 	PASSWORD,
 	shot,
 	test,
@@ -24,7 +24,7 @@ for (const kind of ["web", "extension"]) {
 		await expect(page.locator("#master-confirmation")).toBeVisible();
 		await page.setViewportSize({ width: 320, height: 800 });
 		await shot(page, `vault-create-${kind}-320`);
-		await openServer(page);
+		await openSetupServer(page);
 		await page.locator("#server").fill(app.origin);
 		await page.locator("#otc").fill(await issueOtc(app.data));
 		await page.locator("#create-library").click();
