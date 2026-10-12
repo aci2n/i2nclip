@@ -14,6 +14,7 @@ Verification used an independently cloned checkout that initially had no node_mo
 
 | Check | Result |
 | --- | --- |
+| Complete `make test-all` pipeline | Passed in the independent clone |
 | Client unit tests | 63 passed |
 | Svelte checker | Zero errors/warnings |
 | Rust unit/database tests | 45 passed |
