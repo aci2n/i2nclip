@@ -42,6 +42,9 @@ test:
 lint:
 	npm run lint
 
+format-write:
+	npm run format:write
+
 # Check client formatting without changing files.
 format-check:
 	npm run format:check
