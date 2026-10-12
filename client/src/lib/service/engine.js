@@ -1,6 +1,6 @@
 import { checkServer } from "../protocol/server.js";
 import { createLibraryRuntime } from "./runtime.js";
-import { serviceTracing, traceMessage } from "./trace.js";
+import { serviceTracing, traceEvent, traceMessage } from "./trace.js";
 
 const empty = (serverUrl) => ({
 	session: {
@@ -140,6 +140,7 @@ export function createServiceEngine(options) {
 		client.connections.set(id, connection);
 	}
 	function install(row) {
+		traceEvent("library.install", { libraryId: row.id });
 		if (disposed) throw new Error("Service ended.");
 		rows.set(row.id, row);
 		const runtime = createLibraryRuntime({
@@ -200,6 +201,7 @@ export function createServiceEngine(options) {
 		options.platform?.onCatalog?.([...rows.values()]);
 	})();
 	function disconnect(id) {
+		traceEvent("client.disconnect", { clientId: id });
 		const client = clients.get(id);
 		if (!client) return;
 		clients.delete(id);
@@ -284,6 +286,7 @@ export function createServiceEngine(options) {
 			return runtime.contextUpload(source, withTags);
 		},
 		connect(deliver) {
+			traceEvent("client.connect", { connectedClients: clients.size + 1 });
 			const client = {
 				id: crypto.randomUUID(),
 				deliver,

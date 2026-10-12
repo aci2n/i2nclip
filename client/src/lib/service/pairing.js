@@ -1,5 +1,6 @@
 import { get, writable } from "svelte/store";
 import { pairingRelay, pairingCrypto } from "../pairing/service.js";
+import { errorDetails, traceEvent } from "./trace.js";
 import {
 	formatPairingCode,
 	PAIRING_TTL_MS,
@@ -52,6 +53,7 @@ export function createPairing(session, services = {}) {
 	}
 	function stop(message = "Pairing canceled. Start again when ready.") {
 		if (!task) return;
+		traceEvent("pairing.cancel", { role: task.role });
 		const current = task;
 		task = null;
 		cleanup(current, true);
@@ -92,7 +94,10 @@ export function createPairing(session, services = {}) {
 				room.instance !== current.room.instance
 			)
 				throw new Error("Pairing session changed. Create a new code.");
-			if (room.step === expected) return room.message;
+			if (room.step === expected) {
+				traceEvent("pairing.step", { role: current.role, step: expected });
+				return room.message;
+			}
 			if (room.step > expected) throw new Error("Invalid pairing step.");
 			await wait(current);
 		}
@@ -142,6 +147,7 @@ export function createPairing(session, services = {}) {
 	}
 	async function run(role, server, operation) {
 		if (disposed || task || get(session).busy) return false;
+		traceEvent("pairing.start", { role });
 		const current = {
 			role,
 			server: "",
@@ -202,8 +208,14 @@ export function createPairing(session, services = {}) {
 							: "Library connected and unlocked. Download a recovery file for this device.",
 				});
 			cleanup(current, false);
+			traceEvent("pairing.completed", { role });
 			return true;
 		} catch (error) {
+			traceEvent("pairing.failed", {
+				role,
+				saved: current.saved,
+				...errorDetails(error),
+			});
 			if (task === current)
 				update({
 					active: false,

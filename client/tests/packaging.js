@@ -10,11 +10,12 @@ import { promisify } from "node:util";
 const execute = promisify(execFile);
 const dist = fileURLToPath(new URL("../dist/", import.meta.url));
 
-test("release web and extension owners exclude debug tracing", async () => {
+test("release web and extension owners include safe service tracing", async () => {
 	for (const file of ["web/assets/web-worker.js", "extension/background.js"]) {
 		const code = await readFile(join(dist, file), "utf8");
-		assert(!code.includes("[i2nclip service]"), file);
-		assert(!code.includes("summarizeMessage"), file);
+		assert(code.includes("[i2nclip service]"), file);
+		assert(code.includes("summarizeMessage"), file);
+		assert(code.includes("[redacted]"), file);
 	}
 });
 

@@ -6,6 +6,7 @@ import { parseRecoveryFile, recoveryFile } from "../protocol/recovery.js";
 import { checkServer } from "../protocol/server.js";
 import { unwrapPrivateKey, wrapPrivateKey } from "../protocol/vault.js";
 import { createSessionContext } from "./identity-context.js";
+import { errorDetails, traceEvent } from "./trace.js";
 
 // Private to the owner. Pairing uses operation handles; pages never receive them.
 export function createIdentity(
@@ -74,6 +75,7 @@ export function createIdentity(
 		if (get(state).busy && !reset)
 			throw new Error("Session is busy. Try again.");
 		const id = ++mutation;
+		traceEvent("identity.mutation.start", { mutation: id, reset });
 		invalidate();
 		const signal = controller.signal;
 		publish({ busy: true, error: "" });
@@ -84,8 +86,13 @@ export function createIdentity(
 				const result = await action(signal);
 				signal.throwIfAborted();
 				publish({ error: "" });
+				traceEvent("identity.mutation.completed", { mutation: id });
 				return result ?? true;
 			} catch (error) {
+				traceEvent("identity.mutation.failed", {
+					mutation: id,
+					...errorDetails(error),
+				});
 				config = await repository.getConfig();
 				if (id === mutation) publish({ error: error.message });
 				throw error;

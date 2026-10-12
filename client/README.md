@@ -184,16 +184,18 @@ are described in [the session service guide](../doc/session.md).
 
 ## Service message tracing
 
-`npm run dev`, `npm run build:web:debug`, and `npm run build:extension:debug`
-enable message tracing. Extension development watchers also use debug mode.
-Normal builds and packages remove tracing from their JavaScript bundles.
+All browser builds and packages include service tracing, including production.
+CLI output remains unchanged.
 
 In Firefox, open `about:debugging#/runtime/this-firefox` and inspect the web
 SharedWorker (`web-worker.js`) or the i2nclip extension background context.
 Enable Debug/Verbose console messages and filter by `[i2nclip service]`.
 Each entry shows direction, client ID, message type/name, and a payload snapshot;
 request IDs and sequences correlate commands, replies, and broadcasts.
-Passwords, private/wrapped keys, invitations, and pairing codes are redacted.
+Credentials, invitations, pairing codes/capabilities, URLs, filenames, tags and
+metadata are redacted. Network traces show sanitized routes, HTTP status and
+elapsed time; failures report a safe classification without raw error text.
+Upload, search, invalidation and pairing phases help locate interrupted work.
 Binary data is summarized by type and size; long arrays and deep objects are bounded.
 
 ## Multiple libraries

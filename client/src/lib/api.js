@@ -21,6 +21,7 @@ import {
 	MAX_META_PLAINTEXT,
 } from "./protocol/meta-plain.js";
 import { uniqueTags } from "./protocol/tags.js";
+import { errorDetails, traceEvent, traceRequest } from "./service/trace.js";
 
 // Plaintext limit. The server allows this plus a small encryption header.
 export const MAX_FILE_BYTES = 32 * 1024 * 1024;
@@ -208,16 +209,18 @@ export async function remove({ serverUrl, privateKey, id, signal }) {
 /** Register a base64url public key with an invitation code. */
 export async function registerKey({ serverUrl, publicKey, otc, signal }) {
 	const url = new URL("/api/register-key", serverUrl);
-	const response = await fetch(url, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify({
-			otc: String(otc).trim(),
-			public_key: String(publicKey).trim(),
+	const response = await traceRequest("POST", "/api/register-key", () =>
+		fetch(url, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				otc: String(otc).trim(),
+				public_key: String(publicKey).trim(),
+			}),
+			cache: "no-store",
+			signal,
 		}),
-		cache: "no-store",
-		signal,
-	});
+	);
 	if (response.status === 204) return;
 	throw await responseError(response);
 }
@@ -369,6 +372,10 @@ async function readBody(response, onProgress, signal) {
 				onProgress(Math.min(100, Math.round((received / total) * 100)));
 		}
 	} catch (error) {
+		traceEvent("download.body.failed", {
+			...errorDetails(error),
+			receivedBytes: received,
+		});
 		await reader.cancel().catch(() => {});
 		throw error;
 	} finally {
@@ -411,23 +418,25 @@ async function signedFetch(
 	const payload = method === "GET" || method === "DELETE" ? undefined : body;
 	// fetch() cannot report how much of the body has been sent. The upload
 	// events on XMLHttpRequest can.
-	if (onProgress && payload && typeof XMLHttpRequest !== "undefined")
-		return requestWithProgress(
+	return traceRequest(method, path, () => {
+		if (onProgress && payload && typeof XMLHttpRequest !== "undefined")
+			return requestWithProgress(
+				method,
+				url,
+				headers,
+				payload,
+				onProgress,
+				signal,
+			);
+		return fetch(url, {
 			method,
-			url,
 			headers,
-			payload,
-			onProgress,
 			signal,
-		);
-	return fetch(url, {
-		method,
-		headers,
-		signal,
-		body: payload,
-		// A media id never changes, and that response allows a private cache.
-		// Lists stay uncached because the server marks them no-store.
-		cache: method === "GET" ? "default" : "no-store",
+			body: payload,
+			// A media id never changes, and that response allows a private cache.
+			// Lists stay uncached because the server marks them no-store.
+			cache: method === "GET" ? "default" : "no-store",
+		});
 	});
 }
 

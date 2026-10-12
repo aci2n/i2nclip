@@ -7,7 +7,12 @@ import { normalizeTag, splitTags, tagTokens } from "../protocol/crypto.js";
 import { uniqueTags } from "../protocol/tags.js";
 import { createIdentity } from "./identity.js";
 import { createPairing } from "./pairing.js";
-import { serviceTracing, traceMessage } from "./trace.js";
+import {
+	errorDetails,
+	serviceTracing,
+	traceEvent,
+	traceMessage,
+} from "./trace.js";
 
 const canceled = () =>
 	new DOMException("Library changed. Try again.", "AbortError");
@@ -131,6 +136,12 @@ export function createLibraryRuntime({
 		};
 	}
 	function clearViews() {
+		traceEvent("library.invalidate", {
+			libraryId,
+			epoch: identity.epoch,
+			views: views.size,
+			downloads: downloads.size,
+		});
 		media.clear();
 		mutations.clear();
 		mutationRevision++;
@@ -230,6 +241,13 @@ export function createLibraryRuntime({
 			status: "Loading…",
 			empty: null,
 		});
+		traceEvent("search.start", {
+			libraryId,
+			id: view.id,
+			revision: version,
+			more,
+			refresh,
+		});
 		if (!more) view.additions = new Set();
 		if (!more && !refresh) Object.assign(view, { ids: [], next: null });
 		publishView(view);
@@ -264,11 +282,23 @@ export function createLibraryRuntime({
 						: "library",
 			});
 		} catch (error) {
+			traceEvent("search.failed", {
+				libraryId,
+				id: view.id,
+				revision: version,
+				...errorDetails(error),
+			});
 			if (version === view.revision && !signal.aborted)
 				view.status = error.message;
 		} finally {
 			if (version === view.revision) {
 				view.loading = false;
+				traceEvent("search.settled", {
+					libraryId,
+					id: view.id,
+					revision: version,
+					items: view.ids.length,
+				});
 				publishView(view);
 			}
 		}
@@ -312,6 +342,11 @@ export function createLibraryRuntime({
 			mutationRevision++;
 			return result;
 		} catch (error) {
+			traceEvent("media.mutation.failed", {
+				libraryId,
+				id,
+				...errorDetails(error),
+			});
 			if (epoch === identity.epoch)
 				Object.assign(item, { message: error.message, error: true });
 			throw error;
@@ -332,6 +367,7 @@ export function createLibraryRuntime({
 		if (entry?.controller.signal.aborted || entry?.epoch !== epoch)
 			entry = null;
 		if (!entry) {
+			traceEvent("download.start", { libraryId, id, epoch });
 			const controller = new AbortController();
 			const signal = AbortSignal.any([controller.signal, identity.signal]);
 			entry = { controller, consumers: new Set(), epoch };
@@ -558,6 +594,7 @@ export function createLibraryRuntime({
 						await persistJob({ ...job, attemptId, status: "preparing" });
 					});
 					const source = await repository.getSource(job.id);
+					traceEvent("upload.prepare", { libraryId, jobId: job.id, attemptId });
 					const prepared = await prepareJob(job, source, signal);
 					await enqueue(async () => {
 						guard(epoch, signal);
@@ -584,6 +621,11 @@ export function createLibraryRuntime({
 						},
 					});
 					transferred = true;
+					traceEvent("upload.transferred", {
+						libraryId,
+						jobId: job.id,
+						attemptId,
+					});
 					guard(epoch, signal);
 					await enqueue(async () => {
 						guard(epoch, signal);
@@ -603,11 +645,23 @@ export function createLibraryRuntime({
 					});
 					mutationRevision++;
 					await publishUpload(result, epoch, signal);
+					traceEvent("upload.completed", {
+						libraryId,
+						jobId: job.id,
+						attemptId,
+					});
 					if (job.context)
 						void Promise.resolve(platform.notify?.("Uploaded.")).catch(
 							() => {},
 						);
 				} catch (error) {
+					traceEvent("upload.failed", {
+						libraryId,
+						jobId: job.id,
+						attemptId,
+						transferred,
+						...errorDetails(error),
+					});
 					await enqueue(async () => {
 						if (disposed || !jobs.has(job.id)) return;
 						if (epoch !== identity.epoch) {

@@ -7,7 +7,7 @@ WORKDIR /client
 COPY client/package.json client/package-lock.json ./
 RUN NODE_OPTIONS=--network-family-autoselection-attempt-timeout=1000 \
     npm ci
-COPY client/index.html client/vite.config.js client/service-tracing.config.js ./
+COPY client/index.html client/vite.config.js ./
 COPY client/public/favicon.ico ./public/favicon.ico
 COPY client/src ./src
 ARG CLIENT_BUILD_MODE=production

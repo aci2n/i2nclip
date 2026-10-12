@@ -1,20 +1,66 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { summarizeMessage } from "../src/lib/service/trace.js";
-import { serviceTracingPlugin } from "../service-tracing.config.js";
 
-test("release builds replace owner tracing with a disabled module", () => {
-	const release = serviceTracingPlugin(false);
-	const id = release.resolveId("./trace.js", "/src/lib/service/engine.js");
-	assert(id);
-	assert.match(release.load(id), /serviceTracing = false/);
-	assert(!release.load(id).includes("console"));
+test("browser traces correlate requests without exposing URLs, pairing capabilities or failure text", async (t) => {
+	const previous = globalThis.self;
+	globalThis.self = {};
+	const trace = await import("../src/lib/service/trace.js?browser-test");
+	if (previous === undefined) delete globalThis.self;
+	else globalThis.self = previous;
+	const logs = [];
+	t.mock.method(console, "debug", (...args) => logs.push(args));
+	const response = new Response(null, { status: 204 });
 	assert.equal(
-		serviceTracingPlugin(true).resolveId(
-			"./trace.js",
-			"/src/lib/service/engine.js",
+		await trace.traceRequest(
+			"POST",
+			"/api/pairings/secret-room/messages?code=secret-code",
+			async () => response,
 		),
-		undefined,
+		response,
+	);
+	const failure = Object.assign(new Error("secret-server-reply"), {
+		name: "TimeoutError",
+	});
+	await assert.rejects(
+		trace.traceRequest(
+			"GET",
+			"/api/media/secret-id?tag=secret-tag",
+			async () => {
+				throw failure;
+			},
+		),
+		(error) => error === failure,
+	);
+	trace.traceMessage("client → owner", "client-1", {
+		type: "command",
+		name: "pairing.receive",
+		payload: {
+			code: "secret-code",
+			password: "secret-password",
+			capability: "secret-capability",
+			verificationCode: "secret-verification",
+			metadata: { name: "secret-name", tags: ["secret-tag"] },
+			srcUrl: "https://secret-host/image",
+			thumb: "secret-thumbnail",
+			error: "secret-server-reply",
+		},
+	});
+	const output = JSON.stringify(logs);
+	assert(!output.includes("secret-"));
+	assert(output.includes("/api/pairings/:id/messages"));
+	assert(output.includes("/api/media/:id"));
+	assert(output.includes("TimeoutError"));
+	assert(output.includes("pairing.receive"));
+	assert.equal(logs[0][1].requestId, logs[1][1].requestId);
+	assert.equal(logs[1][1].httpStatus, 204);
+	assert.equal(logs[2][1].requestId, logs[3][1].requestId);
+	t.mock.method(console, "debug", () => {
+		throw new Error("console unavailable");
+	});
+	assert.equal(
+		await trace.traceRequest("GET", "/api/media", async () => response),
+		response,
 	);
 });
 

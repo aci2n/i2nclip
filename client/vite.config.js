@@ -1,10 +1,8 @@
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { defineConfig } from "vite";
-import { serviceTracingPlugin } from "./service-tracing.config.js";
 
-export default defineConfig(({ command, mode }) => ({
+export default defineConfig({
 	plugins: [
-		serviceTracingPlugin(command === "serve" || mode === "debug"),
 		svelte(),
 		{
 			name: "web-favicon",
@@ -45,14 +43,11 @@ export default defineConfig(({ command, mode }) => ({
 	build: { outDir: "dist/web", minify: false, cssMinify: false },
 	worker: {
 		format: "es",
-		plugins: () => [
-			serviceTracingPlugin(command === "serve" || mode === "debug"),
-		],
 		rolldownOptions: {
 			output: { minify: false, entryFileNames: "assets/[name].js" },
 		},
 	},
-}));
+});
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
