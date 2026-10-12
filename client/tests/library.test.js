@@ -1,296 +1,144 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { get, writable } from "svelte/store";
-import { createLibrary as implementation } from "../src/lib/stores/library.js";
-import { deferred, tick, workflowSession } from "./helpers.js";
+import { get } from "svelte/store";
+import { createLibrary } from "../src/lib/stores/library.js";
+import { deferred, tick } from "./helpers.js";
+import { engineClient, serviceFixture, until } from "./service-helpers.js";
 
-const identity = {
-	ready: true,
-	wrappedKey: {},
-	serverUrl: "https://clip.example",
-	privateKey: "first",
-};
-
-async function setup(t) {
-	const session = writable(identity);
-	session.credentials = () => {
-		const { serverUrl, privateKey } = get(session);
-		return { serverUrl, privateKey };
-	};
-	const calls = [];
-	const uploads = [];
-	const library = createLibrary(
-		session,
-		{},
-		{
-			list(options) {
-				const job = deferred();
-				calls.push({ ...job, options });
-				return job.promise;
-			},
-			sendUpload({ source, credentials, onProgress: progress, signal }) {
-				const job = deferred();
-				uploads.push({ ...job, source, credentials, signal, progress });
-				return job.promise;
-			},
+test("library projections preserve independent searches and receive shared media changes", async (t) => {
+	const f = await serviceFixture(t, {
+		api: {
+			list: async ({ tags }) => ({
+				items: [{ id: tags || "all" }],
+				next: null,
+			}),
 		},
-	);
-	t.after(library.dispose);
-	await tick();
-	return { session, calls, uploads, library };
-}
-
-test("a stale search cannot replace the latest results, even if cancellation is ignored", async (t) => {
-	const { library, calls } = await setup(t);
-	const search = library.search("new");
-	await tick();
-	assert.equal(calls[0].options.signal.aborted, true);
-	calls[1].resolve({ items: [{ id: "new" }], next: null });
-	await search;
-	calls[0].resolve({ items: [{ id: "old" }], next: "old-cursor" });
-	await tick();
-	assert.deepEqual(get(library).items, [{ id: "new" }]);
-	assert.equal(get(library).next, null);
-});
-
-test("pagination uses the submitted tags and allows only one request at a time", async (t) => {
-	const { library, calls } = await setup(t);
-	const search = library.search("vacation");
-	await tick();
-	calls[1].resolve({ items: [{ id: "first" }], next: "cursor" });
-	await search;
-	const more = library.more();
-	await tick();
-	await library.more();
-	assert.equal(calls.length, 3);
-	assert.equal(calls[2].options.tags, "vacation");
-	assert.equal(calls[2].options.after, "cursor");
-	calls[2].resolve({ items: [{ id: "second" }], next: null });
-	await more;
+	});
+	const second = engineClient(f.engine);
+	t.after(second.dispose);
+	await second.ready;
+	const a = createLibrary(f.client, {}),
+		b = createLibrary(second, {});
+	t.after(a.dispose);
+	t.after(b.dispose);
+	await until(() => get(a).items.length && get(b).items.length);
+	await a.search("one");
+	await b.search("two");
 	assert.deepEqual(
-		get(library).items.map((item) => item.id),
-		["first", "second"],
+		get(a).items.map((item) => item.id),
+		["one"],
 	);
-});
-
-test("changing identity clears results and invalidates pending requests", async (t) => {
-	const { session, library, calls } = await setup(t);
-	session.set({ ...identity, privateKey: "second" });
-	await tick();
-	assert.equal(calls[0].options.signal.aborted, true);
-	calls[1].resolve({ items: [{ id: "second-library" }], next: null });
-	await tick();
-	calls[0].resolve({ items: [{ id: "first-library" }], next: null });
-	await tick();
-	assert.deepEqual(get(library).items, [{ id: "second-library" }]);
-	session.set({ ...identity, privateKey: "" });
-	await tick();
-	assert.deepEqual(get(library).items, []);
-});
-
-test("uploads are serialized and a library change cancels the remaining batch", async (t) => {
-	const { session, library, calls, uploads } = await setup(t);
-	calls[0].resolve({ items: [], next: null });
-	await tick();
-	const upload = library.upload([{ name: "one" }, { name: "two" }]);
-	await tick();
-	await library.upload([{ name: "duplicate" }]);
-	assert.equal(uploads.length, 1);
-	uploads[0].resolve();
-	await tick();
-	assert.equal(uploads.length, 2);
-	session.set({ ...identity, privateKey: "" });
-	await tick();
-	assert.equal(uploads[1].signal.aborted, true);
-	uploads[1].reject(new DOMException("cancelled", "AbortError"));
-	await upload;
-	assert.equal(get(library).uploadStatus, "");
-	assert.equal(get(library).uploading, false);
-});
-
-test("restoring the same identity invalidates requests and uploads from its previous generation", async (t) => {
-	const { session, library, calls, uploads } = await setup(t);
-	const upload = library.upload([{ name: "one" }, { name: "two" }]);
-	await tick();
-	session.set({ ...identity, identityGeneration: "restored" });
-	await tick();
-	assert.equal(calls[0].options.signal.aborted, true);
-	assert.equal(uploads[0].signal.aborted, true);
-	uploads[0].resolve();
-	await upload;
-	assert.equal(uploads.length, 1);
-	calls[1].resolve({ items: [{ id: "restored" }], next: null });
-	calls[0].resolve({ items: [{ id: "stale" }], next: null });
-	await tick();
-	assert.deepEqual(get(library).items, [{ id: "restored" }]);
-});
-
-test("a failed file does not stop a batch and retry sends only failed files", async (t) => {
-	const { library, calls, uploads } = await setup(t);
-	calls[0].resolve({ items: [], next: null });
-	await tick();
-	const first = { name: "failed" },
-		second = { name: "saved" };
-	const batch = library.upload([first, second]);
-	await tick();
-	assert.deepEqual(get(library).uploadProgress, {
-		name: "failed",
-		index: 1,
-		total: 2,
-		percent: 0,
-	});
-	uploads[0].reject(new Error("temporary"));
-	await tick();
-	assert.equal(uploads[1].source.blob, second);
-	uploads[1].resolve();
-	await tick();
-	calls[1].resolve({ items: [{ id: "saved" }], next: null });
-	await batch;
-	assert.deepEqual(get(library).uploadFailures, [
-		{ file: first, error: "temporary" },
-	]);
-	assert.equal(get(library).uploadStatus, "");
-	uploads[0].progress(80);
-	assert.equal(get(library).uploadProgress, null);
-	const retry = library.retryUploads();
-	await tick();
-	uploads[1].progress(90);
-	assert.equal(get(library).uploadProgress.name, "failed");
-	assert.equal(uploads[2].source.blob, first);
-	assert.equal(uploads[2].source.name, uploads[0].source.name);
-	assert.notEqual(uploads[0].source, uploads[1].source);
-	uploads[2].resolve();
-	await tick();
-	calls[2].resolve({ items: [{ id: "saved" }, { id: "retried" }], next: null });
-	await retry;
-	assert.deepEqual(get(library).uploadFailures, []);
-	assert.equal(uploads.length, 3);
-});
-
-test("server changes clear failed files and ignore late upload completion", async (t) => {
-	const { session, library, calls, uploads } = await setup(t);
-	calls[0].resolve({ items: [], next: null });
-	await tick();
-	const batch = library.upload([{ name: "old" }, { name: "never-sent" }]);
-	await tick();
-	session.set({ ...identity, serverUrl: "https://new.example" });
-	await tick();
-	calls[1].resolve({ items: [], next: null });
-	uploads[0].resolve();
-	await batch;
-	assert.equal(uploads.length, 1);
-	assert.equal(get(library).uploadProgress, null);
-	assert.deepEqual(get(library).uploadFailures, []);
-	assert.equal(get(library).uploadStatus, "");
-	library.dispose();
-	await library.upload([{ name: "after-dispose" }]);
-	assert.equal(uploads.length, 1);
-});
-
-test("replacing results disposes media and prevents a stale save dialog", async (t) => {
-	const { generatePrivateKey } = await import(
-		"../src/lib/protocol/identity.js"
+	assert.deepEqual(
+		get(b).items.map((item) => item.id),
+		["two"],
 	);
-	const { privateKey } = await generatePrivateKey();
-	const job = deferred();
-	let downloads = 0;
-	const revoked = [];
-	t.mock.method(URL, "revokeObjectURL", (url) => revoked.push(url));
-	t.mock.method(globalThis, "fetch", (_url, options) => {
-		options.signal.addEventListener(
-			"abort",
-			() => job.reject(new DOMException("cancelled", "AbortError")),
-			{ once: true },
-		);
-		return job.promise;
-	});
-	const library = createLibrary(
-		writable({ ...identity, privateKey }),
-		{
-			download: () => {
-				downloads++;
-			},
+	assert.equal(get(a).query, "one");
+	assert.equal(get(b).query, "two");
+	await second.command("identity.reset");
+	assert.deepEqual(get(a).items, []);
+	assert.deepEqual(get(b).items, []);
+});
+
+test("replacing results disposes media and prevents a late save dialog", async (t) => {
+	const download = deferred();
+	let saves = 0;
+	const f = await serviceFixture(t, {
+		api: {
+			list: async ({ tags }) => ({
+				items: tags ? [] : [{ id: "file" }],
+				next: null,
+			}),
+			getContent: () => download.promise,
 		},
-		{ list: async () => ({ items: [], next: null }) },
-	);
-	t.after(library.dispose);
-	await tick();
-	const media = library.media({
-		id: crypto.randomUUID(),
-		metadata: { content_type: "image/png", tags: [] },
-		tokens: [],
-		thumb: new Uint8Array([1]),
 	});
-	const preview = get(media).preview;
-	const downloading = media.download();
+	const library = createLibrary(f.client, {
+		download: () => {
+			saves++;
+		},
+	});
+	t.after(library.dispose);
+	await until(() => get(library).cards.length === 1);
+	const downloading = get(library).cards[0].media.download();
 	await tick();
 	await library.search("absent");
+	download.resolve(new Uint8Array([1]));
 	await downloading;
-	assert.ok(revoked.includes(preview));
-	assert.equal(downloads, 0);
+	assert.equal(saves, 0);
 });
 
-test("progress from a finished file cannot overwrite the next file in the same batch", async (t) => {
-	const { library, calls, uploads } = await setup(t);
-	calls[0].resolve({ items: [], next: null });
-	await tick();
-	const batch = library.upload([{ name: "first" }, { name: "second" }]);
-	await tick();
-	uploads[0].resolve();
-	await tick();
-	uploads[1].progress(25);
-	uploads[0].progress(99);
-	assert.equal(get(library).uploadProgress.name, "second");
-	assert.equal(get(library).uploadProgress.percent, 25);
-	uploads[1].resolve();
-	await tick();
-	calls[1].resolve({ items: [], next: null });
-	await batch;
-});
-
-test("overlapping pagination entries produce only one card per media ID", async (t) => {
-	const { library, calls } = await setup(t);
-	calls[0].resolve({ items: [{ id: "one" }], next: "cursor" });
-	await tick();
-	const more = library.more();
-	await tick();
-	calls[1].resolve({ items: [{ id: "one" }, { id: "two" }], next: null });
-	await more;
-	assert.deepEqual(
-		get(library).items.map((item) => item.id),
-		["one", "two"],
-	);
-	assert.equal(get(library).cards.length, 2);
-});
-
-test("leaving the library prevents a late image reveal from opening its preview", async (t) => {
-	const { library, calls } = await setup(t);
-	const item = { id: "one", metadata: { content_type: "image/png" } };
-	calls[0].resolve({ items: [item], next: null });
-	await tick();
+test("an obsolete image reveal cannot open a preview after closing it", async (t) => {
 	const job = deferred();
-	t.mock.method(library.media(item), "reveal", () => job.promise);
-	const revealing = library.reveal("one");
+	const f = await serviceFixture(t, {
+		api: { list: async () => ({ items: [{ id: "image" }], next: null }) },
+	});
+	const library = createLibrary(f.client, {});
+	t.after(library.dispose);
+	await until(() => get(library).cards.length === 1);
+	t.mock.method(get(library).cards[0].media, "reveal", () => job.promise);
+	const revealing = library.reveal("image");
 	library.closePreview();
-	job.resolve("blob:stale");
+	job.resolve("blob:late");
 	await revealing;
 	assert.equal(get(library).selected, null);
 });
 
-test("overlapping cursor pages cannot overwrite tags saved while pagination was pending", async (t) => {
-	const { library, calls } = await setup(t);
-	const item = { id: "one", metadata: { tags: ["old"] } };
-	calls[0].resolve({ items: [item], next: "cursor" });
-	await tick();
-	const more = library.more();
-	await tick();
-	library.updateTags("one", { tags: ["new"] }, ["new-token"]);
-	calls[1].resolve({ items: [item], next: null });
-	await more;
-	assert.deepEqual(get(library).items[0].metadata.tags, ["new"]);
-	assert.deepEqual(get(get(library).cards[0].media).metadata.tags, ["new"]);
+test("all tabs see failed uploads and can retry retained sources", async (t) => {
+	let uploads = 0;
+	const f = await serviceFixture(t, {
+		upload: async () => {
+			if (++uploads === 1) throw new Error("offline");
+			return { id: "saved" };
+		},
+	});
+	const second = engineClient(f.engine);
+	t.after(second.dispose);
+	await second.ready;
+	const a = createLibrary(f.client, {}),
+		b = createLibrary(second, {});
+	t.after(a.dispose);
+	t.after(b.dispose);
+	const file = new File(["bytes"], "one.txt");
+	await a.upload([file]);
+	await until(() => get(b).uploadFailures.length === 1);
+	assert.equal(get(b).uploadFailures[0].file.name, "one.txt");
+	await b.retryUploads();
+	await until(() => !get(b).uploading && !get(b).uploadFailures.length);
+	assert.equal(uploads, 2);
 });
 
-function createLibrary(session, platform, ...args) {
-	return implementation(workflowSession(session, platform), platform, ...args);
-}
+test("metadata refresh preserves the rendered card and its inline editor resource owner", async (t) => {
+	const { tagTokens } = await import("../src/lib/protocol/crypto.js");
+	let item = {
+		id: "file",
+		metadata: { name: "file.txt", tags: [], content_type: "text/plain" },
+		tokens: [],
+		metaHash: "a",
+	};
+	const refresh = deferred();
+	let lists = 0;
+	const f = await serviceFixture(t, {
+		api: {
+			list: async () =>
+				++lists === 1 ? { items: [item], next: null } : refresh.promise,
+			updateMetadata: async ({ metadata, privateKey }) => {
+				item = {
+					...item,
+					metadata,
+					tokens: await tagTokens(privateKey, metadata.tags),
+					metaHash: "b",
+				};
+				return { tokens: item.tokens, metaHash: "b", conflict: false };
+			},
+		},
+	});
+	const library = createLibrary(f.client, {});
+	t.after(library.dispose);
+	await until(() => get(library).cards.length === 1);
+	const card = get(library).cards[0].media;
+	assert.equal(await library.retag("file", ["New"]), true);
+	assert.equal(get(library).cards[0].media, card);
+	assert.deepEqual(get(card).metadata.tags, ["New"]);
+	refresh.resolve({ items: [item], next: null });
+	await until(() => !get(library).loading);
+	assert.equal(get(library).cards[0].media, card);
+});

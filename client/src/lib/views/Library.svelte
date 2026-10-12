@@ -10,7 +10,7 @@ let tags = $state(untrack(() => library.query()));
 let filesInput = $state();
 </script>
 
-{#if !$session.wrappedKey}
+{#if !$session.configured}
 	<section id="setup" class="panel empty">
 		<h2>Your library starts here</h2>
 		<p>
@@ -20,7 +20,7 @@ let filesInput = $state();
 			to start saving encrypted media.
 		</p>
 	</section>
-{:else if !$session.privateKey}
+{:else if !$session.unlocked}
 	<Unlock {session} />
 {:else}
 	<form
@@ -39,13 +39,12 @@ let filesInput = $state();
 			bind:value={tags}
 		>
 		<button type="submit">Search</button>
-		<label class="file" class:disabled={$library.uploading}
+		<label class="file"
 			>Upload<input
 				bind:this={filesInput}
 				id="files"
 				type="file"
 				multiple
-				disabled={$library.uploading}
 				onchange={(event) => selectFiles(event, library.upload)}
 			></label
 		>
@@ -55,7 +54,7 @@ let filesInput = $state();
 	{[
 		$library.status,
 		$library.uploadStatus,
-		!$session.wrappedKey || $session.privateKey ? $session.error : "",
+		!$session.configured || $session.unlocked ? $session.error : "",
 	]
 		.filter(Boolean)
 		.join(" | ")}
@@ -88,11 +87,28 @@ let filesInput = $state();
 			disabled={$library.uploading}
 			onclick={library.retryUploads}
 		>
-			Retry failed files
+			Retry retained files
+		</button>
+		<button
+			type="button"
+			class="secondary"
+			disabled={$library.uploading}
+			onclick={library.discardUploads}
+		>
+			Discard retained files
 		</button>
 	</section>
 {/if}
-{#if $session.privateKey && $library.empty}
+{#if $library.uploadCompleted.length}
+	<p class="upload-history">
+		{$library.uploadCompleted.length}
+		uploaded.
+		<button type="button" class="secondary" onclick={library.dismissCompleted}>
+			Clear completed uploads
+		</button>
+	</p>
+{/if}
+{#if $session.unlocked && $library.empty}
 	<section id="empty-library" class="panel empty">
 		{#if $library.empty === "library"}
 			<h2>Your library is empty</h2>
@@ -150,10 +166,6 @@ let filesInput = $state();
 	flex: none;
 	margin: 0;
 }
-.file.disabled {
-	opacity: 0.5;
-	cursor: default;
-}
 .file input {
 	position: absolute;
 	width: 1px;
@@ -183,6 +195,12 @@ let filesInput = $state();
 .upload-failures {
 	margin: 1rem 0;
 	overflow-wrap: anywhere;
+}
+.upload-history {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.5rem;
 }
 .upload-progress progress {
 	width: min(24rem, 80%);

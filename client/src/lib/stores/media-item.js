@@ -1,65 +1,95 @@
 import { get, writable } from "svelte/store";
-import { getContent, remove, updateMetadata } from "../api.js";
-import { audioArt } from "../media/audio-art.js";
 import { downloadName } from "../media/format.js";
 import { sniffContentType } from "../media/metadata.js";
-import { tagTokens } from "../protocol/crypto.js";
-import { uniqueTags } from "../protocol/tags.js";
 
-export function createMediaItem(
-	initialItem,
-	credentials,
-	platform,
-	api = { getContent, remove, updateMetadata },
-	{ validate } = {},
-) {
-	let item = initialItem;
+// UI resource owner. Fetching/decryption/mutations are service commands.
+export function createMediaItem(initialItem, client, platform) {
 	const urls = new Set();
 	const controller = new AbortController();
-	const signal = controller.signal;
 	let disposed = false;
-	let bytes;
-	const makeUrl = (data, type) => {
-		const url = URL.createObjectURL(new Blob([data], { type }));
+	let loading = false;
+	let content;
+	let thumb;
+	const makeUrl = (blob) => {
+		const url = URL.createObjectURL(blob);
 		urls.add(url);
 		return url;
 	};
 	const state = writable({
-		...item,
+		...initialItem,
 		busy: false,
-		deleted: false,
 		shown: false,
-		progress: null,
-		message: "",
-		error: false,
 		url: "",
-		preview: item.thumb?.length ? makeUrl(item.thumb, "image/webp") : "",
+		preview: "",
+		message: "",
+		progress: null,
+		error: false,
 	});
-	const options = { ...credentials, id: item.id, signal };
-
-	// This advisory check never replaces an action's result.
-	const checkedMetadata = item.metadata;
-	const checkedTokens = item.tokens || [];
-	if (checkedMetadata)
-		tagTokens(credentials.privateKey, checkedMetadata.tags || [])
-			.then((expected) => {
-				if (
-					!disposed &&
-					get(state).metadata === checkedMetadata &&
-					!get(state).message &&
-					(expected.length !== checkedTokens.length ||
-						expected.some((token) => !checkedTokens.includes(token)))
-				) {
-					state.update((value) => ({
-						...value,
-						message: "Tags on the server do not match this file.",
-					}));
-				}
-			})
-			.catch(() => {});
-
+	const revoke = () => {
+		for (const url of urls) URL.revokeObjectURL(url);
+		urls.clear();
+		content = null;
+	};
+	const epoch = get(client).session.epoch;
+	const instance = get(client).instanceId;
+	const unsubscribe = client.subscribe((value) => {
+		if (disposed) return;
+		if (
+			!value.connected ||
+			value.instanceId !== instance ||
+			value.session.epoch !== epoch
+		) {
+			revoke();
+			controller.abort();
+			state.update((current) => ({
+				...current,
+				url: "",
+				preview: "",
+				shown: false,
+			}));
+			return;
+		}
+		const item = value.media[initialItem.id];
+		if (!item) return;
+		if (item.deleted) {
+			revoke();
+			controller.abort();
+		}
+		let preview = get(state).preview;
+		const sameThumb =
+			thumb &&
+			item.thumb?.length === thumb.length &&
+			item.thumb.every((byte, index) => byte === thumb[index]);
+		if (!sameThumb && item.thumb?.length && !item.deleted) {
+			thumb = item.thumb;
+			if (preview) {
+				URL.revokeObjectURL(preview);
+				urls.delete(preview);
+			}
+			preview = makeUrl(new Blob([item.thumb], { type: "image/webp" }));
+		}
+		state.update((current) => ({
+			...current,
+			...item,
+			busy: item.busy || loading,
+			preview: item.deleted ? "" : preview,
+			url: item.deleted ? "" : current.url,
+			shown: item.deleted ? false : current.shown,
+		}));
+	});
+	function current() {
+		return (
+			!disposed &&
+			!controller.signal.aborted &&
+			get(client).connected &&
+			get(client).instanceId === instance &&
+			get(client).session.epoch === epoch &&
+			!get(state).deleted
+		);
+	}
 	async function run(action) {
-		if (disposed || get(state).busy || get(state).deleted) return null;
+		if (!current() || get(state).busy) return null;
+		loading = true;
 		state.update((value) => ({
 			...value,
 			busy: true,
@@ -67,11 +97,9 @@ export function createMediaItem(
 			error: false,
 		}));
 		try {
-			if (validate) await validate();
-			signal.throwIfAborted();
 			return await action();
 		} catch (error) {
-			if (!disposed)
+			if (current())
 				state.update((value) => ({
 					...value,
 					message: error.message,
@@ -79,148 +107,71 @@ export function createMediaItem(
 				}));
 			return null;
 		} finally {
-			if (!disposed)
-				state.update((value) => ({ ...value, busy: false, progress: null }));
-		}
-	}
-
-	async function content() {
-		if (get(state).url) return get(state).url;
-		let receiving = true;
-		try {
-			const result = await api.getContent({
-				...options,
-				onProgress: (progress) => {
-					if (receiving && !disposed)
-						state.update((value) => ({ ...value, progress }));
-				},
-			});
-			signal.throwIfAborted();
-			bytes = result;
-			const type =
-				get(state).metadata?.content_type || "application/octet-stream";
-			const url = makeUrl(bytes, type);
-			state.update((value) => ({ ...value, url }));
-			return url;
-		} finally {
-			receiving = false;
-		}
-	}
-
-	return {
-		subscribe: state.subscribe,
-		updateItem(nextItem) {
-			if (disposed) return;
-			item = nextItem;
-			state.update((value) => ({
-				...value,
-				...nextItem,
-				url: value.url,
-				preview:
-					value.preview ||
-					(nextItem.thumb?.length ? makeUrl(nextItem.thumb, "image/webp") : ""),
-			}));
-		},
-		reveal: () =>
-			run(async () => {
-				const url = await content();
-				signal.throwIfAborted();
-				const type = get(state).metadata?.content_type || "";
-				const art = type.startsWith("audio/") ? audioArt(bytes) : null;
+			loading = false;
+			if (current())
 				state.update((value) => ({
 					...value,
-					shown: true,
-					preview: art
-						? makeUrl(art, sniffContentType(art, ""))
-						: value.preview,
+					busy: get(client).media[initialItem.id]?.busy || false,
 				}));
-				return url;
+		}
+	}
+	async function receive() {
+		if (content) return content;
+		const result = await client.command(
+			"media.content",
+			{ id: initialItem.id },
+			{ signal: controller.signal },
+		);
+		if (!current()) return null;
+		content = result;
+		const url = makeUrl(result.blob);
+		state.update((value) => ({ ...value, url }));
+		return result;
+	}
+	return {
+		subscribe: state.subscribe,
+		reveal: () =>
+			run(async () => {
+				const result = await receive();
+				if (!result || !current()) return null;
+				const preview = result.art
+					? makeUrl(
+							new Blob([result.art], {
+								type: sniffContentType(result.art, ""),
+							}),
+						)
+					: get(state).preview;
+				state.update((value) => ({ ...value, shown: true, preview }));
+				return get(state).url;
 			}),
 		download: () =>
 			run(async () => {
-				const url = await content();
-				signal.throwIfAborted();
-				const metadata = get(state).metadata;
+				if (!(await receive()) || !current()) return;
+				const value = get(state);
 				await platform.download(
-					url,
-					downloadName(metadata?.name || item.id, metadata?.content_type),
+					value.url,
+					downloadName(
+						value.metadata?.name || initialItem.id,
+						value.metadata?.content_type,
+					),
 				);
 			}),
 		retag: (tags) =>
-			run(async () => {
-				const value = get(state);
-				if (!value.metadata) throw new Error("No metadata to update.");
-				const metadata = { ...value.metadata, tags: uniqueTags(tags) };
-				const result = await api.updateMetadata({
-					...options,
-					metadata,
-					thumb: item.thumb,
-					prevMetaHash: value.metaHash,
-				});
-				signal.throwIfAborted();
-				if (result.conflict) {
-					if (result.item.metadata) {
-						item = { ...item, ...result.item };
-						state.update((current) => ({
-							...current,
-							...result.item,
-							metadataUnavailable: false,
-							message:
-								"This file changed in another page. Latest tags loaded; review and try again.",
-							error: true,
-						}));
-						return { conflict: true, item: { ...result.item } };
-					}
-					state.update((current) => ({
-						...current,
-						metadataUnavailable: true,
-						message:
-							"This file changed in another page, but its metadata could not be opened. Your draft is preserved.",
-						error: true,
-					}));
-					return { conflict: true, item: null };
-				}
-				item = {
-					...item,
-					tokens: result.tokens,
-					metaHash: result.metaHash,
-					metadata,
-				};
-				state.update((current) => ({
-					...current,
-					metadata,
-					tokens: result.tokens,
-					metaHash: result.metaHash,
-					metadataUnavailable: false,
-					message: "",
-				}));
-				return { metadata, tokens: result.tokens, metaHash: result.metaHash };
-			}),
+			run(() =>
+				client.command("media.retag", {
+					id: initialItem.id,
+					tags,
+					metaHash: get(state).metaHash,
+				}),
+			),
 		remove: () =>
-			run(async () => {
-				await api.remove(options);
-				signal.throwIfAborted();
-				bytes = null;
-				urls.forEach((url) => {
-					URL.revokeObjectURL(url);
-				});
-				urls.clear();
-				state.update((value) => ({
-					...value,
-					deleted: true,
-					url: "",
-					preview: "",
-				}));
-				return true;
-			}),
+			run(() => client.command("media.remove", { id: initialItem.id })),
 		dispose() {
+			if (disposed) return;
 			disposed = true;
 			controller.abort();
-			bytes = null;
-			urls.forEach((url) => {
-				URL.revokeObjectURL(url);
-			});
-			urls.clear();
+			unsubscribe();
+			revoke();
 		},
 	};
 }

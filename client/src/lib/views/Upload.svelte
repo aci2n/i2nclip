@@ -16,12 +16,12 @@ const tags = $derived(pending.tags);
 			alt={$pending.name}
 		>
 	{/if}
-	{#if !$session.wrappedKey}
+	{#if !$session.configured}
 		<p>
 			<a href={settingsHref}>Create or restore your library</a>
 			before uploading.
 		</p>
-	{:else if !$session.privateKey}
+	{:else if !$session.unlocked}
 		<Unlock {session} id={auto ? "form" : "unlock"} />
 	{:else}
 		<form

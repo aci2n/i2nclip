@@ -1,11 +1,9 @@
 import { get, writable } from "svelte/store";
-import { list } from "../api.js";
-import { sendUpload } from "../media/upload.js";
-import { splitTags } from "../protocol/crypto.js";
 import { createMediaItem } from "./media-item.js";
-import { createUploadBatch } from "./upload-batch.js";
 
-export function createLibrary(session, platform, api = { list, sendUpload }) {
+export function createLibrary(client, platform) {
+	const viewId = crypto.randomUUID();
+	const cards = new Map();
 	const state = writable({
 		items: [],
 		cards: [],
@@ -15,189 +13,150 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 		loading: false,
 		empty: null,
 		status: "",
+		uploading: false,
+		uploadProgress: null,
+		uploadFailures: [],
+		uploadCompleted: [],
+		uploadStatus: "",
 	});
-	let credentials = null;
-	let identityOperation;
-	let revision = 0;
-	let request;
 	let disposed = false;
+	let viewInstance;
+	let opening = false;
 	let previewRevision = 0;
-	const mediaItems = new Map();
-
-	const batch = createUploadBatch(session, platform, api.sendUpload, () =>
-		load(),
-	);
-	const unsubscribeBatch = batch.subscribe((uploads) =>
-		state.update((value) => ({ ...value, ...uploads })),
-	);
-
-	function clearMediaItems() {
+	let uploadStatus = "";
+	function clear() {
 		previewRevision++;
-		for (const media of mediaItems.values()) media.dispose();
-		mediaItems.clear();
+		for (const media of cards.values()) media.dispose();
+		cards.clear();
 	}
-
-	function invalidate() {
-		revision++;
-		identityOperation?.dispose();
-		identityOperation = null;
-		credentials = null;
-		request?.abort();
-		batch.reset();
-		clearMediaItems();
-		state.update((value) => ({
-			...value,
-			items: [],
-			cards: [],
-			selected: null,
-			next: null,
-			loading: false,
-			empty: null,
-			status: "",
-		}));
-	}
-
-	async function load(more = false) {
-		if (
-			!credentials ||
-			disposed ||
-			(more && (get(state).loading || !get(state).next))
-		)
-			return;
-		if (!more) {
-			revision++;
-			request?.abort();
-			clearMediaItems();
-		}
-		const version = revision;
-		const operation = identityOperation;
-		const controller = new AbortController();
-		request = controller;
-		const after = more ? get(state).next : null;
-		const query = get(state).query;
-		state.update((value) => ({
-			...value,
-			items: more ? value.items : [],
-			cards: more ? value.cards : [],
-			selected: more ? value.selected : null,
-			next: more ? value.next : null,
-			loading: true,
-			empty: null,
-			status: "Loading…",
-		}));
-		try {
-			const captured = await session.withIdentity(
-				operation,
-				(identity) => identity,
-			);
-			controller.signal.throwIfAborted();
-			const page = await api.list({
-				...captured,
-				tags: query,
-				after,
-				signal: controller.signal,
+	function open(value) {
+		if (opening || !value.connected || viewInstance === value.clientId) return;
+		opening = true;
+		client
+			.command("view.open", { id: viewId, query: get(state).query })
+			.then(() => {
+				viewInstance = value.clientId;
+			})
+			.catch((error) => {
+				if (!disposed)
+					state.update((current) => ({ ...current, status: error.message }));
+			})
+			.finally(() => {
+				opening = false;
 			});
-			if (disposed || version !== revision || controller.signal.aborted) return;
-			// Keep existing entries when cursor pages overlap: a late list response
-			// must not overwrite a tag edit that completed while More was loading.
-			const entries = new Map(
-				(more ? get(state).items : []).map((item) => [item.id, item]),
-			);
-			for (const item of page.items)
-				if (!entries.has(item.id)) entries.set(item.id, item);
-			const items = [...entries.values()];
-			const cards = items.map((item) => ({ item, media: media(item) }));
-			state.update((value) => ({
-				...value,
-				items,
-				cards,
-				next: page.next,
-				empty:
-					!more && !page.items.length
-						? splitTags(query).length
-							? "search"
-							: "library"
-						: null,
-				status: "",
-			}));
-		} catch (error) {
-			if (!disposed && version === revision && !controller.signal.aborted)
-				state.update((value) => ({ ...value, status: error.message }));
-		} finally {
-			if (!disposed && version === revision)
-				state.update((value) => ({ ...value, loading: false }));
-		}
 	}
-
-	const unsubscribe = session.observeIdentity((value) => {
-		const next =
-			value.ready && value.wrappedKey && value.privateKey
+	const unsubscribe = client.subscribe((value) => {
+		if (disposed) return;
+		open(value);
+		const view = value.views[viewId];
+		const ids =
+			value.connected && value.session.unlocked ? view?.ids || [] : [];
+		for (const [id, media] of cards)
+			if (!ids.includes(id)) {
+				media.dispose();
+				cards.delete(id);
+			}
+		const items = ids.map((id) => value.media[id]).filter(Boolean);
+		for (const item of items)
+			if (!cards.has(item.id))
+				cards.set(item.id, createMediaItem(item, client, platform));
+		const active = value.uploads.find((job) =>
+			["preparing", "uploading"].includes(job.status),
+		);
+		const batch = active
+			? value.uploads.filter((job) => job.batchId === active.batchId)
+			: [];
+		const failures = value.uploads
+			.filter((job) => ["failed", "interrupted", "paused"].includes(job.status))
+			.map((job) => ({
+				...job,
+				file: { name: job.name || "upload" },
+				error:
+					job.status === "interrupted"
+						? "Interrupted. It may already be saved on the server; check before retrying."
+						: job.status === "paused"
+							? "Queued before restart. Retry to continue."
+							: job.error,
+			}));
+		state.update((current) => ({
+			...current,
+			...(view || {}),
+			query: view?.query ?? current.query,
+			items,
+			cards: items.map((item) => ({ item, media: cards.get(item.id) })),
+			selected:
+				current.selected &&
+				ids.includes(current.selected.id) &&
+				value.session.unlocked
+					? current.selected
+					: null,
+			uploading: value.uploads.some((job) =>
+				["queued", "preparing", "uploading"].includes(job.status),
+			),
+			uploadProgress: active
 				? {
-						serverUrl: value.serverUrl,
-						privateKey: value.privateKey,
-						identityGeneration: value.identityGeneration,
+						name: active.name,
+						index: batch.indexOf(active) + 1,
+						total: batch.length,
+						percent: active.progress || 0,
 					}
-				: null;
-
-		invalidate();
-		credentials = next;
-		if (credentials) {
-			identityOperation = session.operation({ onInvalidated: invalidate });
-			load();
-		}
+				: null,
+			uploadFailures: failures,
+			uploadCompleted: value.uploads
+				.filter((job) => job.status === "completed")
+				.map((job) => job.id),
+			uploadStatus,
+		}));
 	});
-
-	function media(item) {
-		if (disposed || !credentials) return null;
-		let media = mediaItems.get(item.id);
-		if (!media) {
-			media = createMediaItem(item, credentials, platform, undefined, {
-				validate: () =>
-					session.withIdentity(identityOperation, (identity) => identity),
-			});
-			mediaItems.set(item.id, media);
-		} else media.updateItem(item);
-		return media;
-	}
-	function updateItem(id, changes) {
-		if (!disposed)
-			state.update((value) => ({
-				...value,
-				items: value.items.map((item) => {
-					if (item.id !== id) return item;
-					const updated = { ...item, ...changes };
-					mediaItems.get(id)?.updateItem(updated);
-					return updated;
-				}),
-			}));
-	}
-	function updateTags(id, metadata, tokens) {
-		updateItem(id, { metadata, tokens });
+	async function action(name, payload) {
+		try {
+			return await client.command(name, payload);
+		} catch (error) {
+			if (!disposed)
+				state.update((value) => ({ ...value, status: error.message }));
+			return false;
+		}
 	}
 	return {
 		subscribe: state.subscribe,
-		search(value = get(state).query) {
-			if (disposed) return;
-			state.update((current) => ({ ...current, query: value }));
-			return load();
-		},
-		more: () => load(true),
 		query: () => get(state).query,
-		updateItem,
-		updateTags,
-		media,
+		search: (query = get(state).query) =>
+			action("view.search", { id: viewId, query }),
+		more: () => action("view.more", { id: viewId }),
+		media: (item) => cards.get(item.id),
+		async upload(files) {
+			const result = await action("uploads.submit", {
+				sources: files.map((file) => ({ blob: file, name: file.name })),
+			});
+			if (result?.failures?.length) {
+				uploadStatus = result.failures
+					.map((failure) => `${failure.name}: ${failure.error}`)
+					.join(" | ");
+				state.update((value) => ({ ...value, uploadStatus }));
+			}
+		},
+		retryUploads: () =>
+			action("uploads.retry", {
+				ids: get(state).uploadFailures.map((job) => job.id),
+			}),
+		discardUploads: () =>
+			action("uploads.discard", {
+				ids: get(state).uploadFailures.map((job) => job.id),
+			}),
+		dismissCompleted: () =>
+			action("uploads.discard", { ids: get(state).uploadCompleted }),
 		async reveal(id, opener) {
-			const target = mediaItems.get(id);
-			const previewVersion = ++previewRevision;
-			const url = await target?.reveal();
+			const media = cards.get(id);
+			const version = ++previewRevision;
+			const url = await media?.reveal();
 			if (
 				!url ||
 				disposed ||
-				previewVersion !== previewRevision ||
-				mediaItems.get(id) !== target
+				version !== previewRevision ||
+				cards.get(id) !== media
 			)
 				return;
-			const metadata = get(target).metadata;
+			const metadata = get(media).metadata;
 			if (metadata?.content_type?.startsWith("image/"))
 				state.update((value) => ({
 					...value,
@@ -209,39 +168,23 @@ export function createLibrary(session, platform, api = { list, sendUpload }) {
 			state.update((value) => ({ ...value, selected: null }));
 		},
 		async remove(id) {
-			const target = mediaItems.get(id);
-			if (!target || get(target).busy || get(target).deleted) return;
+			const media = cards.get(id);
 			if (
+				!media ||
+				get(media).busy ||
 				!platform.confirm(
-					`Delete ${get(target).metadata?.name || id}? This cannot be undone.`,
+					`Delete ${get(media).metadata?.name || id}? This cannot be undone.`,
 				)
 			)
 				return;
-			if (await target.remove())
-				state.update((value) => ({
-					...value,
-					selected: value.selected?.id === id ? null : value.selected,
-				}));
+			return media.remove();
 		},
-		async retag(id, tags) {
-			const target = mediaItems.get(id);
-			const result = await target?.retag(tags);
-			if (!result || disposed || mediaItems.get(id) !== target) return false;
-			if (result.conflict) {
-				if (result.item) updateItem(id, result.item);
-				return false;
-			}
-			updateItem(id, result);
-			return true;
-		},
-		upload: batch.upload,
-		retryUploads: batch.retryUploads,
+		retag: (id, tags) => cards.get(id)?.retag(tags),
 		dispose() {
 			disposed = true;
-			invalidate();
 			unsubscribe();
-			batch.dispose();
-			unsubscribeBatch();
+			clear();
+			void client.command("view.close", { id: viewId }).catch(() => {});
 		},
 	};
 }

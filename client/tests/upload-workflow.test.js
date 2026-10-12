@@ -1,312 +1,85 @@
 import assert from "node:assert/strict";
-import test, { beforeEach } from "node:test";
-import { get, writable } from "svelte/store";
-import {
-	createUploadTask as implementation,
-	sendPendingUpload as pendingImplementation,
-} from "../src/lib/media/upload-workflow.js";
-import {
-	deferred,
-	installUploadLocks,
-	tick,
-	workflowSession,
-} from "./helpers.js";
+import test from "node:test";
+import { get } from "svelte/store";
+import { deferred } from "./helpers.js";
+import { serviceFixture, until } from "./service-helpers.js";
 
-beforeEach(installUploadLocks);
-
-function fixture(t, options = {}) {
-	const state = writable({
-		privateKey: "key",
-		serverUrl: "https://clip.example",
+test("completed transfer progress cannot overwrite the next service job", async (t) => {
+	const transfers = [];
+	const f = await serviceFixture(t, {
+		upload: (options) => {
+			const job = deferred();
+			transfers.push({ options, ...job });
+			return job.promise;
+		},
 	});
-	let subscriptions = 0;
-	const session = {
-		credentials: () => get(state),
-		subscribe(listener) {
-			subscriptions++;
-			const unsubscribe = state.subscribe(listener);
-			return () => {
-				subscriptions--;
-				unsubscribe();
-			};
-		},
-	};
-	const task = createUploadTask({ session, ...options });
-	t.after(task.dispose);
-	return { task, state, subscriptions: () => subscriptions };
-}
-
-test("each transfer stops publishing progress after settlement, while the batch task remains usable", async (t) => {
-	const { task } = fixture(t);
-	const first = deferred();
-	let oldProgress;
-	const updates = [];
-	const sending = task.send(
-		{ onProgress: (percent) => updates.push(percent) },
-		({ onProgress }) => {
-			oldProgress = onProgress;
-			onProgress(10);
-			return first.promise;
-		},
-	);
-	first.reject(new Error("temporary"));
-	await assert.rejects(sending, /temporary/);
-	await task.send(
-		{ onProgress: (percent) => updates.push(percent) },
-		async ({ onProgress }) => {
-			oldProgress(99);
-			onProgress(20);
-		},
-	);
-	oldProgress(100);
-	assert.deepEqual(updates, [10, 20]);
-});
-
-test("a credential change aborts ignored cancellation and invalidates a task only once", async (t) => {
-	let invalidated = 0;
-	const { task, state, subscriptions } = fixture(t, {
-		onInvalidated: () => invalidated++,
+	await f.client.command("uploads.submit", {
+		sources: ["one", "two"].map((name) => ({
+			blob: new Blob([name]),
+			name,
+			preview: null,
+		})),
 	});
-	const transfer = deferred();
-	const sending = task.send({}, () => transfer.promise);
-	state.update((value) => ({ ...value, privateKey: "other" }));
-	state.update((value) => ({ ...value, serverUrl: "https://other.example" }));
-	assert.equal(task.signal.aborted, true);
-	assert.equal(invalidated, 1);
-	transfer.resolve();
-	await assert.rejects(sending, { name: "AbortError" });
-	task.dispose();
-	task.dispose();
-	assert.equal(subscriptions(), 0);
-});
-
-test("owner cancellation covers preparation before transfer and prevents sending", async (t) => {
-	const owner = new AbortController();
-	const { task } = fixture(t, { signal: owner.signal });
-	const preparing = deferred();
-	const prepared = preparing.promise.then(() => task.assertCurrent());
-	owner.abort();
-	preparing.resolve();
-	await assert.rejects(prepared, { name: "AbortError" });
-	await assert.rejects(
-		task.send({}, () => assert.fail("cancelled task must not send")),
-		{ name: "AbortError" },
-	);
-});
-
-test("a new generation cancels uploads even when the key and server are unchanged", async (t) => {
-	const { task, state } = fixture(t);
-	const transfer = deferred();
-	const sending = task.send({}, () => transfer.promise);
-	state.update((value) => ({ ...value, identityGeneration: "restored" }));
-	assert.equal(task.signal.aborted, true);
-	transfer.resolve();
-	await assert.rejects(sending, { name: "AbortError" });
-});
-
-test("library changes during pending-ID cleanup suppress completion and notification", async (t) => {
-	const { task, state } = fixture(t);
-	let removed;
-	await assert.rejects(
-		sendPendingUpload(
-			{
-				task,
-				id: "one",
-				source: {},
-				platform: {
-					session: {
-						get: async () => ({ "upload:one": {} }),
-						remove: async (key) => {
-							removed = key;
-							state.update((value) => ({ ...value, privateKey: "other" }));
-						},
-					},
-					notify: () => assert.fail("stale completion must not notify"),
-				},
-				onUploaded: () =>
-					assert.fail("stale completion must not publish success"),
-			},
-			async () => {},
+	await until(() => transfers.length === 1);
+	transfers[0].resolve({ id: "one" });
+	await until(() => transfers.length === 2);
+	transfers[1].options.onProgress(25);
+	transfers[0].options.onProgress(99);
+	await until(() =>
+		get(f.client).uploads.some(
+			(job) => job.status === "uploading" && job.progress === 25,
 		),
-		{ name: "AbortError" },
 	);
-	assert.equal(removed, "upload:one");
-});
-
-test("pending ID ownership covers preparation, skips competing sends, and rejects stale sources", async (t) => {
-	const first = fixture(t).task;
-	const second = fixture(t).task;
-	const preparation = deferred();
-	const stored = { "upload:one": {} };
-	let sends = 0,
-		notices = 0,
-		prepares = 0;
-	const platform = {
-		session: {
-			get: async (key) => ({ [key]: stored[key] }),
-			remove: async (key) => {
-				delete stored[key];
-			},
-		},
-		notify: async () => notices++,
-	};
-	const upload = async () => sends++;
-	const options = {
-		id: "one",
-		platform,
-		prepareSource: () => {
-			prepares++;
-			return preparation.promise;
-		},
-	};
-	const sending = sendPendingUpload({ ...options, task: first }, upload);
-	await tick();
-	assert.equal(
-		await sendPendingUpload({ ...options, task: second }, upload),
-		"busy",
+	const active = get(f.client).uploads.find(
+		(job) => job.status === "uploading",
 	);
-	assert.equal(prepares, 1);
-	preparation.resolve({});
-	assert.equal(await sending, "uploaded");
-	assert.equal(
-		await sendPendingUpload({ ...options, task: second }, upload),
-		"missing",
-	);
-	assert.equal(prepares, 1);
-	assert.equal(sends, 1);
-	assert.equal(notices, 1);
-});
-
-for (const stage of ["preparation", "transfer"]) {
-	test(`${stage} failure releases pending ownership for an explicit retry`, async (t) => {
-		const { task } = fixture(t);
-		let failed = true;
-		const failure = () => {
-			if (failed) throw new Error("temporary");
-			return {};
-		};
-		const options = {
-			task,
-			id: "one",
-			platform: {
-				session: {
-					get: async () => ({ "upload:one": {} }),
-					remove: async () => {},
-				},
-				notify: async () => {},
-			},
-			prepareSource: stage === "preparation" ? failure : async () => ({}),
-		};
-		const upload = stage === "transfer" ? failure : async () => {};
-		await assert.rejects(sendPendingUpload(options, upload), /temporary/);
-		failed = false;
-		assert.equal(await sendPendingUpload(options, upload), "uploaded");
-	});
-}
-
-test("cancellation before ownership or during the storage recheck never sends", async (t) => {
-	const { task } = fixture(t);
-	const read = deferred();
-	const options = {
-		task,
-		id: "one",
-		platform: { session: { get: () => read.promise } },
-		prepareSource: () => assert.fail("cancelled source must not prepare"),
-	};
-	const sending = sendPendingUpload(options);
-	task.dispose();
-	read.resolve({ "upload:one": {} });
-	await assert.rejects(sending, { name: "AbortError" });
-	await assert.rejects(sendPendingUpload(options), { name: "AbortError" });
-});
-
-test("missing Web Locks retains the source and never submits", async (t) => {
-	const { task } = fixture(t);
-	Object.defineProperty(navigator, "locks", {
-		configurable: true,
-		value: undefined,
-	});
-	await assert.rejects(
-		sendPendingUpload({
-			task,
-			id: "one",
-			platform: {
-				session: { get: () => assert.fail("must not touch storage") },
-			},
-		}),
-		/Upload coordination is unavailable/,
+	assert.equal(active.name, "two");
+	assert.equal(active.progress, 25);
+	transfers[1].resolve({ id: "two" });
+	await until(() =>
+		get(f.client).uploads.every((job) => job.status === "completed"),
 	);
 });
 
-test("successful cleanup releases ownership before notification finishes", async (t) => {
-	const first = fixture(t).task;
-	const second = fixture(t).task;
-	const notice = deferred();
-	let pending = {};
-	const options = {
-		id: "one",
-		source: {},
-		platform: {
-			session: {
-				get: async () => ({ "upload:one": pending }),
-				remove: async () => {
-					pending = undefined;
-				},
-			},
-			notify: () => notice.promise,
-		},
-	};
-	const sending = sendPendingUpload(
-		{ ...options, task: first },
-		async () => {},
-	);
-	await tick();
-	assert.equal(
-		await sendPendingUpload({ ...options, task: second }, () =>
-			assert.fail("completed source must not send"),
-		),
-		"missing",
-	);
-	notice.resolve();
-	assert.equal(await sending, "uploaded");
-});
-
-function createUploadTask({ session, ...options }) {
-	return implementation({ ...options, session: workflowSession(session) });
-}
-
-function sendPendingUpload(options, upload) {
-	return pendingImplementation(
-		{
-			...options,
-			task: {
-				...options.task,
-				pending: workflowSession({}, options.platform).pending,
-			},
-		},
-		upload,
-	);
-}
-
-test("invalidation after credential validation still prevents starting the upload", async (t) => {
-	const state = writable({
-		privateKey: "key",
-		serverUrl: "https://clip.example",
-	});
-	const session = workflowSession(state);
-	const task = implementation({
-		session: {
-			...session,
-			async withIdentity(operation, action) {
-				const credentials = await session.withIdentity(operation, action);
-				state.update((value) => ({ ...value, privateKey: "" }));
-				return credentials;
-			},
+test("web video uploads are accepted before optional thumbnail preparation and survive helper failure", async (t) => {
+	let source;
+	const f = await serviceFixture(t, {
+		upload: async (options) => {
+			source = options.source;
+			return { id: "video" };
 		},
 	});
-	t.after(task.dispose);
-	await assert.rejects(
-		task.send({}, () => assert.fail("invalidated upload started")),
-		{ name: "AbortError" },
-	);
+	const accepted = await f.client.command("uploads.submit", {
+		sources: [
+			{ blob: new Blob(["video"], { type: "video/webm" }), name: "video.webm" },
+		],
+	});
+	assert.equal(accepted.ids.length, 1);
+	await until(() => get(f.client).uploads[0].status === "completed");
+	assert.equal(source.preview, null);
+});
+
+test("late progress from a failed attempt cannot overwrite a retry of the same job", async (t) => {
+	const transfers = [];
+	const f = await serviceFixture(t, {
+		upload: (options) => {
+			const job = deferred();
+			transfers.push({ options, ...job });
+			return job.promise;
+		},
+	});
+	const accepted = await f.client.command("uploads.submit", {
+		sources: [{ blob: new Blob(["one"]), name: "one", preview: null }],
+	});
+	await until(() => transfers.length === 1);
+	transfers[0].reject(new Error("offline"));
+	await until(() => get(f.client).uploads[0].status === "failed");
+	await f.client.command("uploads.retry", { ids: accepted.ids });
+	await until(() => transfers.length === 2);
+	transfers[1].options.onProgress(25);
+	transfers[0].options.onProgress(99);
+	await until(() => get(f.client).uploads[0].progress === 25);
+	assert.equal(get(f.client).uploads[0].progress, 25);
+	transfers[1].resolve({ id: "saved" });
+	await until(() => get(f.client).uploads[0].status === "completed");
 });

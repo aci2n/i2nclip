@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
 import { createApplication } from "../src/lib/stores/application.js";
+import { createServiceEngine } from "../src/lib/service/engine.js";
+import { engineClient, memoryRepository } from "./service-helpers.js";
 
 function setup(t, page) {
 	let location = new URL(
@@ -20,9 +22,13 @@ function setup(t, page) {
 		addEventListener: (name, callback) => listeners.set(name, callback),
 		removeEventListener: (name) => listeners.delete(name),
 	};
-	const storage = { get: async () => ({}) };
+	const engine = createServiceEngine({
+		repository: memoryRepository(),
+		defaultServerUrl: "https://clip.example",
+	});
+	t.after(engine.dispose);
 	const app = createApplication(
-		{ local: storage, session: storage, subscribe: () => () => {} },
+		{ createService: () => engineClient(engine) },
 		page,
 		browser,
 	);

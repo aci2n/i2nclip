@@ -56,28 +56,21 @@ direction and protocol step. JSON packets contain `v: 1`, `iv`, and `ct` encoded
 as unpadded base64url. The identity plaintext contains `v`, `serverUrl`,
 `privateKey`, and `publicKey`; the acknowledgment contains `v: 1, saved: true`.
 
-The receiver validates the identity and selected server, acquires the session
-Web Lock, checks that no library/pending registration exists, and saves a freshly
-password-wrapped key with fresh local generation IDs. The sender reports success
-only after decrypting the acknowledgment. A failed acknowledgment does not undo
-a successful save; the receiver reports that distinction.
+The receiver validates the identity and selected server inside the browser
+service, checks that no library/pending registration exists, and saves a freshly
+wrapped key with the new device password. IndexedDB commit must complete before
+acknowledgment. The unlocked key stays in owner memory, and restarting the owner
+requires password entry.
 
-Pairing state, passwords, setup, and capability tokens are memory-only. Reset,
-identity/server changes, cancellation, expiry, and page disposal terminate the
-worker and release references. Starting reset or a server change invalidates
-pairing immediately, before asynchronous storage cleanup. The shared [session service](session.md) owns invalidation and storage access.
-Before sending the identity, its general `withIdentity` operation acquires the session Web Lock, rereads the persisted server,
-identity generation and unlocked key, and validates their agreement with the
-original pairing. It holds that lock through encrypted identity submission,
-including bounded retries, but releases it before waiting for acknowledgment.
-Transfers and mutations from other pages therefore run in order even if storage
-notifications have not arrived. A transfer already submitted cannot be recalled.
-This does not guarantee erasure of JavaScript strings from process memory.
-HTTPS is required except for `localhost`,
-`127.0.0.1`, and `::1`. The design protects against relay observation and message
-substitution, assuming trusted client builds; a compromised web client can access
-an unlocked identity. An attacker can still disrupt pairing by claiming a room
-or dropping messages.
+The shared [browser service](client-service.md) owns pairing and its private
+operation handles. Reset/server changes invalidate pairing immediately. Transfer
+and acknowledgment validate the current operation inside the owner's serialized
+identity queue; no UI page receives private credentials or chooses a lock.
+
+Pairing status is broadcast to connected clients. Only the initiating connection
+receives the initial pairing code and may approve, reject verification or cancel.
+Disconnect cancels its pairing attempt. Other tabs observe status without taking
+over approval. Expiry and bounded relay retries remain enforced by the owner.
 
 ## Relay API
 
@@ -158,7 +151,7 @@ all web/extension directions and verify mismatch cancellation without import.
 Rust tests cover role capabilities, ordering/idempotency, room/rate/body limits,
 source spoofing, saturated read admission, permit release, and expiry. Client
 regressions cover stalled reset/server changes, stale persisted credentials,
-and session-lock ordering across pages. Firefox tests use independent browser
+and owner command ordering across pages. Firefox tests use independent browser
 contexts and the real Rust API for every web/extension direction, new-password
 unlock, wrong codes, and reset
 cancellation. The extension needs packaged WASM enabled by its narrowly scoped

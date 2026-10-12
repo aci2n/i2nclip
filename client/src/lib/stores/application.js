@@ -7,8 +7,9 @@ import { createSettings } from "./settings.js";
 
 // The application owns workflows across view changes; views only render them.
 export function createApplication(platform, initialPage, browser = window) {
-	const session = createSession(platform);
-	const pairing = createPairing(session);
+	const client = platform.createService();
+	const session = createSession(client, platform);
+	const pairing = createPairing(client);
 	const settings = createSettings(session, platform);
 	const standalone = !initialPage;
 	const pageAtLocation = () => {
@@ -31,12 +32,10 @@ export function createApplication(platform, initialPage, browser = window) {
 			: null;
 	const auto = popupPage === "unlock" || params.has("auto");
 	const pending = popupPage
-		? createPendingUpload(session, platform, params.get("id"), undefined, {
-				auto,
-			})
+		? createPendingUpload(client, platform, params.get("id"), { auto })
 		: null;
 	let library = ["library", "options"].includes(page)
-		? createLibrary(session, platform)
+		? createLibrary(client, platform)
 		: null;
 	const state = writable({ page, library, pending, auto, popupPage });
 	let disposed = false;
@@ -51,7 +50,7 @@ export function createApplication(platform, initialPage, browser = window) {
 	function show(page) {
 		if (disposed) return;
 		if (["library", "options"].includes(page))
-			library ??= createLibrary(session, platform);
+			library ??= createLibrary(client, platform);
 		library?.closePreview();
 		state.set({ page, library, pending, auto, popupPage });
 	}
@@ -87,6 +86,7 @@ export function createApplication(platform, initialPage, browser = window) {
 			settings.dispose();
 			pairing.dispose();
 			session.dispose();
+			client.dispose();
 		},
 	};
 }

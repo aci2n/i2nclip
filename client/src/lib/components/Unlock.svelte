@@ -9,7 +9,7 @@ function submit(event) {
 
 <form {id} onsubmit={submit} class="panel">
 	<h2>Unlock your library</h2>
-	<p>Your library stays unlocked for this browser session.</p>
+	<p>Your library stays unlocked while the app service is running.</p>
 	<label for="pass">Unlock password</label>
 	<div class="bar">
 		<input

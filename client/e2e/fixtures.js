@@ -20,6 +20,9 @@ const png = Buffer.from(
 
 const test = base.extend({
 	app: async ({ page }, use) => {
+		page.on("pageerror", (error) =>
+			console.error("Browser error:", error.message),
+		);
 		const data = await fixtureDatabase("create");
 		let api;
 		let web;
@@ -58,8 +61,8 @@ async function fillCreation(page, code) {
 
 async function storage(page) {
 	return page.evaluate(async () => ({
-		local: await browser.storage.local.get(null),
-		session: await browser.storage.session.get(null),
+		local: await window.serviceTest("config"),
+		session: (await window.serviceTest("state")).session,
 	}));
 }
 
@@ -119,6 +122,7 @@ async function downloadRecovery(page) {
 }
 
 async function resetLibrary(page, accept = true) {
+	await page.bringToFront();
 	page.once("dialog", async (dialog) => {
 		expect(dialog.type()).toBe("confirm");
 		if (accept) await dialog.accept();
@@ -165,67 +169,125 @@ async function shot(page, name) {
 }
 
 function installBrowser() {
-	const listeners = [];
-	const notify = (before, after, area) => {
-		const changes = {};
-		for (const key of new Set([
-			...Object.keys(before),
-			...Object.keys(after),
-		])) {
-			if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
-				changes[key] = { oldValue: before[key], newValue: after[key] };
-			}
-		}
-		for (const listener of listeners) listener(changes, area);
-	};
-	const bag = (storage, area) => ({
-		async get(keys) {
-			const all = JSON.parse(storage.getItem("i2nclip-e2e") || "{}");
-			if (keys == null) return { ...all };
-			const names = Array.isArray(keys) ? keys : [keys];
-			const out = {};
-			for (const name of names) if (name in all) out[name] = all[name];
-			return out;
-		},
-		async set(values) {
-			const all = JSON.parse(storage.getItem("i2nclip-e2e") || "{}");
-			const next = { ...all, ...values };
-			storage.setItem("i2nclip-e2e", JSON.stringify(next));
-			notify(all, next, area);
-		},
-		async remove(keys) {
-			const all = JSON.parse(storage.getItem("i2nclip-e2e") || "{}");
-			const next = { ...all };
-			for (const key of Array.isArray(keys) ? keys : [keys]) delete next[key];
-			storage.setItem("i2nclip-e2e", JSON.stringify(next));
-			notify(all, next, area);
-		},
-		async clear() {
-			const all = JSON.parse(storage.getItem("i2nclip-e2e") || "{}");
-			storage.removeItem("i2nclip-e2e");
-			notify(all, {}, area);
-		},
-	});
-	globalThis.browser = {
-		runtime: { getURL: (file) => new URL(file, location.href).href },
-		storage: {
-			local: bag(localStorage, "local"),
-			session: bag(sessionStorage, "session"),
-			onChanged: {
-				addListener: (listener) => listeners.push(listener),
-				removeListener: (listener) => {
-					const index = listeners.indexOf(listener);
-					if (index !== -1) listeners.splice(index, 1);
-				},
+	const connectionListeners = new Set();
+	function connect() {
+		const extension = location.pathname.startsWith("/client/dist/extension/");
+		const worker = new SharedWorker(
+			extension ? "/client/dist/e2e/background.js" : "/assets/web-worker.js",
+			{
+				type: "module",
+				name: extension ? "i2nclip-extension-test" : "i2nclip-service",
 			},
-		},
-		notifications: { create: async () => {} },
+		);
+		const listeners = new Set(),
+			disconnects = new Set();
+		const port = {
+			name: "i2nclip-service",
+			postMessage: (message) => worker.port.postMessage(message),
+			onMessage: {
+				addListener: (fn) => listeners.add(fn),
+				removeListener: (fn) => listeners.delete(fn),
+			},
+			onDisconnect: {
+				addListener: (fn) => disconnects.add(fn),
+				removeListener: (fn) => disconnects.delete(fn),
+			},
+			disconnect() {
+				worker.port.postMessage({ type: "detach" });
+				worker.port.close();
+			},
+		};
+		worker.port.onmessage = ({ data }) => {
+			for (const listener of listeners) listener(data);
+		};
+		worker.onerror = () => {
+			for (const listener of disconnects) listener();
+		};
+		worker.port.start();
+		connectionListeners.add(port);
+		return port;
+	}
+	window.browser = {
+		runtime: { connect, getURL: (path) => `/client/dist/extension/${path}` },
 		downloads: {
 			download: async ({ url }) => {
-				window.lastDownload = await (await fetch(url)).text();
+				const response = await fetch(url);
+				window.lastDownload = response.headers
+					.get("content-type")
+					?.includes("json")
+					? await response.text()
+					: Array.from(new Uint8Array(await response.arrayBuffer()));
 				return 1;
 			},
 		},
+	};
+	window.serviceTest = async (name, payload = {}) => {
+		if (name === "config")
+			return new Promise((resolve, reject) => {
+				const opening = indexedDB.open("i2nclip-service");
+				opening.onerror = () => reject(opening.error);
+				opening.onsuccess = () => {
+					const db = opening.result;
+					if (!db.objectStoreNames.contains("config")) {
+						db.close();
+						resolve({});
+						return;
+					}
+					const tx = db.transaction("config");
+					const request = tx.objectStore("config").get("identity");
+					tx.oncomplete = () => {
+						const value = request.result || {};
+						db.close();
+						resolve(value);
+					};
+					tx.onabort = () => {
+						db.close();
+						reject(tx.error);
+					};
+				};
+			});
+		const port = connect();
+		let instanceId;
+		let epoch;
+		const requestId = crypto.randomUUID();
+		try {
+			return await new Promise((resolve, reject) => {
+				port.onMessage.addListener((message) => {
+					if (message.type === "snapshot" && !instanceId) {
+						instanceId = message.instanceId;
+						epoch = message.value.session.epoch;
+						if (name === "state") {
+							resolve(message.value);
+							return;
+						}
+						if (name === "config")
+							port.postMessage({ type: "test.config", requestId });
+						else if (name === "context")
+							port.postMessage({ type: "test.context", requestId, ...payload });
+						else if (name === "restart") {
+							port.postMessage({ type: "test.restart" });
+							resolve(true);
+						} else
+							port.postMessage({
+								type: "command",
+								instanceId,
+								requestId,
+								name,
+								payload: { ...payload, epoch },
+							});
+					}
+					if (
+						["reply", "test.reply"].includes(message.type) &&
+						message.requestId === requestId
+					) {
+						if (message.error) reject(new Error(message.error.message));
+						else resolve(message.value);
+					}
+				});
+			});
+		} finally {
+			port.disconnect();
+		}
 	};
 }
 

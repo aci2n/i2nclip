@@ -1,70 +1,48 @@
-const listeners = new Set();
-const storage = (area) => ({
-	async get(keys) {
-		const all = JSON.parse(area.getItem("i2nclip") || "{}");
-		if (keys == null) return all;
-		return Object.fromEntries(
-			(Array.isArray(keys) ? keys : [keys])
-				.filter((key) => key in all)
-				.map((key) => [key, all[key]]),
-		);
-	},
-	async set(values) {
-		area.setItem(
-			"i2nclip",
-			JSON.stringify({ ...(await this.get(null)), ...values }),
-		);
-		listeners.forEach((fn) => {
-			fn();
-		});
-	},
-	async remove(keys) {
-		const values = await this.get(null);
-		for (const key of Array.isArray(keys) ? keys : [keys]) delete values[key];
-		area.setItem("i2nclip", JSON.stringify(values));
-		listeners.forEach((fn) => {
-			fn();
-		});
-	},
-	async clear() {
-		area.removeItem("i2nclip");
-		listeners.forEach((fn) => {
-			fn();
-		});
-	},
-});
+import { thumbnail } from "../media/thumbnail.js";
+import { createServiceClient } from "../service/client.js";
 
-window.addEventListener("storage", () =>
-	listeners.forEach((fn) => {
-		fn();
-	}),
-);
-// A restored or suspended page may have missed the shared-storage events.
-const resume = () => {
-	listeners.forEach((fn) => {
-		fn();
-	});
-};
-window.addEventListener("pageshow", resume);
-window.addEventListener("focus", resume);
-document.addEventListener("visibilitychange", () => {
-	if (document.visibilityState === "visible") resume();
-});
 export const webPlatform = {
-	confirm: (message) => globalThis.confirm(message),
-	local: storage(localStorage),
-	session: storage(sessionStorage),
-	subscribe(fn) {
-		listeners.add(fn);
-		return () => listeners.delete(fn);
+	createService() {
+		return createServiceClient(
+			() => {
+				if (!globalThis.SharedWorker)
+					throw new Error("SharedWorker is unavailable in this browser.");
+				const worker = new SharedWorker(
+					new URL("../service/web-worker.js", import.meta.url),
+					{ type: "module", name: "i2nclip-service" },
+				);
+				const port = worker.port;
+				port.start();
+				return {
+					send: (message) => port.postMessage(message),
+					listen(listener) {
+						const receive = ({ data }) => listener(data);
+						port.addEventListener("message", receive);
+						return () => port.removeEventListener("message", receive);
+					},
+					disconnect: () => port.close(),
+					onDisconnect(listener) {
+						worker.addEventListener("error", listener);
+						port.addEventListener("messageerror", listener);
+						return () => {
+							worker.removeEventListener("error", listener);
+							port.removeEventListener("messageerror", listener);
+						};
+					},
+				};
+			},
+			{
+				helper: (name, payload) =>
+					name === "videoThumbnail" ? thumbnail(payload.blob) : null,
+			},
+		);
 	},
+	confirm: (message) => globalThis.confirm(message),
 	async download(url, filename) {
 		const anchor = document.createElement("a");
 		anchor.href = url;
 		anchor.download = filename;
 		anchor.click();
 	},
-	fetchMedia: ({ srcUrl }, signal) => fetch(srcUrl, { signal }),
-	notify: () => {},
 	close: () => {},
 };

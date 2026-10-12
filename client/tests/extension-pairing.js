@@ -17,10 +17,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { generatePrivateKey } from "../src/lib/protocol/identity.js";
+import { wrapPrivateKey } from "../src/lib/protocol/vault.js";
+import { recoveryFile } from "../src/lib/protocol/recovery.js";
 
 const client = fileURLToPath(new URL("../", import.meta.url));
 
-test("installed Firefox add-on runs the packaged OPAQUE workers under its manifest CSP", {
+test("installed Firefox add-on runs OPAQUE and shares a background owner through binary ports across restart", {
 	timeout: 60_000,
 }, async () => {
 	const directory = await mkdtemp(join(tmpdir(), "i2nclip-pairing-addon-"));
@@ -30,7 +33,18 @@ test("installed Firefox add-on runs the packaged OPAQUE workers under its manife
 	const report = new Promise((resolve) => {
 		resolveReport = resolve;
 	});
+	let uploads = 0;
 	const server = createServer((request, response) => {
+		if (request.url === "/api/media") {
+			request.resume();
+			request.on("end", () => {
+				if (++uploads > 1) {
+					response.writeHead(200, { "content-type": "application/json" });
+					response.end(JSON.stringify({ id: "a".repeat(64) }));
+				}
+			});
+			return;
+		}
 		let text = "";
 		request.on("data", (chunk) => {
 			text += chunk;
@@ -60,7 +74,7 @@ test("installed Firefox add-on runs the packaged OPAQUE workers under its manife
 			manifest.content_security_policy.extension_pages,
 			"script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; worker-src 'self'",
 		);
-		manifest.background = { scripts: ["pairing-smoke.js"], type: "module" };
+		manifest.background.scripts.push("pairing-smoke.js");
 		await writeFile(join(addon, "manifest.json"), JSON.stringify(manifest));
 		const worker = (await readdir(join(addon, "chunks"))).find((name) =>
 			/^worker-.*\.js$/.test(name),
@@ -103,10 +117,64 @@ try {
   if (value.test !== "packaged-worker") throw new Error("Incorrect transfer");
   const ack = await receiver("acknowledge");
   await sender("verifyAcknowledgment", {message: ack});
-  await fetch(${JSON.stringify(endpoint)}, {method: "POST", body: JSON.stringify({ok: true})});
+  await browser.tabs.create({url: browser.runtime.getURL("service-smoke.html")});
 } catch (error) {
   await fetch(${JSON.stringify(endpoint)}, {method: "POST", body: JSON.stringify({error: error.message})});
 } finally { for (const worker of workers) worker.terminate(); }
+`,
+		);
+		const key = await generatePrivateKey();
+		const recovery = recoveryFile({
+			serverUrl: new URL(endpoint).origin,
+			wrappedKey: await wrapPrivateKey(key.privateKey, "service-password", 1),
+		});
+		await writeFile(
+			join(addon, "service-smoke.html"),
+			'<!doctype html><script type="module" src="service-smoke.js"></script>',
+		);
+		await writeFile(
+			join(addon, "service-smoke.js"),
+			`
+function connect() {
+ const port = browser.runtime.connect({name: "i2nclip-service"});
+ let state;
+ const pending = new Map();
+ let resolveReady; const ready = new Promise(resolve => { resolveReady = resolve; });
+ port.onMessage.addListener(message => {
+  if (message.type === "snapshot") { state = message; resolveReady(); }
+  if (message.type === "state") {
+   if (message.topic === "session") state.value.session = message.value;
+   if (message.topic === "uploads") state.value.uploads = message.value;
+  }
+  if (message.type === "reply") { const job = pending.get(message.requestId); if (!job) return; pending.delete(message.requestId); if (message.error) job.reject(new Error(message.error.message)); else job.resolve(message.value); }
+ });
+ return {ready, get state() {return state.value;}, command(name, payload = {}) { const requestId = crypto.randomUUID(); return new Promise((resolve, reject) => { pending.set(requestId, {resolve, reject}); port.postMessage({type: "command", instanceId: state.instanceId, requestId, name, payload: {...payload, epoch: state.value.session.epoch}}); }); }, close: () => port.disconnect()};
+}
+async function until(check) { const end = Date.now() + 15000; while (!check()) { if (Date.now() > end) throw new Error("Service state did not settle"); await new Promise(resolve => setTimeout(resolve, 10)); } }
+try {
+ const first = connect(), second = connect(); await Promise.all([first.ready, second.ready]);
+ if (!first.state.session.configured) {
+  await first.command("identity.restore", {file: new Blob([${JSON.stringify(recovery)}], {type: "application/json"}), password: "service-password"});
+  await until(() => second.state.session.unlocked);
+  const backup = await second.command("identity.backup");
+  if (!(backup instanceof Blob) || !(await backup.text()).includes("i2nclip-recovery")) throw new Error("Binary reply did not cross runtime.Port");
+  if (JSON.stringify(second.state).includes("privateKey")) throw new Error("Private key leaked to client");
+  const sources = [{blob: new Blob([new Uint8Array(65536)]), name: "retained.bin", preview: null}, {blob: new Blob(["queued"]), name: "queued.txt", preview: null}];
+  await first.command("uploads.submit", {sources});
+  await until(() => first.state.uploads.some(job => job.status === "uploading"));
+  await new Promise(resolve => setTimeout(resolve, 500));
+  browser.runtime.reload();
+ } else {
+  if (first.state.session.unlocked) throw new Error("Restart restored plaintext key");
+  if (!first.state.uploads.some(job => job.status === "interrupted") || !first.state.uploads.some(job => job.status === "paused")) throw new Error("Restart lost unfinished jobs");
+  await first.command("identity.unlock", {password: "service-password"});
+  await second.command("uploads.retry", {ids: first.state.uploads.map(job => job.id)});
+  await until(() => second.state.uploads.every(job => job.status === "completed"));
+  await first.command("identity.reset"); await until(() => !second.state.session.configured);
+  await fetch(${JSON.stringify(endpoint)}, {method: "POST", body: JSON.stringify({ok: true})});
+  first.close(); second.close();
+ }
+} catch (error) { await fetch(${JSON.stringify(endpoint)}, {method: "POST", body: JSON.stringify({error: error.message})}); }
 `,
 		);
 		child = spawn(

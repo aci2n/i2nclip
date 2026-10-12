@@ -1,6 +1,6 @@
 <script>
 import { onDestroy, untrack } from "svelte";
-import { splitTags } from "../protocol/crypto.js";
+import { splitTags } from "../protocol/tags.js";
 import { focus } from "../stores/dom.js";
 import { createTagEditor } from "../stores/tag-editor.js";
 
@@ -10,13 +10,7 @@ const locked = $derived(disabled || $editor.saving);
 onDestroy(editor.dispose);
 </script>
 
-<fieldset
-	class="tag-list"
-	aria-label={`Tags for ${name}`}
-	onfocusout={(event) => {
-		if (!event.currentTarget.contains(event.relatedTarget)) editor.blur();
-	}}
->
+<fieldset class="tag-list" aria-label={`Tags for ${name}`}>
 	{#each tags as tag}
 		<span class="chip tag"
 			><span class="tag-text">{tag}</span

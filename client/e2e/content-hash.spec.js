@@ -1,43 +1,42 @@
 import { createLibrary, expect, test } from "./fixtures.js";
 
-test("content hashes keep immutable downloads correct across deletion and new uploads", async ({
+test("fresh uploads have distinct content hashes and immutable verified downloads", async ({
 	page,
 	app,
 }) => {
 	await createLibrary(page, app);
-	const result = await page.evaluate(async (serverUrl) => {
-		const api = await import("/client/src/lib/api.js");
-		const { privateKey } = await browser.storage.session.get("privateKey");
-		const credentials = { serverUrl, privateKey };
-		const bytes = new TextEncoder().encode("same media, fresh encryption");
-		const options = { ...credentials, bytes, name: "file.txt", tags: [] };
-		const first = await api.upload(options);
-		const opened = await api.getContent({ ...credentials, id: first.id });
-		await api.updateMetadata({
-			...credentials,
-			id: first.id,
-			metadata: { ...first.metadata, name: "renamed.txt" },
-			prevMetaHash: first.metaHash,
-		});
-		const listed = await api.list(credentials);
-		await api.remove({ ...credentials, id: first.id });
-		const second = await api.upload(options);
-		const replacement = await api.getContent({ ...credentials, id: second.id });
-		return {
-			first: first.id,
-			second: second.id,
-			opened: Array.from(opened),
-			replacement: Array.from(replacement),
-			expected: Array.from(bytes),
-			name: listed.items[0].metadata.name,
-			listedId: listed.items[0].id,
-		};
-	}, app.origin);
-	expect(result.first).toMatch(/^[0-9a-f]{64}$/);
-	expect(result.second).toMatch(/^[0-9a-f]{64}$/);
-	expect(result.first).not.toBe(result.second);
-	expect(result.opened).toEqual(result.expected);
-	expect(result.replacement).toEqual(result.expected);
-	expect(result.listedId).toBe(result.first);
-	expect(result.name).toBe("renamed.txt");
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	for (const name of ["first.txt", "second.txt"]) {
+		await page
+			.locator("#files")
+			.setInputFiles({
+				name,
+				mimeType: "text/plain",
+				buffer: Buffer.from("same media, fresh encryption"),
+			});
+		await expect(
+			page.locator(".card-title").filter({ hasText: name }),
+		).toBeVisible();
+	}
+	const state = await page.evaluate(() => window.serviceTest("state"));
+	const ids = Object.keys(state.media);
+	expect(ids).toHaveLength(2);
+	expect(ids[0]).not.toBe(ids[1]);
+	for (const id of ids) expect(id).toMatch(/^[0-9a-f]{64}$/);
+	const content = await page.evaluate(async (id) => {
+		const result = await window.serviceTest("media.content", { id });
+		return result.blob.text();
+	}, ids[0]);
+	expect(content).toBe("same media, fresh encryption");
+	const card = page.locator(".card").filter({ hasText: "first.txt" });
+	page.once("dialog", (dialog) => dialog.accept());
+	await card.locator('[data-act="delete"]').click();
+	await expect(page.locator(".card")).toHaveCount(1);
+	expect(
+		await page.evaluate(
+			async (id) =>
+				(await window.serviceTest("media.content", { id })).blob.text(),
+			ids[1],
+		),
+	).toBe(content);
 });

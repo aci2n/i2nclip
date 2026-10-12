@@ -24,8 +24,7 @@
     "contextMenus",
     "downloads",
     "notifications",
-    "scripting",
-    "storage"
+    "scripting"
   ],
   "host_permissions": [
     "<all_urls>"

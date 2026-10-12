@@ -44,7 +44,9 @@ export default defineConfig({
 	worker: {
 		format: "es",
 		plugins: () => [],
-		rolldownOptions: { output: { minify: false } },
+		rolldownOptions: {
+			output: { minify: false, entryFileNames: "assets/[name].js" },
+		},
 	},
 });
 

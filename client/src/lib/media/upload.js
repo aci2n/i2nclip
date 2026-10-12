@@ -74,7 +74,10 @@ export async function sendUpload({
 	const prepared = await prepareMedia(source, platform, signal);
 	const bytes = new Uint8Array(await prepared.blob.arrayBuffer());
 	signal?.throwIfAborted();
-	const preview = await thumbnail(prepared.blob, signal);
+	const preview =
+		prepared.preview !== undefined
+			? prepared.preview
+			: await thumbnail(prepared.blob, signal);
 	signal?.throwIfAborted();
 	return upload({
 		...credentials,

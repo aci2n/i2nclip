@@ -5,7 +5,7 @@ let { session, pairing, server } = $props();
 let code = $state("");
 let password = $state("");
 let open = $state(false);
-const configured = $derived(Boolean($session.wrappedKey));
+const configured = $derived(Boolean($session.configured));
 const disabled = $derived(
 	$pairing.active || $session.busy || Boolean($session.pendingRegistration),
 );
@@ -32,7 +32,7 @@ async function connect(event) {
 	<div class="pairing">
 		{#if !$pairing.active}
 			{#if configured}
-				{#if !$session.privateKey}
+				{#if !$session.unlocked}
 					<p>Unlock this browser before connecting another device.</p>
 					<Unlock
 						{session}
@@ -114,12 +114,14 @@ async function connect(event) {
 			<p class="address">Server: {$pairing.server}</p>
 			<p>Expires in {$pairing.remaining} seconds.</p>
 			<div class="actions">
-				{#if $pairing.approval && $pairing.verificationCode}
+				{#if $pairing.canControl &&
+					$pairing.approval &&
+					$pairing.verificationCode}
 					<button type="button" id="pairing-approve" onclick={pairing.approve}>
 						Codes match — send library
 					</button>
 				{/if}
-				{#if $pairing.verificationCode}
+				{#if $pairing.canControl && $pairing.verificationCode}
 					<button
 						type="button"
 						id="pairing-mismatch"
@@ -129,7 +131,12 @@ async function connect(event) {
 						Codes don’t match
 					</button>
 				{/if}
-				<button type="button" class="secondary" onclick={pairing.cancel}>
+				<button
+					type="button"
+					class="secondary"
+					disabled={!$pairing.canControl}
+					onclick={pairing.cancel}
+				>
 					Cancel pairing
 				</button>
 			</div>

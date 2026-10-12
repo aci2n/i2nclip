@@ -19,14 +19,11 @@ import {
 	parsePairingCode,
 	sealPairing,
 } from "../src/lib/protocol/pairing.js";
-import { createPairing } from "../src/lib/stores/pairing.js";
-import { createSession } from "../src/lib/stores/session.js";
-import {
-	deferred,
-	installSessionLocks,
-	tick,
-	workflowSession,
-} from "./helpers.js";
+import { createPairing } from "../src/lib/service/pairing.js";
+import { createIdentity } from "../src/lib/service/identity.js";
+import { wrapPrivateKey } from "../src/lib/protocol/vault.js";
+import { memoryRepository } from "./service-helpers.js";
+import { deferred, tick, workflowSession } from "./helpers.js";
 
 const room = {
 	v: 1,
@@ -568,54 +565,17 @@ test("identity changes cancel authenticated pairing before any identity transfer
 
 for (const mutation of ["reset", "setServer"]) {
 	test(`${mutation} immediately cancels authenticated pairing while storage is stalled`, async (t) => {
-		installSessionLocks(t);
 		const key = await generatePrivateKey();
-		let local = {
+		const repository = memoryRepository({
 			serverUrl: origin,
-			wrappedKey: {},
+			wrappedKey: await wrapPrivateKey(key.privateKey, "password123", 1),
 			publicKey: key.publicKey,
 			identityGeneration: "sender",
-		};
-		let cached = { privateKey: key.privateKey, sessionGeneration: "sender" };
-		const entered = deferred(),
-			finish = deferred();
-		let changed = () => {};
-		const senderSession = createSession({
-			local: {
-				get: async () => ({ ...local }),
-				clear: async () => {
-					local = {};
-					changed();
-				},
-				set: async (value) => {
-					entered.resolve();
-					await finish.promise;
-					local = { ...local, ...value };
-					changed();
-				},
-			},
-			session: {
-				get: async () => ({ ...cached }),
-				clear: async () => {
-					entered.resolve();
-					await finish.promise;
-					cached = {};
-					changed();
-				},
-				remove: async () => {
-					cached = {};
-				},
-			},
-			subscribe: (fn) => {
-				changed = fn;
-				return () => {};
-			},
 		});
-		t.after(() => {
-			finish.resolve();
-			senderSession.dispose();
-		});
+		const senderSession = createIdentity(repository, origin);
+		t.after(senderSession.dispose);
 		await senderSession.ready;
+		await senderSession.unlock("password123");
 		const f = fixture(t, undefined, { senderSession });
 		const sending = f.sender.send();
 		await until(() => Boolean(get(f.sender).code));
@@ -625,12 +585,22 @@ for (const mutation of ["reset", "setServer"]) {
 			origin,
 		);
 		await until(() => get(f.sender).approval);
+		const entered = deferred(),
+			finish = deferred();
+		const original = repository[mutation === "reset" ? "reset" : "setConfig"];
+		repository[mutation === "reset" ? "reset" : "setConfig"] = async (
+			...args
+		) => {
+			entered.resolve();
+			await finish.promise;
+			return original(...args);
+		};
+		t.after(() => finish.resolve());
 		const changing =
 			mutation === "reset"
 				? senderSession.reset()
 				: senderSession.setServer("https://other.example");
 		await entered.promise;
-		assert.equal(get(senderSession).privateKey, "");
 		assert.equal(get(f.sender).approval, false);
 		f.sender.approve();
 		assert.equal(await sending, false);

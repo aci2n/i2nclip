@@ -9,9 +9,9 @@ const savedServer = $derived($session.serverUrl);
 const mode = $derived($settings.mode);
 const feedback = $derived($settings.feedback);
 const feedbackAt = $derived(
-	$session.wrappedKey && ["create", "restore"].includes(feedback.scope)
+	$session.configured && ["create", "restore"].includes(feedback.scope)
 		? "library"
-		: feedback.scope === "reset" && !$session.wrappedKey
+		: feedback.scope === "reset" && !$session.configured
 			? "setup"
 			: feedback.scope,
 );
@@ -42,7 +42,7 @@ function create(event) {
 {/snippet}
 
 <div id="settings" class="settings">
-	{#if !$session.wrappedKey}
+	{#if !$session.configured}
 		<section class="panel">
 			<h2>Your encrypted library</h2>
 			<p>Files are encrypted in your browser before upload.</p>

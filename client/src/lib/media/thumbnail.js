@@ -39,13 +39,20 @@ async function webp(source) {
 	const height = source.videoHeight || source.height;
 	if (!width || !height) return null;
 	const scale = Math.min(1, EDGE / Math.max(width, height));
-	const canvas = document.createElement("canvas");
-	canvas.width = Math.max(1, Math.round(width * scale));
-	canvas.height = Math.max(1, Math.round(height * scale));
+	const targetWidth = Math.max(1, Math.round(width * scale));
+	const targetHeight = Math.max(1, Math.round(height * scale));
+	const canvas =
+		typeof OffscreenCanvas !== "undefined"
+			? new OffscreenCanvas(targetWidth, targetHeight)
+			: document.createElement("canvas");
+	canvas.width = targetWidth;
+	canvas.height = targetHeight;
 	canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
-	const file = await new Promise((resolve) =>
-		canvas.toBlob(resolve, "image/webp", 0.75),
-	);
+	const file = canvas.convertToBlob
+		? await canvas.convertToBlob({ type: "image/webp", quality: 0.75 })
+		: await new Promise((resolve) =>
+				canvas.toBlob(resolve, "image/webp", 0.75),
+			);
 	return file ? file.bytes() : null;
 }
 

@@ -1,5 +1,5 @@
 import { get, writable } from "svelte/store";
-import { splitTags } from "../protocol/crypto.js";
+import { splitTags } from "../protocol/tags.js";
 
 // Editing state is scoped to the rendered editor. The media store owns the PUT.
 export function createTagEditor(save) {
@@ -12,7 +12,6 @@ export function createTagEditor(save) {
 		buttonFocus: 0,
 	});
 	let disposed = false;
-	let blurred = false;
 	function cancel() {
 		if (disposed || get(state).saving) return;
 		state.update((value) => ({
@@ -26,7 +25,6 @@ export function createTagEditor(save) {
 	async function persist(tags, clearDraft = false) {
 		if (disposed || get(state).saving) return false;
 		const submitted = get(state).value;
-		blurred = false;
 		state.update((value) => ({
 			...value,
 			saving: true,
@@ -42,11 +40,10 @@ export function createTagEditor(save) {
 					saving: false,
 					failed: !success,
 					value:
-						success && (blurred || (clearDraft && value.value === submitted))
+						success && clearDraft && value.value === submitted
 							? ""
 							: value.value,
-					editing: success && blurred ? false : value.editing,
-					inputFocus: blurred ? value.inputFocus : value.inputFocus + 1,
+					inputFocus: value.inputFocus + 1,
 				}));
 		}
 		return success;
@@ -65,12 +62,6 @@ export function createTagEditor(save) {
 				}));
 		},
 		cancel,
-		blur() {
-			if (disposed) return;
-			if (get(state).saving) blurred = true;
-			else if (!get(state).failed)
-				state.update((value) => ({ ...value, editing: false, value: "" }));
-		},
 		add(tags) {
 			if (splitTags(get(state).value).length)
 				return persist([...tags, get(state).value], true);
