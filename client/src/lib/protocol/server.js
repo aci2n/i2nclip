@@ -1,5 +1,3 @@
-export const DEFAULT_SERVER_URL = "https://clip.i2n.duckdns.org";
-
 export function checkServer(serverUrl) {
 	let url;
 	try {

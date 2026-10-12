@@ -1,7 +1,7 @@
 import { utf8 } from "./bytes.js";
 import { loadKey } from "./crypto.js";
+import { passwordOpen, passwordSeal } from "./password.js";
 import { checkServer } from "./server.js";
-import { passwordOpen, passwordSeal } from "./vault.js";
 
 export const MAX_RECOVERY_BYTES = 1024 * 1024;
 export async function validateIdentity(identity) {

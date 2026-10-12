@@ -1,8 +1,8 @@
 <script>
-import Pairing from "../components/Pairing.svelte";
+import PairingSend from "../components/PairingSend.svelte";
+import PasswordSettings from "../components/PasswordSettings.svelte";
 import RecoveryExport from "../components/RecoveryExport.svelte";
-import Setup from "../components/Setup.svelte";
-import VaultSettings from "../components/VaultSettings.svelte";
+import Setup from "./Setup.svelte";
 
 let { session, pairing } = $props();
 let feedback = $state({ scope: "", text: "", error: false });
@@ -16,18 +16,7 @@ async function action(scope, work, success) {
 </script>
 <div class="settings stack">
 	{#if !$session.configured}
-		<Setup
-			{busy}
-			defaultServer={$session.serverUrl}
-			error={$session.error}
-			pairingState={$pairing}
-			oncreate={session.create}
-			onrestore={session.restore}
-			onreceive={pairing.receive}
-			onapprove={pairing.approve}
-			onreject={pairing.rejectVerification}
-			oncancel={pairing.cancel}
-		/>
+		<Setup {session} {pairing} />
 	{:else}
 		<section class="panel stack">
 			<h2>Your library</h2>
@@ -79,16 +68,13 @@ async function action(scope, work, success) {
 					"Recovery file downloaded.",
 				)}
 		/>
-		<Pairing
+		<PairingSend
 			state={$pairing}
-			server={$session.serverUrl}
-			configured
 			busy={$session.busy}
-			onSend={pairing.send}
-			onReceive={pairing.receive}
-			onApprove={pairing.approve}
-			onRejectVerification={pairing.rejectVerification}
-			onCancel={pairing.cancel}
+			onsend={pairing.send}
+			onapprove={pairing.approve}
+			onreject={pairing.rejectVerification}
+			oncancel={pairing.cancel}
 		/>
 		<details class="panel">
 			<summary>Forget this library</summary>
@@ -119,7 +105,7 @@ async function action(scope, work, success) {
 			</div>
 		</details>
 	{/if}
-	<VaultSettings
+	<PasswordSettings
 		{busy}
 		error={feedback.scope === "password" && feedback.error ? feedback.text : ""}
 		status={feedback.scope === "password" && !feedback.error

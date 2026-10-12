@@ -4,7 +4,7 @@ import {
 	PBKDF2_ITERATIONS,
 	sealBytes,
 	wrappingKey,
-} from "./protocol/vault.js";
+} from "./protocol/password.js";
 
 const STORAGE_KEY = "i2nclip.identity";
 const PURPOSE = "i2nclip/local-identity/1";

@@ -10,11 +10,13 @@ export function createTabAdmission(browser = window) {
 	function leave() {
 		revision++;
 		pending = false;
-		release?.();
+		const unlock = release;
 		release = null;
 		if (!disposed) {
 			state.set({ status: "suspended", error: "" });
 		}
+		// Let the root view dispose its workflows before another tab enters.
+		queueMicrotask(() => unlock?.());
 	}
 	function acquire() {
 		if (disposed || pending || release) {

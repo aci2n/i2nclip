@@ -19,7 +19,7 @@ export async function wrappingKey(passphrase, salt, iterations) {
 	);
 }
 
-// The same primitives protect the local vault and portable recovery manifests.
+// The same primitives protect the saved identity and portable recovery manifests.
 export async function sealBytes(key, bytes, purpose, { binary = false } = {}) {
 	const iv = crypto.getRandomValues(new Uint8Array(12));
 	const ct = await crypto.subtle.encrypt(
@@ -82,13 +82,4 @@ export async function passwordOpen(record, password, purpose) {
 	} catch {
 		throw new Error("Wrong password or damaged encrypted data.");
 	}
-}
-export async function importVaultKey(bytes) {
-	if (bytes.length !== 32) {
-		throw new Error("Invalid vault key.");
-	}
-	return crypto.subtle.importKey("raw", bytes, { name: "AES-GCM" }, false, [
-		"encrypt",
-		"decrypt",
-	]);
 }
