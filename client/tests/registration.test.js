@@ -3,6 +3,7 @@ import test from "node:test";
 import { get } from "svelte/store";
 import { createIdentity } from "../src/lib/service/identity.js";
 import { memoryRepository } from "./service-helpers.js";
+
 const creation = {
 	serverUrl: "https://clip.example",
 	password: "password123",

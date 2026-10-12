@@ -8,8 +8,8 @@ export {
 	isKeyRegistered,
 	list,
 	MAX_FILE_BYTES,
-	registerKey,
 	registerAuthenticatedKey,
+	registerKey,
 	remove,
 	updateMetadata,
 	upload,
@@ -36,8 +36,8 @@ export { generatePrivateKey, parsePrivateKey } from "./protocol/identity.js";
 
 export {
 	exportRecovery,
-	openRecovery,
 	MAX_RECOVERY_BYTES,
+	openRecovery,
 } from "./protocol/recovery.js";
 export { checkServer } from "./protocol/server.js";
 export { uniqueTags } from "./protocol/tags.js";

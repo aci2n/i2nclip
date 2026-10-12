@@ -1,7 +1,7 @@
 <script>
-import VaultSettings from "../components/VaultSettings.svelte";
-import Setup from "../components/Setup.svelte";
 import Pairing from "../components/Pairing.svelte";
+import Setup from "../components/Setup.svelte";
+import VaultSettings from "../components/VaultSettings.svelte";
 
 let { session, settings, pairing, management, setup, vault, onRestore } =
 	$props();

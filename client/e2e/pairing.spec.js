@@ -8,6 +8,7 @@ import {
 	shot,
 	test,
 } from "./fixtures.js";
+
 const url = (kind, app) =>
 	kind === "web"
 		? `${app.origin}/?page=options`

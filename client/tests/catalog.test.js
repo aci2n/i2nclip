@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
+import { generatePrivateKey } from "../src/lib/protocol/identity.js";
 import { createServiceEngine } from "../src/lib/service/engine.js";
 import { createLibraryClient } from "../src/lib/service/scope.js";
 import { createSetup } from "../src/lib/stores/setup.js";
-import { generatePrivateKey } from "../src/lib/protocol/identity.js";
-import { engineClient, memoryRepository, until } from "./service-helpers.js";
 import { deferred } from "./helpers.js";
+import { engineClient, memoryRepository, until } from "./service-helpers.js";
 
 test("authorization follows the source server, preserves other drafts, and aborts when the source changes", async (t) => {
 	const sending = deferred();

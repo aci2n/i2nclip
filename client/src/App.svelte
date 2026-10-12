@@ -1,9 +1,9 @@
 <script>
-import ContextDestination from "./lib/components/ContextDestination.svelte";
-import VaultScreen from "./lib/components/VaultScreen.svelte";
 import { onDestroy, untrack } from "svelte";
-import ManageLibraries from "./lib/components/ManageLibraries.svelte";
 import AboutDialog from "./lib/components/AboutDialog.svelte";
+import ContextDestination from "./lib/components/ContextDestination.svelte";
+import ManageLibraries from "./lib/components/ManageLibraries.svelte";
+import VaultScreen from "./lib/components/VaultScreen.svelte";
 import { createApplication } from "./lib/stores/application.js";
 import Library from "./lib/views/Library.svelte";
 import Settings from "./lib/views/Settings.svelte";

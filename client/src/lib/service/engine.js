@@ -1,8 +1,8 @@
 import { loadKey } from "../protocol/crypto.js";
 import {
 	exportRecovery,
-	openRecovery,
 	MAX_RECOVERY_BYTES,
+	openRecovery,
 } from "../protocol/recovery.js";
 import { checkServer } from "../protocol/server.js";
 import { createLibraryRuntime } from "./runtime.js";

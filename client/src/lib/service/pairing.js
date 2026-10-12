@@ -1,6 +1,5 @@
 import { get, writable } from "svelte/store";
-import { pairingRelay, pairingCrypto } from "../pairing/service.js";
-import { errorDetails, traceEvent } from "./trace.js";
+import { pairingCrypto, pairingRelay } from "../pairing/service.js";
 import {
 	formatPairingCode,
 	PAIRING_TTL_MS,
@@ -9,6 +8,7 @@ import {
 	pairingSecret,
 	parsePairingCode,
 } from "../protocol/pairing.js";
+import { errorDetails, traceEvent } from "./trace.js";
 
 const canceled = () => new DOMException("Pairing canceled.", "AbortError");
 

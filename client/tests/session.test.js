@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
-import { createIdentity } from "../src/lib/service/identity.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
+import { createIdentity } from "../src/lib/service/identity.js";
 import { memoryRepository } from "./service-helpers.js";
 
 async function fixture(t) {

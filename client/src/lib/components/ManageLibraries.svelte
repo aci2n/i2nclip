@@ -1,6 +1,7 @@
 <script>
-import RecoveryExport from "./RecoveryExport.svelte";
 import { untrack } from "svelte";
+import RecoveryExport from "./RecoveryExport.svelte";
+
 let { app, catalog, libraryId, serverControls, vault } = $props();
 let name = $state("");
 let savedName = "";

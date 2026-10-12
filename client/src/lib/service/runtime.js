@@ -1,8 +1,8 @@
 import { get } from "svelte/store";
 import * as api from "../api.js";
 import { audioArt } from "../media/audio-art.js";
-import { checkFileSize, prepareMedia, sendUpload } from "../media/upload.js";
 import { thumbnail } from "../media/thumbnail.js";
+import { checkFileSize, prepareMedia, sendUpload } from "../media/upload.js";
 import { normalizeTag, splitTags, tagTokens } from "../protocol/crypto.js";
 import { uniqueTags } from "../protocol/tags.js";
 import { createIdentity } from "./identity.js";

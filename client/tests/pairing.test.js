@@ -19,10 +19,10 @@ import {
 	parsePairingCode,
 	sealPairing,
 } from "../src/lib/protocol/pairing.js";
-import { createPairing } from "../src/lib/service/pairing.js";
 import { createIdentity } from "../src/lib/service/identity.js";
-import { memoryRepository } from "./service-helpers.js";
+import { createPairing } from "../src/lib/service/pairing.js";
 import { deferred, tick, workflowSession } from "./helpers.js";
+import { memoryRepository } from "./service-helpers.js";
 
 const room = {
 	v: 1,

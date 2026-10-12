@@ -1,7 +1,8 @@
 <script>
-import RecoveryImport from "./RecoveryImport.svelte";
-import Pairing from "./Pairing.svelte";
 import { selectTab } from "../stores/dom.js";
+import Pairing from "./Pairing.svelte";
+import RecoveryImport from "./RecoveryImport.svelte";
+
 let {
 	session,
 	settings,

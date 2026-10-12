@@ -1,5 +1,5 @@
-import { defaultLibraryName } from "./library-name.js";
 import { get, writable } from "svelte/store";
+import { defaultLibraryName } from "./library-name.js";
 
 export function createSettings(
 	session,

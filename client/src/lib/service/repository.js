@@ -1,4 +1,3 @@
-import { encodeSource, decodeSource } from "./source-record.js";
 import { utf8 } from "../protocol/bytes.js";
 import {
 	importVaultKey,
@@ -7,6 +6,7 @@ import {
 	passwordSeal,
 	sealBytes,
 } from "../protocol/vault.js";
+import { decodeSource, encodeSource } from "./source-record.js";
 
 // Only the owner opens IDB. Crypto finishes before a short atomic transaction.
 export function createRepository(indexedDB = globalThis.indexedDB) {

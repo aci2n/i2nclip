@@ -10,6 +10,7 @@ import {
 	resetLibrary,
 	test,
 } from "./fixtures.js";
+
 async function setup(page, app) {
 	await page.goto(`${app.origin}/?page=options`);
 	await openServer(page);

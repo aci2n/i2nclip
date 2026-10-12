@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
-import { createLibraryRuntime } from "../src/lib/service/runtime.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
+import { createLibraryRuntime } from "../src/lib/service/runtime.js";
 import { deferred, tick } from "./helpers.js";
 import { engineClient, memoryRepository, until } from "./service-helpers.js";
 

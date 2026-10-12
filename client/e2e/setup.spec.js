@@ -1,9 +1,9 @@
 import {
 	createLibrary,
-	master,
 	downloadRecovery,
 	expect,
 	issueOtc,
+	master,
 	PASSWORD,
 	shot,
 	test,

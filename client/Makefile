@@ -39,15 +39,12 @@ test:
 	npm run check
 
 # Check JavaScript/Svelte for static analysis errors.
-lint:
-	npm run lint
-
-format-write:
-	npm run format:write
-
-# Check client formatting without changing files.
 format-check:
 	npm run format:check
+
+# Check client formatting without changing files.
+format-write:
+	npm run format:write
 
 # Build and inspect all archives, then run the extracted CLI; zip/unzip/GNU tar required.
 test-packages: packages

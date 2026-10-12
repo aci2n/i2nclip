@@ -1,12 +1,12 @@
-import { createVault } from "./vault.js";
-import { createLibraryClient } from "../service/scope.js";
 import { get, writable } from "svelte/store";
+import { createLibraryClient } from "../service/scope.js";
 import { createLibrary } from "./library.js";
 import { createPairing } from "./pairing.js";
 import { createPendingUpload } from "./pending-upload.js";
 import { createSession } from "./session.js";
 import { createSettings } from "./settings.js";
 import { createSetup } from "./setup.js";
+import { createVault } from "./vault.js";
 
 // The application owns workflows across view changes; views only render them.
 export function createApplication(platform, initialPage, browser = window) {

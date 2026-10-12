@@ -1,4 +1,5 @@
 import { normalizeTag, splitTags } from "./crypto.js";
+
 export { splitTags } from "./crypto.js";
 
 // Keep the first spelling while comparing tags by their protocol normalization.

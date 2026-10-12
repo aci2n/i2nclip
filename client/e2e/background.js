@@ -1,8 +1,10 @@
 // Browser-test host: real engine and IndexedDB, with only Firefox platform APIs shimmed.
+
+import { sendUpload } from "../src/lib/media/upload.js";
 import { DEFAULT_SERVER_URL } from "../src/lib/protocol/server.js";
 import { createServiceEngine } from "../src/lib/service/engine.js";
 import { createRepository } from "../src/lib/service/repository.js";
-import { sendUpload } from "../src/lib/media/upload.js";
+
 let uploadGate, releaseUploads;
 const repository = createRepository();
 // Exercise the capability fallback used by SharedWorkers without nested Worker.

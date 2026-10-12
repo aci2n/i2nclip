@@ -1,5 +1,6 @@
 <script>
 import RecoveryExport from "./RecoveryExport.svelte";
+
 let { vault } = $props();
 let current = $state("");
 let password = $state("");

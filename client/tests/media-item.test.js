@@ -3,6 +3,7 @@ import test from "node:test";
 import { get, writable } from "svelte/store";
 import { createMediaItem } from "../src/lib/stores/media-item.js";
 import { deferred } from "./helpers.js";
+
 const item = {
 	id: "sample",
 	metadata: { name: "sample.png", content_type: "image/png", tags: [] },

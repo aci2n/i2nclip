@@ -1,7 +1,7 @@
 import { utf8 } from "./bytes.js";
 import { loadKey } from "./crypto.js";
-import { passwordSeal, passwordOpen } from "./vault.js";
 import { checkServer } from "./server.js";
+import { passwordOpen, passwordSeal } from "./vault.js";
 // A portable manifest has its own password, independent of any client's vault.
 export const MAX_RECOVERY_BYTES = 1024 * 1024;
 export async function exportRecovery(libraries, password, scope = "vault") {

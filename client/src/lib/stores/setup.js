@@ -1,8 +1,8 @@
-import { defaultLibraryName } from "./library-name.js";
 import { get, writable } from "svelte/store";
+import { defaultLibraryName } from "./library-name.js";
+import { createPairing } from "./pairing.js";
 import { createSession } from "./session.js";
 import { createSettings } from "./settings.js";
-import { createPairing } from "./pairing.js";
 
 // A local form draft backed by an owner runtime only after submission.
 export function createSetup(root, platform, currentLibrary, onComplete) {

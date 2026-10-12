@@ -405,7 +405,6 @@ function startWeb() {
 }
 
 export {
-	master,
 	chooseRestore,
 	createLibrary,
 	DEFAULT_SERVER,
@@ -416,6 +415,7 @@ export {
 	fillCreation,
 	installBrowser,
 	issueOtc,
+	master,
 	openReset,
 	openServer,
 	options,

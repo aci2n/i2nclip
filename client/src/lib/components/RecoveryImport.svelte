@@ -1,6 +1,7 @@
 <script>
 import { onDestroy, untrack } from "svelte";
 import { createRecoveryImport } from "../stores/recovery-import.js";
+
 let { vault, onComplete = () => {} } = $props();
 const form = untrack(() => createRecoveryImport(vault, onComplete));
 onDestroy(form.dispose);

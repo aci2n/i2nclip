@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
-import { createEncryptedRepository } from "../src/lib/service/repository.js";
-import { createServiceEngine } from "../src/lib/service/engine.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
 import { exportRecovery, openRecovery } from "../src/lib/protocol/recovery.js";
-import { engineClient, until } from "./service-helpers.js";
+import { createServiceEngine } from "../src/lib/service/engine.js";
+import { createEncryptedRepository } from "../src/lib/service/repository.js";
 import { deferred, tick } from "./helpers.js";
+import { engineClient, until } from "./service-helpers.js";
 
 function backend() {
 	const records = new Map();

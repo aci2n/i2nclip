@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
-import { createApplication } from "../src/lib/stores/application.js";
 import { createLibraryRuntime } from "../src/lib/service/runtime.js";
+import { createApplication } from "../src/lib/stores/application.js";
 import { engineClient, memoryRepository } from "./service-helpers.js";
 
 function setup(t, page) {
