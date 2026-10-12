@@ -7,9 +7,6 @@ export const MAX_RECOVERY_BYTES = 1024 * 1024;
 export async function validateIdentity(identity) {
 	if (
 		!identity ||
-		typeof identity.name !== "string" ||
-		!identity.name.trim() ||
-		identity.name.length > 80 ||
 		typeof identity.privateKey !== "string" ||
 		identity.privateKey.length > 4096
 	) {
@@ -18,7 +15,6 @@ export async function validateIdentity(identity) {
 	checkServer(identity.serverUrl);
 	await loadKey(identity.privateKey);
 	return {
-		name: identity.name.trim(),
 		serverUrl: new URL(identity.serverUrl).origin,
 		privateKey: identity.privateKey,
 	};

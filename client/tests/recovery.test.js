@@ -16,7 +16,6 @@ test("portable recovery preserves content decryption, normalized tags and public
 	const original = await loadKey(created.privateKey);
 	const text = await exportRecovery(
 		{
-			name: "Library",
 			serverUrl: "https://clip.example.com",
 			privateKey: created.privateKey,
 		},
@@ -25,6 +24,7 @@ test("portable recovery preserves content decryption, normalized tags and public
 	assert(!text.includes(JSON.parse(created.privateKey).seed));
 	await assert.rejects(openRecovery(text, "wrong"), /Wrong password/);
 	const recovered = await openRecovery(text, "test password");
+	assert.deepEqual(Object.keys(recovered).sort(), ["privateKey", "serverUrl"]);
 	const restored = await loadKey(recovered.privateKey);
 	assert.equal(restored.registrationKey, original.registrationKey);
 	assert.equal(
@@ -55,7 +55,6 @@ test("portable recovery preserves content decryption, normalized tags and public
 	await assert.rejects(
 		exportRecovery(
 			{
-				name: "Bad",
 				serverUrl: "javascript:alert(1)",
 				privateKey: created.privateKey,
 			},

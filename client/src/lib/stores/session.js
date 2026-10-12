@@ -27,7 +27,6 @@ export function createSession({
 		configured: false,
 		unlocked: false,
 		serverUrl: defaultServerUrl,
-		name: "",
 		privateKey: "",
 		publicKey: "",
 		epoch,
@@ -52,7 +51,6 @@ export function createSession({
 		state.update((v) => ({
 			...v,
 			configured: Boolean(identity),
-			name: identity?.name || "",
 			serverUrl: identity?.serverUrl || defaultServerUrl,
 			privateKey: identity?.privateKey || "",
 			epoch,
@@ -158,7 +156,7 @@ export function createSession({
 				error: "",
 			});
 		},
-		create: ({ serverUrl, otc, name }) =>
+		create: ({ serverUrl, otc }) =>
 			action(async (signal) => {
 				if (!get(state).unlocked || identity) {
 					throw new Error(
@@ -167,7 +165,7 @@ export function createSession({
 				}
 				checkServer(serverUrl);
 				const { privateKey } = await generatePrivateKey();
-				const next = await validateIdentity({ serverUrl, privateKey, name });
+				const next = await validateIdentity({ serverUrl, privateKey });
 				const key = await loadKey(privateKey);
 				await http.registerKey({
 					serverUrl: next.serverUrl,
@@ -208,7 +206,6 @@ export function createSession({
 				value.signal?.throwIfAborted();
 				return apply(
 					{
-						name: "My library",
 						serverUrl: value.serverUrl,
 						privateKey: value.privateKey,
 					},
@@ -226,18 +223,6 @@ export function createSession({
 			action(async (signal) => {
 				await persistence.changePassword(current, password);
 				signal.throwIfAborted();
-			}),
-		rename: (name) =>
-			action(async (signal) => {
-				if (!identity || !get(state).unlocked) {
-					throw new Error("Unlock your library first.");
-				}
-				const next = await validateIdentity({ ...identity, name });
-				signal.throwIfAborted();
-				await persistence.save(next);
-				signal.throwIfAborted();
-				identity = next;
-				publish();
 			}),
 		forget: () => action((signal) => apply(null, signal)),
 		reset() {

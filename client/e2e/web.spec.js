@@ -17,6 +17,7 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	app,
 }) => {
 	await createLibrary(page, app);
+	await expect(page.getByLabel("Library name", { exact: true })).toHaveCount(0);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await expect(
 		page.getByRole("heading", { name: "Your library is empty" }),
@@ -229,12 +230,9 @@ test("upload failures continue through the batch and retry survives navigation",
 	]);
 	await entered;
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
-	await page.getByText("Rename library", { exact: true }).click();
-	await page
-		.getByLabel("Library name", { exact: true })
-		.fill("Renamed while uploading");
-	await page.getByRole("button", { name: "Save name", exact: true }).click();
-	await expect(page.getByRole("status")).toHaveText("Library renamed.");
+	await expect(
+		page.getByRole("heading", { name: "Your library", exact: true }),
+	).toBeVisible();
 	releaseSecond();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await expect(

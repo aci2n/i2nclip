@@ -1,23 +1,14 @@
 <script>
 let { busy, error, oncreate } = $props();
-let name = $state("My library");
 let otc = $state("");
 </script>
 <form
 	class="stack"
 	onsubmit={(event) => {
 		event.preventDefault();
-		oncreate({ name, otc });
+		oncreate({ otc });
 	}}
 >
-	<label class="field"
-		>Library name<input
-			required
-			maxlength="80"
-			bind:value={name}
-			disabled={busy}
-		></label
-	>
 	<label class="field"
 		>Invitation code<input
 			required

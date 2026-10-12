@@ -29,23 +29,13 @@ async function fixture(t, http = {}) {
 
 test("one encrypted identity survives reload, password changes, and forgetting without plaintext secrets", async (t) => {
 	const f = await fixture(t, { registerKey: async () => {} });
-	assert.equal(
-		await f.session.create({ name: "Photos", serverUrl, otc: "invite" }),
-		true,
-	);
+	assert.equal(await f.session.create({ serverUrl, otc: "invite" }), true);
 	const privateKey = get(f.session).privateKey;
-	const signal = f.session.signal;
-	const epoch = f.session.epoch;
-	assert.equal(await f.session.rename("Renamed"), true);
-	assert.equal(f.session.signal, signal);
-	assert.equal(f.session.epoch, epoch);
-	assert.equal(signal.aborted, false);
 	const saved = [...f.local.values.values()][0];
 	assert.equal(f.local.values.size, 1);
 	for (const secret of [
 		privateKey,
 		JSON.parse(privateKey).seed,
-		"Renamed",
 		serverUrl,
 		password,
 	]) {
@@ -74,16 +64,13 @@ test("one encrypted identity survives reload, password changes, and forgetting w
 
 test("storage failure retains the previous record and identity", async (t) => {
 	const f = await fixture(t, { registerKey: async () => {} });
-	assert.equal(
-		await f.session.create({ name: "Photos", serverUrl, otc: "invite" }),
-		true,
-	);
+	assert.equal(await f.session.create({ serverUrl, otc: "invite" }), true);
 	const before = [...f.local.values.values()][0];
 	f.local.setItem = () => {
 		throw new Error("Storage quota exceeded.");
 	};
-	assert.equal(await f.session.rename("Changed"), false);
-	assert.equal(get(f.session).name, "Photos");
+	assert.equal(await f.session.forget(), false);
+	assert.equal(get(f.session).configured, true);
 	assert.equal([...f.local.values.values()][0], before);
 	assert.match(get(f.session).error, /quota/);
 	assert.equal(get(f.session).busy, false);
@@ -99,15 +86,11 @@ test("locking cancels registration and rejects overlapping session mutations", a
 		},
 	});
 	const registering = f.session.create({
-		name: "Photos",
 		serverUrl,
 		otc: "invite",
 	});
 	const signal = await entered.promise;
-	assert.equal(
-		await f.session.create({ name: "Other", serverUrl, otc: "invite" }),
-		false,
-	);
+	assert.equal(await f.session.create({ serverUrl, otc: "invite" }), false);
 	f.session.lock();
 	result.resolve();
 	assert.equal(await registering, false);
@@ -118,7 +101,6 @@ test("locking cancels registration and rejects overlapping session mutations", a
 
 test("recovery verifies server registration and cannot replace a configured singleton", async (t) => {
 	const identity = {
-		name: "Recovered",
 		serverUrl,
 		privateKey: (await generatePrivateKey()).privateKey,
 	};
@@ -143,7 +125,7 @@ test("locking during encryption cannot commit or restore an unwrapped key", asyn
 	await assert.rejects(initializing, { name: "AbortError" });
 	assert.equal(local.values.size, 0);
 	await persistence.initialize(password);
-	const saving = persistence.save({ name: "late" });
+	const saving = persistence.save({ serverUrl: "https://late.example" });
 	persistence.lock();
 	await assert.rejects(saving, { name: "AbortError" });
 	assert.equal(await persistence.unlock(password), null);
