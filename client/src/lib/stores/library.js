@@ -16,6 +16,7 @@ export function createLibrary(client, platform, initial = {}) {
 		status: "",
 		uploading: false,
 		uploadProgress: null,
+		uploadJobs: [],
 		uploadFailures: [],
 		uploadCompleted: [],
 		uploadStatus: "",
@@ -102,6 +103,7 @@ export function createLibrary(client, platform, initial = {}) {
 						percent: active.progress || 0,
 					}
 				: null,
+			uploadJobs: value.uploads,
 			uploadFailures: failures,
 			uploadCompleted: value.uploads
 				.filter((job) => job.status === "completed")

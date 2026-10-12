@@ -286,6 +286,8 @@ function installBrowser() {
 						}
 						if (name === "config")
 							port.postMessage({ type: "test.config", requestId, libraryId });
+						else if (name === "pauseUploads" || name === "resumeUploads")
+							port.postMessage({ type: `test.${name}`, requestId });
 						else if (name === "context")
 							port.postMessage({
 								type: "test.context",

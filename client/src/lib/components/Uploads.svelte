@@ -19,18 +19,25 @@ let { library } = $props();
 		{#if $library.uploadStatus}
 			<p role="status">{$library.uploadStatus}</p>
 		{/if}
-		{#if $library.uploadProgress}
+		{#if $library.uploading}
 			<section class="upload-progress" aria-label="Upload progress">
-				<p role="status">
-					Uploading {$library.uploadProgress.index} of
-					{$library.uploadProgress.total}: {$library.uploadProgress.name}
-				</p>
-				<progress
-					max="100"
-					value={$library.uploadProgress.percent}
-					aria-label="Current file upload"
-				></progress>
-				<span>{$library.uploadProgress.percent}%</span>
+				<ul class="upload-list">
+					{#each $library.uploadJobs as job (job.id)}
+						{@const percent =
+							job.status === "completed" ? 100 : job.progress || 0}
+						<li>
+							<span
+								>{job.name || "Preparing file…"}<small
+									>{job.status}</small
+								></span
+							><progress
+								max="100"
+								value={percent}
+								aria-label={`${job.name || "File"} upload progress`}
+							></progress><span>{percent}%</span>
+						</li>
+					{/each}
+				</ul>
 			</section>
 		{/if}
 		{#if $library.uploadFailures.length}
@@ -107,9 +114,24 @@ summary {
 	gap: 0.5rem;
 }
 .upload-progress progress {
-	width: min(24rem, 80%);
+	width: 100%;
 	accent-color: var(--accent);
-	margin-right: 0.5rem;
+}
+.upload-list {
+	list-style: none;
+	padding: 0;
+	display: grid;
+	gap: 0.75rem;
+}
+.upload-list li {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 5rem 3rem;
+	gap: 0.5rem;
+	align-items: center;
+}
+small {
+	display: block;
+	color: var(--muted);
 }
 .upload-failures ul {
 	padding-left: 1.5rem;

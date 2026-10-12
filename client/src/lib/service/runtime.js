@@ -29,6 +29,7 @@ export function createLibraryRuntime({
 	uploadLane,
 	nextJobOrder,
 	libraryId,
+	completedRetentionMs = 5000,
 }) {
 	const clients = new Map();
 	const views = new Map();
@@ -37,6 +38,7 @@ export function createLibraryRuntime({
 	const downloads = new Map();
 	const helpers = new Map();
 	let jobs = new Map();
+	let completionTimer;
 	let disposed = false;
 	let pumping = false;
 	let changingContext = 0;
@@ -108,6 +110,67 @@ export function createLibraryRuntime({
 		for (const client of clients.values())
 			send(client, { type: "state", topic, value });
 	}
+	function publishUploads() {
+		if (disposed) return;
+		broadcast("uploads", uploadState());
+		clearTimeout(completionTimer);
+		const batches = new Map();
+		for (const job of jobs.values()) {
+			if (!batches.has(job.batchId)) batches.set(job.batchId, []);
+			batches.get(job.batchId).push(job);
+		}
+		const complete = [...batches.values()].filter((batch) =>
+			batch.every((job) => job.status === "completed"),
+		);
+		if (!complete.length || disposed) return;
+		const deadline = Math.min(
+			...complete.map(
+				(batch) =>
+					Math.max(
+						...batch.map(
+							(job) => job.completedAt || job.createdAt || Date.now(),
+						),
+					) + completedRetentionMs,
+			),
+		);
+		completionTimer = setTimeout(
+			() => {
+				void enqueue(async () => {
+					if (disposed) return;
+					for (const batch of complete) {
+						if (
+							batch.some(
+								(job) => jobs.get(job.id) !== job || job.status !== "completed",
+							)
+						)
+							continue;
+						if (
+							Math.max(
+								...batch.map(
+									(job) => job.completedAt || job.createdAt || Date.now(),
+								),
+							) +
+								completedRetentionMs >
+							Date.now()
+						)
+							continue;
+						for (const job of batch) {
+							await repository.removeJob(job.id);
+							jobs.delete(job.id);
+						}
+					}
+					publishUploads();
+				}).catch((error) => {
+					if (!disposed) {
+						traceEvent("upload.cleanup.failed", errorDetails(error));
+						completionTimer = setTimeout(publishUploads, completedRetentionMs);
+					}
+				});
+			},
+			Math.max(0, deadline - Date.now()),
+		);
+	}
+
 	function viewState(view) {
 		return {
 			id: view.id,
@@ -179,6 +242,8 @@ export function createLibraryRuntime({
 		const stored = (await repository.jobs()).sort((a, b) => a.order - b.order);
 		for (const job of stored) {
 			nextOrder = Math.max(nextOrder, job.order || 0);
+			if (job.status === "completed" && !job.completedAt)
+				job.completedAt = Date.now();
 			if (["uploading", "preparing"].includes(job.status))
 				job.status = "interrupted";
 			else if (job.status === "queued") job.status = "paused";
@@ -187,7 +252,7 @@ export function createLibraryRuntime({
 			jobs.set(job.id, job);
 			await repository.putJob(job);
 		}
-		broadcast("uploads", uploadState());
+		publishUploads();
 	});
 	function credentials() {
 		return identity.credentials();
@@ -464,7 +529,7 @@ export function createLibraryRuntime({
 		await repository.putJob(job, source);
 		guard(epoch);
 		jobs.set(job.id, job);
-		broadcast("uploads", uploadState());
+		publishUploads();
 	}
 	async function submit(
 		client,
@@ -618,7 +683,7 @@ export function createLibraryRuntime({
 								jobs.get(job.id)?.status === "uploading"
 							) {
 								jobs.get(job.id).progress = progress;
-								broadcast("uploads", uploadState());
+								publishUploads();
 							}
 						},
 					});
@@ -636,6 +701,7 @@ export function createLibraryRuntime({
 							attemptId,
 							name: prepared.name,
 							status: "completed",
+							completedAt: Date.now(),
 							auto: false,
 							progress: null,
 							error: "",
@@ -643,7 +709,7 @@ export function createLibraryRuntime({
 						};
 						await repository.finishJob(completed);
 						jobs.set(job.id, completed);
-						broadcast("uploads", uploadState());
+						publishUploads();
 					});
 					mutationRevision++;
 					await publishUpload(result, epoch, signal);
@@ -674,7 +740,7 @@ export function createLibraryRuntime({
 								progress: null,
 								error: "Library changed. Try again.",
 							});
-							broadcast("uploads", uploadState());
+							publishUploads();
 							return;
 						}
 						const failed = {
@@ -696,7 +762,7 @@ export function createLibraryRuntime({
 									...failed,
 									error: `${failed.error} Could not save upload status: ${failure.message}`,
 								});
-								broadcast("uploads", uploadState());
+								publishUploads();
 							}
 						}
 					});
@@ -752,7 +818,7 @@ export function createLibraryRuntime({
 								await repository.putJob(job);
 							}
 						jobs = new Map(stored.map((job) => [job.id, job]));
-						broadcast("uploads", uploadState());
+						publishUploads();
 					});
 					changingContext--;
 					void pump();
@@ -862,7 +928,7 @@ export function createLibraryRuntime({
 						await repository.removeJob(id);
 						jobs.delete(id);
 					}
-					broadcast("uploads", uploadState());
+					publishUploads();
 					return true;
 				});
 			case "pending.get": {
@@ -1029,6 +1095,7 @@ export function createLibraryRuntime({
 		},
 		dispose() {
 			disposed = true;
+			clearTimeout(completionTimer);
 			for (const id of [...clients.keys()]) disconnect(id);
 			pairing.dispose();
 			identity.dispose();

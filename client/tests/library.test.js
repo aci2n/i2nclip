@@ -5,6 +5,47 @@ import { createLibrary } from "../src/lib/stores/library.js";
 import { deferred, tick } from "./helpers.js";
 import { engineClient, serviceFixture, until } from "./service-helpers.js";
 
+test("all clients see per-file progress and only fully successful batches expire", async (t) => {
+	const transfer = deferred();
+	let attempt = 0;
+	const f = await serviceFixture(t, {
+		completedRetentionMs: 35,
+		upload: async ({ source, onProgress }) => {
+			if (source.name === "first.txt") {
+				onProgress(37);
+				await transfer.promise;
+			}
+			if (source.name === "second.txt" && ++attempt === 1)
+				throw new Error("offline");
+			return { id: source.name };
+		},
+	});
+	const second = engineClient(f.engine);
+	t.after(second.dispose);
+	await second.ready;
+	const a = createLibrary(f.client, {}),
+		b = createLibrary(second, {});
+	t.after(a.dispose);
+	t.after(b.dispose);
+	await a.upload([
+		new File(["bytes"], "first.txt"),
+		new File(["bytes"], "second.txt"),
+	]);
+	await until(() => get(b).uploadJobs[0]?.progress === 37);
+	assert.equal(get(b).uploadJobs[1].status, "queued");
+	transfer.resolve();
+	await until(() => get(b).uploadFailures.length === 1);
+	await new Promise((resolve) => setTimeout(resolve, 65));
+	assert.equal(get(b).uploadCompleted.length, 1);
+	await b.retryUploads();
+	await until(() => get(b).uploadCompleted.length === 2);
+	await until(
+		() => get(a).uploadJobs.length === 0 && get(b).uploadJobs.length === 0,
+	);
+	assert.equal((await f.repository.jobs()).length, 0);
+	assert.equal(get(a).items.length, 2);
+});
+
 test("uploads append matching cards without list refresh and survive older search results", async (t) => {
 	const { tagTokens } = await import("../src/lib/protocol/crypto.js");
 	const stale = deferred();

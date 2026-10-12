@@ -122,11 +122,6 @@ test("realistic mixed media and long tags remain usable at narrow widths in both
 	}
 	await page.locator(".uploads summary").click();
 	await shot(page, "service-uploads-320");
-	await expect(
-		page.getByRole("button", { name: "Clear completed uploads" }),
-	).toBeVisible();
-	await page.getByRole("button", { name: "Clear completed uploads" }).click();
-	await expect(page.locator(".uploads")).toContainText("No recent uploads.");
 });
 
 test("a failed remote capture remains available for explicit discard", async ({

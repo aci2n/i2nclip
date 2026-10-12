@@ -2,6 +2,8 @@
 import { DEFAULT_SERVER_URL } from "../src/lib/protocol/server.js";
 import { createServiceEngine } from "../src/lib/service/engine.js";
 import { createRepository } from "../src/lib/service/repository.js";
+import { sendUpload } from "../src/lib/media/upload.js";
+let uploadGate, releaseUploads;
 const repository = createRepository();
 // Exercise the capability fallback used by SharedWorkers without nested Worker.
 Object.defineProperty(globalThis, "Worker", {
@@ -11,6 +13,11 @@ Object.defineProperty(globalThis, "Worker", {
 const engine = createServiceEngine({
 	repository,
 	defaultServerUrl: DEFAULT_SERVER_URL,
+	upload: async (options) => {
+		await uploadGate;
+		options.signal.throwIfAborted();
+		return sendUpload(options);
+	},
 	platform: {
 		fetchMedia: ({ srcUrl }, signal) => fetch(srcUrl, { signal }),
 		notify: () => {},
@@ -19,6 +26,23 @@ const engine = createServiceEngine({
 self.onconnect = ({ ports: [port] }) => {
 	const connection = engine.connect((message) => port.postMessage(message));
 	port.onmessage = async ({ data }) => {
+		if (
+			data.type === "test.pauseUploads" ||
+			data.type === "test.resumeUploads"
+		) {
+			if (data.type === "test.pauseUploads")
+				uploadGate = new Promise((resolve) => (releaseUploads = resolve));
+			else {
+				releaseUploads?.();
+				uploadGate = undefined;
+			}
+			port.postMessage({
+				type: "test.reply",
+				requestId: data.requestId,
+				value: true,
+			});
+			return;
+		}
 		if (data.type === "test.config") {
 			port.postMessage({
 				type: "test.reply",
