@@ -7,10 +7,11 @@ WORKDIR /client
 COPY client/package.json client/package-lock.json ./
 RUN NODE_OPTIONS=--network-family-autoselection-attempt-timeout=1000 \
     npm ci
-COPY client/index.html client/vite.config.js ./
+COPY client/index.html client/vite.config.js client/service-tracing.config.js ./
 COPY client/public/favicon.ico ./public/favicon.ico
 COPY client/src ./src
-RUN npm run build:web
+ARG CLIENT_BUILD_MODE=production
+RUN npm run build:web -- --mode "$CLIENT_BUILD_MODE"
 
 FROM docker.io/library/rust:1-bookworm AS build
 WORKDIR /src

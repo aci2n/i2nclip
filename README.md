@@ -58,6 +58,10 @@ Podman and a recent Compose provider such as
 [Podman Compose documentation](https://docs.podman.io/en/latest/markdown/podman-compose.1.html).
 With Docker Compose as the provider, start `systemctl --user start podman.socket`
 first. Rerun `make dev` after source changes to rebuild the existing Containerfile.
+The development Compose build uses debug mode for the web client, including
+service message tracing. Inspect `web-worker.js` in Firefox's `about:debugging`
+and enable Debug/Verbose console messages. Normal container builds use production
+mode and omit tracing. `make dev-extension` already uses debug client builds.
 
 [compose.yaml](compose.yaml) defines the web/API server and PostgreSQL 18 on a
 explicit `dev` bridge network (`i2nclip-dev_dev` by default). Both published ports bind to host loopback: the server
