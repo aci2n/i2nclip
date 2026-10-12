@@ -133,9 +133,9 @@ async function connect(event) {
 	&:not(.embedded) {
 		margin-top: 1rem;
 	}
-}
-.pairing > button {
-	justify-self: start;
+	> button {
+		justify-self: start;
+	}
 }
 .verification {
 	display: flex;

@@ -1,163 +1,177 @@
-:root {
-	color-scheme: light dark;
-	font:
-		15px / 1.5 system-ui,
-		sans-serif;
-	color: #2c2a28;
-	background: #f4f0ea;
-	--paper: #fffdf8;
-	--muted: #6a645c;
-	--line: #e6dfd6;
-	--accent: #27675b;
-	--soft: #e5eee9;
-	--error: #a4372e;
-}
-@media (prefers-color-scheme: dark) {
-	:root {
-		color: #f3efe8;
-		background: #1c1b19;
-		--paper: #262522;
-		--muted: #b7b0a6;
-		--line: #403d37;
-		--accent: #a4d9c9;
-		--soft: #303e37;
-		--error: #f3a49a;
+@layer reset, base, controls, layout;
+
+@layer reset {
+	* {
+		box-sizing: border-box;
+	}
+	body,
+	h1,
+	h2,
+	h3,
+	h4,
+	h5,
+	h6,
+	p,
+	ul,
+	ol,
+	dl,
+	dd,
+	fieldset,
+	legend {
+		margin: 0;
+		padding: 0;
 	}
 }
-* {
-	box-sizing: border-box;
+
+@layer base {
+	:root {
+		color-scheme: light dark;
+		font:
+			15px / 1.5 system-ui,
+			sans-serif;
+		color: #2c2a28;
+		background: #f4f0ea;
+		--paper: #fffdf8;
+		--muted: #6a645c;
+		--line: #e6dfd6;
+		--accent: #27675b;
+		--soft: #e5eee9;
+		--error: #a4372e;
+	}
+	@media (prefers-color-scheme: dark) {
+		:root {
+			color: #f3efe8;
+			background: #1c1b19;
+			--paper: #262522;
+			--muted: #b7b0a6;
+			--line: #403d37;
+			--accent: #a4d9c9;
+			--soft: #303e37;
+			--error: #f3a49a;
+		}
+	}
+	body {
+		background: inherit;
+	}
+	a {
+		color: var(--accent);
+		text-underline-offset: 0.25rem;
+	}
+	h2 {
+		font-size: 1.05rem;
+	}
+	p {
+		color: var(--muted);
+	}
+	label {
+		display: block;
+		margin: 0;
+		font-size: 0.9rem;
+	}
+	summary {
+		cursor: pointer;
+	}
 }
-body,
-h1,
-h2,
-h3,
-h4,
-h5,
-h6,
-p,
-ul,
-ol,
-dl,
-dd,
-fieldset,
-legend {
-	margin: 0;
-	padding: 0;
+
+@layer controls {
+	input,
+	select,
+	button {
+		font: inherit;
+		border: 1px solid var(--line);
+		border-radius: 0.4rem;
+		padding: 0.5rem 0.75rem;
+	}
+	input,
+	select {
+		width: 100%;
+		color: inherit;
+		background: var(--paper);
+		min-width: 0;
+	}
+	input:focus-visible,
+	select:focus-visible,
+	button:focus-visible,
+	a:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 3px;
+	}
+	::placeholder {
+		color: var(--muted);
+	}
+	button {
+		background: var(--accent);
+		color: var(--paper);
+		cursor: pointer;
+		border-color: transparent;
+		&.secondary {
+			background: var(--soft);
+			color: var(--accent);
+		}
+		&.danger {
+			color: var(--error);
+		}
+		&:disabled {
+			opacity: 0.5;
+			cursor: default;
+		}
+	}
 }
-body {
-	background: inherit;
+
+@layer layout {
+	/* Containers own spacing: fields group controls; stacks separate groups. */
+	.stack {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		> button {
+			align-self: flex-start;
+		}
+	}
+	.field {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		min-width: 0;
+		> p {
+			margin: 0;
+			font-size: 0.9rem;
+		}
+	}
+	.bar {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		input {
+			flex: 1;
+		}
+		button {
+			flex: none;
+			margin: 0;
+		}
+	}
+	.panel {
+		background: var(--paper);
+		border: 1px solid var(--line);
+		border-radius: 0.6rem;
+		padding: 1rem;
+		min-width: 0;
+	}
+	.feedback {
+		color: var(--muted);
+		font-size: 0.9rem;
+		margin-top: 0.5rem;
+	}
+	.error {
+		color: var(--error);
+	}
+	.feedback:empty,
+	[role="status"]:empty {
+		display: none;
+	}
 }
-a {
-	color: var(--accent);
-	text-underline-offset: 0.25rem;
-}
-h2 {
-	font-size: 1.05rem;
-}
-p {
-	color: var(--muted);
-}
-label {
-	display: block;
-	margin: 0;
-	font-size: 0.9rem;
-}
-input,
-select,
-button {
-	font: inherit;
-	border: 1px solid var(--line);
-	border-radius: 0.4rem;
-	padding: 0.5rem 0.75rem;
-}
-input,
-select {
-	width: 100%;
-	color: inherit;
-	background: var(--paper);
-	min-width: 0;
-}
-input:focus-visible,
-select:focus-visible,
-button:focus-visible,
-a:focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: 3px;
-}
-::placeholder {
-	color: var(--muted);
-}
-button {
-	background: var(--accent);
-	color: var(--paper);
-	cursor: pointer;
-	border-color: transparent;
-}
-button.secondary {
-	background: var(--soft);
-	color: var(--accent);
-}
-button.danger {
-	color: var(--error);
-}
-button:disabled {
-	opacity: 0.5;
-	cursor: default;
-}
-/* Containers own spacing: fields group labels with controls; stacks separate groups. */
-.stack {
-	display: flex;
-	flex-direction: column;
-	gap: 1rem;
-}
-.stack > button {
-	align-self: flex-start;
-}
-.field {
-	display: flex;
-	flex-direction: column;
-	gap: 0.5rem;
-	min-width: 0;
-}
-.field > p {
-	margin: 0;
-	font-size: 0.9rem;
-}
-.bar {
-	display: flex;
-	align-items: center;
-	gap: 0.5rem;
-}
-.bar input {
-	flex: 1;
-}
-.bar button {
-	flex: none;
-	margin: 0;
-}
-.panel {
-	background: var(--paper);
-	border: 1px solid var(--line);
-	border-radius: 0.6rem;
-	padding: 1rem;
-	min-width: 0;
-}
-summary {
-	cursor: pointer;
-}
-.feedback {
-	color: var(--muted);
-	font-size: 0.9rem;
-	margin-top: 0.5rem;
-}
-.error {
-	color: var(--error);
-}
-.feedback:empty,
-[role="status"]:empty {
-	display: none;
-}
-/* FIXME: I removed !important, review if CSS layers can help here */
+
+/* Hidden semantics must survive unlayered component grid/flex declarations. */
 [hidden] {
-	display: none;
+	display: none !important;
 }
