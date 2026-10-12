@@ -20,6 +20,8 @@ For implementation, read [the shared implementation guide](implementation-guide.
 14. [x] **44:** Investigate duplicate element IDs in pairing-settings and whether component IDs can be scoped in Svelte. IDs in views are acceptable when useful for tests. ([plan](implementation-plan-44.md))
 15. [x] **45:** Keep store access in views; start by making Pairing pure and review other components for the same issue. ([plan](implementation-plan-45.md))
 16. [x] **46:** Use modern CSS features, including nesting and layers, where they fit. ([plan](implementation-plan-46.md))
+17. [ ] **47**: Fix tests in current branch. Avoid using IDs for selectors, prefer classes wherever possible. This makes E2E tests very hard to maintain manually. See TODO in Setup.svelte
+18. [ ] **48**: Refactor Svelte views and components. Right now components like Pairing are doing way too much for example by implementing both receiving and sending behavior. Components should have a single responsibility, have no access to stores, no id attributes in elements. Views are the containers for the pure components and propagate store state to the pure components through properties. Setup.svelte is another offender that does too many things branching by conditionals. In general, components should not excessively nest conditionals.
 
 ## Deferred
 

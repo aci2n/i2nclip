@@ -84,8 +84,12 @@ const blocked = $derived($session.busy || pairingState.active);
 			{@render notice("create")}
 		{/if}
 	</form>
-{/snippet}
-{#snippet libraryName()}
+  {/snippet}
+  <!-- TODO: remove render attr. This is a hack to work around E2E tests failing due to
+       multiple elements sharing the same id. Fixed IDs in components is terrible and we
+       should never do that. -->
+  {#snippet libraryName(render)}
+  {#if render }
 	<div class="field">
 		<label for={additional ? "new-library-name" : "library-name"}
 			>Library name</label
@@ -101,6 +105,7 @@ const blocked = $derived($session.busy || pairingState.active);
 			disabled={blocked}
 		>
 	</div>
+  {/if}
 {/snippet}
 
 <div class="stack">
@@ -147,7 +152,7 @@ const blocked = $derived($session.busy || pairingState.active);
 		hidden={mode !== "create"}
 	>
 		<p>Create a new library with a one-time invitation code.</p>
-		{@render libraryName()}
+		{@render libraryName(mode === "create")}
 		<div class="field">
 			<label for={additional ? "setup-server" : "server"}>Server</label>
 			<input
@@ -203,7 +208,7 @@ const blocked = $derived($session.busy || pairingState.active);
 		hidden={mode !== "pair"}
 	>
 		<p>Pair an existing library from another device.</p>
-		{@render libraryName()}
+		{@render libraryName(mode === "pair")}
 		<div class="field">
 			<label for="pair-server">Pairing server</label>
 			<input
