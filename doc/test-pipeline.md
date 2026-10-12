@@ -4,7 +4,7 @@ This specifies simplification phase 15. Tests must run from a fresh clone with t
 
 ## Preparation and commands
 
-The client Makefile installs locked npm dependencies when `node_modules/.package-lock.json` is absent or older than the package files. Node is resolved from PATH; use the version pinned in `.nvmrc`. Builds, static checks, unit tests, and packaging depend on this preparation.
+The client Makefile installs locked npm dependencies when `node_modules/.package-lock.json` is absent or older than the package files. Node is resolved from PATH; Makefile targets check the exact version pinned in `.nvmrc` before installing dependencies or running client commands. Builds, static checks, unit tests, and packaging depend on this preparation.
 
 `make test` runs client unit tests, Svelte checking, and Rust unit/configuration tests. `make test-db` provisions PostgreSQL or uses an explicitly supplied disposable administrator connection. `make test-e2e` prepares dependencies, installs Firefox/Chromium, builds the web client and all helper executables, and runs browser tests. `make test-all` runs portable checks, packaging, database tests, and browser tests sequentially. The Linux/Podman process profile is separately requested with `make test-profile`.
 
@@ -12,7 +12,7 @@ Retain one npm build and one packaging command. Remove target aliases and debug 
 
 ## Resource ownership
 
-Rust unit/API tests call routers in-process. Each database test uses a separate database. Each browser scenario owns its database, server process, and browser context. PostgreSQL containers expose only a randomly selected host port, required for host-based clients. Explicit Docker socket configuration takes precedence; otherwise use the available Docker or Podman socket.
+Rust unit/API tests call routers in-process. Each database test uses a separate database with cleanup guards that run after assertion panics. Unit tests have a sixty-second timeout, and browser waits and held-request cleanup are bounded. Each browser scenario owns its database, server process, and browser context. PostgreSQL containers expose only a randomly selected host port, required for host-based clients. Explicit Docker socket configuration takes precedence; otherwise use the available Docker or Podman socket.
 
 The `test-server` example binds `127.0.0.1:0` before deriving its canonical origin. After initializing the real web/API router, it prints `ready http://127.0.0.1:<port>`. It accepts the fixture database URL through the environment. Browser tests and the resource profile use the reported origin; neither probes or reserves a port in a separate process.
 

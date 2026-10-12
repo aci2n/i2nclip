@@ -1,8 +1,11 @@
 # Client commands use the Node version in .nvmrc, resolved from PATH.
 .DEFAULT_GOAL := build
-.PHONY: build web audit test lint format-check format-write test-packages test-e2e test-profile
+.PHONY: check-node build web audit test lint format-check format-write test-packages test-e2e test-profile
 
-node_modules/.package-lock.json: package.json package-lock.json .nvmrc
+check-node:
+	@test "$$(node --version)" = "v$(strip $(file <.nvmrc))" || { echo "Use Node $(strip $(file <.nvmrc)) from .nvmrc on PATH" >&2; exit 1; }
+
+node_modules/.package-lock.json: package.json package-lock.json .nvmrc | check-node
 	npm ci
 
 build web audit test lint format-check format-write test-e2e test-profile test-packages: node_modules/.package-lock.json
