@@ -211,6 +211,24 @@ export async function registerKey({ serverUrl, publicKey, otc, signal }) {
 }
 
 // A signed read proves registration without spending another invitation.
+export async function registerAuthenticatedKey({
+	serverUrl,
+	privateKey,
+	publicKey,
+	signal,
+}) {
+	await sendBytes(
+		serverUrl,
+		await loadKey(privateKey),
+		"POST",
+		"/api/register-key/authenticated",
+		new TextEncoder().encode(JSON.stringify({ public_key: publicKey })),
+		undefined,
+		signal,
+	);
+}
+
+// A signed read proves registration without spending another invitation.
 export async function isKeyRegistered({ serverUrl, privateKey, signal }) {
 	const response = await signedFetch(
 		serverUrl,

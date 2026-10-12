@@ -224,19 +224,24 @@ function installBrowser() {
 	window.serviceTest = async (name, payload = {}) => {
 		if (name === "config")
 			return new Promise((resolve, reject) => {
-				const opening = indexedDB.open("i2nclip-service");
+				const opening = indexedDB.open("i2nclip-libraries");
 				opening.onerror = () => reject(opening.error);
 				opening.onsuccess = () => {
 					const db = opening.result;
-					if (!db.objectStoreNames.contains("config")) {
+					if (!db.objectStoreNames.contains("libraries")) {
 						db.close();
 						resolve({});
 						return;
 					}
-					const tx = db.transaction("config");
-					const request = tx.objectStore("config").get("identity");
+					const tx = db.transaction("libraries");
+					const request = tx.objectStore("libraries").getAll();
 					tx.oncomplete = () => {
-						const value = request.result || {};
+						const lib = new URLSearchParams(location.search).get("library");
+						const value =
+							(
+								request.result.find((row) => row.id === lib) ||
+								request.result[0]
+							)?.identity || {};
 						db.close();
 						resolve(value);
 					};
@@ -255,15 +260,29 @@ function installBrowser() {
 				port.onMessage.addListener((message) => {
 					if (message.type === "snapshot" && !instanceId) {
 						instanceId = message.instanceId;
-						epoch = message.value.session.epoch;
+						const libraryId =
+							new URLSearchParams(location.search).get("library") ||
+							message.value.catalog?.[0]?.id;
+						const selected =
+							message.value.libraries?.[libraryId] || message.value;
+						epoch = selected.session.epoch;
 						if (name === "state") {
-							resolve(message.value);
+							resolve({
+								...selected,
+								catalog: message.value.catalog,
+								libraries: message.value.libraries,
+							});
 							return;
 						}
 						if (name === "config")
-							port.postMessage({ type: "test.config", requestId });
+							port.postMessage({ type: "test.config", requestId, libraryId });
 						else if (name === "context")
-							port.postMessage({ type: "test.context", requestId, ...payload });
+							port.postMessage({
+								type: "test.context",
+								requestId,
+								libraryId,
+								...payload,
+							});
 						else if (name === "restart") {
 							port.postMessage({ type: "test.restart" });
 							resolve(true);
@@ -273,7 +292,7 @@ function installBrowser() {
 								instanceId,
 								requestId,
 								name,
-								payload: { ...payload, epoch },
+								payload: { ...payload, epoch, libraryId },
 							});
 					}
 					if (

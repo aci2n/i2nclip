@@ -1,3 +1,4 @@
+import { createLibraryClient } from "../service/scope.js";
 import { get, writable } from "svelte/store";
 import { createLibrary } from "./library.js";
 import { createPairing } from "./pairing.js";
@@ -7,7 +8,23 @@ import { createSettings } from "./settings.js";
 
 // The application owns workflows across view changes; views only render them.
 export function createApplication(platform, initialPage, browser = window) {
-	const client = platform.createService();
+	const root = platform.createService();
+	const initialLibrary = new URLSearchParams(browser.location.search).get(
+		"library",
+	);
+	const client = createLibraryClient(
+		root,
+		initialLibrary,
+		(id) => {
+			const url = new URL(
+				browser.location.href ||
+					`http://local${browser.location.pathname}${browser.location.search}`,
+			);
+			url.searchParams.set("library", id);
+			browser.history.replaceState?.({}, "", `${url.pathname}${url.search}`);
+		},
+		new URLSearchParams(browser.location.search).get("id"),
+	);
 	const session = createSession(client, platform);
 	const pairing = createPairing(client);
 	const settings = createSettings(session, platform);
@@ -34,14 +51,51 @@ export function createApplication(platform, initialPage, browser = window) {
 	const pending = popupPage
 		? createPendingUpload(client, platform, params.get("id"), { auto })
 		: null;
-	let library = ["library", "options"].includes(page)
-		? createLibrary(client, platform)
-		: null;
-	const state = writable({ page, library, pending, auto, popupPage });
+	const searchDrafts = new Map();
+	const newLibrary = () =>
+		createLibrary(client, platform, searchDrafts.get(client.id()));
+	let library = ["library", "options"].includes(page) ? newLibrary() : null;
+	const state = writable({
+		page,
+		library,
+		pending,
+		auto,
+		popupPage,
+		catalog: [],
+		libraryId: initialLibrary,
+	});
+	let lastSelection;
+	function disposeLibrary() {
+		if (library) {
+			if (lastSelection)
+				searchDrafts.set(lastSelection, {
+					query: library.query(),
+					draft: library.draft(),
+				});
+			library.dispose();
+		}
+	}
+	const unsubscribeCatalog = root.subscribe(() => {
+		const id = client.id();
+		if (id !== lastSelection && lastSelection) {
+			disposeLibrary();
+			library = ["library", "options"].includes(get(state).page)
+				? newLibrary()
+				: null;
+		}
+		lastSelection = id;
+		state.update((value) => ({
+			...value,
+			library,
+			catalog: get(root).catalog || [],
+			libraryId: id,
+		}));
+	});
 	let disposed = false;
 	const href = (name) => {
 		const query = new URLSearchParams();
 		if (standalone) query.set("page", name);
+		if (client.id()) query.set("library", client.id());
 		if (popupPage && params.has("id")) query.set("id", params.get("id"));
 		if (popupPage && auto) query.set("auto", "");
 		const path = standalone ? "" : `${name}.html`;
@@ -49,12 +103,31 @@ export function createApplication(platform, initialPage, browser = window) {
 	};
 	function show(page) {
 		if (disposed) return;
-		if (["library", "options"].includes(page))
-			library ??= createLibrary(client, platform);
+		if (["library", "options"].includes(page)) library ??= newLibrary();
 		library?.closePreview();
-		state.set({ page, library, pending, auto, popupPage });
+		state.update((value) => ({
+			...value,
+			page,
+			library,
+			pending,
+			auto,
+			popupPage,
+		}));
 	}
-	const restore = () => show(pageAtLocation());
+	function selectLibrary(id) {
+		disposeLibrary();
+		client.select(id);
+		library = ["library", "options"].includes(get(state).page)
+			? newLibrary()
+			: null;
+		lastSelection = id;
+		state.update((value) => ({ ...value, library, libraryId: id }));
+	}
+	const restore = () => {
+		const id = new URLSearchParams(browser.location.search).get("library");
+		if (id && id !== client.id()) selectLibrary(id);
+		show(pageAtLocation());
+	};
 	browser.addEventListener("popstate", restore);
 	return {
 		subscribe: state.subscribe,
@@ -62,6 +135,27 @@ export function createApplication(platform, initialPage, browser = window) {
 		pairing,
 		settings,
 		href,
+		selectLibrary,
+		async addLibrary(name) {
+			const id = await root.command("libraries.add", {
+				name,
+				serverUrl: get(client).session.serverUrl,
+			});
+			selectLibrary(id);
+			browser.history.pushState({}, "", href("options"));
+			show("options");
+		},
+		async renameLibrary(name) {
+			await root.command("libraries.rename", { libraryId: client.id(), name });
+		},
+		async forgetLibrary() {
+			if (
+				platform.confirm(
+					"Forget this library and its unfinished uploads? Server files stay saved. Keep a recovery file first.",
+				)
+			)
+				await root.command("libraries.forget", { libraryId: client.id() });
+		},
 		navigate(event, page) {
 			if (
 				disposed ||
@@ -82,11 +176,13 @@ export function createApplication(platform, initialPage, browser = window) {
 			disposed = true;
 			browser.removeEventListener("popstate", restore);
 			pending?.dispose();
-			library?.dispose();
+			disposeLibrary();
 			settings.dispose();
 			pairing.dispose();
 			session.dispose();
+			unsubscribeCatalog();
 			client.dispose();
+			root.dispose();
 		},
 	};
 }

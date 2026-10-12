@@ -1,7 +1,7 @@
 import { get, writable } from "svelte/store";
 import { createMediaItem } from "./media-item.js";
 
-export function createLibrary(client, platform) {
+export function createLibrary(client, platform, initial = {}) {
 	const viewId = crypto.randomUUID();
 	const cards = new Map();
 	const state = writable({
@@ -9,7 +9,8 @@ export function createLibrary(client, platform) {
 		cards: [],
 		selected: null,
 		next: null,
-		query: "",
+		query: initial.query || "",
+		searchDraft: initial.draft || "",
 		loading: false,
 		empty: null,
 		status: "",
@@ -120,6 +121,9 @@ export function createLibrary(client, platform) {
 	return {
 		subscribe: state.subscribe,
 		query: () => get(state).query,
+		draft: () => get(state).searchDraft,
+		editDraft: (searchDraft) =>
+			state.update((value) => ({ ...value, searchDraft })),
 		search: (query = get(state).query) =>
 			action("view.search", { id: viewId, query }),
 		more: () => action("view.more", { id: viewId }),

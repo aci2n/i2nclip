@@ -24,15 +24,13 @@ test("setup, recovery export, reset and restoration use durable configuration wi
 	expect(recovery).not.toContain(PASSWORD);
 	expect(recovery).not.toContain("privateKey");
 	await resetLibrary(page);
-	expect((await storage(page)).local).toEqual({});
+	expect((await storage(page)).local).not.toHaveProperty("wrappedKey");
 	await chooseRestore(page);
-	await page
-		.locator("#file")
-		.setInputFiles({
-			name: "recovery.json",
-			mimeType: "application/json",
-			buffer: Buffer.from(recovery),
-		});
+	await page.locator("#file").setInputFiles({
+		name: "recovery.json",
+		mimeType: "application/json",
+		buffer: Buffer.from(recovery),
+	});
 	await page.locator("#restore-pass").fill(PASSWORD);
 	await page.locator("#restore-pass").press("Enter");
 	await expect(page.locator("#status")).toHaveText(
@@ -79,13 +77,11 @@ test("invalid recovery and invalid server input preserve form drafts and saved c
 	expect((await storage(page)).local.serverUrl).toBe(created.local.serverUrl);
 	await resetLibrary(page);
 	await chooseRestore(page);
-	await page
-		.locator("#file")
-		.setInputFiles({
-			name: "bad.json",
-			mimeType: "application/json",
-			buffer: Buffer.from("{}"),
-		});
+	await page.locator("#file").setInputFiles({
+		name: "bad.json",
+		mimeType: "application/json",
+		buffer: Buffer.from("{}"),
+	});
 	await page.locator("#restore-pass").fill(PASSWORD);
 	await page.locator("#restore-pass").press("Enter");
 	await expect(page.locator("#status")).toContainText("Invalid recovery");

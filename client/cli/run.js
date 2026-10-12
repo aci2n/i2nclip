@@ -26,6 +26,8 @@ tags ID [--add TEXT] [--remove TEXT]  Remove, then add tags; repeatable options
 --recovery FILE       Override $XDG_CONFIG_HOME/i2nclip/recovery.json
                       (default: ~/.config/i2nclip/recovery.json)
 --password-file PATH  Read password from a file, or /dev/stdin
+--authorize-with FILE Authorize create/register using an existing recovery file
+--authorizer-password-file PATH  Password for that authorizing library
 --help                Show this help
 
 Passwords are prompted without echo. Copy an extension recovery file to the
@@ -33,8 +35,8 @@ configuration path, or supply --recovery. Upload accepts exactly one file.
 `;
 
 const commandOptions = {
-	create: ["server", "otc"],
-	register: ["otc"],
+	create: ["server", "otc", "authorize-with", "authorizer-password-file"],
+	register: ["otc", "authorize-with", "authorizer-password-file"],
 	list: ["tags", "after"],
 	upload: ["tags", "content-type"],
 	download: ["output"],
@@ -44,6 +46,8 @@ const commandOptions = {
 const strings = [
 	"server",
 	"otc",
+	"authorize-with",
+	"authorizer-password-file",
 	"tags",
 	"after",
 	"content-type",
@@ -88,16 +92,33 @@ function parse(argv) {
 			`${command} requires ${count === 1 ? "exactly one argument" : "no positional arguments"}.`,
 		);
 	for (const option of command === "create"
-		? ["server", "otc"]
+		? ["server"]
 		: command === "register"
-			? ["otc"]
+			? []
 			: command === "download"
 				? ["output"]
 				: []) {
 		if (!values[option]?.trim())
 			throw new UsageError(`--${option} is required.`);
 	}
-	for (const option of ["recovery", "password-file", "after", "content-type"]) {
+	if (["create", "register"].includes(command)) {
+		if (
+			Boolean(values.otc?.trim()) === Boolean(values["authorize-with"]?.trim())
+		)
+			throw new UsageError("Choose exactly one of --otc or --authorize-with.");
+		if (values["authorizer-password-file"] && !values["authorize-with"])
+			throw new UsageError(
+				"--authorizer-password-file requires --authorize-with.",
+			);
+	}
+	for (const option of [
+		"recovery",
+		"password-file",
+		"after",
+		"content-type",
+		"authorize-with",
+		"authorizer-password-file",
+	]) {
 		if (values[option] !== undefined && !values[option].trim())
 			throw new UsageError(`--${option} must not be empty.`);
 	}
@@ -168,6 +189,30 @@ export async function run(
 		? await passwordFromFile(values["password-file"], signal)
 		: await prompt("Password: ", signal);
 	const emit = (value) => stdout(`${JSON.stringify(value)}\n`);
+	async function register(publicKey, serverUrl) {
+		if (!values["authorize-with"])
+			return api.registerKey({ serverUrl, publicKey, otc: values.otc, signal });
+		const authorizer = api.parseRecoveryFile(
+			(await readFileBounded(values["authorize-with"], 65536, signal)).toString(
+				"utf8",
+			),
+		);
+		if (new URL(authorizer.serverUrl).origin !== new URL(serverUrl).origin)
+			throw new UsageError("Authorizing library must use the same server.");
+		const secret = values["authorizer-password-file"]
+			? await passwordFromFile(values["authorizer-password-file"], signal)
+			: await prompt("Authorizing library password: ", signal);
+		const authorizerKey = await api.unwrapPrivateKey(
+			authorizer.wrappedKey,
+			secret,
+		);
+		return api.registerAuthenticatedKey({
+			serverUrl,
+			publicKey,
+			privateKey: authorizerKey,
+			signal,
+		});
+	}
 	if (command === "create") {
 		if (password.length < 8)
 			throw new Error("Password must have at least 8 characters.");
@@ -185,15 +230,10 @@ export async function run(
 			signal,
 		);
 		try {
-			await api.registerKey({
-				serverUrl: values.server,
-				publicKey: identity.publicKey,
-				otc: values.otc,
-				signal,
-			});
+			await register(identity.publicKey, values.server);
 		} catch (error) {
 			stderr(
-				`Encrypted identity saved at ${path}. Retry: ${shellQuote(process.execPath)} ${shellQuote(process.argv[1])} register --recovery ${shellQuote(path)} --otc CODE\n`,
+				`Encrypted identity saved at ${path}. Retry: ${shellQuote(process.execPath)} ${shellQuote(process.argv[1])} register --recovery ${shellQuote(path)} ${values["authorize-with"] ? `--authorize-with ${shellQuote(values["authorize-with"])}` : "--otc CODE"}\n`,
 			);
 			throw error;
 		}
@@ -207,11 +247,7 @@ export async function run(
 	switch (command) {
 		case "register": {
 			if (!(await api.isKeyRegistered(credentials)))
-				await api.registerKey({
-					...credentials,
-					publicKey: key.registrationKey,
-					otc: values.otc,
-				});
+				await register(key.registrationKey, recovery.serverUrl);
 			emit({ registered: true });
 			break;
 		}

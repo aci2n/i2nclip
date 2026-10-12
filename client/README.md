@@ -12,7 +12,7 @@ JavaScript API remains `src/lib/index.js`.
 | `src/lib/views/` | Library, Settings, and Upload page markup |
 | `src/lib/components/` | Cards, inline tags, unlocking, and the image dialog |
 | `src/lib/stores/` | Read-only service projections, UI drafts and page resource ownership |
-| `src/lib/service/` | Shared engine, commands/events, identity, IndexedDB and worker host |
+| `src/lib/service/` | Catalog owner, per-library runtimes, commands/events, identity, IndexedDB and worker host |
 | `src/lib/stores/dom.js` | Small browser adapters for focus, dialogs, validation, and file selection |
 | `src/lib/protocol/` | Identity, encryption, tag normalization, framing, and recovery format |
 | `src/lib/api.js` | Signed HTTP requests and encrypted API payloads |
@@ -195,3 +195,20 @@ Each entry shows direction, client ID, message type/name, and a payload snapshot
 request IDs and sequences correlate commands, replies, and broadcasts.
 Passwords, private/wrapped keys, invitations, and pairing codes are redacted.
 Binary data is summarized by type and size; long arrays and deep objects are bounded.
+
+## Multiple libraries
+
+Each tab chooses its own named library. The catalog and per-library unlock,
+uploads, pairing and media state are service-owned; names are local and never
+sent to the server. Settings can rename or forget the selected library. Adding a
+library opens Create/Restore/Connect without replacing existing entries. Create
+can use an invitation or an unlocked library registered on the same server.
+
+The schema starts a fresh `i2nclip-libraries` IndexedDB database. Export development
+recovery files before upgrading and restore them as separate named entries; the
+old single-library database is not migrated or deleted. Each library has its own
+password and unchanged recovery file. Owner restart locks all libraries.
+
+The CLI selects libraries through `--recovery`. `create` and `register` accept
+`--authorize-with FILE` instead of `--otc`, plus `--authorizer-password-file PATH`
+for that library's password. `--password-file` still belongs to the destination.

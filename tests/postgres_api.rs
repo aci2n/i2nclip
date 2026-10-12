@@ -1755,3 +1755,95 @@ async fn metadata_read_is_an_owner_filtered_snapshot_and_old_put_is_removed() {
         StatusCode::NOT_FOUND
     );
 }
+
+#[tokio::test]
+async fn authenticated_registration_creates_independent_keys_and_is_idempotent() {
+    let owner = new_identity();
+    let child = new_identity();
+    let stranger = new_identity();
+    let (database, router) = app(&[&owner]).await;
+    let path = "/api/register-key/authenticated";
+    let body = serde_json::json!({"public_key": child.registration_key()})
+        .to_string()
+        .into_bytes();
+    assert_eq!(
+        call(&router, &stranger, "POST", path, body.clone()).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            call(&router, &owner, "POST", path, body.clone()).await.0,
+            StatusCode::NO_CONTENT
+        );
+    }
+    assert_eq!(
+        call(&router, &child, "GET", "/api/media", vec![]).await.0,
+        StatusCode::OK
+    );
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM registered_keys")
+        .fetch_one(&database.1)
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
+    for invalid in [
+        serde_json::json!({"public_key":"bad"}),
+        serde_json::json!({"public_key": child.registration_key(),"otc":"unused"}),
+    ] {
+        assert_eq!(
+            call(
+                &router,
+                &owner,
+                "POST",
+                path,
+                invalid.to_string().into_bytes()
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let header = client_crypto::authorization(
+        &owner,
+        "http://i2nclip.test",
+        crypto::now_secs(),
+        &client_crypto::fresh_nonce(),
+        "POST",
+        path,
+        &body,
+    );
+    let request = || {
+        Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("authorization", &header)
+            .body(Body::from(body.clone()))
+            .unwrap()
+    };
+    assert_eq!(
+        router.clone().oneshot(request()).await.unwrap().status(),
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        router.clone().oneshot(request()).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let header = client_crypto::authorization(
+        &owner,
+        "http://i2nclip.test",
+        crypto::now_secs(),
+        &client_crypto::fresh_nonce(),
+        "POST",
+        path,
+        &body,
+    );
+    let request = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("authorization", &header)
+        .body(Body::from("{}"))
+        .unwrap();
+    assert_eq!(
+        router.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+}

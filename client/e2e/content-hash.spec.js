@@ -7,13 +7,11 @@ test("fresh uploads have distinct content hashes and immutable verified download
 	await createLibrary(page, app);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	for (const name of ["first.txt", "second.txt"]) {
-		await page
-			.locator("#files")
-			.setInputFiles({
-				name,
-				mimeType: "text/plain",
-				buffer: Buffer.from("same media, fresh encryption"),
-			});
+		await page.locator("#files").setInputFiles({
+			name,
+			mimeType: "text/plain",
+			buffer: Buffer.from("same media, fresh encryption"),
+		});
 		await expect(
 			page.locator(".card-title").filter({ hasText: name }),
 		).toBeVisible();

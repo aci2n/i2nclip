@@ -8,7 +8,12 @@ import { unwrapPrivateKey, wrapPrivateKey } from "../protocol/vault.js";
 import { createSessionContext } from "./identity-context.js";
 
 // Private to the owner. Pairing uses operation handles; pages never receive them.
-export function createIdentity(repository, defaultServerUrl, serialize) {
+export function createIdentity(
+	repository,
+	defaultServerUrl,
+	serialize,
+	authorizeRegistration,
+) {
 	let config = {};
 	let privateKey = "";
 	let epoch = 0;
@@ -135,14 +140,14 @@ export function createIdentity(repository, defaultServerUrl, serialize) {
 				return action(identity.credentials());
 			});
 		},
-		create: ({ serverUrl, password, otc }) =>
+		create: ({ serverUrl, password, otc = "", authorizerLibraryId }) =>
 			mutate(async (signal) => {
 				checkServer(serverUrl);
 				if (config.wrappedKey)
 					throw new Error("A library is already configured.");
 				if (password.length < 8)
 					throw new Error("Password must be at least 8 characters.");
-				if (!otc.trim())
+				if (!otc.trim() && !authorizerLibraryId)
 					throw new Error("Enter an invitation code from the admin.");
 				let pending = config.pendingRegistration;
 				const retry = Boolean(pending);
@@ -177,12 +182,23 @@ export function createIdentity(repository, defaultServerUrl, serialize) {
 						!retry ||
 						!(await isKeyRegistered({ serverUrl, privateKey: key, signal }))
 					)
-						await registerKey({
-							serverUrl,
-							publicKey: pending.publicKey,
-							otc,
-							signal,
-						});
+						if (authorizerLibraryId) {
+							if (!authorizeRegistration)
+								throw new Error("Authenticated registration is unavailable.");
+							await authorizeRegistration(
+								authorizerLibraryId,
+								pending.publicKey,
+								serverUrl,
+								signal,
+							);
+						} else {
+							await registerKey({
+								serverUrl,
+								publicKey: pending.publicKey,
+								otc,
+								signal,
+							});
+						}
 				} catch (error) {
 					signal.throwIfAborted();
 					throw new Error(

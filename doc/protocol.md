@@ -108,3 +108,12 @@ Upload POSTs share four slots across owners in one server router. After authenti
 Content GETs use sixteen separate download slots per router, acquired after authentication and empty-body verification and before fetching content. Requests wait when all slots are occupied; saturation does not return `503`. Missing/unowned content returns `404` after capacity becomes available. There is currently no admission-wait or response-duration deadline. Responses send the fetched owned bytes in at most 64 KiB slices with Content-Length, retaining the permit through completion or disposal. Fetching releases its database connection before response draining. Full-buffer downloads are intentional. Cache behavior is unchanged.
 
 Nonce cleanup runs as part of the hourly maintenance task described above. Its strict `expires < now` boundary matches the request timestamp check; the post-insertion timestamp check protects delayed requests if cleanup has already removed an expired nonce.
+
+## Authenticated registration
+
+`POST /api/register-key/authenticated` accepts JSON `{ "public_key": "…" }`,
+signed with an existing registered library key using the normal request/body
+hash protocol. Authentication precedes bounded body reading. Registration of an
+already registered key is idempotent (`204`). Invitations remain supported by
+`POST /api/register-key`. This endpoint adds no accounts, roles, key ancestry or
+file permissions; each registered key owns its own media namespace.

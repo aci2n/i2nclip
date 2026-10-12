@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
-import { createServiceEngine } from "../src/lib/service/engine.js";
+import { createLibraryRuntime } from "../src/lib/service/runtime.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
 import { wrapPrivateKey } from "../src/lib/protocol/vault.js";
 import { deferred, tick } from "./helpers.js";
@@ -15,7 +15,7 @@ async function fixture(t, options = {}) {
 		wrappedKey: await wrapPrivateKey(key.privateKey, "password123", 1),
 		identityGeneration: "identity",
 	});
-	const engine = createServiceEngine({
+	const engine = createLibraryRuntime({
 		repository,
 		defaultServerUrl: "https://clip.example",
 		api: { list: async () => ({ items: [], next: null }) },
@@ -166,7 +166,7 @@ test("restart locks the identity and retains interrupted and queued sources with
 	const stored = await f.repository.jobs();
 	assert.equal(stored.length, 2);
 	let uploads = 0;
-	const engine = createServiceEngine({
+	const engine = createLibraryRuntime({
 		repository: f.repository,
 		defaultServerUrl: "https://clip.example",
 		upload: async () => {

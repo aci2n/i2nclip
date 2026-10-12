@@ -9,6 +9,7 @@ export {
 	list,
 	MAX_FILE_BYTES,
 	registerKey,
+	registerAuthenticatedKey,
 	remove,
 	updateMetadata,
 	upload,

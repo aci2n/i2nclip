@@ -2,7 +2,8 @@
 
 See [the browser service design and complete state inventory](client-service.md).
 
-One owner runs in the web SharedWorker or extension background context. These
+One catalog owner runs in the web SharedWorker or extension background context.
+Each named library has its own identity, runtime, epoch and cancellation context. These
 have separate scopes. Pages hold read-only projections and communicate through
 commands/events; no page reads identity storage or receives a private key.
 
@@ -20,6 +21,7 @@ uncertain mutation commands are never automatically replayed.
 
 Accepted uploads outlive their submitting page. Owner restart marks active
 transfers interrupted and pauses queued jobs, preserving their sources for
-explicit retry after unlocking. Reset discards configuration and all jobs/sources;
+explicit retry after unlocking. Global reset discards the entire catalog and all jobs/sources; forgetting one
+library removes only that library;
 successful server changes discard sources for the old context. Already submitted
 network requests cannot be recalled.

@@ -49,19 +49,22 @@ label {
 	font-size: 0.9rem;
 }
 input,
+select,
 button {
 	font: inherit;
 	border: 1px solid var(--line);
 	border-radius: 0.4rem;
 	padding: 0.5rem 0.75rem;
 }
-input {
+input,
+select {
 	width: 100%;
 	color: inherit;
 	background: var(--paper);
 	min-width: 0;
 }
 input:focus-visible,
+select:focus-visible,
 button:focus-visible,
 a:focus-visible {
 	outline: 2px solid var(--accent);

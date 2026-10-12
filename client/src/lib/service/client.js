@@ -8,6 +8,8 @@ export function createServiceClient(
 	{ helper, browser = globalThis.window } = {},
 ) {
 	const initial = () => ({
+		catalog: [],
+		libraries: {},
 		connected: false,
 		instanceId: null,
 		clientId: null,
@@ -78,6 +80,22 @@ export function createServiceClient(
 		if (disposed) return;
 		lastMessage = Date.now();
 		if (message.type === "snapshot") {
+			for (const [id, job] of pending) {
+				if (
+					job.libraryId &&
+					(!message.value.libraries?.[job.libraryId] ||
+						(job.runtimeId &&
+							job.runtimeId !==
+								message.value.libraries[job.libraryId].runtimeId))
+				) {
+					pending.delete(id);
+					job.reject(
+						new Error(
+							"Library context ended. The action may have completed; check its state before retrying.",
+						),
+					);
+				}
+			}
 			connecting = false;
 			const changed = instanceId && instanceId !== message.instanceId;
 			if (changed) rejectPending();
@@ -114,6 +132,14 @@ export function createServiceClient(
 		if (message.type === "state")
 			state.update((value) => {
 				switch (message.topic) {
+					case "library":
+						return {
+							...value,
+							libraries: {
+								...value.libraries,
+								[message.value.id]: message.value.state,
+							},
+						};
 					case "session":
 						return { ...value, session: message.value };
 					case "uploads":
@@ -156,6 +182,7 @@ export function createServiceClient(
 						transport.send({
 							type: "helperResult",
 							helperId: message.helperId,
+							libraryId: message.libraryId,
 							value: value ?? null,
 						});
 				});
@@ -190,12 +217,21 @@ export function createServiceClient(
 		const requestId = crypto.randomUUID();
 		let rejectAbort;
 		const result = new Promise((resolve, reject) => {
-			pending.set(requestId, { resolve, reject });
+			pending.set(requestId, {
+				resolve,
+				reject,
+				libraryId: name.startsWith("libraries.") ? null : payload.libraryId,
+				runtimeId: get(state).libraries?.[payload.libraryId]?.runtimeId,
+			});
 			rejectAbort = reject;
 		});
 		const abort = () => {
 			pending.delete(requestId);
-			transport.send({ type: "cancel", requestId });
+			transport.send({
+				type: "cancel",
+				requestId,
+				libraryId: payload.libraryId,
+			});
 			rejectAbort(signal.reason);
 		};
 		signal?.addEventListener("abort", abort, { once: true });
@@ -207,7 +243,14 @@ export function createServiceClient(
 				name,
 				payload: {
 					...payload,
-					epoch: payload.epoch ?? get(state).session.epoch,
+					runtimeId:
+						payload.runtimeId ??
+						get(state).libraries?.[payload.libraryId]?.runtimeId,
+					epoch:
+						payload.epoch ??
+						(payload.libraryId
+							? get(state).libraries[payload.libraryId]?.session.epoch
+							: (get(state).session?.epoch ?? 0)),
 				},
 			});
 			return await result;

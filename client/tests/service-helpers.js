@@ -79,7 +79,7 @@ export async function serviceFixture(t, options = {}) {
 		"../src/lib/protocol/identity.js"
 	);
 	const { wrapPrivateKey } = await import("../src/lib/protocol/vault.js");
-	const { createServiceEngine } = await import("../src/lib/service/engine.js");
+	const { createLibraryRuntime } = await import("../src/lib/service/runtime.js");
 	const key = await generatePrivateKey();
 	const repository = memoryRepository({
 		serverUrl: "https://clip.example",
@@ -87,7 +87,7 @@ export async function serviceFixture(t, options = {}) {
 		wrappedKey: await wrapPrivateKey(key.privateKey, "password123", 1),
 		identityGeneration: "identity",
 	});
-	const engine = createServiceEngine({
+	const engine = createLibraryRuntime({
 		repository,
 		defaultServerUrl: "https://clip.example",
 		api: { list: async () => ({ items: [], next: null }) },

@@ -162,6 +162,13 @@ impl Database {
         Ok(code)
     }
 
+    /// Register a key authorized by an existing registered identity.
+    pub(crate) async fn register_key(&self, public: &[u8; 32]) -> Result<(), Error> {
+        sqlx::query("INSERT INTO registered_keys (public_key) VALUES ($1) ON CONFLICT (public_key) DO NOTHING")
+            .bind(public.as_slice()).execute(&self.pool).await?;
+        Ok(())
+    }
+
     /// Consume a valid invitation and register the key in one transaction.
     pub(crate) async fn consume_code(&self, code: &str, public: &[u8; 32]) -> Result<(), Error> {
         let hash = crypto::body_hash_bytes(code.trim().as_bytes());

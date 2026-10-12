@@ -6,6 +6,7 @@ export function createSettings(session, platform) {
 		server: "",
 		password: "",
 		otc: "",
+		authorizerLibraryId: "",
 		restorePassword: "",
 		recoveryFiles: undefined,
 		feedback: { scope: "setup", text: "", error: false },
@@ -14,7 +15,22 @@ export function createSettings(session, platform) {
 	let disposed = false;
 	let running = false;
 	let serverUrl;
+	let libraryId,
+		attempt = 0;
+	const drafts = new Map();
 	const unsubscribe = session.subscribe((value) => {
+		if (value.libraryId !== libraryId) {
+			if (libraryId) drafts.set(libraryId, get(state));
+			libraryId = value.libraryId;
+			attempt++;
+			running = false;
+			state.set({
+				...initial,
+				...drafts.get(libraryId),
+				server: value.serverUrl,
+			});
+			serverUrl = value.serverUrl;
+		}
 		if (serverUrl !== value.serverUrl) {
 			serverUrl = value.serverUrl;
 			state.update((current) => ({ ...current, server: serverUrl }));
@@ -29,6 +45,7 @@ export function createSettings(session, platform) {
 	) {
 		if (disposed || running || get(session).busy) return false;
 		running = true;
+		const ownAttempt = ++attempt;
 		state.update((value) => ({
 			...value,
 			feedback: { scope, text: pending, error: false },
@@ -40,6 +57,8 @@ export function createSettings(session, platform) {
 		} catch (failure) {
 			error = failure.message;
 		}
+		if (ownAttempt !== attempt && scope !== "reset") return false;
+		if (scope === "reset" && success) drafts.clear();
 		running = false;
 		if (disposed) return false;
 		state.update((value) => ({
@@ -60,10 +79,16 @@ export function createSettings(session, platform) {
 				state.update((current) => ({ ...current, [field]: value }));
 		},
 		create() {
-			const { server, password, otc } = get(state);
+			const { server, password, otc, authorizerLibraryId } = get(state);
 			return action(
 				"create",
-				() => session.create({ serverUrl: server.trim(), password, otc }),
+				() =>
+					session.create({
+						serverUrl: server.trim(),
+						password,
+						otc,
+						authorizerLibraryId,
+					}),
 				"Library created. Download your recovery file before uploading.",
 				"Creating library…",
 				{ password: "", otc: "" },

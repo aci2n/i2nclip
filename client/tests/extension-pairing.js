@@ -141,14 +141,14 @@ function connect() {
  const pending = new Map();
  let resolveReady; const ready = new Promise(resolve => { resolveReady = resolve; });
  port.onMessage.addListener(message => {
-  if (message.type === "snapshot") { state = message; resolveReady(); }
+  if (message.type === "snapshot") { state = {...message, value: message.value.libraries[message.value.catalog[0].id], libraryId: message.value.catalog[0].id}; resolveReady(); }
   if (message.type === "state") {
-   if (message.topic === "session") state.value.session = message.value;
+   if (message.topic === "library" && message.value.id === state.libraryId) state.value = message.value.state;
    if (message.topic === "uploads") state.value.uploads = message.value;
   }
   if (message.type === "reply") { const job = pending.get(message.requestId); if (!job) return; pending.delete(message.requestId); if (message.error) job.reject(new Error(message.error.message)); else job.resolve(message.value); }
  });
- return {ready, get state() {return state.value;}, command(name, payload = {}) { const requestId = crypto.randomUUID(); return new Promise((resolve, reject) => { pending.set(requestId, {resolve, reject}); port.postMessage({type: "command", instanceId: state.instanceId, requestId, name, payload: {...payload, epoch: state.value.session.epoch}}); }); }, close: () => port.disconnect()};
+ return {ready, get state() {return state.value;}, command(name, payload = {}) { const requestId = crypto.randomUUID(); return new Promise((resolve, reject) => { pending.set(requestId, {resolve, reject}); port.postMessage({type: "command", instanceId: state.instanceId, requestId, name, payload: {...payload, epoch: state.value.session.epoch, libraryId: state.libraryId}}); }); }, close: () => port.disconnect()};
 }
 async function until(check) { const end = Date.now() + 15000; while (!check()) { if (Date.now() > end) throw new Error("Service state did not settle"); await new Promise(resolve => setTimeout(resolve, 10)); } }
 try {

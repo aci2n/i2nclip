@@ -13,15 +13,27 @@ export function createSession(client, platform) {
 	});
 	let disposed = false;
 	let localError = "";
-	const unsubscribe = client.subscribe((value) =>
-		state.set({ ...value.session, error: localError || value.session.error }),
-	);
+	let libraryId;
+	const unsubscribe = client.subscribe((value) => {
+		if (libraryId !== value.libraryId) {
+			localError = "";
+			libraryId = value.libraryId;
+		}
+		state.set({
+			...value.session,
+			catalog: value.catalog || [],
+			libraryId: value.libraryId,
+			error: localError || value.session.error,
+		});
+	});
 	async function action(name, payload) {
+		const ownLibrary = get(client).libraryId;
 		localError = "";
 		try {
 			await client.command(`identity.${name}`, payload);
 			return true;
 		} catch (error) {
+			if (disposed || get(client).libraryId !== ownLibrary) return false;
 			localError = error.message;
 			state.update((value) => ({ ...value, error: localError }));
 			return false;
@@ -35,7 +47,11 @@ export function createSession(client, platform) {
 		unlock: (password) => action("unlock", { password }),
 		setServer: (serverUrl) => action("setServer", { serverUrl }),
 		discardCreation: () => action("discardCreation"),
-		reset: () => action("reset"),
+		reset: async () => {
+			if (!get(client).libraryId) return action("reset");
+			await client.rootCommand("libraries.reset");
+			return true;
+		},
 		async backup() {
 			const instance = get(client).instanceId;
 			const epoch = get(client).session.epoch;

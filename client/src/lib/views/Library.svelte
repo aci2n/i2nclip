@@ -1,12 +1,10 @@
 <script>
-import { untrack } from "svelte";
 import ImageDialog from "../components/ImageDialog.svelte";
 import MediaCard from "../components/MediaCard.svelte";
 import Unlock from "../components/Unlock.svelte";
 import { pickFiles, selectFiles } from "../stores/dom.js";
 
 let { session, library, settingsHref, onsettings } = $props();
-let tags = $state(untrack(() => library.query()));
 let filesInput = $state();
 </script>
 
@@ -28,7 +26,7 @@ let filesInput = $state();
 		class="bar toolbar"
 		onsubmit={(event) => {
 			event.preventDefault();
-			library.search(tags);
+			library.search($library.searchDraft);
 		}}
 	>
 		<input
@@ -36,7 +34,7 @@ let filesInput = $state();
 			type="search"
 			placeholder="Search tags"
 			aria-label="Tags, separated by commas"
-			bind:value={tags}
+			bind:value={() => $library.searchDraft, library.editDraft}
 		>
 		<button type="submit">Search</button>
 		<label class="file"
@@ -127,7 +125,7 @@ let filesInput = $state();
 				type="button"
 				class="secondary"
 				onclick={() => {
-					tags = "";
+					library.editDraft("");
 					library.search("");
 				}}
 			>

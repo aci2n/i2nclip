@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
 import { createApplication } from "../src/lib/stores/application.js";
-import { createServiceEngine } from "../src/lib/service/engine.js";
+import { createLibraryRuntime } from "../src/lib/service/runtime.js";
 import { engineClient, memoryRepository } from "./service-helpers.js";
 
 function setup(t, page) {
@@ -22,7 +22,7 @@ function setup(t, page) {
 		addEventListener: (name, callback) => listeners.set(name, callback),
 		removeEventListener: (name) => listeners.delete(name),
 	};
-	const engine = createServiceEngine({
+	const engine = createLibraryRuntime({
 		repository: memoryRepository(),
 		defaultServerUrl: "https://clip.example",
 	});

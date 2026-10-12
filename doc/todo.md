@@ -19,14 +19,41 @@ Work through these in order. Details and reproductions are in [the audit report]
 
 12. [x] Device pairing with a 12-character code and OPAQUE. Backend only relays messages; see [the protocol](pairing.md). Explicit approval, encrypted transfer, and a new device password work across web and extension clients. Client/Rust tests, all 81 Firefox tests, final pairing regressions, installed-extension worker/CSP verification, lint, and package checks pass.
 
-12.5 refactor client lock ownership model (shared worker/background service)
+12.5 [x] refactor client lock ownership model (shared worker/background service)
 
 13. [x] Remove custom margins from form labels and use container gaps where suitable. Reviewed the full UI for consistent spacing using Spectrum and GOV.UK design-system guidance. Forms, disclosures, cards, empty states, and About now use explicit spacing. Client tests (177), checker, lint, formatting, web/extension builds, and five focused Firefox runs pass; light/dark screenshots were inspected at narrow widths.
 
-14. multi-library: with pairing, a user may choose to share a library with other users, while keeping a personal library private. Libraries should be name-able client side. Backend should be mostly unchanged, but it should provide an authenticated API to register new public keys so we don't need to issue OTC every time.
+14. [x] Multi-library: named client-side catalogs, independent tab selection and passwords, per-library service runtimes, one shared sequential upload queue, and pairing additions preserve personal libraries. Existing registered keys can authorize new keys on the same server; CLI create/register supports an authorizing recovery file. Scoped forgetting, atomic global reset, failure recovery, fresh IndexedDB schema and unchanged recovery/pairing formats are covered. Client tests (143), Rust tests, PostgreSQL API tests (25), all 22 Firefox scenarios, installed-extension/CSP verification, package checks and narrow light/dark screenshots pass.
 
 15. allow multiple pairing sessions for the same owner: if the pk is shared, multiple users may be pairing at the same time
 
 16. pairing state in DB (stateless servers)
 
 17. [x] Replace scripts/dev.sh with compose.yaml: explicit bridge network, PostgreSQL health-gated startup, persistent project-scoped storage, and loopback port/origin overrides. Make development targets now delegate to Podman Compose. Updated setup/reset documentation and shared build-context exclusions for both Compose providers. Verified full and cached image builds, API/web assets, invitation issuance, database readiness and persistence across teardown/restart, and unhealthy-database startup failure in disposable Compose projects.
+
+
+18. dont show pending uploads when locked
+
+19. dont refresh on deletion: keep the card grayed out (prio: 2)
+
+20. dont refresh on upload: on batch uploads refreshing after every upload is jarring
+
+21. rename assets/worker.js assets/pairing-worker.js
+
+22. figure out why pairing Worker does not work in brave: Worker is not defined in the SharedWorker context
+VM21:1 Uncaught ReferenceError: Worker is not defined
+    at eval (eval at pairingWorker (web-worker.js:1547:17), <anonymous>:1:1)
+    at pairingWorker (web-worker.js:1547:17)
+    at run (web-worker.js:1820:21)
+    at Object.receive (web-worker.js:1922:11)
+    at dispatch (web-worker.js:2734:63)
+    at async Object.receive (web-worker.js:2798:21)
+ 
+23. consider adding chrome as a target for e2e tests next to firefox. Reuse test code as much as possible. If needed create browser-specific interfaces to abstract implementation details, and use the interfaces in shared tests. Do not check browser type in specific tests.
+
+24. consider moving the "status" section in the library page, and in general all "status" sections in the settings page too, to a shared toast-notification stack. Considerations: some notifications can be dismissed automatically after X ms, some should be persistent until dismissed by the user, like the "uploaded X files" notification. Consider using native <dialog> elements for this. Notifications should live in the service engine layer and be shared across clients. The service should let clients say where to spawn the notification, default to top right.
+
+
+PRIORITY (highest prio first): 14, 22, 23, 18+19+20+21, 24
+
+DEFERRED: 15, 16

@@ -8,7 +8,8 @@ export function serviceTracingPlugin(enabled) {
 			if (
 				!enabled &&
 				source === "./trace.js" &&
-				importer?.endsWith("/service/engine.js")
+				(importer?.endsWith("/service/engine.js") ||
+					importer?.endsWith("/service/runtime.js"))
 			)
 				return disabled;
 		},

@@ -17,6 +17,11 @@ function databaseFixture() {
 				mode,
 				requests,
 				objectStore: (name) => ({
+					getAll: () => {
+						const request = { name };
+						requests.push(request);
+						return request;
+					},
 					get: (key) => {
 						const request = { name, key };
 						requests.push(request);
@@ -34,7 +39,7 @@ function databaseFixture() {
 	};
 	const repository = createRepository({
 		open(name, version) {
-			assert.equal(name, "i2nclip-service");
+			assert.equal(name, "i2nclip-libraries");
 			assert.equal(version, 1);
 			opened = { result: database };
 			queueMicrotask(() => {
@@ -56,7 +61,7 @@ function databaseFixture() {
 test("a successful database request cannot acknowledge a transaction that later aborts", async () => {
 	const f = databaseFixture();
 	await f.repository.ready;
-	const read = f.repository.getConfig();
+	const read = f.repository.libraries();
 	const rejected = assert.rejects(read, /disk failed/);
 	await tick();
 	f.tx.requests[0].result = { serverUrl: "https://saved.example" };
@@ -71,6 +76,7 @@ test("source and job acceptance wait for one atomic database commit", async () =
 	await f.repository.ready;
 	let committed = false;
 	const saving = f.repository
+		.scope("library")
 		.putJob({ id: "one", status: "queued" }, new Blob(["source"]))
 		.then(() => {
 			committed = true;
@@ -82,7 +88,7 @@ test("source and job acceptance wait for one atomic database commit", async () =
 	f.tx.oncomplete();
 	await saving;
 	assert.equal(committed, true);
-	assert.deepEqual(f.stores, ["config", "jobs", "sources"]);
+	assert.deepEqual(f.stores, ["libraries", "jobs", "sources"]);
 });
 
 test("browser UI accesses no raw identity storage, credentials or API workflows", async () => {

@@ -98,20 +98,40 @@ function create(event) {
 						</p>
 					{/if}
 					<div class="field">
-						<label for="otc">Invitation code</label>
-						<input
-							id="otc"
-							type="text"
-							required
-							autocomplete="off"
-							spellcheck="false"
+						<label for="authorizer">Register using</label>
+						<select
+							id="authorizer"
 							bind:value={
-								() => $settings.otc,
-								(value) => settings.edit("otc", value)
+								() => $settings.authorizerLibraryId,
+								(value) => settings.edit("authorizerLibraryId", value)
 							}
 							disabled={$session.busy}
 						>
+							<option value="">Invitation code</option>
+							{#each $session.catalog.filter(
+								(row) => row.id !== $session.libraryId && row.unlocked,
+							) as row}
+								<option value={row.id}>{row.name}</option>
+							{/each}
+						</select>
 					</div>
+					{#if !$settings.authorizerLibraryId}
+						<div class="field">
+							<label for="otc">Invitation code</label>
+							<input
+								id="otc"
+								type="text"
+								required
+								autocomplete="off"
+								spellcheck="false"
+								bind:value={
+									() => $settings.otc,
+									(value) => settings.edit("otc", value)
+								}
+								disabled={$session.busy}
+							>
+						</div>
+					{/if}
 					<div class="field">
 						<label for="pass">Unlock password</label>
 						<input

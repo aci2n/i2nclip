@@ -571,3 +571,65 @@ test("Node executable supports stdin passwords and returns meaningful exit codes
 	assert.match(failure.stderr, /Wrong password/);
 	assert.equal(failure.stdout, "");
 });
+
+test("authenticated CLI creation and retry use a separate authorizing recovery and password", async (t) => {
+	const f = await fixture(t);
+	const destination = join(f.dir, "team.json"),
+		destinationPassword = join(f.dir, "team-password");
+	await writeFile(destinationPassword, "team-password\n");
+	const flags = [
+		"--recovery",
+		destination,
+		"--password-file",
+		destinationPassword,
+		"--authorize-with",
+		f.recovery,
+		"--authorizer-password-file",
+		f.passwordFile,
+	];
+	let publicKey,
+		calls = 0;
+	const api = {
+		...library,
+		registerAuthenticatedKey: async (options) => {
+			calls++;
+			publicKey = options.publicKey;
+			assert.equal(options.privateKey, f.identity.privateKey);
+			const saved = library.parseRecoveryFile(
+				await readFile(destination, "utf8"),
+			);
+			const key = await library.loadKey(
+				await library.unwrapPrivateKey(saved.wrappedKey, "team-password"),
+			);
+			assert.equal(key.registrationKey, publicKey);
+			if (calls === 1) throw new Error("lost response");
+		},
+		isKeyRegistered: async () => false,
+	};
+	await assert.rejects(
+		run(["create", "--server", "http://localhost:8080", ...flags], {
+			...f.options,
+			api,
+		}),
+		/lost response/,
+	);
+	const first = publicKey;
+	await run(["register", ...flags], { ...f.options, api });
+	assert.equal(calls, 2);
+	assert.equal(publicKey, first);
+	assert.notEqual(publicKey, f.identity.publicKey);
+	await assert.rejects(
+		run(["register", ...flags, "--otc", "invite"], { ...f.options, api }),
+		/exactly one/,
+	);
+	const other = library.recoveryFile({
+		serverUrl: "https://other.example",
+		wrappedKey: library.parseRecoveryFile(await readFile(f.recovery, "utf8"))
+			.wrappedKey,
+	});
+	await writeFile(f.recovery, other);
+	await assert.rejects(
+		run(["register", ...flags], { ...f.options, api }),
+		/same server/,
+	);
+});
