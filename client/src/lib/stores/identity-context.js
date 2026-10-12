@@ -1,17 +1,7 @@
 import { get } from "svelte/store";
 
-const fields = [
-	"serverUrl",
-	"publicKey",
-	"privateKey",
-	"identityGeneration",
-	"configured",
-];
-const changed = (a, b, includeUnlocked = true) =>
-	fields.some(
-		(field) =>
-			(includeUnlocked || field !== "privateKey") && a[field] !== b[field],
-	);
+const fields = ["serverUrl", "publicKey", "privateKey", "epoch", "configured"];
+const changed = (a, b) => fields.some((field) => a[field] !== b[field]);
 const stale = () =>
 	new DOMException("Library changed. Try again.", "AbortError");
 
@@ -25,19 +15,6 @@ export function createSessionContext(state) {
 			for (const operation of [...operations]) {
 				operation.abort(stale());
 			}
-		},
-		observe(listener, { includeUnlocked = true } = {}) {
-			let previous;
-			return state.subscribe((value) => {
-				if (
-					!value.ready ||
-					(previous && !changed(previous, value, includeUnlocked))
-				) {
-					return;
-				}
-				previous = value;
-				listener(Object.freeze({ ...value }));
-			});
 		},
 		operation({ signal, onInvalidated } = {}) {
 			const expected = Object.freeze({ ...get(state) });

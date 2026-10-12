@@ -10,12 +10,13 @@ const STORAGE_KEY = "i2nclip.identity";
 const PURPOSE = "i2nclip/local-identity/1";
 
 // One atomic storage record. The unwrapped key and identity exist only in memory.
-export function createPersistence(storage = globalThis.localStorage) {
+export function createPersistence(storage) {
+	const local = () => storage ?? globalThis.localStorage;
 	let record;
 	let key;
 	let generation = 0;
 	function read() {
-		const text = storage.getItem(STORAGE_KEY);
+		const text = local().getItem(STORAGE_KEY);
 		if (!text) {
 			return false;
 		}
@@ -46,11 +47,11 @@ export function createPersistence(storage = globalThis.localStorage) {
 			throw new DOMException("Client locked.", "AbortError");
 		}
 		const next = { ...record, encrypted };
-		storage.setItem(STORAGE_KEY, JSON.stringify(next));
+		local().setItem(STORAGE_KEY, JSON.stringify(next));
 		record = next;
 	}
 	async function initialize(password) {
-		if (record || storage.getItem(STORAGE_KEY)) {
+		if (record || local().getItem(STORAGE_KEY)) {
 			throw new Error("A master password is already configured.");
 		}
 		if (password.length < 8) {
@@ -69,7 +70,7 @@ export function createPersistence(storage = globalThis.localStorage) {
 			iterations: PBKDF2_ITERATIONS,
 			encrypted,
 		};
-		storage.setItem(STORAGE_KEY, JSON.stringify(next));
+		local().setItem(STORAGE_KEY, JSON.stringify(next));
 		record = next;
 		key = nextKey;
 	}
@@ -126,7 +127,7 @@ export function createPersistence(storage = globalThis.localStorage) {
 				iterations: PBKDF2_ITERATIONS,
 				encrypted,
 			};
-			storage.setItem(STORAGE_KEY, JSON.stringify(next));
+			local().setItem(STORAGE_KEY, JSON.stringify(next));
 			record = next;
 			key = nextKey;
 		},
@@ -135,7 +136,7 @@ export function createPersistence(storage = globalThis.localStorage) {
 			key = null;
 		},
 		reset() {
-			storage.removeItem(STORAGE_KEY);
+			local().removeItem(STORAGE_KEY);
 			generation++;
 			record = null;
 			key = null;

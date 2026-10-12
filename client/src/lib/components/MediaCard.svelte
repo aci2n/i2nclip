@@ -60,6 +60,7 @@ const summary = $derived(
 			<button
 				type="button"
 				class="image-button file-type"
+				aria-label={`Open ${name}`}
 				onclick={(event) => onreveal(event.currentTarget)}
 				disabled={media.busy}
 			>

@@ -10,8 +10,7 @@ RUN NODE_OPTIONS=--network-family-autoselection-attempt-timeout=1000 \
 COPY client/index.html client/vite.config.js ./
 COPY client/public/favicon.ico ./public/favicon.ico
 COPY client/src ./src
-ARG CLIENT_BUILD_MODE=production
-RUN npm run build:web -- --mode "$CLIENT_BUILD_MODE"
+RUN npm run build:web
 
 FROM docker.io/library/rust:1-bookworm AS build
 WORKDIR /src

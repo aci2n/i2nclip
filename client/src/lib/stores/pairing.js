@@ -377,16 +377,12 @@ export function createPairing(session, services = {}) {
 					throw new Error(get(session).error || "Could not save the library.");
 				}
 				current.saved = true;
-				current.operation = savedOperation.operation || savedOperation;
+				current.operation = savedOperation;
 				const acknowledge = async () => {
 					check(current);
 					await submit(current, 5, await call(current, "acknowledge"));
 				};
-				if (savedOperation.withIdentity) {
-					await savedOperation.withIdentity(acknowledge);
-				} else {
-					await session.withIdentity(current.operation, acknowledge);
-				}
+				await session.withIdentity(current.operation, acknowledge);
 			});
 		},
 		approve() {

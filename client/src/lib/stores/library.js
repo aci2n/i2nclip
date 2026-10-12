@@ -286,7 +286,12 @@ export function createLibrary(
 			}
 		},
 		dismissCompleted: () =>
-			state.update((v) => ({ ...v, uploadCompleted: [] })),
+			state.update((v) => ({
+				...v,
+				uploadCompleted: [],
+				uploadStatus:
+					v.uploadFailures.length || v.uploading ? v.uploadStatus : "",
+			})),
 		async reveal(id, opener) {
 			const row = cards.get(id);
 			const own = ++previewRevision;

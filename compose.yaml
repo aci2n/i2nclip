@@ -30,8 +30,6 @@ services:
     build:
       context: .
       dockerfile: Containerfile
-      args:
-        CLIENT_BUILD_MODE: debug
     image: localhost/i2nclip-dev:latest
     networks:
       - dev

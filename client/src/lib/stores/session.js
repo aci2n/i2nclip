@@ -109,7 +109,6 @@ export function createSession({
 			return epoch;
 		},
 		operation: context.operation,
-		observeIdentity: context.observe,
 		credentials() {
 			if (!identity || !get(state).unlocked || get(state).busy || disposed) {
 				throw new Error("Unlock your library first.");
@@ -228,9 +227,23 @@ export function createSession({
 				await persistence.changePassword(current, password);
 				signal.throwIfAborted();
 			}),
-		rename: (name) => action((signal) => apply({ ...identity, name }, signal)),
+		rename: (name) =>
+			action(async (signal) => {
+				if (!identity || !get(state).unlocked) {
+					throw new Error("Unlock your library first.");
+				}
+				const next = await validateIdentity({ ...identity, name });
+				signal.throwIfAborted();
+				await persistence.save(next);
+				signal.throwIfAborted();
+				identity = next;
+				publish();
+			}),
 		forget: () => action((signal) => apply(null, signal)),
 		reset() {
+			if (disposed) {
+				return false;
+			}
 			try {
 				persistence.reset();
 				invalidate();
@@ -268,10 +281,20 @@ export function createSession({
 				}
 			}),
 		dispose() {
+			if (disposed) {
+				return;
+			}
 			disposed = true;
 			invalidate();
 			persistence.lock();
 			identity = null;
+			publish({
+				status: "locked",
+				unlocked: false,
+				publicKey: "",
+				busy: false,
+				error: "",
+			});
 		},
 	};
 	return session;

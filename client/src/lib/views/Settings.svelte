@@ -93,14 +93,14 @@ async function action(scope, work, success) {
 								"Forget this library? Keep a recovery file before continuing.",
 							)
 						) {
-							session.forget();
+							action("forget", session.forget, "Library forgotten.");
 						}
 					}}
 				>
 					Forget library
 				</button>
-				{#if $session.error}
-					<p role="alert" class="error">{$session.error}</p>
+				{#if feedback.scope === "forget" && feedback.error}
+					<p role="alert" class="error">{feedback.text}</p>
 				{/if}
 			</div>
 		</details>

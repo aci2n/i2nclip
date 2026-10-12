@@ -8,7 +8,8 @@ let { state, onapprove, onreject, oncancel } = $props();
 		{/if}
 		{#if state.verificationCode}
 			<label class="field"
-				>Verification code<output class="code"
+				><span>Verification code</span
+				><output class="code" aria-label="Verification code"
 					>{state.verificationCode}</output
 				></label
 			>
