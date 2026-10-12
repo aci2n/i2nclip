@@ -22,10 +22,6 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/ping", get(ping))
         .route("/api/register-key", post(register_key))
-        .route(
-            "/api/register-key/authenticated",
-            post(register_authenticated_key),
-        )
         .merge(media::router())
         .merge(crate::pairing::router())
         .layer(tower_http::trace::TraceLayer::new_for_http())
@@ -103,47 +99,6 @@ async fn ping(State(state): State<AppState>, request: Request) -> Response {
 struct RegisterKeyJson {
     otc: String,
     public_key: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AuthenticatedKeyJson {
-    public_key: String,
-}
-
-async fn register_authenticated_key(State(state): State<AppState>, request: Request) -> Response {
-    let verified = match auth::verify_request(
-        &state,
-        request.method(),
-        request.uri(),
-        request.headers(),
-    )
-    .await
-    {
-        Ok(value) => value,
-        Err(error) => return fail(error),
-    };
-    let bytes =
-        match read_body_with_deadline(request.into_body(), MAX_REGISTER_BODY, SHORT_BODY_DEADLINE)
-            .await
-        {
-            Ok(value) => value,
-            Err(response) => return *response,
-        };
-    if let Err(error) = auth::verify_body(&verified, &bytes).await {
-        return fail(error);
-    }
-    let result = async {
-        let payload: AuthenticatedKeyJson = serde_json::from_slice(&bytes)
-            .map_err(|_| Error::BadRequest("invalid registration payload".into()))?;
-        let public = auth::parse_public_key(&payload.public_key)?;
-        state.db.register_key(&public).await
-    }
-    .await;
-    match result {
-        Ok(()) => empty(StatusCode::NO_CONTENT),
-        Err(error) => fail(error),
-    }
 }
 
 async fn register_key(State(state): State<AppState>, request: Request) -> Response {

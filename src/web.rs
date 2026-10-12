@@ -23,20 +23,13 @@ pub(crate) fn serve(api: Router, directory: PathBuf) -> Router {
             ServeFile::new(directory.join("favicon.ico")),
         )
         .layer(map_response(html_cache));
-    // Stable worker URLs let all tabs join one owner and revalidate across builds.
-    let workers = Router::new()
-        .route_service(
-            "/assets/web-worker.js",
-            ServeFile::new(directory.join("assets/web-worker.js")),
-        )
-        .layer(map_response(html_cache));
     let assets = Router::new()
         .nest_service(
             "/assets",
             ServeDir::new(directory.join("assets")).append_index_html_on_directories(false),
         )
         .layer(map_response(asset_cache));
-    api.merge(html).merge(workers).merge(assets)
+    api.merge(html).merge(assets)
 }
 
 async fn html_cache(response: Response) -> Response {
@@ -80,7 +73,6 @@ mod tests {
             std::fs::write(directory.join("favicon.ico"), b"\x00\x00\x01\x00").unwrap();
             std::fs::write(directory.join("assets/app-ab123456.js"), "export {};").unwrap();
             std::fs::write(directory.join("assets/app-ab123456.css"), "body {}").unwrap();
-            std::fs::write(directory.join("assets/web-worker.js"), "export {};").unwrap();
             std::fs::write(directory.join("private.txt"), "not public").unwrap();
             Self(directory)
         }
@@ -159,20 +151,11 @@ mod tests {
             to_bytes(favicon.into_body(), 1024).await.unwrap(),
             &b"\x00\x00\x01\x00"[..]
         );
-        for path in ["/assets/web-worker.js"] {
-            let response = request(app.clone(), Method::GET, path).await;
-            assert_eq!(response.status(), StatusCode::OK);
-            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
-            assert!(response.headers()[header::CONTENT_TYPE]
-                .to_str()
-                .unwrap()
-                .starts_with("text/javascript"));
-        }
+
         for path in [
             "/",
             "/index.html",
             "/favicon.ico",
-            "/assets/web-worker.js",
             "/assets/app-ab123456.js",
         ] {
             let response = request(app.clone(), Method::HEAD, path).await;
