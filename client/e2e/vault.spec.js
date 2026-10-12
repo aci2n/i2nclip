@@ -104,7 +104,7 @@ for (const kind of ["web", "extension"]) {
 				2,
 			);
 			await expect(recipient.locator("#library-selector option")).toHaveText([
-				"Personal",
+				"Personal 1",
 				"Team",
 			]);
 			await recipient

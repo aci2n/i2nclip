@@ -206,7 +206,9 @@ default when a registered library exists; the selected
 source determines its server. OTC and Pair keep their own server choices, while
 Restore uses the recovery file's server.
 
-Add library expands the same form without changing the current selection.
+New setup suggests the lowest unused “Personal N” name; the suggestion is editable
+and saved names remain unchanged. Add library expands the same form without
+changing the current selection.
 Unsubmitted fields stay local. Submitted setups have service-owned provisional
 records, appear in the picker only after their identities are saved, and retain
 failed registrations for Resume setup after reload. Retrying reuses the encrypted

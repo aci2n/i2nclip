@@ -1,3 +1,4 @@
+import { defaultLibraryName } from "./library-name.js";
 import { get, writable } from "svelte/store";
 import { createSession } from "./session.js";
 import { createSettings } from "./settings.js";
@@ -152,7 +153,7 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 			publish();
 			const catalog = get(projection).catalog;
 			settings.edit("mode", catalog.length ? "authorize" : "create");
-			settings.edit("libraryName", "");
+			settings.edit("libraryName", defaultLibraryName(catalog));
 			settings.edit(
 				"server",
 				get(root).libraries[currentLibrary()]?.session.serverUrl || "",

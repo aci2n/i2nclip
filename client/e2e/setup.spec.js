@@ -26,7 +26,9 @@ test("four setup tabs support master unlock and durable invitation retries", asy
 	await page.locator("#unlock-vault").click();
 	await expect(page.getByRole("alert")).toBeVisible();
 	await master(page);
-	await add(page, "Authorized", "authorize");
+	await page.locator("#add-library-settings > summary").click();
+	await expect(page.locator("#new-library-name")).toHaveValue("Personal 2");
+	await page.locator("#new-library-name").fill("Authorized");
 	await expect(page.locator("#authorizer-unlock")).toHaveCount(0);
 	await expect(page.locator("#library-selector")).toHaveCount(0);
 	await page.locator("#authorize-library").click();
@@ -76,6 +78,7 @@ test("setup remains compact and restores a named library using its recovery serv
 }) => {
 	await page.goto(`${app.web.origin}/client/dist/extension/options.html`);
 	await master(page);
+	await expect(page.locator("#library-name")).toHaveValue("Personal 1");
 	await expect(page.getByRole("tab")).toHaveText([
 		"OTC",
 		"Authorize",
@@ -119,7 +122,7 @@ test("setup remains compact and restores a named library using its recovery serv
 	await page.locator("#preview-recovery").click();
 	await page.locator("#restore").click();
 	await expect(page.locator("#library-selector option:checked")).toHaveText(
-		"Personal",
+		"Personal 1",
 	);
 	expect(
 		(await page.evaluate(() => window.serviceTest("state"))).session.serverUrl,

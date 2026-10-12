@@ -1,3 +1,4 @@
+import { defaultLibraryName } from "./library-name.js";
 import { get, writable } from "svelte/store";
 
 export function createSettings(
@@ -7,7 +8,7 @@ export function createSettings(
 ) {
 	const initial = {
 		mode: "create",
-		libraryName: "Personal",
+		libraryName: defaultLibraryName(),
 		server: "",
 		otc: "",
 		authorizerLibraryId: "",
@@ -35,7 +36,10 @@ export function createSettings(
 					value.pendingRegistration?.authorizerLibraryId ||
 					value.catalog?.[0]?.id ||
 					"",
-				libraryName: value.libraryName || "Personal",
+				libraryName:
+					(value.configured || value.pendingRegistration) && value.libraryName
+						? value.libraryName
+						: defaultLibraryName(value.catalog),
 				...drafts.get(libraryId),
 				server: value.serverUrl,
 			});
