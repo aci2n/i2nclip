@@ -1,4 +1,4 @@
-import { createSessionContext } from "../src/lib/service/identity-context.js";
+import { createSessionContext } from "../src/lib/stores/identity-context.js";
 export function deferred() {
 	let resolve;
 	let reject;
@@ -16,7 +16,6 @@ export function workflowSession(store) {
 	return {
 		...store,
 		operation: context.operation,
-		observeIdentity: context.observe,
 		async withIdentity(operation, action) {
 			operation.signal.throwIfAborted();
 			return action(context.expected(operation));

@@ -1,191 +1,171 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
+import { createPersistence } from "../src/lib/persistence.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
-import { createIdentity } from "../src/lib/service/identity.js";
-import { memoryRepository } from "./service-helpers.js";
+import { exportRecovery } from "../src/lib/protocol/recovery.js";
+import { createSession } from "../src/lib/stores/session.js";
+import { deferred } from "./helpers.js";
 
-async function fixture(t) {
-	const key = await generatePrivateKey();
-	const config = {
-		serverUrl: "https://clip.example",
-		privateKey: key.privateKey,
-		publicKey: key.publicKey,
-		identityGeneration: "initial",
+function storage() {
+	const values = new Map();
+	return {
+		values,
+		getItem: (key) => values.get(key) ?? null,
+		setItem: (key, value) => values.set(key, value),
+		removeItem: (key) => values.delete(key),
 	};
-	const repository = memoryRepository(config);
-	const identity = createIdentity(repository, config.serverUrl);
-	t.after(identity.dispose);
-	await identity.ready;
-	return { identity, repository, key, config };
+}
+const password = "master-password";
+const serverUrl = "https://clip.example";
+async function fixture(t, http = {}) {
+	const local = storage();
+	const persistence = createPersistence(local);
+	const session = createSession({ persistence, http });
+	t.after(session.dispose);
+	assert.equal(await session.initialize(password), true);
+	return { local, persistence, session };
 }
 
-test("library runtimes receive credentials from an already unlocked repository", async (t) => {
-	const f = await fixture(t);
-	assert.equal(get(f.identity).privateKey, f.key.privateKey);
-	assert.equal((await f.repository.getConfig()).privateKey, f.key.privateKey);
-});
-
-test("fabricated, foreign, disposed and invalidated operation handles cannot authorize pairing", async (t) => {
-	const f = await fixture(t);
-	const other = createIdentity(f.repository, f.config.serverUrl);
-	t.after(other.dispose);
-	await other.ready;
-	const operation = f.identity.operation();
-	for (const handle of [
-		{ signal: new AbortController().signal },
-		other.operation(),
+test("one encrypted identity survives reload, password changes, and forgetting without plaintext secrets", async (t) => {
+	const f = await fixture(t, { registerKey: async () => {} });
+	assert.equal(
+		await f.session.create({ name: "Photos", serverUrl, otc: "invite" }),
+		true,
+	);
+	const privateKey = get(f.session).privateKey;
+	const signal = f.session.signal;
+	const epoch = f.session.epoch;
+	assert.equal(await f.session.rename("Renamed"), true);
+	assert.equal(f.session.signal, signal);
+	assert.equal(f.session.epoch, epoch);
+	assert.equal(signal.aborted, false);
+	const saved = [...f.local.values.values()][0];
+	assert.equal(f.local.values.size, 1);
+	for (const secret of [
+		privateKey,
+		JSON.parse(privateKey).seed,
+		"Renamed",
+		serverUrl,
+		password,
 	]) {
-		await assert.rejects(
-			f.identity.withIdentity(handle, () =>
-				assert.fail("invalid handle accepted"),
-			),
-			/Invalid session operation/,
-		);
+		assert(!saved.includes(secret));
 	}
-	operation.dispose();
-	await assert.rejects(
-		f.identity.withIdentity(operation, () => {}),
-		/Invalid session operation/,
-	);
-	const stale = f.identity.operation();
-	await f.identity.reset();
-	await assert.rejects(
-		f.identity.withIdentity(stale, () => assert.fail("stale handle accepted")),
-		{ name: "AbortError" },
-	);
+	f.session.dispose();
+	assert.equal(get(f.session).privateKey, "");
+	assert.equal(get(f.session).unlocked, false);
+	const restored = createSession({ persistence: createPersistence(f.local) });
+	t.after(restored.dispose);
+	assert.equal(get(restored).status, "locked");
+	assert.equal(await restored.unlock("wrong-password"), false);
+	assert.equal(await restored.unlock(password), true);
+	assert.equal(get(restored).privateKey, privateKey);
+	assert.equal(await restored.changePassword(password, "new-password"), true);
+	restored.lock();
+	assert.equal(get(restored).privateKey, "");
+	assert.equal(await restored.unlock(password), false);
+	assert.equal(await restored.unlock("new-password"), true);
+	assert.equal(await restored.forget(), true);
+	assert.equal(get(restored).configured, false);
+	restored.lock();
+	assert.equal(await restored.unlock("new-password"), true);
+	assert.equal(get(restored).configured, false);
 });
 
-test("failed configuration writes publish the actual saved server and allow retry", async (t) => {
-	const f = await fixture(t);
-	const save = f.repository.setConfig;
-	f.repository.setConfig = async () => {
-		throw new Error("disk full");
+test("storage failure retains the previous record and identity", async (t) => {
+	const f = await fixture(t, { registerKey: async () => {} });
+	assert.equal(
+		await f.session.create({ name: "Photos", serverUrl, otc: "invite" }),
+		true,
+	);
+	const before = [...f.local.values.values()][0];
+	f.local.setItem = () => {
+		throw new Error("Storage quota exceeded.");
 	};
-	await assert.rejects(
-		f.identity.setServer("https://other.example"),
-		/disk full/,
-	);
-	assert.equal(get(f.identity).serverUrl, f.config.serverUrl);
-	assert.match(get(f.identity).error, /disk full/);
-	f.repository.setConfig = save;
-	await f.identity.setServer("https://other.example");
-	assert.equal(get(f.identity).serverUrl, "https://other.example");
+	assert.equal(await f.session.rename("Changed"), false);
+	assert.equal(get(f.session).name, "Photos");
+	assert.equal([...f.local.values.values()][0], before);
+	assert.match(get(f.session).error, /quota/);
+	assert.equal(get(f.session).busy, false);
 });
 
-test("a paired import uses the unlocked vault, persists before acknowledgment, and validates the public key", async (t) => {
-	const f = await fixture(t);
-	await f.identity.reset();
-	const args = {
-		serverUrl: f.config.serverUrl,
-		...f.key,
-		signal: new AbortController().signal,
-	};
-	await assert.rejects(
-		f.identity.importPairing({ ...args, publicKey: "wrong" }),
-		/Invalid paired/,
-	);
-	const result = await f.identity.importPairing(args);
-	assert.equal(result.outcome, "saved");
-	const operation = result.operation;
-	let acknowledged = false;
-	await result.withIdentity(async (credentials) => {
-		assert.equal((await f.repository.getConfig()).publicKey, f.key.publicKey);
-		assert.equal(credentials.privateKey, f.key.privateKey);
-		acknowledged = true;
-	});
-	assert.equal(acknowledged, true);
-	operation.dispose();
-	const reopened = createIdentity(f.repository, f.config.serverUrl);
-	t.after(reopened.dispose);
-	await reopened.ready;
-
-	assert.equal(get(reopened).privateKey, f.key.privateKey);
-});
-
-test("duplicate pairing validates keys before resolving and guards acknowledgment in the destination", async (t) => {
-	const f = await fixture(t);
-	const receiverRepository = memoryRepository({});
-	let resolutions = 0;
-	const receiver = createIdentity(
-		receiverRepository,
-		f.config.serverUrl,
-		undefined,
-		undefined,
-		async (options) => {
-			resolutions++;
-			const operation = f.identity.operation(options);
-			return {
-				outcome: "existing",
-				libraryId: "saved",
-				operation,
-				withIdentity: (action) => f.identity.withIdentity(operation, action),
-			};
+test("locking cancels registration and rejects overlapping session mutations", async (t) => {
+	const entered = deferred();
+	const result = deferred();
+	const f = await fixture(t, {
+		registerKey: async ({ signal }) => {
+			entered.resolve(signal);
+			await result.promise;
 		},
+	});
+	const registering = f.session.create({
+		name: "Photos",
+		serverUrl,
+		otc: "invite",
+	});
+	const signal = await entered.promise;
+	assert.equal(
+		await f.session.create({ name: "Other", serverUrl, otc: "invite" }),
+		false,
 	);
-	t.after(receiver.dispose);
-	await receiver.ready;
-	const args = {
-		...f.key,
-		serverUrl: f.config.serverUrl,
-		signal: new AbortController().signal,
-	};
-	await assert.rejects(
-		receiver.importPairing({ ...args, publicKey: "wrong" }),
-		/Invalid paired/,
-	);
-	assert.equal(resolutions, 0);
-	const result = await receiver.importPairing(args);
-	assert.equal(result.libraryId, "saved");
-	assert.deepEqual(await receiverRepository.getConfig(), {});
-	await result.withIdentity((credentials) =>
-		assert.equal(credentials.privateKey, f.key.privateKey),
-	);
-	await f.identity.reset();
-	await assert.rejects(
-		result.withIdentity(() => assert.fail("stale acknowledgment")),
-		{ name: "AbortError" },
-	);
-	result.operation.dispose();
+	f.session.lock();
+	result.resolve();
+	assert.equal(await registering, false);
+	assert.equal(signal.aborted, true);
+	assert.equal(await f.session.unlock(password), true);
+	assert.equal(get(f.session).configured, false);
 });
 
-test("pairing resolves a duplicate committed between lookup and final save", async (t) => {
-	const { ExistingLibraryError } = await import(
-		"../src/lib/service/repository.js"
-	);
-	const f = await fixture(t);
-	const repository = memoryRepository({});
-	repository.setConfig = async () => {
-		throw new ExistingLibraryError("saved");
+test("recovery verifies server registration and cannot replace a configured singleton", async (t) => {
+	const identity = {
+		name: "Recovered",
+		serverUrl,
+		privateKey: (await generatePrivateKey()).privateKey,
 	};
-	let lookups = 0;
-	const receiver = createIdentity(
-		repository,
-		f.config.serverUrl,
-		undefined,
-		undefined,
-		async (options) => {
-			if (++lookups === 1) {
-				return null;
-			}
-			const operation = f.identity.operation(options);
-			return {
-				outcome: "existing",
-				libraryId: "saved",
-				operation,
-				withIdentity: (action) => f.identity.withIdentity(operation, action),
-			};
+	const text = await exportRecovery(identity, "recovery-password");
+	let registered = false;
+	const f = await fixture(t, { isKeyRegistered: async () => registered });
+	const file = new Blob([text]);
+	assert.equal(await f.session.restore(file, "recovery-password"), false);
+	assert.equal(get(f.session).configured, false);
+	registered = true;
+	assert.equal(await f.session.restore(file, "recovery-password"), true);
+	assert.equal(get(f.session).privateKey, identity.privateKey);
+	assert.equal(await f.session.restore(file, "recovery-password"), false);
+	assert.equal(get(f.session).privateKey, identity.privateKey);
+});
+
+test("locking during encryption cannot commit or restore an unwrapped key", async () => {
+	const local = storage();
+	const persistence = createPersistence(local);
+	const initializing = persistence.initialize(password);
+	persistence.lock();
+	await assert.rejects(initializing, { name: "AbortError" });
+	assert.equal(local.values.size, 0);
+	await persistence.initialize(password);
+	const saving = persistence.save({ name: "late" });
+	persistence.lock();
+	await assert.rejects(saving, { name: "AbortError" });
+	assert.equal(await persistence.unlock(password), null);
+});
+
+test("unavailable browser storage is reported without crashing initialization", (t) => {
+	const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+	Object.defineProperty(globalThis, "localStorage", {
+		configurable: true,
+		get() {
+			throw new Error("Storage access denied.");
 		},
-	);
-	t.after(receiver.dispose);
-	await receiver.ready;
-	const result = await receiver.importPairing({
-		...f.key,
-		serverUrl: f.config.serverUrl,
-		signal: new AbortController().signal,
 	});
-	assert.equal(result.outcome, "existing");
-	assert.equal(lookups, 2);
-	await result.withIdentity(() => {});
-	result.operation.dispose();
+	t.after(() => {
+		if (previous) {
+			Object.defineProperty(globalThis, "localStorage", previous);
+		} else {
+			delete globalThis.localStorage;
+		}
+	});
+	const session = createSession();
+	t.after(session.dispose);
+	assert.equal(get(session).status, "locked");
+	assert.match(get(session).error, /access denied/);
 });

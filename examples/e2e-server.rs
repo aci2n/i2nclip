@@ -1,11 +1,5 @@
-//! Real API listener with test-only CORS, using I2N_DATABASE_URL.
+//! Real web/API listener for isolated browser tests, using I2N_DATABASE_URL.
 
-use axum::body::Body;
-use axum::extract::Request;
-use axum::http::HeaderValue;
-use axum::http::Method;
-use axum::middleware::Next;
-use axum::response::Response;
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -16,8 +10,7 @@ async fn main() {
     let listen = args.next().expect("listen address");
     let app = i2nclip::router(&database_url, &origin)
         .await
-        .expect("router")
-        .layer(axum::middleware::from_fn(allow_browser));
+        .expect("router");
     let listener = TcpListener::bind(&listen).await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
     println!("ready {addr}");
@@ -28,29 +21,4 @@ async fn main() {
     )
     .await
     .expect("serve");
-}
-
-async fn allow_browser(request: Request, next: Next) -> Response {
-    if request.method() == Method::OPTIONS {
-        return Response::builder()
-            .status(204)
-            .header("access-control-allow-origin", "*")
-            .header(
-                "access-control-allow-methods",
-                "GET, POST, PUT, DELETE, OPTIONS",
-            )
-            .header(
-                "access-control-allow-headers",
-                "authorization, content-type",
-            )
-            .header("access-control-max-age", "600")
-            .body(Body::empty())
-            .expect("options response");
-    }
-    let mut response = next.run(request).await;
-    response.headers_mut().insert(
-        axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
-    response
 }

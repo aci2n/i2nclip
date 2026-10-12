@@ -15,20 +15,17 @@ test("portable recovery preserves content decryption, normalized tags and public
 	const created = await generatePrivateKey();
 	const original = await loadKey(created.privateKey);
 	const text = await exportRecovery(
-		[
-			{
-				name: "Library",
-				serverUrl: "https://clip.example.com",
-				privateKey: created.privateKey,
-			},
-		],
+		{
+			name: "Library",
+			serverUrl: "https://clip.example.com",
+			privateKey: created.privateKey,
+		},
 		"test password",
-		"library",
 	);
 	assert(!text.includes(JSON.parse(created.privateKey).seed));
 	await assert.rejects(openRecovery(text, "wrong"), /Wrong password/);
 	const recovered = await openRecovery(text, "test password");
-	const restored = await loadKey(recovered.libraries[0].privateKey);
+	const restored = await loadKey(recovered.privateKey);
 	assert.equal(restored.registrationKey, original.registrationKey);
 	assert.equal(
 		await tagToken(restored, "vacation"),
@@ -41,7 +38,7 @@ test("portable recovery preserves content decryption, normalized tags and public
 		"original upload",
 	);
 	for (const changed of [
-		{ v: 1 },
+		{ v: 99 },
 		{ encrypted: { v: 2 } },
 		{ encrypted: { ...JSON.parse(text).encrypted, iterations: 9_000_000 } },
 		{ encrypted: { ...JSON.parse(text).encrypted, salt: "AAAA" } },
@@ -57,15 +54,12 @@ test("portable recovery preserves content decryption, normalized tags and public
 	}
 	await assert.rejects(
 		exportRecovery(
-			[
-				{
-					name: "Bad",
-					serverUrl: "javascript:alert(1)",
-					privateKey: created.privateKey,
-				},
-			],
+			{
+				name: "Bad",
+				serverUrl: "javascript:alert(1)",
+				privateKey: created.privateKey,
+			},
 			"test password",
-			"library",
 		),
 	);
 });

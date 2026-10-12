@@ -2,9 +2,11 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
 	testDir: "e2e",
+	workers: 2,
 	timeout: 180_000,
 	expect: { timeout: 20_000 },
 	use: {
+		actionTimeout: 20_000,
 		viewport: { width: 1100, height: 800 },
 	},
 	projects: [

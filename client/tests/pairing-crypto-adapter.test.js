@@ -2,21 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { pairingCrypto } from "../src/lib/pairing/service.js";
 
-function noNestedWorkers(t) {
-	const previous = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-	Object.defineProperty(globalThis, "Worker", {
-		configurable: true,
-		value: undefined,
-	});
-	t.after(() =>
-		previous
-			? Object.defineProperty(globalThis, "Worker", previous)
-			: delete globalThis.Worker,
-	);
-}
-
-test("pairing completes with isolated owner crypto when nested Worker is unavailable", async (t) => {
-	noNestedWorkers(t);
+test("isolated pairing adapters complete a verified exchange", async (t) => {
 	const sender = pairingCrypto();
 	const receiver = pairingCrypto();
 	t.after(sender.dispose);
@@ -47,8 +33,7 @@ test("pairing completes with isolated owner crypto when nested Worker is unavail
 	);
 });
 
-test("owner crypto adapter serializes calls, rejects disposal immediately and sanitizes failures", async (t) => {
-	noNestedWorkers(t);
+test("pairing crypto adapter serializes calls, rejects disposal immediately and sanitizes failures", async (t) => {
 	const worker = pairingCrypto();
 	const pending = worker.call("senderSetup", {
 		secret: "W4TXN9RC",

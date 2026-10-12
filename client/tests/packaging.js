@@ -21,7 +21,7 @@ test("web ZIP contains only its entry page and bundled assets", async () => {
 	const names = await entries("i2nclip-web.zip", "unzip", ["-Z1"]);
 	assert(names.includes("index.html"));
 	assert(names.includes("favicon.ico"));
-	assert(!names.some(name => /worker|background|manifest/.test(name)));
+	assert(!names.some((name) => /worker|background|manifest/.test(name)));
 	assert(names.some((name) => /^assets\/crypto-.*\.js$/.test(name)));
 	assert(names.some((name) => /^assets\/.*\.js$/.test(name)));
 	assert(names.some((name) => /^assets\/.*\.css$/.test(name)));

@@ -19,10 +19,8 @@ import {
 	parsePairingCode,
 	sealPairing,
 } from "../src/lib/protocol/pairing.js";
-import { createIdentity } from "../src/lib/service/identity.js";
-import { createPairing } from "../src/lib/service/pairing.js";
+import { createPairing } from "../src/lib/stores/pairing.js";
 import { deferred, tick, workflowSession } from "./helpers.js";
-import { memoryRepository } from "./service-helpers.js";
 
 const room = {
 	v: 1,
@@ -338,12 +336,12 @@ function fixture(t, receiverImport, options = {}) {
 			removed++;
 		},
 	});
-	const worker = () => ({ call: createPairingCrypto(), dispose() {} });
+	const crypto = () => ({ call: createPairingCrypto(), dispose() {} });
 	const senderState =
 		options.senderSession ||
 		writable({
 			serverUrl: origin,
-			identityGeneration: "sender",
+			epoch: "sender",
 			configured: true,
 			privateKey: "",
 			ready: true,
@@ -383,7 +381,7 @@ function fixture(t, receiverImport, options = {}) {
 					privateKey: value.privateKey,
 					publicKey: value.publicKey,
 					configured: true,
-					identityGeneration: "receiver",
+					epoch: "receiver",
 				});
 				return workflow.operation({
 					signal: value.signal,
@@ -394,13 +392,13 @@ function fixture(t, receiverImport, options = {}) {
 	};
 	const sender = createPairing(options.senderSession || session(senderState), {
 		relay,
-		worker,
+		crypto,
 		pollMs: 1,
 		...options,
 	});
 	const receiver = createPairing(session(receiverState), {
 		relay,
-		worker,
+		crypto,
 		pollMs: 1,
 		...options,
 	});
@@ -435,7 +433,7 @@ test("pairing requires explicit approval and reports success only after durable 
 			...get(state),
 			...value,
 			configured: true,
-			identityGeneration: "receiver",
+			epoch: "receiver",
 		});
 		return true;
 	});
@@ -543,7 +541,7 @@ test("identity changes cancel authenticated pairing before any identity transfer
 	await until(() => get(f.sender).approval);
 	f.senderState.update((value) => ({
 		...value,
-		identityGeneration: "changed",
+		epoch: "changed",
 	}));
 	assert.equal(await sending, false);
 	f.receiver.cancel();
@@ -552,50 +550,6 @@ test("identity changes cancel authenticated pairing before any identity transfer
 	assert.equal(get(f.receiverState).privateKey, undefined);
 	assert(f.removed() >= 1);
 });
-
-for (const mutation of ["reset", "setServer"]) {
-	test(`${mutation} immediately cancels authenticated pairing while storage is stalled`, async (t) => {
-		const key = await generatePrivateKey();
-		const repository = memoryRepository({
-			serverUrl: origin,
-			privateKey: key.privateKey,
-			publicKey: key.publicKey,
-			identityGeneration: "sender",
-		});
-		const senderSession = createIdentity(repository, origin);
-		t.after(senderSession.dispose);
-		await senderSession.ready;
-		const f = fixture(t, undefined, { senderSession });
-		const sending = f.sender.send();
-		await until(() => Boolean(get(f.sender).code));
-		const receiving = f.receiver.receive(get(f.sender).code, origin);
-		await until(() => get(f.sender).approval);
-		const entered = deferred();
-		const finish = deferred();
-		const original = repository[mutation === "reset" ? "reset" : "setConfig"];
-		repository[mutation === "reset" ? "reset" : "setConfig"] = async (
-			...args
-		) => {
-			entered.resolve();
-			await finish.promise;
-			return original(...args);
-		};
-		t.after(() => finish.resolve());
-		const changing =
-			mutation === "reset"
-				? senderSession.reset()
-				: senderSession.setServer("https://other.example");
-		await entered.promise;
-		assert.equal(get(f.sender).approval, false);
-		f.sender.approve();
-		assert.equal(await sending, false);
-		assert.equal(f.transcript.length, 3);
-		f.receiver.cancel();
-		assert.equal(await receiving, false);
-		finish.resolve();
-		assert.equal(await changing, true);
-	});
-}
 
 test("cancellation during room creation removes a late room without publishing its code", async (t) => {
 	const create = deferred();
@@ -679,7 +633,7 @@ test("lost acknowledgment preserves the saved library without claiming sender su
 	const receiving = f.receiver.receive(get(f.sender).code, origin);
 	await until(() => get(f.sender).approval);
 	f.sender.approve();
-	assert.equal(await receiving, false);
+	assert.equal(await receiving, true);
 	assert.equal(get(f.receiverState).privateKey, key.privateKey);
 	assert.match(
 		get(f.receiver).status,
