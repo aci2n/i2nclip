@@ -1,0 +1,50 @@
+name: i2nclip-dev
+
+services:
+  db:
+    image: docker.io/library/postgres:18
+    networks:
+      - dev
+    environment:
+      POSTGRES_USER: i2nclip
+      POSTGRES_DB: i2nclip
+      POSTGRES_PASSWORD: i2nclip-dev
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    ports:
+      - "127.0.0.1:${DEV_DB_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          PGPASSWORD=$$POSTGRES_PASSWORD psql --host=127.0.0.1
+          --username=$$POSTGRES_USER --dbname=$$POSTGRES_DB
+          --no-password --command='SELECT 1' > /dev/null 2>&1
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  server:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: localhost/i2nclip-dev:latest
+    networks:
+      - dev
+    environment:
+      I2N_ORIGIN: ${DEV_ORIGIN:-http://localhost:${DEV_PORT:-8080}}
+      I2N_DATABASE_URL: postgresql://i2nclip:i2nclip-dev@db:5432/i2nclip?sslmode=disable
+    ports:
+      - "127.0.0.1:${DEV_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+networks:
+  dev:
+    driver: bridge
+
+volumes:
+  postgres-data:

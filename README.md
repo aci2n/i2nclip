@@ -52,38 +52,49 @@ cargo run
 For local development with Linux Podman, run `make dev`. It builds the existing
 server image (including the web client), starts PostgreSQL 18, and serves the app
 at `http://localhost:8080`. Rust, Node, and npm run inside the image build; only
-Podman is required on the host. Rerun `make dev` after source changes to rebuild.
+Podman and a recent Compose provider such as
+[podman-compose](https://github.com/containers/podman-compose) are required.
+`podman compose` delegates to the installed provider; see the
+[Podman Compose documentation](https://docs.podman.io/en/latest/markdown/podman-compose.1.html).
+With Docker Compose as the provider, start `systemctl --user start podman.socket`
+first. Rerun `make dev` after source changes to rebuild the existing Containerfile.
 
-The server and database share the `i2nclip-dev` bridge network. Only the server
-publishes a port, bound to host loopback; PostgreSQL has no host port. Image builds
-use Podman's default network.
+[compose.yaml](compose.yaml) defines the web/API server and PostgreSQL 18 on a
+explicit `dev` bridge network (`i2nclip-dev_dev` by default). Both published ports bind to host loopback: the server
+on 8080 and PostgreSQL on 5432. `DEV_PORT`, `DEV_DB_PORT`, and `DEV_ORIGIN` override
+the ports and expected browser origin. Image builds use Podman's default network.
 Runtime requires working Podman bridge networking. If rootless Pasta reports a
-missing `/dev/net/tun`, fix the host's rootless networking configuration; changing
-the build network does not fix container startup.
-The database uses fixed development-only credentials and persists in the named
-`i2nclip-dev-postgres-data` volume mounted at `/var/lib/postgresql`.
+missing `/dev/net/tun`, fix the host's rootless networking configuration.
 
 ```sh
-make dev                         # attached server logs; Ctrl-C stops the server
+make dev                         # attached logs; Ctrl-C stops the services
 make dev-otc                     # in another terminal, issue a registration code
-make dev-down                    # stop both containers, preserving database data
+make dev-down                    # remove containers/network, preserve database data
 make dev DEV_PORT=8081           # app origin defaults to http://localhost:8081
+make dev-db DEV_DB_PORT=5433     # start only PostgreSQL in the background
 ```
 
-`make dev-db` starts only the database and waits for an authenticated TCP query
-to succeed. `DEV_ORIGIN` overrides the server's expected browser origin, for
-example `make dev DEV_ORIGIN=http://localhost:5173` when using Vite separately.
-The database stays running after Ctrl-C or a server failure. Database startup
-has a 60-second readiness limit; failure prints database logs and prevents server
-startup. `make run` still runs Rust directly with your own environment settings.
+The server waits for PostgreSQL's healthcheck to pass an authenticated TCP query
+before starting. The check runs every two seconds with 30 retries after a
+five-second startup period. `make dev-db` starts the database in the background
+and waits up to 90 seconds for health. `make run` runs Rust directly against the
+database on `DEV_DB_PORT`; `DEV_DB_URL` overrides its full connection URL.
+Ctrl-C or a server exit stops the attached stack.
+`DEV_ORIGIN=http://localhost:5173` supports a separate Vite development server.
+`COMPOSE` can override the Make command, for example `COMPOSE=podman-compose`.
 
-When schema changes require a fresh development database, explicitly delete its
-container and volume (this destroys all local development data), then restart:
+The fixed development credentials are defined in Compose. PostgreSQL persists
+in the project-scoped `i2nclip-dev_postgres-data` volume at `/var/lib/postgresql`.
+The previous script's containers and `i2nclip-dev-postgres-data` volume are left
+alone; stop those containers before using the same host ports. The Compose
+project starts with its own database.
+
+When schema changes require a fresh development database, explicitly remove the
+Compose volume (this destroys all data in the development Compose database),
+then restart:
 
 ```sh
-make dev-down
-podman rm i2nclip-dev-postgres
-podman volume rm i2nclip-dev-postgres-data
+podman compose down --volumes
 make dev
 ```
 

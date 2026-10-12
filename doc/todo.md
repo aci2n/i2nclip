@@ -29,4 +29,4 @@ Work through these in order. Details and reproductions are in [the audit report]
 
 16. pairing state in DB (stateless servers)
 
-17. remove scripts/dev.sh, replace with podman compose file
+17. [x] Replace scripts/dev.sh with compose.yaml: explicit bridge network, PostgreSQL health-gated startup, persistent project-scoped storage, and loopback port/origin overrides. Make development targets now delegate to Podman Compose. Updated setup/reset documentation and shared build-context exclusions for both Compose providers. Verified full and cached image builds, API/web assets, invitation issuance, database readiness and persistence across teardown/restart, and unhealthy-database startup failure in disposable Compose projects.
