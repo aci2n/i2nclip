@@ -32,7 +32,7 @@ Work through these in order. Details and reproductions are in [the audit report]
 17. [x] Replace scripts/dev.sh with compose.yaml: explicit bridge network, PostgreSQL health-gated startup, persistent project-scoped storage, and loopback port/origin overrides. Make development targets now delegate to Podman Compose. Updated setup/reset documentation and shared build-context exclusions for both Compose providers. Verified full and cached image builds, API/web assets, invitation issuance, database readiness and persistence across teardown/restart, and unhealthy-database startup failure in disposable Compose projects.
 
 
-18. dont show pending uploads when locked
+18. [x] Locked pages hide pending-upload details and release previews; the service rejects source reads without an unlocked identity. Pending sources remain durable and reappear after unlocking. Late preview replies cannot expose sources after locking. Unit regressions, checker and all four Firefox/Chromium popup scenarios pass.
 
 19. dont refresh on deletion: keep the card grayed out
 
@@ -53,8 +53,10 @@ VM21:1 Uncaught ReferenceError: Worker is not defined
 
 24. consider moving the "status" section in the library page, and in general all "status" sections in the settings page too, to a shared toast-notification stack. Considerations: some notifications can be dismissed automatically after X ms, some should be persistent until dismissed by the user, like the "uploaded X files" notification. Consider using native <dialog> elements for this. Notifications should live in the service engine layer and be shared across clients. The service should let clients say where to spawn the notification, default to top right.
 
-25. I like the "inline status" messages we display today, close to the owning components. I do think it's a little intrusive in the library page, with "Loading", "Uploading", "clear uploaded" messages showing in the same section, varying the height of the page. Figure out a simple way to improve the situation. Only minimal changes allowed here, not critical.
+25. I like the "inline status" messages we display today, close to the owning components. I do think it's a little intrusive in the library page, with "Loading", "Uploading", "clear uploaded" messages showing in the same section, varying the height of the page. Figure out a simple way to improve the situation. Only minimal changes allowed here, not critical. Maybe upload state could go in a new tab? With a dedicated view, a list of uploaded items, options to clear each individually, or to clear all at once. Make it a first-class UI element instead of the inline view we have today. Consider only showing the tab if there are active uploads if it makes sense  (or graying it out if none, whatever is less confusing)
 
-PRIORITY (highest prio first): 14, 22, 23, 18+19+20+21, 25
+26. Tracing in production builds. Debugging the deployed application is difficult because the worker context runs network calls, absorbs failures, etc. I believe we can get rid of the "dev-only" plugin for the tracer and just include it always. Add tracing liberally, both to understand the flow of the application and to debug errors. Of course avoid logging sensitive data. If console is not on, console logs are free anyways.
+
+PRIORITY (highest prio first): 14, 22, 23, 18+19+20+21, 25, 26
 
 DEFERRED: 15, 16, 24

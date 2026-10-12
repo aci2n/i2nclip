@@ -795,7 +795,10 @@ export function createLibraryRuntime({
 					return true;
 				});
 			case "pending.get": {
+				credentials();
+				const epoch = identity.epoch;
 				const source = await repository.getSource(payload.id);
+				guard(epoch, signal);
 				return source?.blob ? { blob: source.blob, name: source.name } : null;
 			}
 			case "pending.send":

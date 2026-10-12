@@ -24,8 +24,16 @@ export function createPendingUpload(
 	async function source() {
 		if (requesting || preview || disposed) return;
 		requesting = true;
+		const captured = get(client);
+		const current = () =>
+			!disposed &&
+			get(client).connected &&
+			get(client).session.unlocked &&
+			get(client).instanceId === captured.instanceId &&
+			get(client).session.epoch === captured.session.epoch;
 		try {
 			const result = await client.command("pending.get", { id });
+			if (!current()) return;
 			if (!result) attempted = false;
 			if (!disposed && result?.blob?.type.startsWith("image/")) {
 				preview = URL.createObjectURL(result.blob);
@@ -35,6 +43,17 @@ export function createPendingUpload(
 			/* Job status carries the authoritative preparation error. */
 		} finally {
 			requesting = false;
+			if (!current()) {
+				attempted = false;
+				const latest = get(client);
+				if (
+					!disposed &&
+					latest.connected &&
+					latest.session.unlocked &&
+					latest.uploads.some((job) => job.id === id)
+				)
+					void source();
+			}
 		}
 	}
 	const unsubscribe = client.subscribe((value) => {
@@ -45,6 +64,20 @@ export function createPendingUpload(
 			update({ preview });
 		}
 		epoch = value.session.epoch;
+		if (!value.connected || !value.session.unlocked) {
+			if (preview) URL.revokeObjectURL(preview);
+			preview = "";
+			attempted = false;
+			update({
+				ready: value.session.ready,
+				busy: false,
+				available: false,
+				name: "",
+				preview: "",
+				status: "",
+			});
+			return;
+		}
 		const job = value.uploads.find((job) => job.id === id);
 		if (!value.session.ready) return;
 		const busy = ["queued", "preparing", "uploading"].includes(job?.status);
@@ -61,7 +94,7 @@ export function createPendingUpload(
 						? `Uploading…${job.progress == null ? "" : ` ${job.progress}%`}`
 						: job.error || "",
 		});
-		if (job && job.status !== "completed" && !attempted) {
+		if (job && job.status !== "completed" && !attempted && !requesting) {
 			attempted = true;
 			void source();
 		}

@@ -51,13 +51,13 @@ let filesInput = $state();
 <p id="status" role="status">
 	{[
 		$library.status,
-		$library.uploadStatus,
+		$session.unlocked ? $library.uploadStatus : "",
 		!$session.configured || $session.unlocked ? $session.error : "",
 	]
 		.filter(Boolean)
 		.join(" | ")}
 </p>
-{#if $library.uploadProgress}
+{#if $session.unlocked && $library.uploadProgress}
 	<section class="upload-progress" aria-label="Upload progress">
 		<p role="status">
 			Uploading {$library.uploadProgress.index} of
@@ -71,7 +71,7 @@ let filesInput = $state();
 		<span>{$library.uploadProgress.percent}%</span>
 	</section>
 {/if}
-{#if $library.uploadFailures.length}
+{#if $session.unlocked && $library.uploadFailures.length}
 	<section class="upload-failures" aria-label="Failed uploads">
 		<h2>Failed uploads</h2>
 		<ul>
@@ -97,7 +97,7 @@ let filesInput = $state();
 		</button>
 	</section>
 {/if}
-{#if $library.uploadCompleted.length}
+{#if $session.unlocked && $library.uploadCompleted.length}
 	<p class="upload-history">
 		{$library.uploadCompleted.length}
 		uploaded.

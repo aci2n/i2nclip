@@ -7,8 +7,10 @@ const tags = $derived(pending.tags);
 
 <section class="panel stack">
 	<h2>{auto ? "Save to your library" : "Upload with tags"}</h2>
-	<p id="name" class="name">{$pending.name}</p>
-	{#if $pending.preview}
+	{#if $session.unlocked}
+		<p id="name" class="name">{$pending.name}</p>
+	{/if}
+	{#if $session.unlocked && $pending.preview}
 		<img
 			id="preview"
 			class="upload-preview"
@@ -43,7 +45,7 @@ const tags = $derived(pending.tags);
 			</button>
 		</form>
 	{/if}
-	<p id="status" role="status">{$pending.status}</p>
+	<p id="status" role="status">{$session.unlocked ? $pending.status : ""}</p>
 </section>
 
 <style>

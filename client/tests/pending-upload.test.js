@@ -1,9 +1,50 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { get } from "svelte/store";
+import { get, writable } from "svelte/store";
 import { createPendingUpload } from "../src/lib/stores/pending-upload.js";
 import { deferred } from "./helpers.js";
 import { serviceFixture, until } from "./service-helpers.js";
+
+test("locked pages hide pending sources and discard previews arriving after locking", async (t) => {
+	const reply = deferred();
+	let reads = 0;
+	const snapshot = {
+		connected: true,
+		instanceId: "owner",
+		session: { ready: true, unlocked: false, epoch: 1 },
+		uploads: [{ id: "pending", name: "private.png", status: "awaiting" }],
+	};
+	const client = {
+		...writable(snapshot),
+		ready: Promise.resolve(),
+		command: async () => {
+			reads++;
+			return reads === 1
+				? reply.promise
+				: { blob: new Blob(["image"], { type: "image/png" }) };
+		},
+	};
+	const pending = createPendingUpload(client, { close() {} }, "pending");
+	t.after(pending.dispose);
+	assert.equal(reads, 0);
+	assert.equal(get(pending).name, "");
+	assert.equal(get(pending).available, false);
+	client.set({ ...snapshot, session: { ...snapshot.session, unlocked: true } });
+	assert.equal(reads, 1);
+	client.set({ ...snapshot, session: { ...snapshot.session, epoch: 2 } });
+	reply.resolve({ blob: new Blob(["image"], { type: "image/png" }) });
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(get(pending).preview, "");
+	assert.equal(get(pending).name, "");
+	client.set({
+		...snapshot,
+		session: { ...snapshot.session, unlocked: true, epoch: 2 },
+	});
+	await until(() => Boolean(get(pending).preview));
+	assert.equal(reads, 2);
+	assert.equal(get(pending).name, "private.png");
+	assert.equal(get(pending).available, true);
+});
 
 test("two pending pages observe one service job and cannot submit it twice", async (t) => {
 	const transfer = deferred();
