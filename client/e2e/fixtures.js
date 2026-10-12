@@ -484,3 +484,34 @@ export async function openPopup(page, url) {
 	}, url);
 	return opening;
 }
+
+export async function assertDocumentIds(page) {
+	const problems = await page.evaluate(() => {
+		const ids = [...document.querySelectorAll("[id]")]
+			.map((node) => node.id)
+			.filter(Boolean);
+		const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
+		const missing = [];
+		for (const node of document.querySelectorAll(
+			"label[for], [aria-labelledby], [aria-describedby], [aria-controls], [aria-owns]",
+		)) {
+			for (const attr of [
+				"for",
+				"aria-labelledby",
+				"aria-describedby",
+				"aria-controls",
+				"aria-owns",
+			]) {
+				for (const target of (node.getAttribute(attr) || "")
+					.split(/\s+/)
+					.filter(Boolean)) {
+					if (!document.getElementById(target)) {
+						missing.push(`${attr}: ${target}`);
+					}
+				}
+			}
+		}
+		return { duplicates, missing };
+	});
+	expect(problems).toEqual({ duplicates: [], missing: [] });
+}

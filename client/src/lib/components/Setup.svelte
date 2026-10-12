@@ -31,7 +31,7 @@ const blocked = $derived($session.busy || $pairing.active);
 )}
 	{#if $settings.feedback.scope === scope && $settings.feedback.text}
 		<p
-			id="status"
+			id={additional ? "setup-status" : "initial-status"}
 			role={$settings.feedback.error ? "alert" : "status"}
 			class:error={$settings.feedback.error}
 		>
@@ -211,6 +211,7 @@ const blocked = $derived($session.busy || $pairing.active);
 		<Pairing
 			{session}
 			{pairing}
+			idPrefix={additional ? "setup-pairing" : "initial-pairing"}
 			server={$settings.pairServer || $settings.server}
 			embedded
 		/>

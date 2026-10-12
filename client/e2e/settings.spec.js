@@ -51,7 +51,7 @@ test("failed registration retains no identity and keeps errors beside setup", as
 	await page.locator("#server").fill(app.origin);
 	await fillCreation(page, "invalid-code");
 	await page.locator("#create-library").click();
-	await expect(page.locator("#status")).toContainText(
+	await expect(page.locator("#initial-status")).toContainText(
 		"No recovery identity was retained",
 	);
 	const failed = await storage(page);

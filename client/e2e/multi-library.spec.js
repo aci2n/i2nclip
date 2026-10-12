@@ -1,4 +1,5 @@
 import {
+	assertDocumentIds,
 	expect,
 	fillCreation,
 	installBrowser,
@@ -83,12 +84,15 @@ for (const kind of ["web", "extension"]) {
 			await expect(page.locator("#pairing-code")).toBeVisible();
 			const code = await page.locator("#pairing-code").textContent();
 			await receiver.getByRole("tab", { name: "Pair", exact: true }).click();
-			await receiver.locator("#pairing-input").fill(code);
+			await receiver.locator("#setup-pairing-input").fill(code);
 			await receiver
 				.getByRole("button", { name: "Connect library", exact: true })
 				.click();
 			await expect(page.locator("#pairing-approve")).toBeVisible();
-			await expect(receiver.locator("#pairing-verification-code")).toHaveText(
+			await assertDocumentIds(receiver);
+			await expect(
+				receiver.locator("#setup-pairing-verification-code"),
+			).toHaveText(
 				await page.locator("#pairing-verification-code").textContent(),
 			);
 			await page.locator("#pairing-approve").click();
@@ -161,14 +165,15 @@ for (const kind of ["web", "extension"]) {
 			await page.locator("#pairing-start").click();
 			await expect(page.locator("#pairing-code")).toBeVisible();
 			await receiver
-				.locator("#pairing-input")
+				.locator("#setup-pairing-input")
 				.fill(await page.locator("#pairing-code").textContent());
 			await receiver
 				.getByRole("button", { name: "Connect library", exact: true })
 				.click();
 			await expect(page.locator("#pairing-approve")).toBeVisible();
+			await assertDocumentIds(receiver);
 			await expect(
-				receiver.locator("#add-library-settings #pairing-verification-code"),
+				receiver.locator("#setup-pairing-verification-code"),
 			).toHaveText(
 				await page.locator("#pairing-verification-code").textContent(),
 			);

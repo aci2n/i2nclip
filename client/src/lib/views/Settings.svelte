@@ -73,7 +73,12 @@ const feedbackAt = $derived(
 		</section>
 	{/if}
 	{#if $session.configured}
-		<Pairing {session} {pairing} server={$session.serverUrl} />
+		<Pairing
+			{session}
+			{pairing}
+			server={$session.serverUrl}
+			idPrefix="pairing"
+		/>
 		{@render management?.()}
 	{/if}
 

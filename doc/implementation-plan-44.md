@@ -35,4 +35,4 @@ Put the document-ID/reference assertion in an existing E2E helper or focused set
 
 ## Implementation notes
 
-List retained ID prefix/suffix conventions, feedback/tab fixes, updated selectors and tested simultaneous states. Item 45 must retain this interface.
+Pairing now requires deterministic `idPrefix`: configured `pairing`, first receiver `initial-pairing`, additional receiver `setup-pairing`. All IDs and labels use the helper. Removed the data-embedded styling workaround in favor of a scoped modifier class. Setup feedback uses `initial-status` / `setup-status`; the root keeps `status`. First/additional Setup instances are exclusive after 36, so their unique tab IDs need no unrelated renaming; keyboard lookup is already scoped by data-tab. Updated sender/receiver selectors and added whole-document ID/IDREF assertions. Combined verification deferred until the end of TODOs 37–46. Item 45 retains this ID interface.

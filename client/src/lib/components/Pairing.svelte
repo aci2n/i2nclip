@@ -1,5 +1,6 @@
 <script>
-let { session, pairing, server, embedded = false } = $props();
+let { session, pairing, server, idPrefix, embedded = false } = $props();
+const id = (suffix) => `${idPrefix}-${suffix}`;
 let code = $state("");
 let open = $state(false);
 const configured = $derived(!embedded && Boolean($session.configured));
@@ -15,15 +16,14 @@ async function connect(event) {
 <svelte:element
 	this={configured ? "details" : "section"}
 	class={embedded ? "embedded" : "panel"}
-	id="pairing-settings"
+	id={id("settings")}
 >
 	{#if configured}
 		<summary>Connect another device</summary>
 	{:else if !embedded}
 		<h2>Connect existing library</h2>
 	{/if}
-	<!-- TODO: remove data-embedded, it's a hack to work around the lack of isolation in this component -->
-	<div class="pairing" data-embedded="{embedded}">
+	<div class="pairing" class:embedded>
 		{#if !$pairing.active}
 			{#if configured}
 				<p>
@@ -32,7 +32,7 @@ async function connect(event) {
 				</p>
 				<button
 					type="button"
-					id="pairing-start"
+					id={id("start")}
 					{disabled}
 					onclick={pairing.send}
 				>
@@ -53,11 +53,11 @@ async function connect(event) {
 						Connect existing library
 					</button>
 				{:else}
-					<form class="stack" id="pairing-receive" onsubmit={connect}>
+					<form class="stack" id={id("receive")} onsubmit={connect}>
 						<div class="field">
-							<label for="pairing-input">Pairing code</label>
+							<label for={id("input")}>Pairing code</label>
 							<input
-								id="pairing-input"
+								id={id("input")}
 								required
 								maxlength="32"
 								autocomplete="off"
@@ -74,12 +74,12 @@ async function connect(event) {
 			{/if}
 		{:else}
 			{#if $pairing.code}
-				<output id="pairing-code" class="code">{$pairing.code}</output>
+				<output id={id("code")} class="code">{$pairing.code}</output>
 			{/if}
 			{#if $pairing.verificationCode}
 				<div class="verification">
-					<label for="pairing-verification-code">Verification code</label>
-					<output id="pairing-verification-code" class="code"
+					<label for={id("verification-code")}>Verification code</label>
+					<output id={id("verification-code")} class="code"
 						>{$pairing.verificationCode}</output
 					>
 				</div>
@@ -88,14 +88,14 @@ async function connect(event) {
 			<p>Expires in {$pairing.remaining} seconds.</p>
 			<div class="actions">
 				{#if $pairing.approval && $pairing.verificationCode}
-					<button type="button" id="pairing-approve" onclick={pairing.approve}>
+					<button type="button" id={id("approve")} onclick={pairing.approve}>
 						Codes match — send library
 					</button>
 				{/if}
 				{#if $pairing.verificationCode}
 					<button
 						type="button"
-						id="pairing-mismatch"
+						id={id("mismatch")}
 						class="secondary"
 						onclick={pairing.rejectVerification}
 					>
@@ -109,7 +109,7 @@ async function connect(event) {
 		{/if}
 		{#if $pairing.status}
 			<p
-				id="pairing-status"
+				id={id("status")}
 				class="feedback"
 				class:error={$pairing.error}
 				role={$pairing.error ? "alert" : "status"}
@@ -124,7 +124,7 @@ async function connect(event) {
 .pairing {
 	display: grid;
 	gap: 1rem;
-	&[data-embedded="false"] {
+	&:not(.embedded) {
 		margin-top: 1rem;
 	}
 }

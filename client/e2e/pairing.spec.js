@@ -25,7 +25,7 @@ async function receive(page, code, app) {
 	await openSetupServer(page);
 	await page.locator("#server").fill(app.origin);
 	await page.getByRole("tab", { name: "Pair", exact: true }).click();
-	await page.locator("#pairing-input").fill(code);
+	await page.locator("#initial-pairing-input").fill(code);
 	await page
 		.getByRole("button", { name: "Connect library", exact: true })
 		.click();
@@ -65,9 +65,9 @@ for (const [from, to] of [
 			const verification = await page
 				.locator("#pairing-verification-code")
 				.textContent();
-			await expect(receiver.locator("#pairing-verification-code")).toHaveText(
-				verification,
-			);
+			await expect(
+				receiver.locator("#initial-pairing-verification-code"),
+			).toHaveText(verification);
 			expect(
 				(await receiver.evaluate(() => window.serviceTest("state"))).session
 					.unlocked,
@@ -132,9 +132,9 @@ for (const kind of ["web", "extension"]) {
 			await expect(follower.locator("#pairing-approve")).toBeVisible();
 			const observer = await context.newPage();
 			await observer.goto(url(kind, app));
-			await expect(observer.locator("#pairing-verification-code")).toHaveCount(
-				0,
-			);
+			await expect(
+				observer.locator("#initial-pairing-verification-code"),
+			).toHaveCount(0);
 			await receiver.close();
 			await follower.locator("#pairing-approve").click();
 			await expect(follower.locator("#pairing-start")).toBeVisible();
@@ -152,7 +152,9 @@ for (const kind of ["web", "extension"]) {
 				app,
 			);
 			await expect(follower.locator("#pairing-approve")).toBeVisible();
-			await expect(observer.locator("#pairing-verification-code")).toHaveText(
+			await expect(
+				observer.locator("#initial-pairing-verification-code"),
+			).toHaveText(
 				await follower.locator("#pairing-verification-code").textContent(),
 			);
 			await follower.locator("#pairing-approve").click();

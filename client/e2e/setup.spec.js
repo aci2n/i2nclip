@@ -1,4 +1,5 @@
 import {
+	assertDocumentIds,
 	createLibrary,
 	downloadRecovery,
 	expect,
@@ -39,13 +40,14 @@ test("four setup tabs support master unlock and fresh invitation attempts", asyn
 	await add(page, "Invited", "create");
 	await page.locator("#otc").fill("invalid-invitation");
 	await page.locator("#create-library").click();
-	await expect(page.locator("#add-library-settings #status")).toContainText(
+	await expect(page.locator("#setup-status")).toContainText(
 		"No recovery identity was retained",
 	);
 	expect(
 		(await page.evaluate(() => window.serviceTest("state"))).catalog,
 	).toHaveLength(2);
 	await expect(page.locator("#library-selector option")).toHaveCount(2);
+	await assertDocumentIds(page);
 	await page.reload();
 	await master(page);
 	await page.locator("#add-library-settings > summary").click();
@@ -72,6 +74,7 @@ test("setup remains compact and restores a named library using its recovery serv
 	await page.goto(`${app.web.origin}/client/dist/extension/options.html`);
 	await master(page);
 	await expect(page.locator("#library-name")).toHaveValue("Personal 1");
+	await assertDocumentIds(page);
 	await expect(page.getByRole("tab")).toHaveText(["OTC", "Pair", "Restore"]);
 	await expect(page.locator("#authorize-panel")).toHaveCount(0);
 	await expect(page.locator("#add-library-settings")).toHaveCount(0);
