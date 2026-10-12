@@ -33,10 +33,16 @@ dev-extension:
 
 .PHONY: test lint format-check test-packages test-extension-pairing test-profile test-e2e test-smoke e2e smoketest
 
+audit:
+	npm audit
+
 # Unit tests for shared libraries, CLI, and smoke runner, plus Svelte type checking.
 test:
 	npm run test
 	npm run check
+
+lint:
+	npm run lint
 
 # Check JavaScript/Svelte for static analysis errors.
 format-check:

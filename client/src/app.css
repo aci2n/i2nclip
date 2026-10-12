@@ -146,6 +146,7 @@ summary {
 [role="status"]:empty {
 	display: none;
 }
+/* FIXME: I removed !important, review if CSS layers can help here */
 [hidden] {
 	display: none;
 }

@@ -115,7 +115,6 @@ test-all:
 lint:
 	cargo clippy --all-targets --all-features -- -D warnings
 	$(MAKE) -C client lint
-	$(MAKE) format-check
 
 # Check Rust and client formatting without changing source files.
 format-check:
@@ -136,6 +135,7 @@ pre-commit:
 # Requires cargo-audit and external network access.
 audit:
 	cargo audit
+	$(MAKE) -C client audit
 
 # Compatibility aliases for existing commands; canonical suite names use test-*.
 client-test: test-client
