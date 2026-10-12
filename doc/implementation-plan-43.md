@@ -34,4 +34,4 @@ Run client checker/lint and extension build. Reuse the relevant existing setting
 
 ## Implementation notes
 
-Record the reset selectors, component spacing restored, historical commit reviewed and screenshots inspected.
+Reviewed `18f380b` without replaying it. Consolidated zero margin/padding for body, headings, paragraphs, lists, definition lists, fieldsets and legends; control padding, typography and focus remain separate. Recovery preview and failed uploads own explicit logical list indentation; recovery rows own a compact gap. Existing component stacks/fields supply paragraph/heading spacing and fieldsets retain local borders/minimum size. Combined visual/check verification deferred until the end of TODOs 37–46.

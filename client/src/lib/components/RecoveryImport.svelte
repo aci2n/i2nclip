@@ -78,3 +78,13 @@ onDestroy(form.dispose);
 		{$form.message}
 	</p>
 {/if}
+
+<style>
+ul {
+	padding-inline-start: 1.5rem;
+	overflow-wrap: anywhere;
+}
+li + li {
+	margin-top: 0.5rem;
+}
+</style>

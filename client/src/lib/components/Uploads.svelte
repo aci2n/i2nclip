@@ -134,6 +134,6 @@ small {
 	color: var(--muted);
 }
 .upload-failures ul {
-	padding-left: 1.5rem;
+	padding-inline-start: 1.5rem;
 }
 </style>
