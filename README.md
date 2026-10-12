@@ -29,8 +29,7 @@ podman exec i2nclip i2nclip otc issue
 Use Node from `client/.nvmrc` and an installed Rust toolchain:
 
 ```sh
-npm ci --prefix client
-make build
+make build              # prepares locked client dependencies
 make web                 # client/dist/i2nclip-web.zip
 ```
 
@@ -67,6 +66,8 @@ PostgreSQL holds ciphertext, metadata, keys, invitations, nonces, and tags. Uplo
 | `make test-db` | PostgreSQL API tests; provisions a disposable container unless `I2N_TEST_DATABASE_URL` is set |
 | `make test-e2e` | Firefox/Chromium web tests against real Rust and isolated databases; installs dependencies and browsers |
 | `make test-profile` | Linux transfer/resource measurements in a disposable PostgreSQL container |
-| `make test-all` | All retained suites, sequentially |
+| `make test-all` | All portable suites, sequentially; resource profile is separate |
 
-With an existing disposable PostgreSQL administrator connection, set `I2N_TEST_DATABASE_URL` and run `npm run e2e --prefix client`. Screenshots are written to ignored `client/e2e/shots/`. See [client architecture](client/README.md) for state ownership.
+With an existing disposable PostgreSQL administrator connection, set `I2N_TEST_DATABASE_URL` and run `npm run e2e --prefix client`. Screenshots use per-test directories under ignored `client/e2e/shots/`. See [client architecture](client/README.md) for state ownership.
+
+Client Makefile targets prepare locked dependencies automatically. Browser tests build their Rust helpers and bind isolated listeners to loopback port 0. PostgreSQL uses a disposable container with a random host port unless an administrator URL is explicitly supplied. See [test preparation and isolation](doc/test-pipeline.md) for fresh-clone prerequisites and commands.

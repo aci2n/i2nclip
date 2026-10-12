@@ -6,7 +6,7 @@ The root application view owns one session, library, and pairing store across na
 
 The session owns the decrypted identity, encryption key through its persistence helper, and cancellation generation. Locking, forgetting, replacement, resetting, and disposal invalidate workflows. Session mutations reject overlap. Stores invoke the API directly.
 
-Only the encrypted identity, name, server URL, and password derivation material are persisted in one atomic localStorage record. A failed write preserves the previous record and identity. Recovery independently encrypts one identity and is validated before saving. There are no migrations.
+Only the encrypted identity, server URL, and password derivation material are persisted in one atomic localStorage record. A failed write preserves the previous record and identity. Recovery independently encrypts one identity and is validated before saving. There are no migrations.
 
 The library owns searches and sequential upload batches across navigation. Cancellation and revision checks suppress stale searches. Pagination uses the submitted query and permits one request at a time. Failed files remain for retry; reloading or changing the identity discards all transient upload state.
 

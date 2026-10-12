@@ -22,8 +22,9 @@ Storage quotas remain necessary before expanding invitations to less-trusted use
 
 Re-encrypting a failed client upload creates fresh ciphertext and normally a new hash. An exact sealed-byte retry returns `409`; refresh the library after a lost response before retrying.
 
-## Local verification
+## Client improvements to specify
 
-Earlier in-process maximum-transfer profiling passed two concurrent 32 MiB uploads followed by two concurrent downloads: 4.697 seconds transfer time, 32.671 ms worst additional timer delay, 305,532 KiB peak RSS, and 1,469,032 bytes allocated by the inspecting PostgreSQL backend. Those RSS figures include fixture/client allocations. Earlier separate-process release profiling measured 234–284 MiB server peak RSS across two local runs, including ordinary/chunked uploads and held downloads. These measurements do not validate saturation of the current four-upload/sixteen-download limits. PostgreSQL process sampling and accounting limits are recorded in [postgresql-profile.md](postgresql-profile.md). Held responses had no idle transactions. Allocation-level buffer attribution and a hard memory bound remain outstanding.
+- Assess image compression before upload, including supported formats, quality controls, and whether a setting is warranted.
+- Consider multiple simultaneous pairing sessions for the same registered identity and shared relay storage for multiple server instances.
 
-The i2nfra templates pass strict Jinja rendering and local Quadlet generation. Python checks and shell syntax pass. Remote deployment dry-run is blocked by missing SSH known-hosts setup in the execution environment; production Quadlet/container validation remains outstanding. Local testcontainers validation now passes with API access and default networking. No VPS deployment was performed.
+These are suggestions, not authorized implementation work. Current client ownership is documented in [session.md](session.md); test preparation and isolation are in [test-pipeline.md](test-pipeline.md).

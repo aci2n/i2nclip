@@ -38,7 +38,7 @@ The separate Rust frame-decoding test retains its allocation-count assertions.
 
 ## Reproduce
 
-Use Linux, Node from `client/.nvmrc`, and the local rootless Podman API socket. Port 8080 must be free. The runner owns the container; the script owns its isolated database and server process. All are cleaned up after the profile. The script does not run in ordinary client tests.
+Use Linux, Node from `client/.nvmrc`, and the local rootless Podman API socket. The release-built test-server helper binds a private loopback port 0 and reports its actual origin. The runner owns the container; the script owns its isolated database and optimized router helper process. The profile measures API transfer resources; it does not exercise production maintenance or graceful shutdown scheduling. All are cleaned up after the profile. The script does not run in ordinary client tests.
 
 ```sh
 make test-profile
