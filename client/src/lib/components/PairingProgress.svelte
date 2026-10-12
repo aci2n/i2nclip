@@ -1,8 +1,8 @@
 <script>
 let { state, onapprove, onreject, oncancel } = $props();
 </script>
-	{#if state.active}
-    <div class="stack">
+{#if state.active}
+	<div class="stack">
 		{#if state.code}
 			<output class="code" aria-label="Pairing code">{state.code}</output>
 		{/if}
@@ -31,17 +31,17 @@ let { state, onapprove, onreject, oncancel } = $props();
 				Cancel pairing
 			</button>
 		</div>
-    </div>
-	{/if}
-	{#if state.status}
-		<p
-			class="feedback"
-			class:error={state.error}
-			role={state.error ? "alert" : "status"}
-		>
-			{state.status}
-		</p>
-	{/if}
+	</div>
+{/if}
+{#if state.status}
+	<p
+		class="feedback"
+		class:error={state.error}
+		role={state.error ? "alert" : "status"}
+	>
+		{state.status}
+	</p>
+{/if}
 <style>
 .code {
 	font-family: monospace;
