@@ -2,9 +2,11 @@
 
 Work through these items in priority order. Each item links to its implementation plan. See [the audit report](audit-2026-10-10.md) and [completed audit follow-ups](todo-completed.md) for background and prior work.
 
+For implementation, read [the shared implementation guide](implementation-guide.md) and the selected plan. The remaining plans include code maps, concrete decisions, ordered steps and focused acceptance cases. Reconcile each plan with preceding completed changes; implement one item at a time and record verification in its implementation notes.
+
 1. [x] **31:** Client-wide master vault, encrypted app data, shared locking, and separate-password library/vault recovery. Verified 162 client tests, Rust checks, 54 browser scenarios, installed Firefox and package checks. ([design](client-service.md))
 2. [x] **32:** Default new library names to “Personal N” (sequential number or random number; choose a sensible approach). ([plan](implementation-plan-32.md))
-3. [ ] **33:** Add strict rules to the JavaScript linter. ([plan](implementation-plan-33.md))
+3. [x] **33:** Add strict rules to the JavaScript linter. ([plan](implementation-plan-33.md))
 4. [ ] **35:** Fix pairing in the same page: “This library is already saved. Select its existing entry.” Investigate why the existing entry cannot be selected. ([plan](implementation-plan-35.md))
 5. [ ] **36:** Simplify Add Library setup. Keep setup state in the client; remove resumable setup, Cancel Setup, and discard-pending-creation flows. On registration failure, show an error and commit only identities whose registration succeeds. ([plan](implementation-plan-36.md))
 6. [ ] **34:** Image compression before upload. Assess browser support and image formats; consider WebP conversion, quality controls, and a user setting. ([plan](implementation-plan-34.md))

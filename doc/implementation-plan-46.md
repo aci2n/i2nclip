@@ -1,19 +1,36 @@
 # Implementation plan: item 46 — Apply modern CSS features where useful
 
-## Goal
+## Goal and boundaries
 
-Use CSS nesting and cascade layers where they improve readability or make global style precedence easier to maintain, while retaining component-scoped styles.
+Use native nesting where it groups related selectors clearly, and a small cascade-layer structure for global styles. Preserve rendered behavior, themes, scoped component styles and accessibility. Follow [the implementation guide](implementation-guide.md) after 43's reset and 44/45's Pairing changes settle.
 
-## Changes
+## Code map and cascade decisions
 
-- Inventory `app.css` and Svelte component styles for repeated selector groups and current nested rules.
-- Group related selectors with native CSS nesting when the relationship is clear; avoid nesting that hides long descendant chains or changes specificity unexpectedly.
-- Define a small global layer order for reset, base/theme, and shared primitives in `app.css`. Keep Svelte component rules scoped and unlayered unless the build proves a layered component strategy is needed.
-- Convert only existing styles with a clear readability or cascade benefit; do not mechanically rewrite every selector.
-- Verify compiled web and extension CSS preserves the intended ordering in both themes.
+- `client/src/app.css`: theme tokens, reset, typography, shared controls/layout primitives and `[hidden]` invariant.
+- `components/Pairing.svelte`: already contains native nesting; do not rewrite it just to count nesting changes.
+- Other Svelte `<style>` blocks remain component scoped and **unlayered**. Normal unlayered component declarations outrank normal global layer declarations, regardless of specificity. That is the intended precedence, but existing styles that relied on global specificity must be reviewed.
+- `client/vite*.config.js`: web/extension builds disable minification. Do not change this to adopt CSS features.
+- Check the stricter Biome configuration from item 33 for `useLayeredStyles`. Keep a documented scoped-style exception if that rule would force every Svelte component into layers; do not weaken unrelated lint rules.
 
-## Acceptance
+## Implementation sequence
 
-- Build web and extension targets and run the Svelte checker without CSS warnings.
-- Inspect representative settings, library, pairing, upload, and media-card views at narrow widths in light and dark themes.
-- Confirm cascade layers do not let component styles fall behind global rules and that nesting changes no rendered behavior.
+1. Inventory global rules and component selector groups; choose a few changes with a clear readability benefit. Record the chosen scope before changing it. Do not mechanically nest the entire stylesheet.
+2. Declare the global layer order once at the beginning of app.css: `@layer reset, base, controls, layout;`. Put the reset/box sizing in reset, theme tokens and both color schemes/typography in base, inputs/buttons/focus treatment in controls, and stacks/fields/bars/panels/feedback primitives in layout. Preserve relative source order within each layer.
+3. Keep the critical existing `[hidden] { display: none !important; }` outside layers. Review any other `!important` rules individually: important declaration layer ordering reverses normal ordering, so a mechanical move can change behavior. Do not add more important declarations to repair normal cascade issues.
+4. Keep component blocks unlayered. Where layering reveals an unintended override (e.g. local button rule now outranks shared control rule), explicitly decide its owner and fix that component/global primitive narrowly; do not restore behavior with global selectors reaching into components or specificity escalation.
+5. Use native `&` nesting for a selector and its states/modifiers/media queries where the compiled selector has the same intended meaning. Separate selectors whose comma list would change specificity; verify class/type/descendant/child combinators explicitly. Keep depth at one or two clear relationships, not long descendant chains. Retain semantically named classes.
+6. Preserve light/dark tokens, form disabled/focus-visible/placeholder states, warning/error colors, wrapping, hidden tabs/dialogs and responsive layouts. No theme redesign or extra breakpoints are part of this item.
+7. Build web and extension and inspect emitted CSS for global layer order and scoped selectors. If the installed Svelte/Vite pipeline emits a warning or unsupported nesting, use the established flat selector for that case rather than changing toolchains. Re-enable a scoped lint rule only when the change actually makes its requirements appropriate.
+
+## Acceptance and verification
+
+- Web/extension output has one consistent global layer order; component styles remain scoped/unlayered and builds/checker have no CSS warnings.
+- Computed styles still produce intended theme/control/focus/hidden behavior. Tab panels with `hidden` remain absent even if their local class uses grid/flex.
+- Before/after Firefox screenshots show unchanged library cards, Settings, setup, pairing, uploads, recovery and About at normal and 320/360 px widths in both themes; use realistic media, long names and errors.
+- Inspect Chromium behavior for native nesting/layers through the relevant browser scenarios too. Keep no-minification build settings and avoid adding a CSS framework/preprocessor.
+
+Run client checks and `make web`/`make extension` once after the stylesheet changes. Reuse representative existing E2E/shot helpers; do not run database/profile/live-smoke suites just for stylesheet organization.
+
+## Implementation notes
+
+List layer membership, nesting changes, cascade issues resolved, compiled output inspected and before/after screenshots. If no additional component nesting improves clarity, record that rather than forcing a conversion.
