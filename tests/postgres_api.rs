@@ -116,7 +116,9 @@ impl TestDatabase {
         let base = std::env::var("I2N_TEST_DATABASE_URL").expect(
             "set I2N_TEST_DATABASE_URL; PostgreSQL integration tests require a real database",
         );
-        let admin = sqlx::PgPool::connect(&base)
+        let admin = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&base)
             .await
             .expect("test PostgreSQL unavailable");
         let name = format!(
@@ -131,7 +133,11 @@ impl TestDatabase {
         admin.close().await;
         let mut url = url::Url::parse(&base).unwrap();
         url.set_path(&name);
-        let pool = sqlx::PgPool::connect(url.as_str()).await.unwrap();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(url.as_str())
+            .await
+            .unwrap();
         Self(url.to_string(), pool)
     }
 }
@@ -145,7 +151,11 @@ impl Drop for TestDatabase {
                 .unwrap()
                 .block_on(async move {
                     let base = std::env::var("I2N_TEST_DATABASE_URL").unwrap();
-                    let pool = sqlx::PgPool::connect(&base).await.unwrap();
+                    let pool = sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(1)
+                        .connect(&base)
+                        .await
+                        .unwrap();
                     let url = url::Url::parse(&target).unwrap();
                     let name = url.path().trim_start_matches('/');
                     sqlx::query(&format!("DROP DATABASE {name} WITH (FORCE)"))

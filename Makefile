@@ -9,6 +9,9 @@ DEV_PORT ?= 8080
 DEV_DB_PORT ?= 5432
 DEV_ORIGIN ?= http://localhost:$(DEV_PORT)
 DEV_DB_URL ?= postgresql://i2nclip:i2nclip-dev@127.0.0.1:$(DEV_DB_PORT)/i2nclip?sslmode=disable
+# Bound case-level concurrency without limiting concurrency inside a test.
+export RUST_TEST_THREADS ?= 4
+
 # Honor explicit socket configuration; support Docker and rootless Podman.
 ifndef DOCKER_HOST
 TEST_CONTAINER_SOCKET := $(or $(wildcard /var/run/docker.sock),$(wildcard $(XDG_RUNTIME_DIR)/podman/podman.sock),$(wildcard /run/user/$(shell id -u)/podman/podman.sock))
