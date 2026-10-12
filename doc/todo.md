@@ -89,6 +89,14 @@ VM21:1 Uncaught ReferenceError: Worker is not defined
 
 42. Do not show "Authorize" tab if there are no authorizing libraries available.
 
-PRIORITY (highest prio first): 31, 32, 33, 35, 36, 34, 35, 36, 37, 38, 39, 40, 41, 42
+43. Default all relevat elements to margin 0, padding 0 in the global stylesheet (light CSS reset). Prefer having <p> with margin 0 by default, and have components use their own spacing as suitable. Otherwise gap+margin+padding stack and create inconsistent layouts. I'm doing a few  myself, check <h2>, <p> and <ul> changes in app.css.
+
+44. Duplicate element IDs in pairing-settings. Do we need to use global element IDs? IDs in components seems like a bad practice, maybe Svelte has a solution for this (scoped IDs?), investigate. It is acceptable in views, especially if it facilitates testing.
+
+45. Limit store access in pure components. Store access should be managed by views. Begin by making Pairing component pure, and check other components that need the same treatment.
+
+46. Use modern CSS features like https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Nesting/Using, layers, where applicable.
+
+PRIORITY (highest prio first): 31, 32, 33, 35, 36, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46
 
 DEFERRED: 15, 16, 24

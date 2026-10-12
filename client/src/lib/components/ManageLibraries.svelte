@@ -72,7 +72,7 @@ async function run(action, scope = "rename") {
 <style>
 fieldset {
 	min-width: 0;
-	margin: 1rem 0 0;
+	margin-top: 1rem;
 	border: 0;
 	padding: 0;
 }
