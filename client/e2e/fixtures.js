@@ -150,10 +150,15 @@ async function issueOtc(databaseUrl) {
 }
 
 async function shot(page, name) {
-	await mkdir(path.join(root, "client/e2e/shots"), { recursive: true });
+	const directory = path.join(
+		root,
+		"client/e2e/shots",
+		test.info().project.name || "default",
+	);
+	await mkdir(directory, { recursive: true });
 	await page.emulateMedia({ colorScheme: "light" });
 	await page.screenshot({
-		path: path.join(root, "client/e2e/shots", `${name}-light.png`),
+		path: path.join(directory, `${name}-light.png`),
 		fullPage: true,
 	});
 	await page.emulateMedia({ colorScheme: "dark" });
@@ -162,7 +167,7 @@ async function shot(page, name) {
 	);
 	expect(bg).toBe("rgb(28, 27, 25)");
 	await page.screenshot({
-		path: path.join(root, "client/e2e/shots", `${name}-dark.png`),
+		path: path.join(directory, `${name}-dark.png`),
 		fullPage: true,
 	});
 	await page.emulateMedia({ colorScheme: "light" });
@@ -461,4 +466,12 @@ async function fixtureDatabase(operation, target) {
 		},
 	);
 	return stdout.trim();
+}
+
+export async function openPopup(page, url) {
+	const opening = page.waitForEvent("popup");
+	await page.evaluate((target) => {
+		window.open(target, "_blank");
+	}, url);
+	return opening;
 }

@@ -71,14 +71,14 @@ save dialogs, playback and resource URLs remain in the requesting page.
 Use the Node version in `.nvmrc`, then `npm ci --prefix client` from the repo root.
 `make test` runs client tests, the Svelte checker, and Rust tests.
 `make test-all` from the repo root runs every suite, including package checks,
-PostgreSQL integration/resource tests, Firefox tests, and the live deployment smoke test.
+PostgreSQL integration/resource tests, Firefox/Chromium tests, and the live deployment smoke test.
 `make test-e2e` provisions PostgreSQL and installs browser dependencies.
 `make extension` builds the XPI without minifying JS or CSS.
-`npm run e2e --prefix client` rebuilds and runs Firefox against the real local API.
+`npm run e2e --prefix client` rebuilds and runs the shared suite in Firefox and Chromium against the real local API.
 
 Browser tests are split by settings, library, and popup behavior. `e2e/fixtures.js`
 owns the API server, service transport shim, and shared helpers. Screenshots are written to
-ignored `e2e/shots/`; review both themes at desktop, 360 px, and 320 px widths.
+ignored `e2e/shots/<project>/`; review both themes at desktop, 360 px, and 320 px widths.
 The mixed-media test includes landscape, portrait, panorama, playable WAV/WebM,
 long names, files, and playback controls. Its video fixture is a one-second test
 pattern; FFmpeg is not needed to run tests.
@@ -212,3 +212,8 @@ password and unchanged recovery file. Owner restart locks all libraries.
 The CLI selects libraries through `--recovery`. `create` and `register` accept
 `--authorize-with FILE` instead of `--otc`, plus `--authorizer-password-file PATH`
 for that library's password. `--password-file` still belongs to the destination.
+
+The E2E projects use the same tests and Firefox API shim in both engines. Native
+installed-extension/CSP checks remain separate. To run one project, pass
+`-- --project=firefox` or `-- --project=chromium` to `npm run e2e`. Browser-specific
+launch configuration belongs in Playwright configuration, not individual tests.

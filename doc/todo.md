@@ -34,11 +34,11 @@ Work through these in order. Details and reproductions are in [the audit report]
 
 18. dont show pending uploads when locked
 
-19. dont refresh on deletion: keep the card grayed out (prio: 2)
+19. dont refresh on deletion: keep the card grayed out
 
 20. dont refresh on upload: on batch uploads refreshing after every upload is jarring
 
-21. rename assets/worker.js assets/pairing-worker.js
+21. rename assets/worker.js assets/pairing-worker.js (if stil exists)
 
 22. [x] Pairing uses one crypto implementation directly in the service owner, with no nested workers or client crypto helpers. Disposable per-attempt executors clear secrets, reject cancelled calls immediately, and mask third-party errors. Real Chromium pairing, shared-tab and multi-library scenarios, crypto regressions, installed-extension CSP verification and package checks pass. Original reproduction: Worker is not defined in the SharedWorker context
 VM21:1 Uncaught ReferenceError: Worker is not defined
@@ -49,11 +49,12 @@ VM21:1 Uncaught ReferenceError: Worker is not defined
     at dispatch (web-worker.js:2734:63)
     at async Object.receive (web-worker.js:2798:21)
 
-23. consider adding chrome as a target for e2e tests next to firefox. Reuse test code as much as possible. If needed create browser-specific interfaces to abstract implementation details, and use the interfaces in shared tests. Do not check browser type in specific tests.
+23. [x] Added Firefox and Chromium Playwright projects sharing the same test code, API fixtures and browser adapters. Browser launch options live in configuration; popup creation uses a shared script-opened-window adapter, and screenshots are separated by project. Both browsers run all scenarios by default, with single-project selection available. All 44 browser scenarios and lint pass.
 
 24. consider moving the "status" section in the library page, and in general all "status" sections in the settings page too, to a shared toast-notification stack. Considerations: some notifications can be dismissed automatically after X ms, some should be persistent until dismissed by the user, like the "uploaded X files" notification. Consider using native <dialog> elements for this. Notifications should live in the service engine layer and be shared across clients. The service should let clients say where to spawn the notification, default to top right.
 
+25. I like the "inline status" messages we display today, close to the owning components. I do think it's a little intrusive in the library page, with "Loading", "Uploading", "clear uploaded" messages showing in the same section, varying the height of the page. Figure out a simple way to improve the situation. Only minimal changes allowed here, not critical.
 
-PRIORITY (highest prio first): 14, 22, 23, 18+19+20+21, 24
+PRIORITY (highest prio first): 14, 22, 23, 18+19+20+21, 25
 
-DEFERRED: 15, 16
+DEFERRED: 15, 16, 24

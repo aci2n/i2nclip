@@ -5,11 +5,19 @@ export default defineConfig({
 	timeout: 180_000,
 	expect: { timeout: 20_000 },
 	use: {
-		browserName: "firefox",
 		viewport: { width: 1100, height: 800 },
-		launchOptions: {
-			firefoxUserPrefs: { "security.sandbox.content.level": 0 },
-			env: { ...process.env, MOZ_DISABLE_CONTENT_SANDBOX: "1" },
-		},
 	},
+	projects: [
+		{
+			name: "firefox",
+			use: {
+				browserName: "firefox",
+				launchOptions: {
+					firefoxUserPrefs: { "security.sandbox.content.level": 0 },
+					env: { ...process.env, MOZ_DISABLE_CONTENT_SANDBOX: "1" },
+				},
+			},
+		},
+		{ name: "chromium", use: { browserName: "chromium" } },
+	],
 });

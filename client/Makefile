@@ -63,7 +63,7 @@ test-e2e: export PATH := $(dir $(NODE)):$(PATH)
 test-e2e:
 	@test -x "$(NODE)" || { echo "Node 22 not found at $(NODE); run nvm install or set NODE" >&2; exit 1; }
 	PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci
-	npx playwright install firefox
+	npx playwright install firefox chromium
 	npm run e2e
 
 # Live CLI upload, metadata/tag edits, verified download, and deletion.

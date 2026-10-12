@@ -1,4 +1,10 @@
-import { createLibrary, expect, PASSWORD, test } from "./fixtures.js";
+import {
+	createLibrary,
+	expect,
+	openPopup,
+	PASSWORD,
+	test,
+} from "./fixtures.js";
 
 test("pending pages share one durable upload and preserve tag drafts across navigation", async ({
 	page,
@@ -14,12 +20,10 @@ test("pending pages share one durable upload and preserve tag drafts across navi
 		(source) => window.serviceTest("context", { source, withTags: true }),
 		source,
 	);
-	const opening = page.waitForEvent("popup");
-	await page.evaluate(
-		(url) => window.open(url, "_blank"),
+	const popup = await openPopup(
+		page,
 		`${app.web.origin}/client/dist/extension/upload.html?id=pending`,
 	);
-	const popup = await opening;
 	await expect(popup.locator("#name")).toHaveText("icon.svg");
 	await popup.locator("#tags").fill("Draft");
 	await popup.getByRole("link", { name: "Settings", exact: true }).click();
@@ -64,8 +68,8 @@ test("background restart starts locked and retains pending sources for explicit 
 	expect(
 		(await page.evaluate(() => window.serviceTest("state"))).uploads[0].status,
 	).toBe("awaiting");
-	const popup = await page.context().newPage();
-	await popup.goto(
+	const popup = await openPopup(
+		page,
 		`${app.web.origin}/client/dist/extension/upload.html?id=retained`,
 	);
 	await expect(popup.locator("#send button")).toBeEnabled();
