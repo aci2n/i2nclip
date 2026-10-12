@@ -128,8 +128,8 @@ format-write:
 	$(MAKE) -C client format-write
 
 # Run before committing: format files, apply Biome fixes, then check lint and formatting.
-pre-commit: format-write
-	cd client && npm exec -- biome check --write --only=assist/source/organizeImports
+pre-commit:
+	$(MAKE) format-write
 	$(MAKE) lint
 
 # Fetch Cargo vulnerability advisories; optional security check, outside test-all.
