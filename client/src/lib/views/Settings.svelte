@@ -94,6 +94,7 @@ async function action(scope, work, success) {
 <style>
 .settings {
 	max-width: 42rem;
+	margin: auto;
 }
 .address {
 	overflow-wrap: anywhere;
