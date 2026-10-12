@@ -38,7 +38,7 @@ Work through these in order. Details and reproductions are in [the audit report]
 
 20. [x] Upload results populate canonical media directly and append cards to matching searches across clients, preserving card owners, pagination and uploads completed during older search requests. Thumbnails reflect the actual encrypted metadata. No per-file list refresh. Client tests (148), Rust checks and all 44 Firefox/Chromium scenarios pass.
 
-21. rename assets/worker.js assets/pairing-worker.js (if stil exists)
+21. [x] Removed the unused pairing worker and its obsolete stable-asset route. No replacement worker is needed: pairing crypto runs directly in the service owner, as requested. Static-serving tests and existing package checks verify the remaining SharedWorker entry.
 
 22. [x] Pairing uses one crypto implementation directly in the service owner, with no nested workers or client crypto helpers. Disposable per-attempt executors clear secrets, reject cancelled calls immediately, and mask third-party errors. Real Chromium pairing, shared-tab and multi-library scenarios, crypto regressions, installed-extension CSP verification and package checks pass. Original reproduction: Worker is not defined in the SharedWorker context
 VM21:1 Uncaught ReferenceError: Worker is not defined

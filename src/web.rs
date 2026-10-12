@@ -29,10 +29,6 @@ pub(crate) fn serve(api: Router, directory: PathBuf) -> Router {
             "/assets/web-worker.js",
             ServeFile::new(directory.join("assets/web-worker.js")),
         )
-        .route_service(
-            "/assets/worker.js",
-            ServeFile::new(directory.join("assets/worker.js")),
-        )
         .layer(map_response(html_cache));
     let assets = Router::new()
         .nest_service(
@@ -85,7 +81,6 @@ mod tests {
             std::fs::write(directory.join("assets/app-ab123456.js"), "export {};").unwrap();
             std::fs::write(directory.join("assets/app-ab123456.css"), "body {}").unwrap();
             std::fs::write(directory.join("assets/web-worker.js"), "export {};").unwrap();
-            std::fs::write(directory.join("assets/worker.js"), "export {};").unwrap();
             std::fs::write(directory.join("private.txt"), "not public").unwrap();
             Self(directory)
         }
@@ -164,7 +159,7 @@ mod tests {
             to_bytes(favicon.into_body(), 1024).await.unwrap(),
             &b"\x00\x00\x01\x00"[..]
         );
-        for path in ["/assets/web-worker.js", "/assets/worker.js"] {
+        for path in ["/assets/web-worker.js"] {
             let response = request(app.clone(), Method::GET, path).await;
             assert_eq!(response.status(), StatusCode::OK);
             assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
@@ -178,7 +173,6 @@ mod tests {
             "/index.html",
             "/favicon.ico",
             "/assets/web-worker.js",
-            "/assets/worker.js",
             "/assets/app-ab123456.js",
         ] {
             let response = request(app.clone(), Method::HEAD, path).await;
