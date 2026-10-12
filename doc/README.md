@@ -1,5 +1,6 @@
 # Project documentation
 
+- [Final refactor review](refactor-review.md): phase 12–16 results, verification, and suggested follow-ups.
 - [Client ownership](session.md): singleton stores, tab admission, persistence, and disposal.
 - [Test pipeline](test-pipeline.md): fresh-clone preparation, fixture ownership, and acceptance checks.
 - [Protocol](protocol.md): HTTP API, signed requests, frames, limits, and storage semantics.

@@ -24,6 +24,7 @@ Re-encrypting a failed client upload creates fresh ciphertext and normally a new
 
 ## Client improvements to specify
 
+- Specify registration uncertainty handling: retain a candidate identity in memory across lost replies or local storage failures and retry the same identity after a signed registration check.
 - Assess image compression before upload, including supported formats, quality controls, and whether a setting is warranted.
 - Consider multiple simultaneous pairing sessions for the same registered identity and shared relay storage for multiple server instances.
 

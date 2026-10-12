@@ -1,47 +1,35 @@
-# PostgreSQL process memory profile
+# PostgreSQL process resource profile
 
-Measured locally on 2026-10-10 with an optimized Rust server, Node 22.23.3, and disposable PostgreSQL 18 under rootless Podman. The server and Node client are separate processes. This is a local measurement, not a production memory limit.
+`make test-profile` is an optional Linux/Podman check. It prepares release-built server/admin helpers and its debug database helper, owns a disposable PostgreSQL container, and uses a fresh database. The server helper binds `127.0.0.1:0`; Node learns its actual origin from the readiness line. No development port must be free.
 
-Each run uses a fresh isolated database and the production server's eight-connection pool. It performs two concurrent 32 MiB uploads with 64 KiB sealed metadata, then two concurrent downloads. It repeats with 16 KiB chunked upload writes without Content-Length. Download readers pause for 250 ms before draining, and downloaded hashes must match. PostgreSQL uses the image defaults rather than the production Quadlet's complete configuration.
+The helper uses the real API router and its bounded eight-connection pool. The profile measures transfer resources; production maintenance and graceful shutdown scheduling are outside this harness. It performs two concurrent 32 MiB uploads with 64 KiB sealed metadata, holds two downloads for 250 ms, and verifies lengths, hashes, and every encrypted byte. It repeats with 16 KiB chunked uploads without Content-Length. Held responses must leave zero idle database transactions.
 
-The script samples server RSS every 10 ms and reads the kernel's lifetime VmHWM. Its second run also samples PostgreSQL processes every 200 ms. Independent health requests run every 20 ms; their measured latency includes local network and client scheduling, not just server event-loop delay.
-
-| Measurement | First run | Second run |
-| --- | ---: | ---: |
-| Server baseline RSS | 7,088 KiB | 7,148 KiB |
-| Server kernel peak RSS | 291,180 KiB (284.4 MiB) | 239,744 KiB (234.1 MiB) |
-| Server final RSS | 174,820 KiB | 141,684 KiB |
-| Server RSS with ordinary downloads held | 204,744 KiB | 205,452 KiB |
-| Server RSS with chunked-round downloads held | 240,364 KiB | 207,228 KiB |
-| Client peak RSS, excluded from server figures | 486,408 KiB | 539,092 KiB |
-| Worst health-response latency | 28.6 ms | 34.0 ms |
-| Successful health requests | 100 | 101 |
-| Ordinary round elapsed time | 1,028 ms | 1,058 ms |
-| Chunked round elapsed time | 1,019 ms | 1,030 ms |
-
-Round times include signing, the deliberate reader pause, process inspection, and hash verification; they are not pure transfer-throughput measurements. The second run used 0.39 seconds of application CPU (39 ticks at 100 ticks/second).
-
-PostgreSQL's second-run baseline summed process RSS was 121,652 KiB; the sampled maximum was 582,872 KiB (569.2 MiB). Held-download snapshots contained 13 PostgreSQL processes and summed to 349,284 KiB and 534,688 KiB. The largest individual processes in those snapshots used 82,804 KiB and 132,180 KiB. Summed RSS counts shared PostgreSQL pages more than once: it must not be treated as unique physical memory or cgroup memory. CPU counters for the live processes rose from 2 ticks at baseline to 77 ticks in the final held-download snapshot; exited processes are not included.
-
-Both rounds had zero idle database transactions while responses were held. This observation supplements the private pool test that acquires all eight connections after content has been fetched; idle-transaction counts alone cannot prove a connection was returned to the pool.
-
-The server peak is substantially above the 64 MiB of content in two transfers. SQLx buffers, HTTP Vec growth, concurrent downloads, and allocator retention need allocation-level measurement to attribute that difference. This profile does not establish a hard bound or justify changing the accepted full-buffer download design. Buffer-growth and response-duration work remains in priorities.md.
-
-## Coverage retained during consolidation
-
-This process profile replaces the older in-process maximum-size transfer profile.
-Both concurrent uploads must return 201; both downloads must return 200, match
-length, hash, and every encrypted byte; held downloads must leave zero idle
-transactions. These checks run for both ordinary and chunked uploads. RSS and
-responsiveness remain reported measurements, without pass/fail thresholds.
-The separate Rust frame-decoding test retains its allocation-count assertions.
+The script samples server RSS every 10 ms and PostgreSQL processes every 200 ms. Health requests run every 20 ms. Timing includes signing, reader pauses, inspection, hash verification, and host scheduling. RSS and responsiveness are measurements rather than pass/fail thresholds. Summed PostgreSQL RSS includes shared pages more than once and is not unique physical memory or cgroup usage.
 
 ## Reproduce
 
-Use Linux, Node from `client/.nvmrc`, and the local rootless Podman API socket. The release-built test-server helper binds a private loopback port 0 and reports its actual origin. The runner owns the container; the script owns its isolated database and optimized router helper process. The profile measures API transfer resources; it does not exercise production maintenance or graceful shutdown scheduling. All are cleaned up after the profile. The script does not run in ordinary client tests.
+Use Node from `client/.nvmrc`, Rust/Cargo, and a local Podman API socket on Linux. The target always creates its own PostgreSQL container, independently of `I2N_TEST_DATABASE_URL`. Explicit `DOCKER_HOST` must select Podman if Docker is also installed. Only the container's randomly mapped database port is published for host clients.
 
 ```sh
 make test-profile
 ```
 
-The target always provisions its own PostgreSQL container, independently of `I2N_TEST_DATABASE_URL`. PostgreSQL process inspection requires local Podman access. Output contains resource counters and timings, not database credentials.
+Output includes process counters and timings, without database credentials. Owned responses, server processes, databases, and the container are cleaned up after the run. The Node process and server are measured separately. This check is independent of the portable `make test-all` pipeline.
+
+## Latest local measurement — 2026-10-12
+
+The check passed while an unrelated verification placeholder owned port 8080; that placeholder received no requests.
+
+| Measurement | Value |
+| --- | ---: |
+| Server baseline RSS | 7,892 KiB |
+| Server kernel peak RSS | 249,428 KiB |
+| Server final RSS | 76,252 KiB |
+| Node client peak RSS | 464,988 KiB |
+| Worst measured health response | 783.4 ms |
+| Successful health requests | 264 |
+| Ordinary round | 5,239 ms |
+| Chunked round | 2,512 ms |
+| Sampled PostgreSQL summed peak RSS | 497,572 KiB |
+
+These values describe one local run and do not establish a memory or response-time guarantee. Buffer attribution and response-lifetime limits remain follow-up topics in [priorities.md](priorities.md). The separate Rust frame-decoding test retains its allocation-count assertions.

@@ -23,9 +23,21 @@ The simplification plan has the following goals:
 
 - Phase 11: Audit the refactor. Ensure documentation does not reference obsolete architecture.
 
+- Phase 12: Remove library name, no longer needed for single-library clients.
+
+- Phase 13: Document in AGENTS.md that agents must strictly respect the guidelines followed during this refactor. Emphasis on doing the minimal thing that achieves the goal, component isolation, etc. Demand that future changes require highly detailed specifications like this one.
+
+- Phase 14: Clean up obsolete/excessive package.json commands, makefile targets, outdated documentation files.
+
+- Phase 15: Review project test pipeline. Ensure that every test is independent and isolated, does not depend on shared port publications unless strictly necessary and can be executed successfully from a fresh clone of the project. Tests that cannot run are dead tests and should be removed.
+
+- Phase 16: Review the final result and suggest further improvements.
+
 
 Overarching guidelines:
 - code should be well organized, separated, and designed to be read and maintained by humans
 - do the minimal thing that achieves the stated goal
-- ask for clarification before starting
-
+- ask for clarification on ambiguous points
+- run tests at the end, focus on refactoring the code first, if the code builds you can commit
+- do small frequent commits
+- assume the project is greenfield, has no live users and do not worry about data/protocol migrations
