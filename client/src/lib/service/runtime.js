@@ -69,14 +69,6 @@ export function createLibraryRuntime({
 			unlocked: Boolean(value.privateKey) && !value.busy,
 			serverUrl: value.serverUrl,
 			publicKey: value.publicKey,
-			pendingRegistration: value.pendingRegistration
-				? {
-						serverUrl: value.pendingRegistration.serverUrl,
-						publicKey: value.pendingRegistration.publicKey,
-						method: value.pendingRegistration.method,
-						authorizerLibraryId: value.pendingRegistration.authorizerLibraryId,
-					}
-				: null,
 			epoch: value.epoch,
 			busy: value.busy,
 			error: value.error,
@@ -886,7 +878,6 @@ export function createLibraryRuntime({
 				create: [payload],
 				setServer: [payload.serverUrl],
 				reset: [],
-				discardCreation: [],
 			}[action];
 			if (!args) {
 				throw new Error("Unknown identity command.");
@@ -1116,6 +1107,7 @@ export function createLibraryRuntime({
 	return {
 		ready,
 		instanceId,
+		registrationServer: () => credentials().serverUrl,
 		pairingDestination(options) {
 			const operation = identity.operation(options);
 			return {

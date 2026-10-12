@@ -98,7 +98,7 @@ for (const [from, to] of [
 }
 
 for (const kind of ["web", "extension"]) {
-	test(`${kind} pairing is shared and another tab can finish after both starting pages close`, async ({
+	test(`${kind} sender pairing survives page closure while closing its temporary receiver cancels`, async ({
 		page,
 		app,
 		browser,
@@ -132,19 +132,32 @@ for (const kind of ["web", "extension"]) {
 			await expect(follower.locator("#pairing-approve")).toBeVisible();
 			const observer = await context.newPage();
 			await observer.goto(url(kind, app));
-			const verification = await follower
-				.locator("#pairing-verification-code")
-				.textContent();
-			await expect(observer.locator("#pairing-verification-code")).toHaveText(
-				verification,
+			await expect(observer.locator("#pairing-verification-code")).toHaveCount(
+				0,
 			);
 			await receiver.close();
 			await follower.locator("#pairing-approve").click();
-			await expect(follower.locator("#pairing-status")).toContainText(
+			await expect(follower.locator("#pairing-start")).toBeVisible();
+			await expect(follower.locator("#pairing-status")).not.toContainText(
 				"New device connected.",
 			);
-			await expect(observer.locator("#pairing-status")).toContainText(
-				"Library connected and unlocked.",
+			expect(
+				(await observer.evaluate(() => window.serviceTest("state"))).catalog,
+			).toHaveLength(0);
+			await follower.locator("#pairing-start").click();
+			await expect(follower.locator("#pairing-code")).toBeVisible();
+			await receive(
+				observer,
+				await follower.locator("#pairing-code").textContent(),
+				app,
+			);
+			await expect(follower.locator("#pairing-approve")).toBeVisible();
+			await expect(observer.locator("#pairing-verification-code")).toHaveText(
+				await follower.locator("#pairing-verification-code").textContent(),
+			);
+			await follower.locator("#pairing-approve").click();
+			await expect(follower.locator("#pairing-status")).toContainText(
+				"New device connected.",
 			);
 			await expect(observer.locator("#configured")).toBeVisible();
 		} finally {

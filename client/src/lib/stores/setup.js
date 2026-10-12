@@ -4,195 +4,166 @@ import { createPairing } from "./pairing.js";
 import { createSession } from "./session.js";
 import { createSettings } from "./settings.js";
 
-// A local form draft backed by an owner runtime only after submission.
+// Form fields belong to this page; only a submitted action allocates owner state.
 export function createSetup(root, platform, currentLibrary, onComplete) {
 	let id;
-	let starting;
-	let draftStarted = false;
+	let submitting;
+	let generation = 0;
 	let disposed = false;
-	let promoted = false;
-	let wasUnlocked = false;
-	const state = writable({ open: false, id: null, resumable: [] });
+	let opened = false;
+	let lastPairing;
+	let draftLibrary;
+	const state = writable({ open: false });
 	const projection = writable({
-		connected: false,
-		libraryId: "draft",
-		libraryName: "",
-		session: {
-			ready: false,
-			configured: false,
-			unlocked: false,
-			serverUrl: "",
-			epoch: 0,
-		},
-		catalog: [],
+		session: {},
 		pairing: { active: false },
-		uploads: [],
-		media: {},
-		views: {},
+		catalog: [],
 	});
+	let settings;
 	function publish(value = get(root)) {
-		const isUnlocked = !value.vault || value.vault.status === "unlocked";
-		if (wasUnlocked && !isUnlocked) {
-			id = undefined;
-			draftStarted = false;
-			promoted = false;
-			settings.resetDraft({ libraryName: "", server: "" });
-			state.update((v) => ({ ...v, open: false }));
-		}
-		wasUnlocked = isUnlocked;
-		const source = value.libraries?.[currentLibrary()];
-		if (id && value.connected && !value.libraries?.[id] && !starting) {
-			id = undefined;
-			draftStarted = false;
-			promoted = false;
-			settings.resetDraft({
-				libraryName: "",
-				server: source?.session.serverUrl || "",
-				mode: value.catalog.length ? "authorize" : "create",
-			});
-			state.update((v) => ({ ...v, open: false }));
-		}
-		const scoped = promoted ? null : value.libraries?.[id];
+		const catalog = (value.catalog || []).map((row) => ({
+			...row,
+			...value.libraries?.[row.id]?.session,
+		}));
+		const scoped = id && value.setup?.id === id ? value.setup : null;
 		projection.set({
-			...get(projection),
-			...(scoped || {}),
-			uploads: scoped?.uploads || [],
-			media: scoped?.media || {},
-			views: scoped?.views || {},
-			pairing: scoped?.pairing || { active: false, status: "" },
+			...scoped,
 			connected: value.connected,
-			libraryId: "draft",
-			libraryName: id ? value.setups?.find((row) => row.id === id)?.name : "",
-			instanceId: value.instanceId,
+			instanceId: `${value.instanceId}:${generation}`,
+			libraryId: `draft:${generation}`,
+			catalog,
+			pairing: scoped?.pairing || lastPairing || { active: false, status: "" },
 			session: scoped?.session || {
-				ready: Boolean(value.connected),
+				ready: value.connected,
 				configured: false,
 				unlocked: false,
-				serverUrl: source?.session.serverUrl || "",
-				epoch: 0,
 				busy: false,
 				error: "",
+				epoch: 0,
+				serverUrl:
+					value.libraries?.[currentLibrary()]?.session.serverUrl ||
+					value.defaultServerUrl ||
+					"",
 			},
-			catalog: (value.catalog || []).map((row) => ({
-				...row,
-				...value.libraries[row.id]?.session,
-			})),
 		});
-		state.update((v) => ({
-			...v,
-			id,
-			resumable: (value.setups || []).filter(
-				(row) => row.id !== currentLibrary(),
-			),
-		}));
-		if (
-			id &&
-			scoped?.session.configured &&
-			!scoped.pairing?.active &&
-			!promoted
-		) {
-			const completedId = id;
-			promoted = true;
-			state.update((v) => ({ ...v, open: false }));
-			queueMicrotask(() => {
-				if (!disposed && promoted && id === completedId) {
-					onComplete(completedId);
-				}
-			});
-		}
 	}
-	const unsubscribe = root.subscribe(publish);
+	function close() {
+		generation++;
+		lastPairing = null;
+		opened = false;
+		id = undefined;
+		submitting = undefined;
+		state.set({ open: false });
+		publish();
+		settings?.resetDraft({
+			libraryName: "",
+			server: "",
+			pairServer: "",
+			otc: "",
+		});
+		void root.command("setup.close").catch(() => {});
+	}
+	const unsubscribe = root.subscribe((value) => {
+		if (
+			opened &&
+			(!value.connected ||
+				(value.vault && value.vault.status !== "unlocked") ||
+				(draftLibrary &&
+					(!value.libraries?.[draftLibrary] ||
+						currentLibrary() !== draftLibrary)))
+		) {
+			close();
+		}
+		publish(value);
+	});
 	const adapter = {
 		subscribe: projection.subscribe,
 		ready: root.ready,
 		async command(name, payload = {}, options) {
+			if (!opened) {
+				start();
+			}
+			const captured = generation;
 			if (!id && !["identity.create", "pairing.receive"].includes(name)) {
 				return true;
 			}
 			if (!id) {
-				const captured = get(root);
-				starting ||= root
-					.command("libraries.beginSetup", {
-						name: get(settings).libraryName,
-						method: get(settings).mode,
-						serverUrl: payload.serverUrl || get(settings).server,
-						authorizerLibraryId: get(settings).authorizerLibraryId,
-					})
-					.then((value) => {
-						const latest = get(root);
-						if (
-							disposed ||
-							latest.instanceId !== captured.instanceId ||
-							latest.vault?.epoch !== captured.vault?.epoch ||
-							(latest.vault && latest.vault.status !== "unlocked")
-						) {
-							throw new Error("Vault context ended. Try again.");
-						}
-						id = value;
-						publish();
-						return id;
-					})
-					.finally(() => {
-						starting = null;
-					});
-				await starting;
-			}
-			const snapshot = get(root).libraries[id];
-			const result = await root.command(
-				name,
-				{
-					...payload,
-					libraryId: id,
-					epoch: snapshot?.session.epoch,
-					runtimeId: snapshot?.runtimeId,
-				},
-				options,
-			);
-			if (name === "pairing.receive" && result?.outcome === "existing") {
-				const receiverId = id;
-				const latest = get(root);
-				if (
-					!disposed &&
-					latest.libraries?.[result.libraryId]?.session.configured
-				) {
-					promoted = true;
-					state.update((v) => ({ ...v, open: false }));
-					onComplete(result.libraryId, result.outcome);
-					await root.command("libraries.discardSetup", {
-						libraryId: receiverId,
-					});
+				if (submitting === captured) {
+					throw new Error("Setup is busy. Try again.");
 				}
+				submitting = captured;
+				try {
+					const draft = get(settings);
+					const value = await root.command("setup.open", {
+						name: draft.libraryName,
+						method: name === "pairing.receive" ? "pair" : draft.mode,
+						serverUrl: payload.serverUrl || draft.server,
+						authorizerLibraryId: draft.authorizerLibraryId,
+					});
+					if (captured !== generation || disposed) {
+						throw new Error("Setup context ended. Try again.");
+					}
+					id = value;
+					publish();
+				} finally {
+					if (submitting === captured) {
+						submitting = undefined;
+					}
+				}
+			}
+			let result;
+			try {
+				result = await root.command(name, { ...payload, setupId: id }, options);
+			} catch (error) {
+				if (captured === generation) {
+					id = undefined;
+					void root.command("setup.close").catch(() => {});
+				}
+				throw error;
+			}
+			if (captured !== generation || disposed) {
+				return false;
+			}
+			if (
+				result?.outcome &&
+				get(root).libraries?.[result.libraryId]?.session.configured
+			) {
+				close();
+				onComplete(result.libraryId, result.outcome, name, result.confirmation);
+			} else if (name === "identity.create" || name === "pairing.receive") {
+				// Retry with a fresh owner workflow and current form fields.
+				lastPairing = get(projection).pairing;
+				id = undefined;
+				void root.command("setup.close").catch(() => {});
 			}
 			return result;
 		},
 	};
-	const session = createSession(adapter, platform);
-	const settings = createSettings(session, platform, { followServer: false });
+	const session = createSession(adapter);
+	settings = createSettings(session, platform, { followServer: false });
 	const pairing = createPairing(adapter);
 	function start() {
-		if (!draftStarted || promoted) {
-			draftStarted = true;
-			id = undefined;
-			promoted = false;
-			publish();
-			const catalog = get(projection).catalog;
-			settings.edit("mode", catalog.length ? "authorize" : "create");
-			settings.edit("libraryName", defaultLibraryName(catalog));
-			settings.edit(
-				"server",
-				get(root).libraries[currentLibrary()]?.session.serverUrl || "",
-			);
-			settings.edit("pairServer", "");
-			settings.edit("otc", "");
-			settings.edit("feedback", { scope: "setup", text: "", error: false });
-			settings.edit(
-				"authorizerLibraryId",
-				catalog.find((row) => row.id === currentLibrary())?.id ||
-					catalog[0]?.id ||
-					"",
-			);
+		if (opened) {
+			return;
 		}
-		state.update((v) => ({ ...v, open: true }));
+		lastPairing = null;
+		draftLibrary = currentLibrary();
+		opened = true;
+		generation++;
+		publish();
+		const catalog = get(projection).catalog;
+		settings.resetDraft({
+			libraryName: defaultLibraryName(catalog),
+			server: get(projection).session.serverUrl,
+			pairServer: "",
+			otc: "",
+			mode: catalog.length ? "authorize" : "create",
+			authorizerLibraryId:
+				catalog.find((row) => row.id === currentLibrary())?.id ||
+				catalog[0]?.id ||
+				"",
+		});
+		state.set({ open: true });
 	}
 	return {
 		subscribe: state.subscribe,
@@ -200,61 +171,9 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 		settings,
 		pairing,
 		start,
-		resume(value) {
-			const row = get(root).setups.find((row) => row.id === value);
-			if (!row) {
-				return;
-			}
-			draftStarted = true;
-			id = value;
-			promoted = false;
-			publish();
-			settings.edit("libraryName", row.name);
-			const pending = get(root).libraries[id].session.pendingRegistration;
-			settings.edit("mode", pending?.method || row.setup?.method || "create");
-			settings.edit(
-				"authorizerLibraryId",
-				pending?.authorizerLibraryId || row.setup?.authorizerLibraryId || "",
-			);
-			settings.edit("server", get(root).libraries[id].session.serverUrl);
-			state.update((v) => ({ ...v, open: true }));
-		},
-		close() {
-			state.update((v) => ({ ...v, open: false }));
-		},
-		async discard() {
-			try {
-				if (promoted) {
-					return;
-				}
-				if (
-					id &&
-					!platform.confirm(
-						"Discard this unfinished setup? Its invitation may already be used. A registered library without its recovery key may become inaccessible.",
-					)
-				) {
-					return;
-				}
-				if (id) {
-					await pairing.cancel();
-				}
-				if (id) {
-					await root.command("libraries.discardSetup", { libraryId: id });
-				}
-				id = undefined;
-				draftStarted = false;
-				promoted = false;
-				publish();
-				state.update((v) => ({ ...v, open: false }));
-			} catch (error) {
-				settings.edit("feedback", {
-					scope: "setup",
-					text: error.message,
-					error: true,
-				});
-			}
-		},
+		close,
 		dispose() {
+			close();
 			disposed = true;
 			unsubscribe();
 			pairing.dispose();

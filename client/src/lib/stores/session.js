@@ -9,7 +9,6 @@ export function createSession(client) {
 		serverUrl: "",
 		busy: false,
 		error: "",
-		pendingRegistration: null,
 	});
 	let disposed = false;
 	let localError = "";
@@ -42,36 +41,11 @@ export function createSession(client) {
 			return false;
 		}
 	}
-	async function renameForSetup(name) {
-		if (name === undefined || !client.rootCommand) {
-			return;
-		}
-		const captured = get(client);
-		if (!captured.libraryId) {
-			return;
-		}
-		await client.rootCommand("libraries.rename", {
-			libraryId: captured.libraryId,
-			name,
-		});
-		const latest = get(client);
-		if (
-			latest.libraryId !== captured.libraryId ||
-			latest.instanceId !== captured.instanceId ||
-			latest.session.epoch !== captured.session.epoch
-		) {
-			throw new Error("Library changed. Start setup again.");
-		}
-	}
 	return {
 		subscribe: state.subscribe,
 		ready: client.ready,
-		create: async (payload) => {
-			await renameForSetup(payload.libraryName);
-			return action("create", payload);
-		},
+		create: (payload) => action("create", payload),
 		setServer: (serverUrl) => action("setServer", { serverUrl }),
-		discardCreation: () => action("discardCreation"),
 		dispose() {
 			disposed = true;
 			unsubscribe();

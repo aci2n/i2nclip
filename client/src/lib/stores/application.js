@@ -23,30 +23,17 @@ export function createApplication(platform, initialPage, browser = window) {
 				browser.location.href ||
 					`http://local${browser.location.pathname}${browser.location.search}`,
 			);
-			url.searchParams.set("library", id);
+			if (id) {
+				url.searchParams.set("library", id);
+			} else {
+				url.searchParams.delete("library");
+			}
 			browser.history.replaceState?.({}, "", `${url.pathname}${url.search}`);
 		},
 		new URLSearchParams(browser.location.search).get("id"),
 	);
 	const session = createSession(client, platform);
-	const pairing = createPairing(client, {
-		beforeReceive: async () => {
-			const id = client.id();
-			const captured = get(client);
-			await root.command("libraries.rename", {
-				libraryId: id,
-				name: get(settings).libraryName,
-			});
-			const latest = get(client);
-			if (
-				client.id() !== id ||
-				latest.instanceId !== captured.instanceId ||
-				latest.session.epoch !== captured.session.epoch
-			) {
-				throw new Error("Library changed. Start pairing again.");
-			}
-		},
-	});
+	const pairing = createPairing(client);
 	const settings = createSettings(session, platform);
 	const standalone = !initialPage;
 	const pageAtLocation = () => {
@@ -151,6 +138,7 @@ export function createApplication(platform, initialPage, browser = window) {
 		return query.size ? `${path}?${query}` : path;
 	};
 	function show(page) {
+		setup.close();
 		if (disposed) {
 			return;
 		}
@@ -168,6 +156,7 @@ export function createApplication(platform, initialPage, browser = window) {
 		}));
 	}
 	function selectLibrary(id) {
+		setup.close();
 		disposeLibrary();
 		client.select(id);
 		library = ["library", "options"].includes(get(state).page)
@@ -180,15 +169,19 @@ export function createApplication(platform, initialPage, browser = window) {
 		root,
 		platform,
 		() => client.id(),
-		(id, outcome) => {
+		(id, outcome, command, confirmation) => {
 			selectLibrary(id);
 			settings.edit("feedback", {
 				scope: "library",
 				text:
-					outcome === "existing"
-						? "Existing library selected."
-						: "Library saved. Download your recovery file before uploading.",
-				error: false,
+					confirmation === "uncertain"
+						? "Library saved, but confirmation failed. Check the other device before retrying."
+						: outcome === "existing"
+							? "Existing library selected."
+							: command === "identity.create"
+								? "Library created. Download your recovery file before uploading."
+								: "Library connected and unlocked. Download a recovery file for this device.",
+				error: confirmation === "uncertain",
 			});
 		},
 	);

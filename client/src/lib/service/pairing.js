@@ -249,7 +249,9 @@ export function createPairing(session, services = {}) {
 				});
 			}
 			cleanup(current, !current.saved);
-			return false;
+			return current.saved && current.completion
+				? { ...current.completion, confirmation: "uncertain" }
+				: false;
 		} finally {
 			if (task === current) {
 				task = null;
@@ -342,10 +344,8 @@ export function createPairing(session, services = {}) {
 		receive(code, server) {
 			return run("receiver", server, async (current) => {
 				const local = get(session);
-				if (local.configured || local.pendingRegistration) {
-					throw new Error(
-						"Reset or discard pending creation before connecting a library.",
-					);
+				if (local.configured) {
+					throw new Error("A library is already configured.");
 				}
 				const { id, secret } = parsePairingCode(code);
 				const initial = await call(current, "receiverStart", { secret });

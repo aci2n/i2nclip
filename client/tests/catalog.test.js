@@ -8,7 +8,7 @@ import { createSetup } from "../src/lib/stores/setup.js";
 import { deferred } from "./helpers.js";
 import { engineClient, memoryRepository, until } from "./service-helpers.js";
 
-test("authorization follows the source server, preserves other drafts, and aborts when the source changes", async (t) => {
+test("authorization follows the owner source server, clears closed drafts, and aborts when the source changes", async (t) => {
 	const sending = deferred();
 	let granted;
 	const f = await fixture(t, {
@@ -38,7 +38,9 @@ test("authorization follows the source server, preserves other drafts, and abort
 	setup.settings.edit("authorizePassword", "new-password");
 	setup.close();
 	setup.start();
-	assert.equal(get(setup.settings).libraryName, "Separate");
+	assert.equal(get(setup.settings).libraryName, "Personal 2");
+	setup.settings.edit("libraryName", "Separate");
+	setup.settings.edit("server", "https://invitation.example");
 	const creating = setup.settings.create();
 	await until(() => granted);
 	assert.equal(granted.serverUrl, "https://other.example");
@@ -50,19 +52,11 @@ test("authorization follows the source server, preserves other drafts, and abort
 	sending.resolve();
 	assert.equal(await creating, false);
 	assert.equal(get(f.root).catalog.length, 2);
-	assert.equal(get(f.root).setups.length, 1);
-	assert.equal(
-		get(f.root).libraries[get(f.root).setups[0].id].session.pendingRegistration
-			.serverUrl,
-		"https://other.example",
-	);
-	await assert.rejects(
-		f.root.command("libraries.discardSetup", { libraryId: "lib-0" }),
-		/Setup completed/,
-	);
+	assert.equal(get(f.root).setup, null);
+	assert.equal((await f.repository.libraries()).length, 2);
 });
 
-test("global reset removes provisional setup and clears its form secrets", async (t) => {
+test("global reset clears temporary setup and its form secrets", async (t) => {
 	const f = await fixture(t, {
 		api: {
 			list: async () => ({ items: [], next: null }),
@@ -82,9 +76,8 @@ test("global reset removes provisional setup and clears its form secrets", async
 	setup.settings.edit("libraryName", "Pending");
 	setup.settings.edit("authorizePassword", "new-password");
 	await setup.settings.create();
-	assert(get(setup).id);
+	assert.equal((await f.repository.libraries()).length, 2);
 	await f.root.command("libraries.reset");
-	assert.equal(get(setup).id, undefined);
 	assert.equal(get(setup).open, false);
 	assert.equal(get(setup.settings).otc, "");
 	assert.equal(get(f.root).catalog.length, 0);
@@ -135,13 +128,10 @@ function catalogRepository(records) {
 		renameLibrary: async (id, name) => {
 			rows.get(id).name = name;
 		},
-		deleteLibraries: async (ids, replacement) => {
+		deleteLibraries: async (ids) => {
 			for (const id of ids) {
 				await scope(id).reset();
 				rows.delete(id);
-			}
-			if (replacement) {
-				rows.set(replacement.id, replacement);
 			}
 		},
 		close() {},
@@ -178,62 +168,46 @@ async function fixture(t, extra = {}) {
 	t.after(b.dispose);
 	return { root, a, b, engine, repository, keys };
 }
-test("setup keeps a failed registration out of the catalog, resumes its identity and promotes after retry", async (t) => {
-	let attempts = 0;
-	t.mock.method(
-		globalThis,
-		"fetch",
-		async () => new Response(null, { status: 401 }),
-	);
+
+test("failed setup writes no row, retries a fresh key and selects only a completed library", async (t) => {
+	const keys = [];
 	const f = await fixture(t, {
 		api: {
 			list: async () => ({ items: [], next: null }),
-			registerAuthenticatedKey: async () => {
-				if (++attempts === 1) {
+			registerAuthenticatedKey: async ({ publicKey }) => {
+				keys.push(publicKey);
+				if (keys.length === 1) {
 					throw new Error("offline");
 				}
 			},
 		},
 	});
 	const completed = [];
-	const platform = { confirm: () => true };
 	const setup = createSetup(
 		f.root,
-		platform,
+		{},
 		() => "lib-0",
 		(id) => completed.push(id),
 	);
 	t.after(setup.dispose);
 	setup.start();
-	assert.equal(get(setup.settings).mode, "authorize");
 	setup.settings.edit("libraryName", "Team");
-	setup.settings.edit("authorizePassword", "new-password");
 	assert.equal(await setup.settings.create(), false);
-	assert.equal(get(f.root).catalog.length, 2);
-	const row = get(f.root).setups.find((row) => row.name === "Team");
-	assert(row);
-	const pending = (await f.repository.scope(row.id).getConfig())
-		.pendingRegistration;
-	assert(pending);
+	assert.equal((await f.repository.libraries()).length, 2);
 	assert.equal(get(setup.settings).feedback.error, true);
-	const resumed = createSetup(
-		f.root,
-		platform,
-		() => "lib-0",
-		(id) => completed.push(id),
+	assert.match(
+		get(setup.settings).feedback.text,
+		/No recovery identity was retained/,
 	);
-	t.after(resumed.dispose);
-	resumed.resume(row.id);
-	assert.equal(get(resumed.settings).mode, "authorize");
-	resumed.settings.edit("authorizePassword", "new-password");
-	assert.equal(await resumed.settings.create(), true);
-	await until(() => completed.includes(row.id));
+	await setup.settings.create();
+	await until(() => completed.length);
+	assert.notEqual(keys[0], keys[1]);
 	assert.equal(get(f.root).catalog.length, 3);
-	assert.equal(get(f.root).setups.length, 0);
 	assert.equal(
-		(await f.repository.scope(row.id).getConfig()).publicKey,
-		pending.publicKey,
+		(await f.repository.scope(completed[0]).getConfig()).publicKey,
+		keys[1],
 	);
+	assert.equal(get(setup).open, false);
 });
 test("library selection is independent and vault unlock applies to all libraries; catalog renames retain identity", async (t) => {
 	const f = await fixture(t);
@@ -249,7 +223,11 @@ test("library selection is independent and vault unlock applies to all libraries
 	);
 	assert.equal(get(f.b).catalog[0].name, "Private");
 	await assert.rejects(
-		f.root.command("libraries.add", { name: "PRIVATE" }),
+		f.root.command("setup.open", {
+			name: "PRIVATE",
+			method: "create",
+			serverUrl: "https://clip.example",
+		}),
 		/already used/,
 	);
 	f.a.select("lib-1");
@@ -328,9 +306,13 @@ test("an unlocked library can authorize a new independent library on its server"
 			},
 		},
 	});
-	const id = await f.root.command("libraries.add", { name: "Team" });
-	await f.root.command("identity.create", {
-		libraryId: id,
+	const setupId = await f.root.command("setup.open", {
+		name: "Team",
+		method: "authorize",
+		authorizerLibraryId: "lib-0",
+	});
+	const result = await f.root.command("identity.create", {
+		setupId,
 		epoch: 0,
 		serverUrl: "https://clip.example",
 		password: "new-password",
@@ -338,7 +320,7 @@ test("an unlocked library can authorize a new independent library on its server"
 	});
 	assert.equal(granted.privateKey, f.keys[0].privateKey);
 	assert.notEqual(granted.publicKey, f.keys[0].publicKey);
-	assert.equal(get(f.root).libraries[id].session.unlocked, true);
+	assert.equal(get(f.root).libraries[result.libraryId].session.unlocked, true);
 	assert.equal(get(f.a).session.publicKey, f.keys[0].publicKey);
 });
 

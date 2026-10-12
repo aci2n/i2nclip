@@ -64,16 +64,21 @@ export function createRepository(indexedDB = globalThis.indexedDB) {
 					reject(tx.error || new Error("Local database read failed."));
 			});
 		},
-		async commit(entries, remove = [], clear = false) {
+		async commit(entries, remove = [], clear = false, { signal } = {}) {
 			await ready;
+			signal?.throwIfAborted();
 			return new Promise((resolve, reject) => {
 				const tx = database.transaction("vault", "readwrite");
 				active.add(tx);
+				const abort = () => tx.abort();
+				signal?.addEventListener("abort", abort, { once: true });
 				tx.oncomplete = () => {
+					signal?.removeEventListener("abort", abort);
 					active.delete(tx);
 					resolve();
 				};
 				tx.onabort = () => {
+					signal?.removeEventListener("abort", abort);
 					active.delete(tx);
 					reject(tx.error || new Error("Local database write canceled."));
 				};
@@ -132,9 +137,10 @@ export function createEncryptedRepository(storage) {
 		tail = result.catch(() => {});
 		return result;
 	};
-	async function write(action) {
+	async function write(action, check = () => {}, signal) {
 		return queue(async (captured) => {
 			requireKey();
+			check();
 			const next = structuredClone(data);
 			const changes = await action(next);
 			guard(captured);
@@ -145,9 +151,12 @@ export function createEncryptedRepository(storage) {
 				{ binary: true },
 			);
 			guard(captured);
+			check();
 			await storage.commit(
 				[["catalog", sealed], ...(changes?.entries || [])],
 				changes?.remove || [],
+				false,
+				{ signal },
 			);
 			guard(captured);
 			data = next;
@@ -372,11 +381,40 @@ export function createEncryptedRepository(storage) {
 			requireKey();
 			return structuredClone(data.jobs);
 		},
-		putLibrary(row) {
+		putLibrary(row, { check, signal } = {}) {
+			return write(
+				(next) => {
+					validateIdentity(next, row.id, row.identity || {});
+					next.libraries = next.libraries.filter((item) => item.id !== row.id);
+					next.libraries.push(row);
+				},
+				check,
+				signal,
+			);
+		},
+		cleanupSetups() {
+			if (
+				!rows().some(
+					(row) =>
+						!row.identity?.privateKey ||
+						row.setup ||
+						row.placeholder ||
+						Object.hasOwn(row.identity, "pendingRegistration"),
+				)
+			) {
+				return Promise.resolve();
+			}
 			return write((next) => {
-				validateIdentity(next, row.id, row.identity || {});
-				next.libraries = next.libraries.filter((item) => item.id !== row.id);
-				next.libraries.push(row);
+				const ids = next.libraries
+					.filter((row) => !row.identity?.privateKey)
+					.map((row) => row.id);
+				next.libraries = next.libraries.filter((row) => !ids.includes(row.id));
+				for (const row of next.libraries) {
+					delete row.setup;
+					delete row.placeholder;
+					delete row.identity.pendingRegistration;
+				}
+				return { remove: clearJobs(next, ids) };
 			});
 		},
 		importLibraries(records, discardIds = []) {
@@ -400,22 +438,9 @@ export function createEncryptedRepository(storage) {
 				row.name = name;
 			});
 		},
-		deleteLibraries(ids, replacement, onlySetups = false) {
+		deleteLibraries(ids) {
 			return write((next) => {
-				if (
-					onlySetups &&
-					next.libraries.some(
-						(row) => ids.includes(row.id) && row.identity?.privateKey,
-					)
-				) {
-					throw new Error(
-						"Setup completed. Keep the saved library and its recovery file.",
-					);
-				}
 				next.libraries = next.libraries.filter((row) => !ids.includes(row.id));
-				if (replacement) {
-					next.libraries.push(replacement);
-				}
 				return { remove: clearJobs(next, ids) };
 			});
 		},

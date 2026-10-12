@@ -15,9 +15,7 @@ const mode = $derived($pairing.active ? "pair" : $settings.mode);
 const authorizer = $derived(
 	$session.catalog?.find((row) => row.id === $settings.authorizerLibraryId),
 );
-const blocked = $derived(
-	$session.busy || $pairing.active || Boolean($session.pendingRegistration),
-);
+const blocked = $derived($session.busy || $pairing.active);
 </script>
 
 {#snippet notice(
@@ -44,12 +42,6 @@ const blocked = $derived(
 			settings.create();
 		}}
 	>
-		{#if $session.pendingRegistration}
-			<p id="pending-creation">
-				Your encrypted identity is saved. Retry registration with your chosen
-				registration method. You can close this page and return later.
-			</p>
-		{/if}
 		{#if method === "create"}
 			<div class="field">
 				<label for="otc">Invitation code</label>
@@ -73,21 +65,10 @@ const blocked = $derived(
 			disabled={$session.busy ||
 				(method === "authorize" && !authorizer?.unlocked)}
 		>
-			{$session.pendingRegistration ? "Retry registration" : "Create library"}
+			Create library
 		</button>
 		{#if mode === method}
 			{@render notice("create")}
-		{/if}
-		{#if $session.pendingRegistration}
-			<button
-				id="discard-creation"
-				type="button"
-				class="secondary danger"
-				disabled={$session.busy}
-				onclick={settings.discardCreation}
-			>
-				Discard pending creation
-			</button>
 		{/if}
 	</form>
 {/snippet}

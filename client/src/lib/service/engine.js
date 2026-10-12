@@ -18,7 +18,6 @@ const empty = (serverUrl) => ({
 		epoch: 0,
 		busy: false,
 		error: "",
-		pendingRegistration: null,
 	},
 	uploads: [],
 	media: {},
@@ -90,6 +89,7 @@ export function createServiceEngine(options) {
 		epoch: vaultEpoch,
 	};
 	const transientUploads = new Map();
+	const attempts = new Map();
 	const unlocked = () => vault.status === "unlocked";
 	function requireUnlocked() {
 		if (!unlocked()) {
@@ -145,16 +145,12 @@ export function createServiceEngine(options) {
 			return {
 				vault,
 				catalog: [],
-				setups: [],
+				setup: null,
 				libraries: {},
 				session: { ...empty("").session, ready: vault.ready },
 			};
 		}
-		const entries = [...rows.values()].map(({ id, name, setup }) => ({
-			id,
-			name,
-			setup,
-		}));
+		const entries = [...rows.values()].map(({ id, name }) => ({ id, name }));
 		return {
 			vault,
 			transientUploads: [...transientUploads].map(([id, entry]) => ({
@@ -164,9 +160,11 @@ export function createServiceEngine(options) {
 			catalog: entries.filter(
 				(row) => client.states.get(row.id)?.session.configured,
 			),
-			setups: entries.filter(
-				(row) => !client.states.get(row.id)?.session.configured,
-			),
+			setup: client.setup?.state
+				? { id: client.setup.id, ...client.setup.state }
+				: null,
+			defaultServerUrl,
+			session: { ...empty(defaultServerUrl).session, ready: true },
 			libraries: Object.fromEntries(
 				[...rows.keys()].map((id) => [
 					id,
@@ -260,6 +258,9 @@ export function createServiceEngine(options) {
 				vaultGuard(epoch);
 				options.signal.throwIfAborted();
 				if (!existing) {
+					if (value.saved) {
+						throw new Error("Library changed. Start pairing again.");
+					}
 					return null;
 				}
 				const destination = runtimes.get(existing.id);
@@ -300,52 +301,179 @@ export function createServiceEngine(options) {
 		}
 		return name;
 	}
-	async function add(
-		name,
-		serverUrl = defaultServerUrl,
-		setup,
-		placeholder = false,
-	) {
-		const epoch = vaultEpoch;
-		checkServer(serverUrl);
-		const row = {
-			...(placeholder ? { placeholder: true } : {}),
-			id: crypto.randomUUID(),
-			name: validateName(name),
-			identity: { serverUrl },
-			setup,
-		};
-		await repository.putLibrary(row);
-		vaultGuard(epoch);
-		const runtime = install(row);
-		await runtime.ready;
-		await notifyCatalog();
+	function closeSetup(client) {
+		const attempt = client.setup;
+		if (!attempt) {
+			return;
+		}
+		client.setup = null;
+		attempts.delete(attempt.id);
+		attempt.controller.abort(new DOMException("Setup closed.", "AbortError"));
+		attempt.sourceScope?.operation.dispose();
+		attempt.connection.disconnect();
+		attempt.runtime.dispose();
 		publish();
-		return row.id;
+	}
+	async function openSetup(client, payload) {
+		closeSetup(client);
+		const epoch = vaultEpoch;
+		const name = validateName(payload.name);
+		if (!["create", "authorize", "pair"].includes(payload.method)) {
+			throw new Error("Choose a setup method.");
+		}
+		const authorizer =
+			payload.method === "authorize"
+				? runtimes.get(payload.authorizerLibraryId)
+				: null;
+		if (payload.method === "authorize" && !authorizer) {
+			throw new Error("Choose an unlocked authorizing library.");
+		}
+		const serverUrl =
+			payload.method === "authorize"
+				? authorizer.registrationServer()
+				: payload.serverUrl || defaultServerUrl;
+		checkServer(serverUrl);
+		const attempt = {
+			id: crypto.randomUUID(),
+			client,
+			controller: new AbortController(),
+			state: empty(serverUrl),
+			completed: null,
+		};
+		client.setup = attempt;
+		attempts.set(attempt.id, attempt);
+		if (authorizer) {
+			attempt.sourceScope = authorizer.pairingDestination({
+				onInvalidated: () => closeSetup(client),
+			});
+		}
+		const check = () => {
+			vaultGuard(epoch);
+			requireUnlocked();
+			attempt.controller.signal.throwIfAborted();
+			if (client.setup !== attempt || !clients.has(client.id)) {
+				throw new Error("Setup context ended. Try again.");
+			}
+		};
+		let config = { serverUrl };
+		const temporaryRepository = {
+			getConfig: async () => config,
+			jobs: async () => [],
+			close() {
+				config = {};
+			},
+			async setConfig(identity) {
+				check();
+				if (!identity.privateKey) {
+					throw new Error("Setup requires a completed identity.");
+				}
+				await serialize(async () => {
+					check();
+					const row = {
+						id: crypto.randomUUID(),
+						name: validateName(name),
+						identity,
+					};
+					await repository.putLibrary(row, {
+						check,
+						signal: attempt.controller.signal,
+					});
+					check();
+					await install(row).ready;
+					check();
+					config = identity;
+					attempt.completed = { outcome: "saved", libraryId: row.id };
+					await notifyCatalog();
+					publish();
+				});
+			},
+		};
+		attempt.runtime = createLibraryRuntime({
+			...options,
+			repository: temporaryRepository,
+			libraryId: attempt.id,
+			authorizeRegistration: async (id, publicKey, _target, signal) => {
+				check();
+				const source = runtimes.get(id);
+				if (!source || source !== authorizer) {
+					throw new Error("Choose an unlocked authorizing library.");
+				}
+				await attempt.sourceScope.withIdentity(() => true);
+				await source.authorizeKey(publicKey, serverUrl, signal);
+				attempt.sourceScope.operation.signal.throwIfAborted();
+				check();
+			},
+			resolvePairing: async (value) => {
+				check();
+				const existing = existingIdentity(
+					await repository.libraries(),
+					attempt.id,
+					value,
+				);
+				check();
+				if (!existing) {
+					if (value.saved) {
+						throw new Error("Library changed. Start pairing again.");
+					}
+					return null;
+				}
+				const destination = runtimes.get(existing.id);
+				if (!destination) {
+					throw new Error("Library changed. Start pairing again.");
+				}
+				return {
+					outcome: value.saved ? "saved" : "existing",
+					libraryId: existing.id,
+					...destination.pairingDestination(value),
+				};
+			},
+		});
+		attempt.connection = attempt.runtime.connect((message) => {
+			if (client.setup !== attempt || !unlocked()) {
+				return;
+			}
+			if (message.type === "snapshot") {
+				attempt.state = message.value;
+			} else if (message.type === "state") {
+				attempt.state = { ...attempt.state, [message.topic]: message.value };
+			} else if (message.type === "reply") {
+				send(client, {
+					...message,
+					...(message.value === true && attempt.completed
+						? { value: attempt.completed }
+						: {}),
+				});
+				return;
+			} else {
+				return;
+			}
+			publish();
+		});
+		await attempt.runtime.ready;
+		check();
+		publish();
+		return attempt.id;
 	}
 	async function activate() {
 		const captured = vaultEpoch;
+		await repository.cleanupSetups?.();
 		const stored = await repository.libraries();
 		const jobs = await repository.jobs();
 		vaultGuard(captured);
 		// Validate every identity before exposing any library to pages.
 		for (const row of stored) {
-			for (const value of [row.identity, row.identity?.pendingRegistration]) {
-				if (
-					value?.privateKey &&
-					(await loadKey(value.privateKey)).registrationKey !== value.publicKey
-				) {
-					throw new Error("Invalid saved identity.");
-				}
-				vaultGuard(captured);
+			const value = row.identity;
+			if (
+				value?.privateKey &&
+				(await loadKey(value.privateKey)).registrationKey !== value.publicKey
+			) {
+				throw new Error("Invalid saved identity.");
 			}
+			vaultGuard(captured);
 		}
 		order = Math.max(0, ...jobs.map((job) => job.order || 0));
 		for (const row of stored) {
 			install(row);
-		}
-		if (!stored.length) {
-			await add("Personal", defaultServerUrl, undefined, true);
 		}
 		await Promise.all([...runtimes.values()].map((runtime) => runtime.ready));
 	}
@@ -361,6 +489,9 @@ export function createServiceEngine(options) {
 		}
 	}
 	function clearRuntimes() {
+		for (const client of clients.values()) {
+			closeSetup(client);
+		}
 		for (const id of [...runtimes.keys()]) {
 			uninstall(id);
 		}
@@ -478,18 +609,8 @@ export function createServiceEngine(options) {
 				}));
 			}
 			const saved = await repository.libraries();
-			const placeholders = saved.filter(
-				(row) =>
-					row.placeholder &&
-					!row.setup &&
-					!row.identity?.privateKey &&
-					!row.identity?.pendingRegistration &&
-					![...clients.values()].some(
-						(client) => client.states.get(row.id)?.pairing.active,
-					),
-			);
-			const discardIds = placeholders.map((row) => row.id);
-			const existing = saved.filter((row) => !discardIds.includes(row.id));
+			const discardIds = [];
+			const existing = saved;
 			const records = [];
 			for (const row of manifest.libraries) {
 				const publicKey = (await loadKey(row.privateKey)).registrationKey;
@@ -520,7 +641,6 @@ export function createServiceEngine(options) {
 						publicKey,
 						privateKey: row.privateKey,
 						identityGeneration: crypto.randomUUID(),
-						pendingRegistration: null,
 					},
 				});
 			}
@@ -573,6 +693,7 @@ export function createServiceEngine(options) {
 		if (!client) {
 			return;
 		}
+		closeSetup(client);
 		clients.delete(id);
 		for (const connection of client.connections.values()) {
 			connection.disconnect();
@@ -580,18 +701,10 @@ export function createServiceEngine(options) {
 	}
 	async function catalogCommand(name, payload) {
 		const epoch = vaultEpoch;
-		const onlySetups = name === "libraries.discardSetup";
-		if (name === "libraries.add" || name === "libraries.beginSetup") {
-			if (
-				name === "libraries.beginSetup" &&
-				!["create", "authorize", "pair", "restore"].includes(payload.method)
-			) {
-				throw new Error("Choose a setup method.");
+		if (name === "libraries.reset") {
+			for (const client of clients.values()) {
+				closeSetup(client);
 			}
-			return add(payload.name, payload.serverUrl, {
-				method: payload.method || "create",
-				authorizerLibraryId: payload.authorizerLibraryId || "",
-			});
 		}
 		if (name === "libraries.rename") {
 			const row = (await repository.libraries()).find(
@@ -608,15 +721,6 @@ export function createServiceEngine(options) {
 			publish();
 			return true;
 		}
-		if (name === "libraries.discardSetup") {
-			const config = await repository.scope(payload.libraryId).getConfig();
-			if (config.privateKey) {
-				throw new Error(
-					"Setup completed. Keep the saved library and its recovery file.",
-				);
-			}
-			name = "libraries.forget";
-		}
 		if (name === "libraries.forget" || name === "libraries.reset") {
 			const ids =
 				name === "libraries.reset" ? [...rows.keys()] : [payload.libraryId];
@@ -626,20 +730,11 @@ export function createServiceEngine(options) {
 			if (saved.length !== ids.length) {
 				throw new Error("Library is no longer saved.");
 			}
-			const replacement =
-				ids.length === rows.size
-					? {
-							id: crypto.randomUUID(),
-							name: "Personal",
-							placeholder: true,
-							identity: { serverUrl: defaultServerUrl },
-						}
-					: null;
 			for (const id of ids) {
 				uninstall(id);
 			}
 			try {
-				await repository.deleteLibraries(ids, replacement, onlySetups);
+				await repository.deleteLibraries(ids);
 				vaultGuard(epoch);
 			} catch (error) {
 				vaultGuard(epoch);
@@ -649,9 +744,6 @@ export function createServiceEngine(options) {
 				await Promise.all(saved.map((row) => runtimes.get(row.id).ready));
 				publish();
 				throw error;
-			}
-			if (replacement) {
-				await install(replacement).ready;
 			}
 
 			await notifyCatalog();
@@ -790,6 +882,54 @@ export function createServiceEngine(options) {
 						const commandEpoch = vaultEpoch;
 						if (message.payload?.vaultEpoch !== undefined) {
 							vaultGuard(message.payload.vaultEpoch);
+						}
+						if (
+							message.name === "setup.open" ||
+							message.name === "setup.close"
+						) {
+							let value = true;
+							if (message.name === "setup.open") {
+								value = await openSetup(client, message.payload || {});
+							} else {
+								closeSetup(client);
+							}
+							send(client, {
+								type: "reply",
+								requestId: message.requestId,
+								value,
+							});
+							return;
+						}
+						if (message.payload?.setupId) {
+							const attempt = attempts.get(message.payload.setupId);
+							if (
+								!attempt ||
+								attempt.client !== client ||
+								client.setup !== attempt
+							) {
+								throw new Error("Setup context ended. Try again.");
+							}
+							if (
+								![
+									"identity.create",
+									"pairing.receive",
+									"pairing.approve",
+									"pairing.cancel",
+									"pairing.rejectVerification",
+								].includes(message.name)
+							) {
+								throw new Error("Unknown setup command.");
+							}
+							await attempt.connection.receive({
+								...message,
+								instanceId: attempt.runtime.instanceId,
+								payload: {
+									...message.payload,
+									serverUrl: attempt.state.session.serverUrl,
+									epoch: attempt.state.session.epoch,
+								},
+							});
+							return;
 						}
 						if (message.name?.startsWith("libraries.")) {
 							const value = await serialize(async () => {

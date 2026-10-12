@@ -23,7 +23,7 @@ export function createLibraryClient(
 	let selected = initialId;
 	let selection = 0;
 	const unsubscribe = client.subscribe((value) => {
-		const entries = [...(value.catalog || []), ...(value.setups || [])];
+		const entries = value.catalog || [];
 		if (jobId) {
 			const destination = Object.entries(value.libraries || {}).find(
 				([, state]) => state.uploads.some((job) => job.id === jobId),
@@ -34,8 +34,17 @@ export function createLibraryClient(
 				onSelect(selected);
 			}
 		}
-		if (entries.length && !entries.some((row) => row.id === selected)) {
+		if (
+			entries.length &&
+			!value.setup &&
+			!entries.some((row) => row.id === selected)
+		) {
 			selected = entries[0].id;
+			selection++;
+			onSelect(selected);
+		}
+		if (!entries.length && value.vault?.status === "unlocked" && selected) {
+			selected = undefined;
 			selection++;
 			onSelect(selected);
 		}
@@ -61,7 +70,7 @@ export function createLibraryClient(
 					ready: value.vault.ready,
 					configured: false,
 					unlocked: false,
-					serverUrl: "",
+					serverUrl: value.defaultServerUrl || "",
 					epoch: value.vault.epoch,
 					busy: value.vault.busy,
 					error: value.vault.error,
@@ -80,11 +89,7 @@ export function createLibraryClient(
 		subscribe: state.subscribe,
 		id: () => selected,
 		select(id) {
-			if (
-				![...get(client).catalog, ...(get(client).setups || [])].some(
-					(row) => row.id === id,
-				)
-			) {
+			if (!get(client).catalog.some((row) => row.id === id)) {
 				throw new Error("Library is no longer saved.");
 			}
 			selected = id;
@@ -96,10 +101,8 @@ export function createLibraryClient(
 				instanceId: `${get(client).instanceId}:${get(client).libraries[id].runtimeId}:${id}:${selection}`,
 				clientId: get(client).clientId,
 				libraryId: id,
-				libraryName: [
-					...get(client).catalog,
-					...(get(client).setups || []),
-				].find((row) => row.id === id)?.name,
+				libraryName: [...get(client).catalog].find((row) => row.id === id)
+					?.name,
 				catalog: get(client).catalog.map((row) => ({
 					...row,
 					...get(client).libraries[row.id]?.session,

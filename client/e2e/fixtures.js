@@ -276,17 +276,16 @@ function installBrowser() {
 						instanceId = message.instanceId;
 						const libraryId =
 							new URLSearchParams(location.search).get("library") ||
-							message.value.catalog?.[0]?.id ||
-							message.value.setups?.[0]?.id;
+							message.value.catalog?.[0]?.id;
 						const selected =
 							message.value.libraries?.[libraryId] || message.value;
-						epoch = selected.session.epoch;
+						epoch = selected.session?.epoch || 0;
 						if (name === "state") {
 							resolve({
 								...selected,
 								vault: message.value.vault,
 								catalog: message.value.catalog,
-								setups: message.value.setups,
+								setup: message.value.setup,
 								libraries: message.value.libraries,
 							});
 							return;

@@ -127,7 +127,7 @@ test("all tabs unlock and lock together; owner restart hides every library until
 	const f = await fixture(t);
 	assert.equal(get(f.first).vault.status, "uninitialized");
 	await assert.rejects(
-		f.first.command("libraries.add", { name: "Forbidden" }),
+		f.first.command("setup.open", { name: "Forbidden", method: "create" }),
 		/Unlock/,
 	);
 	await f.first.command("vault.initialize", { password: "master-password" });
@@ -472,7 +472,7 @@ test("recovery import fails atomically and oversized files are rejected before r
 	});
 	assert.equal(get(f.first).catalog[0].name, "Personal");
 	assert.equal(result.imported.length, 1);
-	assert.equal(get(f.first).setups.length, 0);
+	assert.equal(get(f.first).setup, null);
 });
 
 test("locking clears unsubmitted setup names, servers and invitation drafts", async (t) => {
@@ -482,7 +482,7 @@ test("locking clears unsubmitted setup names, servers and invitation drafts", as
 	const setup = createSetup(
 		f.first,
 		{},
-		() => get(f.first).setups[0]?.id,
+		() => undefined,
 		() => {},
 	);
 	t.after(setup.dispose);
@@ -492,7 +492,7 @@ test("locking clears unsubmitted setup names, servers and invitation drafts", as
 	setup.settings.edit("otc", "private-invitation");
 	await f.second.command("vault.lock");
 	assert.equal(get(setup).open, false);
-	assert.equal(get(setup.settings).libraryName, "");
+	assert.notEqual(get(setup.settings).libraryName, "Private draft");
 	assert.equal(get(setup.settings).server, "");
 	assert.equal(get(setup.settings).otc, "");
 });
@@ -578,4 +578,193 @@ test("duplicate pairing identity lookup uses origin and atomic writes reject sim
 		}),
 		undefined,
 	);
+});
+
+test("temporary setup is private to its connection and final commits resolve a two-page name race", async (t) => {
+	const f = await fixture(t);
+	await f.first.command("vault.initialize", { password: "master-password" });
+	const responses = [deferred(), deferred()];
+	let posts = 0;
+	t.mock.method(globalThis, "fetch", async () => responses[posts++].promise);
+	const payload = {
+		name: "Same name",
+		method: "create",
+		serverUrl: "https://clip.example",
+	};
+	const firstId = await f.first.command("setup.open", payload);
+	const secondId = await f.second.command("setup.open", payload);
+	assert.equal(get(f.first).setup.id, firstId);
+	assert.equal(get(f.second).setup.id, secondId);
+	assert.equal(JSON.stringify(get(f.first)).includes("privateKey"), false);
+	await assert.rejects(
+		f.second.command("pairing.cancel", { setupId: firstId }),
+		/context ended/i,
+	);
+	const creating = [
+		f.first.command("identity.create", { setupId: firstId, otc: "one" }),
+		f.second.command("identity.create", { setupId: secondId, otc: "two" }),
+	];
+	const results = Promise.allSettled(creating);
+	await until(() => posts === 2);
+	assert.deepEqual(await f.repository.libraries(), []);
+	for (const response of responses) {
+		response.resolve(new Response(null, { status: 204 }));
+	}
+	const settled = await results;
+	assert.equal(settled.filter((v) => v.status === "fulfilled").length, 1);
+	assert.match(
+		settled.find((v) => v.status === "rejected").reason.message,
+		/already used.*No recovery identity was retained/,
+	);
+	assert.equal((await f.repository.libraries()).length, 1);
+});
+
+for (const ending of ["close", "lock", "disconnect"]) {
+	test(`temporary setup ${ending} prevents a late registration from saving`, async (t) => {
+		const f = await fixture(t);
+		await f.first.command("vault.initialize", { password: "master-password" });
+		const response = deferred();
+		let posted;
+		t.mock.method(globalThis, "fetch", async () => {
+			posted = true;
+			return response.promise;
+		});
+		const setupId = await f.first.command("setup.open", {
+			name: "Temporary",
+			method: "create",
+			serverUrl: "https://clip.example",
+		});
+		const creating = f.first
+			.command("identity.create", { setupId, otc: "invitation" })
+			.catch((error) => error);
+		await until(() => posted);
+		if (ending === "close") {
+			await f.first.command("setup.close");
+		} else if (ending === "lock") {
+			await f.second.command("vault.lock");
+		} else {
+			f.first.dispose();
+		}
+		response.resolve(new Response(null, { status: 204 }));
+		assert.ok((await creating) instanceof Error);
+		if (ending === "lock") {
+			await f.second.command("vault.unlock", { password: "master-password" });
+		}
+		assert.deepEqual(await f.repository.libraries(), []);
+		assert.equal(get(f.second).catalog.length, 0);
+	});
+}
+
+test("failed setup commit leaves an empty catalog and no transient identity in encrypted storage", async (t) => {
+	const f = await fixture(t);
+	await f.first.command("vault.initialize", { password: "master-password" });
+	t.mock.method(
+		globalThis,
+		"fetch",
+		async () => new Response(null, { status: 204 }),
+	);
+	const setupId = await f.first.command("setup.open", {
+		name: "Temporary",
+		method: "create",
+		serverUrl: "https://clip.example",
+	});
+	const before = structuredClone([...f.storage.records]);
+	f.storage.commit = async () => {
+		throw new Error("disk full");
+	};
+	await assert.rejects(
+		f.first.command("identity.create", { setupId, otc: "invitation" }),
+		/disk full.*invitation may have been used/,
+	);
+	assert.deepEqual([...f.storage.records], before);
+	assert.deepEqual(await f.repository.libraries(), []);
+	assert.equal(get(f.first).catalog.length, 0);
+});
+
+test("activation atomically removes unfinished rows and sources, preserving completed identities despite stale markers", async (t) => {
+	const f = await fixture(t);
+	await f.first.command("vault.initialize", { password: "master-password" });
+	const key = await generatePrivateKey();
+	const identity = {
+		...key,
+		serverUrl: "https://clip.example",
+		identityGeneration: "stable",
+		pendingRegistration: { ...key },
+	};
+	await f.repository.putLibrary({
+		id: "complete",
+		name: "Keep",
+		setup: { method: "create" },
+		placeholder: true,
+		identity,
+	});
+	await f.repository.putLibrary({
+		id: "unfinished",
+		name: "Drop",
+		setup: { method: "create" },
+		identity: { pendingRegistration: { ...key } },
+	});
+	await f.repository
+		.scope("unfinished")
+		.putJob(
+			{ id: "old-job", status: "awaiting" },
+			{ blob: new Blob(["secret"]), name: "old.txt" },
+		);
+	await f.first.command("vault.lock");
+	const before = structuredClone([...f.storage.records]);
+	const commit = f.storage.commit;
+	f.storage.commit = async () => {
+		throw new Error("cleanup failed");
+	};
+	await assert.rejects(
+		f.first.command("vault.unlock", { password: "master-password" }),
+		/cleanup failed/,
+	);
+	assert.equal(get(f.first).vault.status, "locked");
+	assert.equal(get(f.first).catalog.length, 0);
+	assert.deepEqual([...f.storage.records], before);
+	f.storage.commit = commit;
+	await f.first.command("vault.unlock", { password: "master-password" });
+	const rows = await f.repository.libraries();
+	assert.equal(rows.length, 1);
+	assert.equal(rows[0].id, "complete");
+	assert.equal(rows[0].identity.privateKey, key.privateKey);
+	assert.equal(rows[0].identity.identityGeneration, "stable");
+	assert.equal(rows[0].setup, undefined);
+	assert.equal(rows[0].identity.pendingRegistration, undefined);
+	assert.deepEqual(await f.repository.jobs(), []);
+	assert.equal(f.storage.records.has("source:old-job"), false);
+});
+
+test("closing setup while final encryption/save is pending checks ownership before writing", async (t) => {
+	const f = await fixture(t);
+	await f.first.command("vault.initialize", { password: "master-password" });
+	t.mock.method(
+		globalThis,
+		"fetch",
+		async () => new Response(null, { status: 204 }),
+	);
+	const save = f.repository.putLibrary;
+	const saving = deferred();
+	let entered;
+	f.repository.putLibrary = async (row, options) => {
+		entered = true;
+		await saving.promise;
+		return save(row, options);
+	};
+	const setupId = await f.first.command("setup.open", {
+		name: "Temporary",
+		method: "create",
+		serverUrl: "https://clip.example",
+	});
+	const creating = f.first
+		.command("identity.create", { setupId, otc: "invitation" })
+		.catch((error) => error);
+	await until(() => entered);
+	await f.first.command("setup.close");
+	saving.resolve();
+	assert.ok((await creating) instanceof Error);
+	await tick();
+	assert.deepEqual(await f.repository.libraries(), []);
+	assert.equal(get(f.first).catalog.length, 0);
 });

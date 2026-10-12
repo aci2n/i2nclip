@@ -13,7 +13,7 @@ in its URL. Switching does not invalidate the selected library's accepted jobs.
 Each client scope has one master password and one encrypted local vault. The
 `i2nclip-vault` IndexedDB database (version 1, `vault` store) holds a password-wrapped
 random vault key, an encrypted catalog/job manifest, and separately encrypted
-binary sources. Names, servers, identities, pending registrations and uploads are
+binary sources. Names, servers, completed identities and uploads are
 encrypted at rest. Only cryptographic parameters and opaque record identifiers
 remain outside encryption. The greenfield schema does not migrate former databases
 or accept the former recovery format; reset development storage for this version.
@@ -27,7 +27,8 @@ There is no idle timeout. Web and extension vaults remain independent.
 
 | State | Owner | Lifetime |
 | --- | --- | --- |
-| Names, servers, identities, pending registration | Service | Encrypted IndexedDB |
+| Names, servers, completed identities | Service | Encrypted IndexedDB |
+| Submitted setup, generated key and registration | Service, per connection | Temporary owner memory |
 | Unlocked private key, epoch, cancellation | Service | Memory only |
 | Upload jobs, unfinished sources, retries | Service | Encrypted IndexedDB |
 | Upload progress, pairing, media metadata/mutations | Service | Memory |
@@ -42,8 +43,7 @@ There is no idle timeout. Web and extension vaults remain independent.
 The client interface is `ready`, `command(name, payload)`, `subscribe(listener)`,
 and `dispose()`. Commands are requests, never direct access to service storage or
 credentials. Each connection receives an initial snapshot and ordered events.
-Unlocked snapshots contain vault status, the completed-library catalog, provisional `setups`, and per-library session, upload, pairing, media
-and that client's view state.
+Unlocked snapshots contain vault status, the completed-library catalog, per-library session, upload, pairing, media and view state, and a sanitized `setup` belonging only to the requesting connection. Empty catalogs have no saved placeholders.
 Content and recovery files are unicast replies. Passwords and private keys are
 never part of snapshots. The UI uses `unlocked`, not a private-key flag.
 
@@ -68,9 +68,7 @@ page; originals are accepted first. Extension video preparation runs in backgrou
 
 Searches remain independent. Canonical media changes broadcast to every client;
 affected searches refresh from their first page. Object URLs, playback and save
-dialogs remain local and are disposed on invalidation. Pairing state and controls
-are shared by all clients. Closing a page leaves pairing running in the service;
-explicit cancellation, expiry, identity changes or owner shutdown end it.
+dialogs remain local and are disposed on invalidation. Sender pairing state and controls are shared by saved-library clients. Closing a sender page leaves its pairing running in the service; explicit cancellation, expiry, identity changes or owner shutdown end it. Temporary receiver pairing belongs to its initiating connection and ends with setup disposal.
 
 Web uses a stable worker URL/name. Explicit detach plus five-second heartbeats
 and a thirty-second connection lease clean up vanished or suspended pages.
@@ -80,7 +78,7 @@ events. Neither transport grants an independent page authority over state.
 ## Commands and replies
 
 All identity-dependent commands carry a library ID, observed epoch and runtime
-instance. Catalog commands add, rename or forget entries. `vault.export` and
+instance. Catalog commands rename or forget saved entries. Setup actions carry an owner-issued `setupId`, scoped to the submitting connection and vault epoch. `vault.export` and
 `media.content` return a Blob (content also returns optional audio art); neither
 broadcasts binary content. Mutation errors have `name` and `message` and follow a
 fresh snapshot. The shared JSDoc wire types are in `service/contract.js`.
@@ -93,8 +91,9 @@ fresh snapshot. The shared JSDoc wire types are in `service/contract.js`.
 | `vault.previewRecovery`, `importRecovery` | recovery Blob/password; names/servers preview or imported IDs/skipped count |
 | `vault.reset` | no arguments; delete all local vault data |
 | `vault.contextUpload` | transient request ID and destination library; accept retained request |
-| `identity.create` | server URL, invitation or authorizer ID; success after durable save |
-| `identity.setServer`, `reset`, `discardCreation` | new URL or no arguments; success |
+| `identity.create` | setup ID, invitation or authorizer ID; `{ outcome: "saved", libraryId }` after durable save |
+| `identity.setServer`, `reset` | new URL or no arguments; success |
+| `setup.open`, `close` | name, method, server/authorizer or no arguments; temporary owner session ID / disposal |
 | `view.open`, `close`, `search`, `more` | view ID and optional submitted query |
 | `media.content`, `remove` | media ID; verified content or success |
 | `media.retag` | media ID, tags and observed metadata hash; success/conflict |
@@ -112,8 +111,11 @@ no API or server database changes are needed.
 Additional libraries can be created using an unlocked authorizing library on the
 same server. The authenticated registration endpoint signs the new public-key
 JSON with the existing library's key. No key or file access is shared between
-these independent libraries by registration. Pairing receives into a fresh catalog
-entry and saves its identity in the encrypted vault before acknowledgment.
+these independent libraries by registration. Pairing receives into a temporary owner runtime, resolves a saved destination or commits one completed identity, then acknowledges using that destination's guarded identity context. Completion replies contain `{ outcome: "saved" | "existing", libraryId }`; a lost acknowledgment adds `confirmation: "uncertain"`. Only the receiver page selects the destination after the reply. Setup is disposed after the reply settles.
+
+Form state lives in the page. Closing Add Library, leaving Settings, changing selection, locking/resetting, or disconnecting ends unfinished setup and clears its fields. Owner resources are allocated lazily with `setup.open`; generated registration keys never enter durable storage before server success. Registration rejection retains no key, and a new submission generates a fresh one. Lost replies and final local commit failures report that the invitation may have been used and require a fresh invitation/restart. There is no saved retry key, resume or discard-pending flow. Server registration and local storage cannot be atomic.
+
+Final commits recheck name uniqueness, vault epoch and attempt ownership. Authorization uses the selected saved runtime's server and identity guard. Network pairing and approval do not hold the engine's catalog queue. Unlock removes old unfinished rows and their encrypted sources atomically, preserves completed identities while clearing obsolete setup markers, and publishes only after cleanup and validation succeed.
 
 Unlocked extension context menus list named library destinations. While locked,
 generic upload actions open unlock and retain only an in-memory source request.

@@ -1,5 +1,5 @@
 import { get, writable } from "svelte/store";
-import { isKeyRegistered, registerKey } from "../api.js";
+import { registerKey } from "../api.js";
 import { loadKey } from "../protocol/crypto.js";
 import { generatePrivateKey } from "../protocol/identity.js";
 import { checkServer } from "../protocol/server.js";
@@ -28,7 +28,6 @@ export function createIdentity(
 		privateKey: "",
 		publicKey: "",
 		configured: false,
-		pendingRegistration: null,
 		identityGeneration: null,
 		epoch,
 		busy: false,
@@ -39,13 +38,9 @@ export function createIdentity(
 		state.set({
 			...get(state),
 			...config,
-			serverUrl:
-				config.pendingRegistration?.serverUrl ||
-				config.serverUrl ||
-				defaultServerUrl,
+			serverUrl: config.serverUrl || defaultServerUrl,
 			publicKey: config.publicKey || "",
 			configured: Boolean(config.privateKey),
-			pendingRegistration: config.pendingRegistration || null,
 			identityGeneration: config.identityGeneration || null,
 			privateKey,
 			epoch,
@@ -121,7 +116,6 @@ export function createIdentity(
 			privateKey: key,
 			publicKey: loaded.registrationKey,
 			identityGeneration: crypto.randomUUID(),
-			pendingRegistration: null,
 		};
 		await repository.setConfig(next);
 		signal.throwIfAborted();
@@ -171,78 +165,39 @@ export function createIdentity(
 				if (!otc.trim() && !authorizerLibraryId) {
 					throw new Error("Enter an invitation code from the admin.");
 				}
-				let pending = config.pendingRegistration;
-				const retry = Boolean(pending);
-				let key;
-				if (pending) {
-					if (pending.serverUrl !== serverUrl) {
-						throw new Error(
-							"Retry creation on its original server, or discard the pending creation first.",
-						);
-					}
-					key = pending.privateKey;
-					if ((await loadKey(key)).registrationKey !== pending.publicKey) {
-						throw new Error("Invalid pending identity.");
-					}
-				} else {
-					const created = await generatePrivateKey();
-					key = created.privateKey;
-					pending = {
-						serverUrl,
-						publicKey: created.publicKey,
-						privateKey: key,
-						method: authorizerLibraryId ? "authorize" : "create",
-						authorizerLibraryId: authorizerLibraryId || "",
-					};
-					signal.throwIfAborted();
-					await repository.setConfig({
-						...config,
-						pendingRegistration: pending,
-					});
-					config = { ...config, pendingRegistration: pending };
-					publish();
-				}
+				const created = await generatePrivateKey();
 				signal.throwIfAborted();
 				try {
-					if (
-						!retry ||
-						!(await isKeyRegistered({ serverUrl, privateKey: key, signal }))
-					) {
-						if (authorizerLibraryId) {
-							if (!authorizeRegistration) {
-								throw new Error("Authenticated registration is unavailable.");
-							}
-							await authorizeRegistration(
-								authorizerLibraryId,
-								pending.publicKey,
-								serverUrl,
-								signal,
-							);
-						} else {
-							await registerKey({
-								serverUrl,
-								publicKey: pending.publicKey,
-								otc,
-								signal,
-							});
+					if (authorizerLibraryId) {
+						if (!authorizeRegistration) {
+							throw new Error("Authenticated registration is unavailable.");
 						}
+						await authorizeRegistration(
+							authorizerLibraryId,
+							created.publicKey,
+							serverUrl,
+							signal,
+						);
+					} else {
+						await registerKey({
+							serverUrl,
+							publicKey: created.publicKey,
+							otc,
+							signal,
+						});
 					}
+					signal.throwIfAborted();
+					await save(serverUrl, created.privateKey, signal);
 				} catch (error) {
 					signal.throwIfAborted();
 					throw new Error(
-						`Registration failed: ${error.message}. Your encrypted identity is saved. Check your registration method and retry registration.`,
+						`Registration or local save failed: ${error.message}. The invitation may have been used. No recovery identity was retained; obtain a fresh invitation and restart.`,
 					);
 				}
-				await save(serverUrl, key, signal);
 			}),
 		setServer: (serverUrl) =>
 			mutate(async (signal) => {
 				checkServer(serverUrl);
-				if (config.pendingRegistration) {
-					throw new Error(
-						"Finish or discard the pending creation before changing servers.",
-					);
-				}
 				await repository.setConfig(
 					{ ...config, serverUrl },
 					{ clearUploads: true },
@@ -250,11 +205,6 @@ export function createIdentity(
 				signal.throwIfAborted();
 				config = { ...config, serverUrl };
 				privateKey = config.privateKey || "";
-			}),
-		discardCreation: () =>
-			mutate(async () => {
-				config = { ...config, pendingRegistration: null };
-				await repository.setConfig(config);
 			}),
 		reset: () =>
 			mutate(
@@ -278,10 +228,8 @@ export function createIdentity(
 				destination = await mutate(async (ownSignal) => {
 					signal.throwIfAborted();
 					checkServer(serverUrl);
-					if (config.privateKey || config.pendingRegistration) {
-						throw new Error(
-							"A library or pending creation is already configured.",
-						);
+					if (config.privateKey) {
+						throw new Error("A library is already configured.");
 					}
 					if ((await loadKey(key)).registrationKey !== publicKey) {
 						throw new Error("Invalid paired identity.");
@@ -301,6 +249,16 @@ export function createIdentity(
 					}
 					try {
 						await save(serverUrl, key, AbortSignal.any([ownSignal, signal]));
+						resolved = await resolvePairing?.({
+							serverUrl,
+							publicKey,
+							signal,
+							onInvalidated,
+							saved: true,
+						});
+						if (resolved) {
+							return resolved;
+						}
 					} catch (error) {
 						if (!(error instanceof ExistingLibraryError) || !resolvePairing) {
 							throw error;

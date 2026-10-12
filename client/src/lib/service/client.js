@@ -19,7 +19,6 @@ export function createServiceClient(
 			configured: false,
 			unlocked: false,
 			serverUrl: "",
-			pendingRegistration: null,
 			busy: false,
 			error: "",
 			epoch: 0,
@@ -90,11 +89,12 @@ export function createServiceClient(
 		if (message.type === "snapshot") {
 			for (const [id, job] of pending) {
 				if (
-					job.libraryId &&
-					(!message.value.libraries?.[job.libraryId] ||
-						(job.runtimeId &&
-							job.runtimeId !==
-								message.value.libraries[job.libraryId].runtimeId))
+					(job.setupId && message.value.setup?.id !== job.setupId) ||
+					(job.libraryId &&
+						(!message.value.libraries?.[job.libraryId] ||
+							(job.runtimeId &&
+								job.runtimeId !==
+									message.value.libraries[job.libraryId].runtimeId)))
 				) {
 					pending.delete(id);
 					job.reject(
@@ -254,6 +254,7 @@ export function createServiceClient(
 			pending.set(requestId, {
 				resolve,
 				reject,
+				setupId: payload.setupId,
 				libraryId: name.startsWith("libraries.") ? null : payload.libraryId,
 				runtimeId: get(state).libraries?.[payload.libraryId]?.runtimeId,
 			});

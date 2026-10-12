@@ -3,7 +3,7 @@ import { defaultLibraryName } from "./library-name.js";
 
 export function createSettings(
 	session,
-	platform,
+	_platform,
 	{ followServer = true } = {},
 ) {
 	const initial = {
@@ -31,15 +31,10 @@ export function createSettings(
 			running = false;
 			state.set({
 				...initial,
-				mode:
-					value.pendingRegistration?.method ||
-					(value.catalog?.length ? "authorize" : "create"),
-				authorizerLibraryId:
-					value.pendingRegistration?.authorizerLibraryId ||
-					value.catalog?.[0]?.id ||
-					"",
+				mode: value.catalog?.length ? "authorize" : "create",
+				authorizerLibraryId: value.catalog?.[0]?.id || "",
 				libraryName:
-					(value.configured || value.pendingRegistration) && value.libraryName
+					value.configured && value.libraryName
 						? value.libraryName
 						: defaultLibraryName(value.catalog),
 				...drafts.get(libraryId),
@@ -131,25 +126,6 @@ export function createSettings(
 					}),
 				"Library created. Download your recovery file before uploading.",
 				"Creating library…",
-				{ otc: "" },
-			);
-		},
-		discardCreation() {
-			if (
-				disposed ||
-				running ||
-				get(session).busy ||
-				!platform.confirm(
-					"Discard this pending identity? Its invitation may already be used, and any library registered with this identity will become inaccessible.",
-				)
-			) {
-				return;
-			}
-			return action(
-				"create",
-				session.discardCreation,
-				"Pending creation discarded.",
-				"Discarding…",
 				{ otc: "" },
 			);
 		},

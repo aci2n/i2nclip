@@ -3,9 +3,7 @@ let { session, pairing, server, embedded = false } = $props();
 let code = $state("");
 let open = $state(false);
 const configured = $derived(!embedded && Boolean($session.configured));
-const disabled = $derived(
-	$pairing.active || $session.busy || Boolean($session.pendingRegistration),
-);
+const disabled = $derived($pairing.active || $session.busy);
 async function connect(event) {
 	event.preventDefault();
 	const entered = code;

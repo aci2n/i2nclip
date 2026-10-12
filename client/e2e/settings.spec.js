@@ -42,7 +42,7 @@ test("setup, recovery export, reset and restoration use durable configuration wi
 	expect(restored.local.configured).toBe(true);
 });
 
-test("failed registration retains the encrypted identity for retry and keeps errors beside setup", async ({
+test("failed registration retains no identity and keeps errors beside setup", async ({
 	page,
 	app,
 }) => {
@@ -52,17 +52,18 @@ test("failed registration retains the encrypted identity for retry and keeps err
 	await fillCreation(page, "invalid-code");
 	await page.locator("#create-library").click();
 	await expect(page.locator("#status")).toContainText(
-		"Your encrypted identity is saved",
+		"No recovery identity was retained",
 	);
 	const failed = await storage(page);
-	expect(failed.local.pendingRegistration.publicKey).toBeTruthy();
-	expect(failed.local.pendingRegistration).not.toHaveProperty("password");
+	expect(failed.local.configured).toBe(false);
+	expect(failed.local).not.toHaveProperty("pendingRegistration");
+	expect(
+		(await page.evaluate(() => window.serviceTest("state"))).catalog,
+	).toHaveLength(0);
 	await page.locator("#otc").fill(await issueOtc(app.data));
 	await page.locator("#create-library").click();
 	await expect(page.locator("#status")).toContainText("Library created.");
-	expect((await storage(page)).local.publicKey).toBe(
-		failed.local.pendingRegistration.publicKey,
-	);
+	expect((await storage(page)).local.publicKey).toBeTruthy();
 });
 
 test("invalid recovery and invalid server input preserve form drafts and saved configuration", async ({

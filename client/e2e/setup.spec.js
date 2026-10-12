@@ -14,7 +14,7 @@ async function add(page, name, method) {
 	await page.locator("#new-library-name").fill(name);
 	await page.locator(`#${method}-tab`).click();
 }
-test("four setup tabs support master unlock and durable invitation retries", async ({
+test("four setup tabs support master unlock and fresh invitation attempts", async ({
 	page,
 	app,
 }) => {
@@ -40,36 +40,29 @@ test("four setup tabs support master unlock and durable invitation retries", asy
 	await page.locator("#otc").fill("invalid-invitation");
 	await page.locator("#create-library").click();
 	await expect(page.locator("#add-library-settings #status")).toContainText(
-		"Your encrypted identity is saved",
+		"No recovery identity was retained",
 	);
-	const pending = await page.evaluate(async () => {
-		const state = await window.serviceTest("state");
-		const row = state.setups.find((row) => row.name === "Invited");
-		return {
-			id: row.id,
-			publicKey: state.libraries[row.id].session.pendingRegistration.publicKey,
-		};
-	});
+	expect(
+		(await page.evaluate(() => window.serviceTest("state"))).catalog,
+	).toHaveLength(2);
 	await expect(page.locator("#library-selector option")).toHaveCount(2);
 	await page.reload();
 	await master(page);
 	await page.locator("#add-library-settings > summary").click();
-	await page
-		.getByRole("button", { name: "Resume setup: Invited", exact: true })
-		.click();
-	await expect(page.locator("#create-tab")).toHaveAttribute(
-		"aria-selected",
-		"true",
+	await expect(page.locator("#new-library-name")).toHaveValue("Personal 2");
+	await expect(page.getByRole("button", { name: /Resume setup/ })).toHaveCount(
+		0,
 	);
+	await page.locator("#new-library-name").fill("Invited");
+	await page.locator("#create-tab").click();
 	await page.locator("#otc").fill(await issueOtc(app.data));
 	await page.locator("#create-library").click();
 	await expect
 		.poll(() => new URL(page.url()).searchParams.get("library"))
-		.toBe(pending.id);
+		.not.toBe(authorized);
 	expect(
-		(await page.evaluate(() => window.serviceTest("state"))).session.publicKey,
-	).toBe(pending.publicKey);
-	expect(new URL(page.url()).searchParams.get("library")).not.toBe(authorized);
+		(await page.evaluate(() => window.serviceTest("state"))).catalog,
+	).toHaveLength(3);
 });
 
 test("setup remains compact and restores a named library using its recovery server", async ({
@@ -127,4 +120,61 @@ test("setup remains compact and restores a named library using its recovery serv
 	expect(
 		(await page.evaluate(() => window.serviceTest("state"))).session.serverUrl,
 	).toBe(app.origin);
+});
+
+test("closing and leaving setup clear its drafts; both setup forms fit narrow themes", async ({
+	page,
+	app,
+}) => {
+	await page.goto(`${app.web.origin}/client/dist/extension/options.html`);
+	await master(page);
+	for (const colorScheme of ["light", "dark"]) {
+		await page.emulateMedia({ colorScheme });
+		for (const width of [320, 360]) {
+			await page.setViewportSize({ width, height: 800 });
+			await shot(page, `setup-temporary-first-${colorScheme}-${width}`);
+			expect(
+				await page.evaluate(
+					() => document.documentElement.scrollWidth <= innerWidth,
+				),
+			).toBe(true);
+		}
+	}
+	await page.locator("#library-name").fill("Unsaved first name");
+	await page.locator("#otc").fill("unsaved-code");
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	await page.getByRole("link", { name: "Settings", exact: true }).click();
+	await expect(page.locator("#library-name")).toHaveValue("Personal 1");
+	await expect(page.locator("#otc")).toHaveValue("");
+	expect(
+		(await page.evaluate(() => window.serviceTest("state"))).catalog,
+	).toHaveLength(0);
+	await createLibrary(page, app);
+	await add(page, "Unsaved additional name", "create");
+	await page.locator("#otc").fill("unsaved-code");
+	await page.locator("#add-library-settings > summary").click();
+	await page.locator("#add-library-settings > summary").click();
+	await expect(page.locator("#new-library-name")).toHaveValue("Personal 2");
+	await page.locator("#create-tab").click();
+	await expect(page.locator("#otc")).toHaveValue("");
+	for (const colorScheme of ["light", "dark"]) {
+		await page.emulateMedia({ colorScheme });
+		for (const width of [320, 360]) {
+			await page.setViewportSize({ width, height: 800 });
+			await shot(page, `setup-temporary-add-${colorScheme}-${width}`);
+			expect(
+				await page.evaluate(
+					() => document.documentElement.scrollWidth <= innerWidth,
+				),
+			).toBe(true);
+		}
+	}
+	await page.locator("#new-library-name").fill("Another draft");
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	await page.getByRole("link", { name: "Settings", exact: true }).click();
+	await page.locator("#add-library-settings > summary").click();
+	await expect(page.locator("#new-library-name")).toHaveValue("Personal 2");
+	expect(
+		(await page.evaluate(() => window.serviceTest("state"))).catalog,
+	).toHaveLength(1);
 });

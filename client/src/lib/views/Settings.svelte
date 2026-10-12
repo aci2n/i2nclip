@@ -1,10 +1,16 @@
 <script>
+import { onMount } from "svelte";
 import Pairing from "../components/Pairing.svelte";
 import Setup from "../components/Setup.svelte";
 import VaultSettings from "../components/VaultSettings.svelte";
 
 let { session, settings, pairing, management, setup, vault, onRestore } =
 	$props();
+onMount(() => {
+	if (!$session.configured) {
+		setup.start();
+	}
+});
 let serverInput = $state();
 let serverDetails = $state();
 const savedServer = $derived($session.serverUrl);
@@ -19,7 +25,7 @@ const feedbackAt = $derived(
 {#snippet notice(
 	scope,
 )}
-	{#if feedbackAt === scope}
+	{#if feedbackAt === scope && feedback.text}
 		<p
 			id="status"
 			class="feedback"
@@ -56,13 +62,9 @@ const feedbackAt = $derived(
 							() => $settings.server,
 							(value) => settings.edit("server", value)
 						}
-						disabled={$session.busy || Boolean($session.pendingRegistration)}
+						disabled={$session.busy}
 					>
-					<button
-						id="save-server"
-						type="submit"
-						disabled={$session.busy || Boolean($session.pendingRegistration)}
-					>
+					<button id="save-server" type="submit" disabled={$session.busy}>
 						Update URL
 					</button>
 				</div>
@@ -78,7 +80,13 @@ const feedbackAt = $derived(
 			<h2>Your encrypted library</h2>
 			<p>Files are encrypted in your browser before upload.</p>
 			{@render notice("setup")}
-			<Setup {session} {settings} {pairing} {vault} {onRestore} />
+			<Setup
+				session={setup.session}
+				settings={setup.settings}
+				pairing={setup.pairing}
+				{vault}
+				{onRestore}
+			/>
 		</section>
 	{:else}
 		<section id="configured" class="panel stack">
@@ -100,7 +108,7 @@ const feedbackAt = $derived(
 		{@render management?.(serverControls)}
 	{/if}
 
-	{#if $session.catalog.length}
+	{#if $session.configured && $session.catalog.length}
 		<details id="add-library-settings" class="panel" open={$setup.open}>
 			<!-- biome-ignore lint/a11y/noStaticElementInteractions: summary is a native keyboard-operable disclosure control. -->
 			<summary
@@ -116,15 +124,6 @@ const feedbackAt = $derived(
 				Add library
 			</summary>
 			<div class="stack disclosure-body">
-				{#each $setup.resumable as row}
-					<button
-						type="button"
-						class="secondary"
-						onclick={() => setup.resume(row.id)}
-					>
-						Resume setup: {row.name}
-					</button>
-				{/each}
 				<Setup
 					session={setup.session}
 					settings={setup.settings}
@@ -133,9 +132,6 @@ const feedbackAt = $derived(
 					{onRestore}
 					additional
 				/>
-				<button type="button" class="secondary" onclick={setup.discard}>
-					Cancel setup
-				</button>
 			</div>
 		</details>
 	{/if}

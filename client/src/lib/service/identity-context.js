@@ -11,7 +11,7 @@ const changed = (a, b, includeUnlocked = true) =>
 	fields.some(
 		(field) =>
 			(includeUnlocked || field !== "privateKey") && a[field] !== b[field],
-	) || Boolean(a.pendingRegistration) !== Boolean(b.pendingRegistration);
+	);
 const stale = () =>
 	new DOMException("Library changed. Try again.", "AbortError");
 
