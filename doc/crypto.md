@@ -65,11 +65,35 @@ Requests use ordinary Ed25519, not Ed25519ph. SHA-256 hashes the body as a field
 
 The digest comparison need not hide the digest: body hashes and signatures are transmitted public values. This is not a secret password/HMAC comparison. Signature verification itself is delegated to the cryptographic library.
 
-## Password wrapping and recovery (client-side)
+## Master vault and recovery (client-side)
 
-The browser encrypts the identity document before persistent storage or recovery export. PBKDF2-HMAC-SHA256 derives an AES-256-GCM key from exact UTF-8 password bytes with a fresh 16-byte salt and 600,000 iterations by default. Wrapping uses a fresh 12-byte IV, full GCM tag, and no AAD. The wrapped JSON contains `v`, `iterations`, `salt`, `iv`, and `ct`; binary values here use standard padded base64. Import accepts iteration counts from 1 through 2,000,000, so the default strength is not an enforced minimum for imported files.
+One random 256-bit AES-GCM vault key protects all saved app data in each browser
+or extension scope. PBKDF2-HMAC-SHA256 derives the wrapping key from exact UTF-8
+master-password bytes, a fresh 16-byte salt and 600,000 iterations. Wrapping and
+record encryption use fresh 12-byte IVs and full GCM tags. Import enforces the
+600,000-iteration minimum and rejects counts above 2,000,000.
 
-A recovery file wraps that object in `{ "format": "i2nclip-recovery", "v": 1, "serverUrl": "…", "wrappedKey": … }`. The outer server URL is not authenticated by GCM. Wrong passwords or modified ciphertext fail authentication. Anyone with the recovery file can guess passwords offline; a high-entropy password matters even with the default work factor. Neither password nor seed is sent to the server. The unlocked seed is available to client code/session storage; wrapping does not protect against compromise of an unlocked browser or extension.
+The wrapper uses AAD `i2nclip/vault-key/1/{vaultId}`. Stored catalog/job metadata
+uses `i2nclip/local-vault/1/{vaultId}/catalog`; upload sources use
+`i2nclip/local-vault/1/{vaultId}/source:{jobId}`. Thus ciphertext cannot be moved
+between vaults, record types or source identifiers. A password change verifies the
+current password and atomically replaces the wrapper. It does not re-encrypt app
+data. The unwrapped vault key is imported as a non-extractable CryptoKey; temporary
+raw key buffers are cleared. Lock drops decrypted state and cancels active work.
+
+Recovery format v2 is `{format: "i2nclip-recovery", v: 2, encrypted: ...}`. The
+separately selected recovery password protects a manifest containing its scope
+(`library` or `vault`) and library names, server URLs and identity documents, using
+AAD `i2nclip/recovery/2`. These fields are encrypted and authenticated together.
+Files contain neither the local vault key nor its master-password wrapper.
+Imports validate identities and re-encrypt under the destination vault key.
+Old recovery files retain their original recovery password after master-password
+changes. Whole-vault exports omit uploads and unfinished registrations.
+
+Passwords and library seeds never reach the server. Encryption at rest does not
+protect an already unlocked client from compromised application code. JavaScript
+strings and browser-managed memory cannot be reliably overwritten; lock releases
+references and prevents stale results from re-entering the application.
 
 ## Guarantees and exclusions
 

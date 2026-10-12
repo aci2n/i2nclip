@@ -20,20 +20,24 @@ export async function wrappingKey(passphrase, salt, iterations) {
 }
 
 // The same primitives protect the local vault and portable recovery manifests.
-export async function sealBytes(key, bytes, purpose, {binary = false} = {}) {
+export async function sealBytes(key, bytes, purpose, { binary = false } = {}) {
 	const iv = crypto.getRandomValues(new Uint8Array(12));
 	const ct = await crypto.subtle.encrypt(
 		{ name: "AES-GCM", iv, additionalData: utf8(purpose) },
 		key,
 		bytes,
 	);
-	return {v: 1, iv: binary ? iv : bytesToB64(iv), ct: binary ? new Uint8Array(ct) : bytesToB64(new Uint8Array(ct))};
+	return {
+		v: 1,
+		iv: binary ? iv : bytesToB64(iv),
+		ct: binary ? new Uint8Array(ct) : bytesToB64(new Uint8Array(ct)),
+	};
 }
 export async function openBytes(key, record, purpose) {
 	if (
 		record?.v !== 1 ||
 		!(typeof record.iv === "string" || record.iv instanceof Uint8Array) ||
-        !(typeof record.ct === "string" || record.ct instanceof Uint8Array)
+		!(typeof record.ct === "string" || record.ct instanceof Uint8Array)
 	)
 		throw new Error("Invalid encrypted data.");
 	const iv = typeof record.iv === "string" ? b64ToBytes(record.iv) : record.iv;

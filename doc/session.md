@@ -7,8 +7,9 @@ Each named library has its own identity, runtime, epoch and cancellation context
 have separate scopes. Pages hold read-only projections and communicate through
 commands/events; no page reads identity storage or receives a private key.
 
-IndexedDB contains configuration, pending encrypted registration, upload jobs and
-retained source blobs. The unlocked key is memory-only, so restart always locks.
+The master vault encrypts configuration, pending registration, upload jobs and
+retained source blobs in IndexedDB. One client-wide unlock opens all libraries;
+one lock clears every runtime and all client projections. The unlocked key is memory-only, so restart always locks.
 Identity changes increment the owner epoch and cancel obsolete work. Authoritative
 state transitions are serialized within the owner; network work does not hold a
 database transaction. Durable changes publish only after transaction completion.

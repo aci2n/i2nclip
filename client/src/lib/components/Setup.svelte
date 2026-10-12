@@ -94,21 +94,23 @@ const blocked = $derived(
 	{#if additional}
 		{@render notice("setup")}
 	{/if}
-	<div class="field">
-		<label for={additional ? "new-library-name" : "library-name"}
-			>Library name</label
-		>
-		<input
-			id={additional ? "new-library-name" : "library-name"}
-			required
-			maxlength="80"
-			bind:value={
-				() => $settings.libraryName,
-				(value) => settings.edit("libraryName", value)
-			}
-			disabled={blocked}
-		>
-	</div>
+	{#if mode !== "restore"}
+		<div class="field">
+			<label for={additional ? "new-library-name" : "library-name"}
+				>Library name</label
+			>
+			<input
+				id={additional ? "new-library-name" : "library-name"}
+				required
+				maxlength="80"
+				bind:value={
+					() => $settings.libraryName,
+					(value) => settings.edit("libraryName", value)
+				}
+				disabled={blocked}
+			>
+		</div>
+	{/if}
 	<div
 		class="setup-tabs"
 		role="tablist"

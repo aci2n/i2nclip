@@ -355,3 +355,178 @@ test("locked context uploads stay transient until unlock and destination selecti
 	assert.equal(get(f.first).transientUploads.length, 0);
 	assert.equal(get(f.first).libraries.lib.uploads[0].id, id);
 });
+
+test("lock invalidates queued unlock commands instead of reopening the vault", async (t) => {
+	const f = await fixture(t);
+	await f.first.command("vault.initialize", { password: "master-password" });
+	const entered = deferred(),
+		release = deferred();
+	f.repository.changePassword = async () => {
+		entered.resolve();
+		await release.promise;
+	};
+	const changing = f.first.command("vault.changePassword", {
+		currentPassword: "master-password",
+		password: "changed-password",
+	});
+	const canceledChange = assert.rejects(changing, /Vault context ended/);
+	await entered.promise;
+	const unlocking = f.second.command("vault.unlock", {
+		password: "master-password",
+	});
+	const canceledUnlock = assert.rejects(unlocking, /Vault context ended/);
+	await tick();
+	await f.first.command("vault.lock");
+	release.resolve();
+	await Promise.all([canceledChange, canceledUnlock]);
+	assert.equal(get(f.second).vault.status, "locked");
+	assert.equal(f.repository.unlocked, false);
+});
+
+test("source acceptance waits for one atomic encrypted catalog and source commit", async () => {
+	const storage = backend(),
+		repository = createEncryptedRepository(storage);
+	await repository.ready;
+	await repository.initialize("master-password");
+	const committed = deferred(),
+		release = deferred(),
+		commit = storage.commit;
+	let entries,
+		acknowledged = false;
+	storage.commit = async (...args) => {
+		entries = args[0];
+		committed.resolve();
+		await release.promise;
+		return commit(...args);
+	};
+	const saving = repository
+		.scope("lib")
+		.putJob({ id: "job", name: "secret-name" }, { blob: new Blob(["source"]) })
+		.then(() => {
+			acknowledged = true;
+		});
+	await committed.promise;
+	assert.equal(acknowledged, false);
+	assert.deepEqual(await repository.jobs(), []);
+	assert.deepEqual(
+		entries.map(([id]) => id),
+		["catalog", "source:job"],
+	);
+	assert(entries[1][1].ct instanceof Uint8Array);
+	release.resolve();
+	await saving;
+	assert.equal(acknowledged, true);
+	assert.equal((await repository.jobs()).length, 1);
+});
+
+test("recovery import fails atomically and oversized files are rejected before reading", async (t) => {
+	const f = await fixture(t);
+	await f.first.command("vault.initialize", { password: "master-password" });
+	const key = await generatePrivateKey();
+	const file = new Blob([
+		await exportRecovery(
+			[
+				{
+					name: "Personal",
+					serverUrl: "https://clip.example",
+					privateKey: key.privateKey,
+				},
+			],
+			"recovery-password",
+			"library",
+		),
+	]);
+	const before = await f.repository.libraries();
+	const commit = f.storage.commit;
+	f.storage.commit = async () => {
+		throw new Error("disk full");
+	};
+	await assert.rejects(
+		f.first.command("vault.importRecovery", {
+			file,
+			password: "recovery-password",
+		}),
+		/disk full/,
+	);
+	assert.deepEqual(await f.repository.libraries(), before);
+	assert.equal(get(f.first).catalog.length, 0);
+	f.storage.commit = commit;
+	await assert.rejects(
+		f.first.command("vault.previewRecovery", {
+			file: new Blob([new Uint8Array(1024 * 1024 + 1)]),
+			password: "recovery-password",
+		}),
+		/Invalid recovery file/,
+	);
+	const result = await f.first.command("vault.importRecovery", {
+		file,
+		password: "recovery-password",
+	});
+	assert.equal(get(f.first).catalog[0].name, "Personal");
+	assert.equal(result.imported.length, 1);
+	assert.equal(get(f.first).setups.length, 0);
+});
+
+test("locking clears unsubmitted setup names, servers and invitation drafts", async (t) => {
+	const { createSetup } = await import("../src/lib/stores/setup.js");
+	const f = await fixture(t);
+	await f.first.command("vault.initialize", { password: "master-password" });
+	const setup = createSetup(
+		f.first,
+		{},
+		() => get(f.first).setups[0]?.id,
+		() => {},
+	);
+	t.after(setup.dispose);
+	setup.start();
+	setup.settings.edit("libraryName", "Private draft");
+	setup.settings.edit("server", "https://private.example");
+	setup.settings.edit("otc", "private-invitation");
+	await f.second.command("vault.lock");
+	assert.equal(get(setup).open, false);
+	assert.equal(get(setup.settings).libraryName, "");
+	assert.equal(get(setup.settings).server, "");
+	assert.equal(get(setup.settings).otc, "");
+});
+
+test("recovery review keeps secrets local and import completion survives its own setup view disposal", async (t) => {
+	const { createRecoveryImport } = await import(
+		"../src/lib/stores/recovery-import.js"
+	);
+	const { createVault } = await import("../src/lib/stores/vault.js");
+	const f = await fixture(t);
+	await f.first.command("vault.initialize", { password: "master-password" });
+	const vault = createVault(f.first, {});
+	t.after(vault.dispose);
+	const key = await generatePrivateKey();
+	const file = new Blob([
+		await exportRecovery(
+			[
+				{
+					name: "Personal",
+					serverUrl: "https://clip.example",
+					privateKey: key.privateKey,
+				},
+			],
+			"recovery-password",
+			"library",
+		),
+	]);
+	let completed;
+	const form = createRecoveryImport(vault, (id) => {
+		completed = id;
+	});
+	t.after(form.dispose);
+	const unsubscribe = f.first.subscribe((value) => {
+		if (value.catalog.length) form.dispose();
+	});
+	t.after(unsubscribe);
+	form.edit("files", [file]);
+	form.edit("password", "recovery-password");
+	await form.review();
+	assert.equal(get(form).password, "");
+	assert.equal(get(form).preview[0].name, "Personal");
+	await form.restore();
+	assert.equal(completed, get(f.first).catalog[0].id);
+	assert.deepEqual(get(form).preview, []);
+});

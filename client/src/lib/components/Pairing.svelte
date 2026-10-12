@@ -24,7 +24,7 @@ async function connect(event) {
 	{:else if !embedded}
 		<h2>Connect existing library</h2>
 	{/if}
-  <!-- TODO: remove data-embedded, it's a hack to work around the lack of isolation in this component -->
+	<!-- TODO: remove data-embedded, it's a hack to work around the lack of isolation in this component -->
 	<div class="pairing" data-embedded="{embedded}">
 		{#if !$pairing.active}
 			{#if configured}
@@ -126,9 +126,9 @@ async function connect(event) {
 .pairing {
 	display: grid;
 	gap: 1rem;
-  &[data-embedded="false"] {
-    margin-top: 1rem;
-  }
+	&[data-embedded="false"] {
+		margin-top: 1rem;
+	}
 }
 .pairing > button {
 	justify-self: start;

@@ -2,7 +2,7 @@
 
 Work through these items in priority order. Items marked **Plan first** need a short design decision before implementation. See [the audit report](audit-2026-10-10.md) and [completed audit follow-ups](todo-completed.md) for background and prior work.
 
-1. [ ] **31 — Plan first:** Master password and single vault.
+1. [x] **31:** Client-wide master vault, encrypted app data, shared locking, and separate-password library/vault recovery. Verified 162 client tests, Rust checks, 54 browser scenarios, installed Firefox and package checks. ([design](client-service.md))
 2. [ ] **32:** Default new library names to “Personal N” (sequential number or random number; choose a sensible approach).
 3. [ ] **33:** Add strict rules to the JavaScript linter.
 4. [ ] **35:** Fix pairing in the same page: “This library is already saved. Select its existing entry.” Investigate why the existing entry cannot be selected.

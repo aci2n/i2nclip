@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import {
 	chooseRestore,
-	master,
 	expect,
 	fillCreation,
 	issueOtc,

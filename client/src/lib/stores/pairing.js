@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 
 export function createPairing(client, { beforeReceive } = {}) {
 	const state = writable({
@@ -9,12 +9,21 @@ export function createPairing(client, { beforeReceive } = {}) {
 		remaining: 0,
 		error: false,
 	});
+	let disposed = false;
 	const unsubscribe = client.subscribe((value) => state.set(value.pairing));
 	async function action(name, payload) {
+		const captured = get(client);
 		try {
 			if (name === "receive") await beforeReceive?.();
 			return await client.command(`pairing.${name}`, payload);
 		} catch (error) {
+			const latest = get(client);
+			if (
+				disposed ||
+				latest.instanceId !== captured.instanceId ||
+				latest.session?.epoch !== captured.session?.epoch
+			)
+				return false;
 			state.update((value) => ({
 				...value,
 				status: error.message,
@@ -31,6 +40,7 @@ export function createPairing(client, { beforeReceive } = {}) {
 		cancel: () => action("cancel"),
 		rejectVerification: () => action("rejectVerification"),
 		dispose() {
+			disposed = true;
 			unsubscribe();
 		},
 	};

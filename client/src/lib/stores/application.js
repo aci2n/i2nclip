@@ -190,11 +190,16 @@ export function createApplication(platform, initialPage, browser = window) {
 		setup,
 		href,
 		selectLibrary,
-        restoredLibrary(id, result) {
-         selectLibrary(id);
-         settings.edit("feedback", {scope: "library", text: `Restored ${result.imported.length} libraries. ${result.skipped} already saved.`, error: false});
-        },
-			async acceptContextUpload(libraryId) {
+		restoredLibrary(id, result) {
+			if (disposed || get(vault).status !== "unlocked") return;
+			selectLibrary(id);
+			settings.edit("feedback", {
+				scope: "library",
+				text: `Restored ${result.imported.length} libraries. ${result.skipped} already saved.`,
+				error: false,
+			});
+		},
+		async acceptContextUpload(libraryId) {
 			await root.command("vault.contextUpload", {
 				libraryId,
 				id: params.get("id"),

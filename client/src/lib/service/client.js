@@ -117,6 +117,12 @@ export function createServiceClient(
 			rejectReady(new Error(message.error));
 			state.update((value) => ({
 				...value,
+				vault: {
+					...value.vault,
+					ready: true,
+					status: "locked",
+					error: message.error,
+				},
 				session: { ...value.session, ready: true, error: message.error },
 			}));
 			return;
@@ -207,6 +213,12 @@ export function createServiceClient(
 			rejectReady(error);
 			state.update((value) => ({
 				...value,
+				vault: {
+					...value.vault,
+					ready: true,
+					status: "locked",
+					error: error.message,
+				},
 				session: { ...value.session, ready: true, error: error.message },
 			}));
 		}

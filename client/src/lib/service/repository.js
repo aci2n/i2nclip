@@ -1,4 +1,4 @@
-import {encodeSource, decodeSource} from "./source-record.js";
+import { encodeSource, decodeSource } from "./source-record.js";
 import { utf8 } from "../protocol/bytes.js";
 import {
 	importVaultKey,
@@ -107,7 +107,8 @@ export function createEncryptedRepository(storage) {
 			const sealed = await sealBytes(
 				key,
 				utf8(JSON.stringify(next)),
-				aad("catalog"), {binary: true},
+				aad("catalog"),
+				{ binary: true },
 			);
 			guard(captured);
 			await storage.commit(
@@ -174,7 +175,7 @@ export function createEncryptedRepository(storage) {
 				if (!sealed) return undefined;
 				const bytes = await openBytes(key, sealed, aad(`source:${id}`));
 				guard(captured);
-                return decodeSource(bytes);
+				return decodeSource(bytes);
 			});
 		},
 		putJob(job, source) {
@@ -182,16 +183,14 @@ export function createEncryptedRepository(storage) {
 				next.jobs = next.jobs.filter((item) => item.id !== job.id);
 				next.jobs.push({ ...job, libraryId });
 				if (source === undefined) return;
-                const bytes = await encodeSource(source);
+				const bytes = await encodeSource(source);
 				return {
 					entries: [
 						[
 							`source:${job.id}`,
-							await sealBytes(
-								key,
-								bytes,
-                                aad(`source:${job.id}`), {binary: true},
-							),
+							await sealBytes(key, bytes, aad(`source:${job.id}`), {
+								binary: true,
+							}),
 						],
 					],
 				};
@@ -248,15 +247,16 @@ export function createEncryptedRepository(storage) {
 				const sealed = await sealBytes(
 					nextKey,
 					utf8(JSON.stringify(next)),
-					`i2nclip/local-vault/1/${id}/catalog`, {binary: true},
+					`i2nclip/local-vault/1/${id}/catalog`,
+					{ binary: true },
 				);
 				guard(captured);
 				await storage.commit([
 					["header", nextHeader],
 					["catalog", sealed],
 				]);
-				guard(captured);
 				header = nextHeader;
+				guard(captured);
 				key = nextKey;
 				data = next;
 			});
@@ -314,8 +314,8 @@ export function createEncryptedRepository(storage) {
 				guard(captured);
 				const next = { ...header, wrappedKey };
 				await storage.commit([["header", next]]);
-				guard(captured);
 				header = next;
+				guard(captured);
 			});
 		},
 		async resetVault() {
@@ -339,12 +339,16 @@ export function createEncryptedRepository(storage) {
 				next.libraries.push(row);
 			});
 		},
-		importLibraries(records) {
+		importLibraries(records, discardIds = []) {
 			return write((next) => {
+				next.libraries = next.libraries.filter(
+					(row) => !discardIds.includes(row.id),
+				);
 				for (const row of records) {
 					validateIdentity(next, row.id, row.identity);
 					next.libraries.push(row);
 				}
+				return { remove: clearJobs(next, discardIds) };
 			});
 		},
 		renameLibrary(id, name) {

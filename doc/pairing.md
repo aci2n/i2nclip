@@ -1,10 +1,10 @@
 # Device pairing
 
 Web and Firefox extension clients can copy an unlocked library identity to a
-fresh browser. The receiver chooses its own password. Pairing copies the full
-identity: there is no per-device revocation or restricted sharing. Recovery files,
-media encryption, request signatures, registration, and local generation checks
-retain their existing formats.
+fresh library entry. Both clients unlock their own master vaults first. Pairing copies the full
+identity: there is no per-device revocation or restricted sharing. Media encryption, request signatures, registration, pairing packets and local
+generation checks retain their existing formats. Recovery uses the independent
+password-protected manifest described in [the service design](client-service.md).
 
 ## Code and authentication
 
@@ -57,10 +57,10 @@ as unpadded base64url. The identity plaintext contains `v`, `serverUrl`,
 `privateKey`, and `publicKey`; the acknowledgment contains `v: 1, saved: true`.
 
 The receiver validates the identity and selected server inside the browser
-service, checks that no library/pending registration exists, and saves a freshly
-wrapped key with the new device password. IndexedDB commit must complete before
+service, checks that no library/pending registration exists, and saves the identity inside the destination
+client’s encrypted vault. The master password is never transferred. IndexedDB commit must complete before
 acknowledgment. The unlocked key stays in owner memory, and restarting the owner
-requires password entry.
+requires the client’s master password.
 
 The shared [browser service](client-service.md) owns pairing and its private
 operation handles. Reset/server changes invalidate pairing immediately. Transfer
@@ -152,7 +152,7 @@ Rust tests cover role capabilities, ordering/idempotency, room/rate/body limits,
 source spoofing, saturated read admission, permit release, and expiry. Client
 regressions cover stalled reset/server changes, stale persisted credentials,
 and owner command ordering across pages. Firefox tests use independent browser
-contexts and the real Rust API for every web/extension direction, new-password
+contexts and the real Rust API for every web/extension direction, independent-vault
 unlock, wrong codes, and reset
 cancellation. The extension needs packaged WASM enabled by its narrowly scoped
 `wasm-unsafe-eval` CSP permission.

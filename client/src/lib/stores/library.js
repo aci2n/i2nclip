@@ -32,7 +32,13 @@ export function createLibrary(client, platform, initial = {}) {
 		cards.clear();
 	}
 	function open(value) {
-		if (opening || !value.connected || viewInstance === value.clientId) return;
+		if (
+			opening ||
+			!value.connected ||
+			!value.session.unlocked ||
+			viewInstance === value.clientId
+		)
+			return;
 		opening = true;
 		client
 			.command("view.open", { id: viewId, query: get(state).query })

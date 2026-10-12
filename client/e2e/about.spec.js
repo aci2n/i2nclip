@@ -1,5 +1,5 @@
 import metadata from "../package.json" with { type: "json" };
-import { expect, shot, test } from "./fixtures.js";
+import { expect, master, shot, test } from "./fixtures.js";
 
 const { repository, version } = metadata;
 
@@ -13,6 +13,7 @@ test("About shows client metadata and restores focus after dismissal", async ({
 		["upload", `${app.web.origin}/client/dist/extension/upload.html`],
 	]) {
 		await page.goto(url);
+		await master(page);
 		const about = page.getByRole("button", { name: "About", exact: true });
 		const dialog = page.getByRole("dialog", { name: "About i2nclip" });
 		await about.click();

@@ -95,7 +95,7 @@ test("two pending pages observe one service job and cannot submit it twice", asy
 	assert(closes >= 1);
 });
 
-test("missing pending jobs finish loading and tag drafts remain local", async (t) => {
+test("missing pending jobs finish loading and invalidation clears private tag drafts", async (t) => {
 	const f = await serviceFixture(t);
 	const pending = createPendingUpload(f.client, { close() {} }, "missing");
 	t.after(pending.dispose);
@@ -103,6 +103,6 @@ test("missing pending jobs finish loading and tag drafts remain local", async (t
 	assert.equal(get(pending).status, "Nothing to upload.");
 	pending.tags.set("draft");
 	await f.client.command("identity.reset");
-	assert.equal(get(pending.tags), "draft");
+	assert.equal(get(pending.tags), "");
 	assert.equal(get(pending).available, false);
 });

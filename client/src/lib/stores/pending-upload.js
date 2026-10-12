@@ -6,6 +6,7 @@ export function createPendingUpload(
 	id,
 	{ auto = false } = {},
 ) {
+	const tags = writable("");
 	const state = writable({
 		ready: false,
 		busy: false,
@@ -65,6 +66,7 @@ export function createPendingUpload(
 		}
 		epoch = value.session.epoch;
 		if (!value.connected || !value.session.unlocked) {
+			tags.set("");
 			if (preview) URL.revokeObjectURL(preview);
 			preview = "";
 			attempted = false;
@@ -104,7 +106,7 @@ export function createPendingUpload(
 	return {
 		subscribe: state.subscribe,
 		ready,
-		tags: writable(""),
+		tags,
 		async send(tags) {
 			if (disposed || get(state).busy || !get(state).available) return;
 			sent = true;

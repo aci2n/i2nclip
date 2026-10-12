@@ -131,7 +131,7 @@ async function createLibrary(page, app) {
 async function downloadRecovery(page) {
 	const manage = page.locator("#rename-library-settings");
 	if (!(await manage.evaluate((element) => element.open)))
-		await manage.locator("summary").click();
+		await manage.locator(":scope > summary").click();
 	await page.locator("#library-recovery-password").fill(PASSWORD);
 	await page.locator("#library-recovery-confirm").fill(PASSWORD);
 	await page.locator("#backup").click();
@@ -152,7 +152,10 @@ async function resetLibrary(page, accept = true) {
 	await page
 		.getByRole("button", { name: "Reset everything", exact: true })
 		.click();
-	if (accept) await master(page);
+	if (accept) {
+		await expect(page.locator("#master-confirmation")).toBeVisible();
+		await master(page);
+	}
 }
 
 const execFileAsync = promisify(execFile);

@@ -99,7 +99,9 @@ export function createServiceEngine(options) {
 		const records = unlocked() ? await repository.libraries() : [];
 		if (!disposed && revision === catalogRevision)
 			options.platform?.onCatalog?.(
-				records.filter((row) => row.identity?.privateKey).map(({id, name}) => ({id, name})),
+				records
+					.filter((row) => row.identity?.privateKey)
+					.map(({ id, name }) => ({ id, name })),
 			);
 	}
 	let disposed = false,
@@ -246,15 +248,23 @@ export function createServiceEngine(options) {
 			throw new Error("That library name is already used.");
 		return name;
 	}
-	async function add(name, serverUrl = defaultServerUrl, setup) {
+	async function add(
+		name,
+		serverUrl = defaultServerUrl,
+		setup,
+		placeholder = false,
+	) {
+		const epoch = vaultEpoch;
 		checkServer(serverUrl);
 		const row = {
+			...(placeholder ? { placeholder: true } : {}),
 			id: crypto.randomUUID(),
 			name: validateName(name),
 			identity: { serverUrl },
 			setup,
 		};
 		await repository.putLibrary(row);
+		vaultGuard(epoch);
 		const runtime = install(row);
 		await runtime.ready;
 		await notifyCatalog();
@@ -279,21 +289,25 @@ export function createServiceEngine(options) {
 		}
 		order = Math.max(0, ...jobs.map((job) => job.order || 0));
 		for (const row of stored) install(row);
-		if (!stored.length) await add("Personal");
+		if (!stored.length)
+			await add("Personal", defaultServerUrl, undefined, true);
 		await Promise.all([...runtimes.values()].map((runtime) => runtime.ready));
 	}
-	function clearRuntimes() {
-		for (const runtime of runtimes.values()) runtime.dispose();
-		runtimes.clear();
-		rows.clear();
-		configured.clear();
+	function uninstall(id) {
+		runtimes.get(id)?.dispose();
+		runtimes.delete(id);
+		rows.delete(id);
+		configured.delete(id);
 		for (const client of clients.values()) {
-			for (const connection of client.connections.values())
-				connection.disconnect();
-			client.connections.clear();
-			client.states.clear();
+			client.connections.get(id)?.disconnect();
+			client.connections.delete(id);
+			client.states.delete(id);
 		}
 	}
+	function clearRuntimes() {
+		for (const id of [...runtimes.keys()]) uninstall(id);
+	}
+
 	function lockVault() {
 		vaultEpoch++;
 		vault = {
@@ -324,7 +338,11 @@ export function createServiceEngine(options) {
 	async function vaultCommand(name, payload) {
 		const epoch = vaultEpoch;
 		if (name === "vault.initialize" || name === "vault.unlock") {
-			if (unlocked()) return true;
+			if (unlocked()) {
+				if (name === "vault.initialize")
+					throw new Error("A master password is already configured.");
+				return true;
+			}
 			vault = { ...vault, busy: true, error: "" };
 			publish();
 			try {
@@ -338,16 +356,15 @@ export function createServiceEngine(options) {
 				publish();
 				return true;
 			} catch (error) {
-                clearRuntimes(); repository.lock();
-				if (epoch === vaultEpoch) {
-					vault = {
-						...vault,
-						status: repository.initialized ? "locked" : "uninitialized",
-						busy: false,
-						error: error.message,
-					};
-					publish();
-				}
+				clearRuntimes();
+				repository.lock();
+				vault = {
+					...vault,
+					status: repository.initialized ? "locked" : "uninitialized",
+					busy: false,
+					error: epoch === vaultEpoch ? error.message : "",
+				};
+				publish();
 				throw error;
 			}
 		}
@@ -399,7 +416,19 @@ export function createServiceEngine(options) {
 					name,
 					serverUrl,
 				}));
-			const existing = await repository.libraries();
+			const saved = await repository.libraries();
+			const placeholders = saved.filter(
+				(row) =>
+					row.placeholder &&
+					!row.setup &&
+					!row.identity?.privateKey &&
+					!row.identity?.pendingRegistration &&
+					![...clients.values()].some(
+						(client) => client.states.get(row.id)?.pairing.active,
+					),
+			);
+			const discardIds = placeholders.map((row) => row.id);
+			const existing = saved.filter((row) => !discardIds.includes(row.id));
 			const records = [];
 			for (const row of manifest.libraries) {
 				const publicKey = (await loadKey(row.privateKey)).registrationKey;
@@ -433,8 +462,9 @@ export function createServiceEngine(options) {
 				});
 			}
 			vaultGuard(epoch);
-			await repository.importLibraries(records);
+			await repository.importLibraries(records, discardIds);
 			vaultGuard(epoch);
+			for (const id of discardIds) uninstall(id);
 			for (const row of records) await install(row).ready;
 			await notifyCatalog();
 			publish();
@@ -477,6 +507,7 @@ export function createServiceEngine(options) {
 			connection.disconnect();
 	}
 	async function catalogCommand(name, payload) {
+		const epoch = vaultEpoch;
 		const onlySetups = name === "libraries.discardSetup";
 		if (name === "libraries.add" || name === "libraries.beginSetup") {
 			if (
@@ -496,6 +527,7 @@ export function createServiceEngine(options) {
 			if (!row) throw new Error("Library is no longer saved.");
 			row.name = validateName(payload.name, row.id);
 			await repository.renameLibrary(row.id, row.name);
+			vaultGuard(epoch);
 			rows.set(row.id, row);
 			await notifyCatalog();
 			publish();
@@ -522,22 +554,16 @@ export function createServiceEngine(options) {
 					? {
 							id: crypto.randomUUID(),
 							name: "Personal",
+							placeholder: true,
 							identity: { serverUrl: defaultServerUrl },
 						}
 					: null;
-			for (const id of ids) {
-				runtimes.get(id).dispose();
-				runtimes.delete(id);
-				rows.delete(id);
-				for (const client of clients.values()) {
-					client.connections.get(id)?.disconnect();
-					client.connections.delete(id);
-					client.states.delete(id);
-				}
-			}
+			for (const id of ids) uninstall(id);
 			try {
 				await repository.deleteLibraries(ids, replacement, onlySetups);
+				vaultGuard(epoch);
 			} catch (error) {
+				vaultGuard(epoch);
 				for (const row of saved) install(row);
 				await Promise.all(saved.map((row) => runtimes.get(row.id).ready));
 				publish();
@@ -643,12 +669,14 @@ export function createServiceEngine(options) {
 								message.payload.vaultEpoch !== vaultEpoch
 							)
 								throw new Error("Vault context ended. Try again.");
+							const receivedEpoch = vaultEpoch;
 							const value =
 								message.name === "vault.lock"
 									? true
-									: await serialize(() =>
-											vaultCommand(message.name, message.payload || {}),
-										);
+									: await serialize(() => {
+											vaultGuard(receivedEpoch);
+											return vaultCommand(message.name, message.payload || {});
+										});
 							send(client, {
 								type: "reply",
 								requestId: message.requestId,
@@ -657,10 +685,20 @@ export function createServiceEngine(options) {
 							return;
 						}
 						requireUnlocked();
-                        const commandEpoch = vaultEpoch;
-                        if (message.payload?.vaultEpoch !== undefined) vaultGuard(message.payload.vaultEpoch);
+						const commandEpoch = vaultEpoch;
+						if (message.payload?.vaultEpoch !== undefined)
+							vaultGuard(message.payload.vaultEpoch);
 						if (message.name?.startsWith("libraries.")) {
-							const value = await serialize(async () => {vaultGuard(commandEpoch); requireUnlocked(); const result = await catalogCommand(message.name, message.payload || {}); vaultGuard(commandEpoch); return result;});
+							const value = await serialize(async () => {
+								vaultGuard(commandEpoch);
+								requireUnlocked();
+								const result = await catalogCommand(
+									message.name,
+									message.payload || {},
+								);
+								vaultGuard(commandEpoch);
+								return result;
+							});
 							send(client, {
 								type: "reply",
 								requestId: message.requestId,
@@ -697,7 +735,8 @@ export function createServiceEngine(options) {
 		},
 		dispose() {
 			disposed = true;
-			for (const runtime of runtimes.values()) runtime.dispose();
+			clearRuntimes();
+			transientUploads.clear();
 			for (const id of [...clients.keys()]) disconnect(id);
 			repository.close();
 		},

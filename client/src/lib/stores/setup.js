@@ -10,6 +10,7 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 		draftStarted = false,
 		disposed = false,
 		promoted = false;
+	let wasUnlocked = false;
 	const state = writable({ open: false, id: null, resumable: [] });
 	const projection = writable({
 		connected: false,
@@ -29,6 +30,15 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 		views: {},
 	});
 	function publish(value = get(root)) {
+		const isUnlocked = !value.vault || value.vault.status === "unlocked";
+		if (wasUnlocked && !isUnlocked) {
+			id = undefined;
+			draftStarted = false;
+			promoted = false;
+			settings.resetDraft({ libraryName: "", server: "" });
+			state.update((v) => ({ ...v, open: false }));
+		}
+		wasUnlocked = isUnlocked;
 		const source = value.libraries?.[currentLibrary()];
 		if (id && value.connected && !value.libraries?.[id] && !starting) {
 			id = undefined;
@@ -45,6 +55,9 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 		projection.set({
 			...get(projection),
 			...(scoped || {}),
+			uploads: scoped?.uploads || [],
+			media: scoped?.media || {},
+			views: scoped?.views || {},
 			pairing: scoped?.pairing || { active: false, status: "" },
 			connected: value.connected,
 			libraryId: "draft",
@@ -89,6 +102,7 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 			if (!id && !["identity.create", "pairing.receive"].includes(name))
 				return true;
 			if (!id) {
+				const captured = get(root);
 				starting ||= root
 					.command("libraries.beginSetup", {
 						name: get(settings).libraryName,
@@ -97,6 +111,14 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 						authorizerLibraryId: get(settings).authorizerLibraryId,
 					})
 					.then((value) => {
+						const latest = get(root);
+						if (
+							disposed ||
+							latest.instanceId !== captured.instanceId ||
+							latest.vault?.epoch !== captured.vault?.epoch ||
+							(latest.vault && latest.vault.status !== "unlocked")
+						)
+							throw new Error("Vault context ended. Try again.");
 						id = value;
 						publish();
 						return id;

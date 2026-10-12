@@ -104,7 +104,7 @@ Run `node client/cli/index.js --help` from the repository root, or
 
 The encrypted recovery file defaults to `$XDG_CONFIG_HOME/i2nclip/recovery.json`,
 or `~/.config/i2nclip/recovery.json` when XDG_CONFIG_HOME is unset, empty, or relative.
-Copy the recovery file downloaded by the extension there, or pass
+Export an individual-library recovery file from Manage Library and copy it there, or pass
 `--recovery /path/to/i2nclip-recovery.json` to any command. The CLI uses the server
 URL in that document and does not store your password or plaintext identity.
 New recovery files use mode 0600 and the automatically created directory uses
@@ -202,7 +202,7 @@ Binary data is summarized by type and size; long arrays and deep objects are bou
 
 Setup has four tabs: OTC (an invitation), Authorize (an existing registered
 library), Pair (another device), and Restore (a recovery file). Authorize is the
-default when a registered library exists and offers inline unlock; the selected
+default when a registered library exists; the selected
 source determines its server. OTC and Pair keep their own server choices, while
 Restore uses the recovery file's server.
 
@@ -213,20 +213,33 @@ failed registrations for Resume setup after reload. Retrying reuses the encrypte
 identity. Manage Library groups rename, server configuration and forgetting;
 Reset Browser is always the final disclosure and affects all local libraries.
 
-Each tab chooses its own named library. The catalog and per-library unlock,
+Each tab chooses its own named library. The vault, catalog,
 uploads, pairing and media state are service-owned; names are local and never
 sent to the server. Settings can rename or forget the selected library. Adding a
 library uses the four-tab setup form without replacing existing entries.
 OTC and Authorize create independent identities; Pair and Restore connect existing ones.
 
-The schema starts a fresh `i2nclip-libraries` IndexedDB database. Export development
-recovery files before upgrading and restore them as separate named entries; the
-old single-library database is not migrated or deleted. Each library has its own
-password and unchanged recovery file. Owner restart locks all libraries.
+Each client first creates one master password. Unlocking grants access to every
+saved library across its connected tabs; Lock hides the application and cancels
+active work. The web SharedWorker and extension background own separate vaults.
+`i2nclip-vault` encrypts names, servers, identities, pending registration, upload
+jobs and binary sources. Owner restart locks everything and requires explicit
+retry of interrupted uploads. Master-password changes re-wrap the vault key.
+
+Manage Library exports one library, while Back up all libraries exports the
+completed catalog. Both use a separately chosen recovery password and exclude
+pending uploads. Restore previews the file's libraries before merging them into
+the current vault. The destination master password remains unchanged. A forgotten
+master password requires resetting local storage and restoring recovery files or
+pairing from another unlocked client. Reset does not delete server files.
+
+This is a new development schema and recovery format; former local databases and
+recovery format v1 are not migrated. Clear development storage when upgrading.
 
 The CLI selects libraries through `--recovery`. `create` and `register` accept
 `--authorize-with FILE` instead of `--otc`, plus `--authorizer-password-file PATH`
-for that library's password. `--password-file` still belongs to the destination.
+for its recovery password. `--password-file` belongs to the destination recovery
+file. Whole-vault exports are not CLI inputs; export an individual library first.
 
 The E2E projects use the same tests and Firefox API shim in both engines. Native
 installed-extension/CSP checks remain separate. To run one project, pass

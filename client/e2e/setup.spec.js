@@ -50,6 +50,7 @@ test("four setup tabs support master unlock and durable invitation retries", asy
 	});
 	await expect(page.locator("#library-selector option")).toHaveCount(2);
 	await page.reload();
+	await master(page);
 	await page.locator("#add-library-settings > summary").click();
 	await page
 		.getByRole("button", { name: "Resume setup: Invited", exact: true })

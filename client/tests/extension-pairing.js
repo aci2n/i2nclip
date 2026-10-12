@@ -110,7 +110,17 @@ try {
 `,
 		);
 		const key = await generatePrivateKey();
-        const recovery = await exportRecovery([{name: "Service library", serverUrl: new URL(endpoint).origin, privateKey: key.privateKey}], "recovery-password", "library");
+		const recovery = await exportRecovery(
+			[
+				{
+					name: "Service library",
+					serverUrl: new URL(endpoint).origin,
+					privateKey: key.privateKey,
+				},
+			],
+			"recovery-password",
+			"library",
+		);
 		await writeFile(
 			join(addon, "service-smoke.html"),
 			'<!doctype html><script type="module" src="service-smoke.js"></script>',

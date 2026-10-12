@@ -1,69 +1,18 @@
 <script>
-import { onDestroy } from "svelte";
+import { onDestroy, untrack } from "svelte";
+import { createRecoveryImport } from "../stores/recovery-import.js";
 let { vault, onComplete = () => {} } = $props();
-let files = $state();
-let password = $state("");
-let preview = $state([]);
-let busy = $state(false);
-let message = $state("");
-let error = $state(false);
-let secret = "";
-let selectedFile;
-let disposed = false;
-onDestroy(() => {
-	disposed = true;
-	secret = "";
-	selectedFile = undefined;
-});
-function invalidate() {
-	preview = [];
-	secret = "";
-	selectedFile = undefined;
-	message = "";
-}
-async function inspect(event) {
-	event.preventDefault();
-	if (busy) return;
-	busy = true;
-	error = false;
-	message = "";
-	secret = password;
-	password = "";
-	selectedFile = files?.[0];
-	try {
-		const result = await vault.previewRecovery(selectedFile, secret);
-		if (!disposed) preview = result;
-	} catch (failure) {
-		invalidate();
-		message = failure.message;
-		error = true;
-	} finally {
-		busy = false;
-	}
-}
-async function restore() {
-	if (busy) return;
-	busy = true;
-	error = false;
-	try {
-		const result = await vault.importRecovery(selectedFile, secret);
-		if (disposed) return;
-		invalidate();
-		files = undefined;
-		message = `Restored ${result.imported.length} libraries. ${result.skipped} already saved.`;
-		if (result.imported[0]) onComplete(result.imported[0], result);
-	} catch (failure) {
-		message = failure.message;
-		error = true;
-	} finally {
-		secret = "";
-		preview = [];
-		selectedFile = undefined;
-		busy = false;
-	}
-}
+const form = untrack(() => createRecoveryImport(vault, onComplete));
+onDestroy(form.dispose);
 </script>
-<form class="stack" id="restore-settings" onsubmit={inspect}>
+<form
+	class="stack"
+	id="restore-settings"
+	onsubmit={(event) => {
+		event.preventDefault();
+		form.review();
+	}}
+>
 	<p>
 		Restore one library or a whole-vault recovery file. Each library keeps its
 		saved server and uses this client’s master password.
@@ -75,9 +24,8 @@ async function restore() {
 			type="file"
 			required
 			accept=".json,application/json"
-			bind:files
-			onchange={invalidate}
-			disabled={busy}
+			bind:files={() => $form.files, (value) => form.edit("files", value)}
+			disabled={$form.busy}
 		>
 	</div>
 	<div class="field">
@@ -87,18 +35,18 @@ async function restore() {
 			type="password"
 			required
 			autocomplete="current-password"
-			bind:value={password}
-			disabled={busy}
+			bind:value={() => $form.password, (value) => form.edit("password", value)}
+			disabled={$form.busy}
 		>
 	</div>
-	<button id="preview-recovery" type="submit" disabled={busy}>
-		{busy ? "Working…" : "Review recovery file"}
+	<button id="preview-recovery" type="submit" disabled={$form.busy}>
+		{$form.busy ? "Working…" : "Review recovery file"}
 	</button>
 </form>
-{#if preview.length}
+{#if $form.preview.length}
 	<div class="stack">
 		<ul>
-			{#each preview as row}
+			{#each $form.preview as row}
 				<li>{row.name} — {row.serverUrl}</li>
 			{/each}
 		</ul>
@@ -106,19 +54,26 @@ async function restore() {
 			Existing libraries are kept. Duplicate identities are skipped and
 			conflicting names receive a suffix.
 		</p>
-		<button id="restore" type="button" disabled={busy} onclick={restore}>
+		<button
+			id="restore"
+			type="button"
+			disabled={$form.busy}
+			onclick={form.restore}
+		>
 			Restore libraries
 		</button>
 		<button
 			class="secondary"
 			type="button"
-			disabled={busy}
-			onclick={invalidate}
+			disabled={$form.busy}
+			onclick={form.cancel}
 		>
 			Cancel
 		</button>
 	</div>
 {/if}
-{#if message}
-	<p role={error ? "alert" : "status"} class:error>{message}</p>
+{#if $form.message}
+	<p role={$form.error ? "alert" : "status"} class:error={$form.error}>
+		{$form.message}
+	</p>
 {/if}
