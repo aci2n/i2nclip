@@ -87,7 +87,7 @@ test("stale searches cannot publish; pagination uses the submitted query and per
 	);
 });
 
-test("uploads run sequentially, continue after failures, and retain only failed files for retry", async (t) => {
+test("uploads run sequentially, continue after failures, and report failures for manual resubmission", async (t) => {
 	const active = deferred();
 	const entered = deferred();
 	const seen = [];
@@ -124,12 +124,14 @@ test("uploads run sequentially, continue after failures, and retain only failed 
 	oldProgress(99);
 	assert.equal(get(f.library).uploadProgress, null);
 	fail = false;
-	assert.equal(await f.library.retryUploads(), true);
+	const resubmitting = f.library.upload([{ name: "bad" }]);
+	assert.deepEqual(get(f.library).uploadFailures, []);
+	assert.equal(await resubmitting, true);
 	assert.deepEqual(seen, ["first", "bad", "last", "bad"]);
 	assert.deepEqual(get(f.library).uploadFailures, []);
 });
 
-test("identity invalidation clears retry files and suppresses stale uploads and searches", async (t) => {
+test("identity invalidation clears failure messages and suppresses stale uploads and searches", async (t) => {
 	const result = deferred();
 	const upload = deferred();
 	const f = fixture(t, {
@@ -213,4 +215,65 @@ test("overlapping media mutations are rejected and metadata conflicts refresh ta
 	assert.match(get(media).message, /another device/);
 	assert.equal(await media.remove(), true);
 	assert.equal(get(media).deleted, true);
+});
+
+test("deleted cards retain their position and pagination, release URLs, and disappear on search", async (t) => {
+	const revoked = [];
+	let listed = 0;
+	let deletes = 0;
+	const f = fixture(t, {
+		http: {
+			list: async () => ({
+				items: listed++ ? [] : [{ ...item("a"), thumb: new Uint8Array([1]) }],
+				next: listed === 1 ? "cursor" : null,
+			}),
+			remove: async () => {
+				deletes++;
+			},
+		},
+		mediaOptions: {
+			urls: {
+				createObjectURL: () => "blob:preview",
+				revokeObjectURL: (url) => revoked.push(url),
+			},
+		},
+	});
+	f.owner.configure();
+	await tick();
+	assert.equal(await f.library.remove("a"), true);
+	assert.equal(get(f.library).cards.length, 1);
+	assert.equal(get(f.library).cards[0].deleted, true);
+	assert.equal(get(f.library).cards[0].preview, "");
+	assert.deepEqual(revoked, ["blob:preview"]);
+	assert.equal(get(f.library).next, "cursor");
+	assert.equal(get(f.library).empty, null);
+	assert.equal(await f.library.remove("a"), false);
+	assert.equal(deletes, 1);
+	assert.equal(await f.library.download("a"), false);
+	await f.library.search("");
+	assert.deepEqual(get(f.library).cards, []);
+	assert.equal(get(f.library).empty, "library");
+});
+
+test("failed and canceled deletions preserve active cards", async (t) => {
+	let confirmed = false;
+	let deletes = 0;
+	const f = fixture(t, {
+		confirm: () => confirmed,
+		http: {
+			list: async () => ({ items: [item("a")], next: null }),
+			remove: async () => {
+				deletes++;
+				throw new Error("Delete unavailable");
+			},
+		},
+	});
+	f.owner.configure();
+	await tick();
+	assert.equal(await f.library.remove("a"), false);
+	assert.equal(deletes, 0);
+	confirmed = true;
+	assert.equal(await f.library.remove("a"), false);
+	assert.equal(get(f.library).cards[0].deleted, false);
+	assert.equal(get(f.library).cards[0].message, "Delete unavailable");
 });

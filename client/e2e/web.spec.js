@@ -91,6 +91,17 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	await page.getByRole("button", { name: "Close image" }).click();
 	page.once("dialog", (dialog) => dialog.accept());
 	await card.getByRole("button", { name: "Delete", exact: true }).click();
+	await expect(card).toHaveCount(1);
+	await expect(card).toHaveClass(/deleted/);
+	await expect(card).toHaveCSS("opacity", "0.2");
+	for (const button of await card.getByRole("button").all()) {
+		await expect(button).toBeDisabled();
+	}
+	await shot(page, "deleted-card-desktop");
+	await page.emulateMedia({ colorScheme: "dark" });
+	await page.setViewportSize({ width: 320, height: 800 });
+	await shot(page, "deleted-card-dark-narrow");
+	await page.getByRole("searchbox").press("Enter");
 	await expect(card).toHaveCount(0);
 	await expect(
 		page.getByRole("heading", { name: "Your library is empty" }),
@@ -180,7 +191,7 @@ test("a second tab is rejected and retry succeeds after owner closure", async ({
 	await second.close();
 });
 
-test("upload failures continue through the batch and retry survives navigation", async ({
+test("upload failures survive navigation and files can be selected again", async ({
 	page,
 	app,
 }) => {
@@ -240,10 +251,15 @@ test("upload failures continue through the batch and retry survives navigation",
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	fail = false;
-	await page
-		.getByRole("button", { name: "Retry failed files", exact: true })
-		.click();
+	await page.getByLabel("Upload", { exact: true }).setInputFiles({
+		name: "failed.txt",
+		mimeType: "text/plain",
+		buffer: Buffer.from("retry me"),
+	});
 	await expect(page.getByRole("article")).toHaveCount(2);
+	await expect(
+		page.getByText("failed.txt: Upload unavailable", { exact: true }),
+	).toHaveCount(0);
 	await expect(
 		page.getByRole("button", { name: "Retry failed files", exact: true }),
 	).toHaveCount(0);
