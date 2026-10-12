@@ -82,6 +82,8 @@ onDestroy(app.dispose);
 				settings={app.settings}
 				pairing={app.pairing}
 				setup={app.setup}
+				forget={app.forget}
+				onForget={app.forgetLibrary}
 				{vault}
 				onRestore={app.restoredLibrary}
 			>

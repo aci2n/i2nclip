@@ -31,4 +31,4 @@ Extend existing `e2e/settings.spec.js`/`multi-library.spec.js` rather than intro
 
 ## Implementation notes
 
-Record the callback/action owner, captured-ID behavior, selector/order and verification.
+Implemented `createForgetLibrary` as an application-owned action facade with captured library/context, double-submit guard and action-local errors. Settings receives only its state and callback; `#forget-library` follows VaultSettings and precedes Reset. Confirmation wording is preserved. Added cancellation/captured-ID/stale-error coverage. Combined verification is deferred until TODOs 37–46 are implemented, as requested.

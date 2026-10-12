@@ -1,5 +1,6 @@
 import { get, writable } from "svelte/store";
 import { createLibraryClient } from "../service/scope.js";
+import { createForgetLibrary } from "./forget-library.js";
 import { createLibrary } from "./library.js";
 import { createPairing } from "./pairing.js";
 import { createPendingUpload } from "./pending-upload.js";
@@ -32,6 +33,7 @@ export function createApplication(platform, initialPage, browser = window) {
 		},
 		new URLSearchParams(browser.location.search).get("id"),
 	);
+	const forget = createForgetLibrary(root, () => client.id(), platform);
 	const session = createSession(client, platform);
 	const pairing = createPairing(client);
 	const settings = createSettings(session, platform);
@@ -102,6 +104,9 @@ export function createApplication(platform, initialPage, browser = window) {
 		}
 		vaultWasUnlocked = isUnlocked;
 		const id = client.id();
+		if (id !== lastSelection) {
+			forget.clear();
+		}
 		if (id !== lastSelection && lastSelection) {
 			disposeLibrary();
 			library = ["library", "options"].includes(get(state).page)
@@ -224,15 +229,8 @@ export function createApplication(platform, initialPage, browser = window) {
 		async renameLibrary(name) {
 			await root.command("libraries.rename", { libraryId: client.id(), name });
 		},
-		async forgetLibrary() {
-			if (
-				platform.confirm(
-					"Forget this library and its unfinished uploads? Server files stay saved. Keep a recovery file first.",
-				)
-			) {
-				await root.command("libraries.forget", { libraryId: client.id() });
-			}
-		},
+		forget,
+		forgetLibrary: forget.run,
 		navigate(event, page) {
 			if (
 				disposed ||

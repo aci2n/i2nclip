@@ -15,15 +15,13 @@ $effect(() => {
 	});
 });
 let error = $state("");
-let errorAt = $state("rename");
 let busy = $state(false);
-async function run(action, scope = "rename") {
+async function run(action) {
 	if (busy) {
 		return;
 	}
 	busy = true;
 	error = "";
-	errorAt = scope;
 	try {
 		await action();
 	} catch (failure) {
@@ -57,17 +55,9 @@ async function run(action, scope = "rename") {
 			</div>
 			<div class="bar actions">
 				<button type="submit" disabled={busy}>Rename</button>
-				<button
-					type="button"
-					class="secondary danger"
-					disabled={busy}
-					onclick={() => run(app.forgetLibrary)}
-				>
-					Forget this library
-				</button>
 			</div>
 		</form>
-		{#if error && errorAt === "rename"}
+		{#if error}
 			<p role="alert">{error}</p>
 		{/if}
 		<RecoveryExport {vault} {libraryId} />

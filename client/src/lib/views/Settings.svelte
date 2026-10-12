@@ -4,8 +4,17 @@ import Pairing from "../components/Pairing.svelte";
 import Setup from "../components/Setup.svelte";
 import VaultSettings from "../components/VaultSettings.svelte";
 
-let { session, settings, pairing, management, setup, vault, onRestore } =
-	$props();
+let {
+	session,
+	settings,
+	pairing,
+	management,
+	setup,
+	vault,
+	onRestore,
+	forget,
+	onForget,
+} = $props();
 onMount(() => {
 	if (!$session.configured) {
 		setup.start();
@@ -136,6 +145,22 @@ const feedbackAt = $derived(
 		</details>
 	{/if}
 	<VaultSettings {vault} />
+	{#if $session.configured}
+		<div class="stack">
+			<button
+				id="forget-library"
+				type="button"
+				class="secondary danger"
+				disabled={$session.busy || $forget.busy}
+				onclick={onForget}
+			>
+				Forget this library
+			</button>
+			{#if $forget.error}
+				<p role="alert" class="error">{$forget.error}</p>
+			{/if}
+		</div>
+	{/if}
 	<details id="reset-settings" class="panel">
 		<summary class="danger">Reset Browser</summary>
 		<div class="stack disclosure-body">

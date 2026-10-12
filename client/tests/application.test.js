@@ -89,3 +89,37 @@ test("popup navigation and history preserve its workflow, tag draft, and source 
 	assert.equal(get(app).library, library);
 	await get(app).pending.ready;
 });
+
+test("forget captures its selected library, prevents overlapping requests and suppresses stale errors", async () => {
+	const { writable } = await import("svelte/store");
+	const { createForgetLibrary } = await import(
+		"../src/lib/stores/forget-library.js"
+	);
+	const { deferred } = await import("./helpers.js");
+	const gate = deferred();
+	let selected = "first";
+	const calls = [];
+	const root = {
+		...writable({ instanceId: "owner", vault: { epoch: 1 } }),
+		command: (name, payload) => {
+			calls.push({ name, payload });
+			return gate.promise;
+		},
+	};
+	let accepted = false;
+	const forget = createForgetLibrary(root, () => selected, {
+		confirm: () => accepted,
+	});
+	assert.equal(await forget.run(), false);
+	assert.equal(calls.length, 0);
+	accepted = true;
+	const pending = forget.run();
+	assert.equal(await forget.run(), false);
+	selected = "second";
+	gate.reject(new Error("disk full"));
+	assert.equal(await pending, false);
+	assert.deepEqual(calls, [
+		{ name: "libraries.forget", payload: { libraryId: "first" } },
+	]);
+	assert.deepEqual(get(forget), { busy: false, error: "" });
+});
