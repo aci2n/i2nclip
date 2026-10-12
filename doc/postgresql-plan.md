@@ -65,7 +65,7 @@ Database operations:
 - Preserve protocol/crypto vectors, body-limit/deadline tests, transfer saturation, and cancellation tests. Replace filesystem-pinning tests with downloads remaining readable after concurrent database deletion.
 - Test pool acquisition timeout, database restart/reconnection, missing configuration, and maintenance failure recovery.
 - Measure maximum-size uploads/downloads, including two simultaneous transfers in each direction. Record app peak memory, PostgreSQL resource use, and event-loop responsiveness; ensure no connection remains checked out while an HTTP response is draining. Distinguish test-client allocations from application-process memory.
-- Run `make test`, `make test-db`, Firefox E2E tests, `make extension`, formatting, and available lint checks. Validate i2nfra templates, Python checks, Quadlet generation, and deployment dry run.
+- Run `make test`, `make test-db`, Firefox E2E tests, `make web`, formatting, and available lint checks. Validate i2nfra templates, Python checks, Quadlet generation, and deployment dry run.
 - Completion requires no SQLite dependency, filesystem blob storage, application connection mutex, staged-file journal, SIGUSR1 GC handler, or application `spawn_blocking` calls.
 - Keep new code consistent with existing project patterns: readable multiline SQL, explicit column lists, normal indentation and spacing, and expanded async workflows/test setup.
 

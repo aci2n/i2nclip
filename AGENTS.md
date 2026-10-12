@@ -3,14 +3,12 @@
 ## Layout and commands
 
 - The server image includes only the web client build, served by Rust on port 8080 alongside the API. `I2N_WEB_DIR` defaults to `client/dist/web` locally and is set to `/usr/local/share/i2nclip/web` in the image.
-- The Rust server lives in `src/`. All frontend source, npm tooling, browser tests, and extension assets live in `client/`.
-- `client/` is a Svelte 5 + Vite project. Reusable crypto, API, media, stores, and components live in `client/src/lib/`. Firefox APIs belong only in `client/src/extension/`, behind the platform adapter.
-- Firefox's manifest, page shells, icons, and update metadata live in `client/public/`. Build before loading `client/dist/extension/manifest.json` as a temporary add-on.
-- Keep one npm project: `client/package.json`, its lockfile, `.nvmrc`, and Playwright configuration all belong in `client/`.
-- The root Makefile delegates frontend commands with `$(MAKE) -C client`; do not include the client Makefile. `make build` builds server and frontend, `make client` builds frontend, and `make extension` builds and packages the add-on.
-- `make web`, `make extension`, and `make cli` build and package individual client targets; `make packages` packages all three. All outputs stay in `client/dist/`. Web ships as `i2nclip-web.zip`; CLI ships as `i2nclip-cli.tar.gz` with an executable Node 22 ESM bundle and no npm runtime dependencies.
-- Packaging is `npm run pack:extension` inside `client/`, using the system `zip` command. No Python packaging script is needed. The XPI is `client/dist/i2nclip.xpi`; runtime files belong at its root. Exclude update metadata and remove stale build entries when repacking.
-- Do not minify JavaScript or CSS unless explicitly needed. All three Vite builds disable minification. ZIP compression is fine.
+- The Rust server lives in `src/`. Frontend source, npm tooling, and browser tests live in `client/`.
+- `client/` is a Svelte 5 + Vite web project. Reusable crypto, API, media, stores, and components live in `client/src/lib/`.
+- Keep one npm project: package.json, lockfile, .nvmrc, and Playwright configuration belong in `client/`.
+- The root Makefile delegates frontend commands with `$(MAKE) -C client`; do not include the client Makefile. `make build` builds server and frontend; `make client` builds frontend.
+- `make web` and `make packages` package the web client as `client/dist/i2nclip-web.zip`. All outputs stay in `client/dist/`.
+- Do not minify JavaScript or CSS unless explicitly needed. The Vite build disables minification. ZIP compression is fine.
 
 ## Database policy
 
@@ -19,15 +17,15 @@
 
 ## State and resource ownership
 
-- Components render state and invoke actions; stores and services own async workflows. Avoid direct DOM mutation or Firefox storage calls in reusable UI components.
+- Views subscribe to stores and pass plain state and callback props to components. Components must not receive or import stores. Stores own async workflows; components may own presentation state. HTML `id` attributes are forbidden.
 - Keep the library store at the app root while navigating between Library and Settings so active uploads and their status survive view changes.
-- Use `$state` for bound DOM references read by template handlers. Run the Svelte checker and ensure `make extension` builds without warnings.
+- Use `$state` for bound DOM references read by template handlers. Run the Svelte checker and ensure `make client` builds without warnings.
 - Search uses cancellation plus stale-result checks. Pagination belongs to the submitted search and allows only one request at a time.
-- Identity or server changes invalidate pending library operations. Upload batches run sequentially; pending context-menu uploads have individual IDs and remain available after failures.
+- Identity or server changes invalidate pending library operations. Upload batches run sequentially and individual failures do not stop the batch. Upload state exists only in memory.
 - A failed file must not stop the rest of a batch. Retain only failed files for retry, clear them on identity/server changes, and ignore progress from completed or superseded uploads.
-- Serialize session mutations across pages with the session Web Lock. Prevent overlapping mutations on a media item.
+- Use one lifetime Web Lock solely for tab admission, before reading localStorage or creating application stores. Reject overlapping session and media-item mutations with local busy state.
 - Media items own decrypted bytes and object URLs. Abort requests and revoke URLs on disposal; stale downloads must not create URLs or open save dialogs.
-- Check local file size before reading bytes. Cap remote reads while streaming; do not trust Content-Length alone.
+- Check local file size before reading bytes. Cap content downloads while streaming; do not trust Content-Length alone.
 - Preserve the encryption protocol when reorganizing code. Rust and JavaScript share `client/tests/test-vectors.json`; content uses fixed purpose AAD, metadata includes the sealed-content hash in its AAD, and downloads verify that hash before decryption.
 
 ## UI conventions and visual review
@@ -44,8 +42,8 @@
 ## Verification
 
 - Install dependencies with `npm ci --prefix client`; use the Node version in `client/.nvmrc`.
-- The root Makefile groups all test/verification targets by required access. `make test-packages` builds the client archives and runs package checks without a browser or database.
+- The root Makefile groups all test/verification targets by required access. `make test-packages` builds the web archive and runs package checks without a browser or database.
 - `make test` runs client tests, the Svelte checker, and Rust tests. `make -C client test` checks only the client.
-- `npm run e2e --prefix client` rebuilds the extension and runs Firefox tests. `make test-e2e` also installs dependencies and Firefox.
-- E2E tests use a real local Rust API and a Firefox API shim. Screenshots go to ignored `client/e2e/shots/`; inspect them with the image-viewing tool.
+- `npm run e2e --prefix client` rebuilds the web app and runs Firefox/Chromium tests. `make test-e2e` also installs dependencies and Firefox.
+- E2E tests use the real local Rust web/API listener without runtime shims. Screenshots go to ignored `client/e2e/shots/`; inspect them with the image-viewing tool.
 - Browser tests need permission to launch Firefox and communicate with local servers. If sandboxing blocks them, rerun with the appropriate escalation.

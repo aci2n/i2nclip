@@ -1,5 +1,8 @@
-# Backend review and protocol documentation
+# Project architecture and protocol documentation
 
+- [Simplification verification](simplification-verification.md): implementation decisions and final checks.
+- [Client ownership](session.md): singleton stores, tab admission, persistence, and disposal.
+- [Device pairing](pairing.md): verification and identity transfer through the relay API.
 - [Database concurrency audit](database-concurrency-audit.md): query-by-query isolation reasoning, concurrent operation outcomes, and startup serialization.
 - [PostgreSQL storage plan](postgresql-plan.md): agreed application, deployment, and verification scope.
 - [PostgreSQL process profile](postgresql-profile.md): separate server/client memory measurements, PostgreSQL process sampling, and reproduction steps.

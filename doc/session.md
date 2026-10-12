@@ -1,28 +1,15 @@
-# Session ownership
+# Client session ownership
 
-See [the browser service design and complete state inventory](client-service.md).
+The web app admits one tab per origin with a lifetime Web Lock before reading saved state or creating application stores. Other tabs show an explicit retry screen. Pagehide disposes workflows before releasing admission; restored pages reacquire admission and start fresh locked sessions.
 
-One catalog owner runs in the web SharedWorker or extension background context.
-Each named library has its own identity, runtime, epoch and cancellation context. These
-have separate scopes. Pages hold read-only projections and communicate through
-commands/events; no page reads identity storage or receives a private key.
+The root application view owns one session, library, and pairing store across navigation. Views subscribe and pass plain values and callback props to isolated components. Components may own presentation state but cannot access stores.
 
-The master vault encrypts configuration, pending registration, upload jobs and
-retained source blobs in IndexedDB. One client-wide unlock opens all libraries;
-one lock clears every runtime and all client projections. The unlocked key is memory-only, so restart always locks.
-Identity changes increment the owner epoch and cancel obsolete work. Authoritative
-state transitions are serialized within the owner; network work does not hold a
-database transaction. Durable changes publish only after transaction completion.
+The session owns the decrypted identity, encryption key through its persistence helper, and cancellation generation. Locking, forgetting, replacement, resetting, and disposal invalidate workflows. Session mutations reject overlap. Stores invoke the API directly.
 
-Internal pairing operation handles prevent forged/disposed/stale authorization.
-Their implementation is private to the service and requires no cross-page locks,
-storage notifications, or per-tab session generation. Shared state broadcasts
-update every connected client. Reconnect/resume requests a fresh snapshot, and
-uncertain mutation commands are never automatically replayed.
+Only the encrypted identity, name, server URL, and password derivation material are persisted in one atomic localStorage record. A failed write preserves the previous record and identity. Recovery independently encrypts one identity and is validated before saving. There are no migrations.
 
-Accepted uploads outlive their submitting page. Owner restart marks active
-transfers interrupted and pauses queued jobs, preserving their sources for
-explicit retry after unlocking. Global reset discards the entire catalog and all jobs/sources; forgetting one
-library removes only that library;
-successful server changes discard sources for the old context. Already submitted
-network requests cannot be recalled.
+The library owns searches and sequential upload batches across navigation. Cancellation and revision checks suppress stale searches. Pagination uses the submitted query and permits one request at a time. Failed files remain for retry; reloading or changing the identity discards all transient upload state.
+
+Media items own bytes, requests, URLs, and mutation busy state. Disposal aborts requests and revokes URLs. Late results cannot create previews or save dialogs. Metadata conflicts refresh the server tags while the editor retains failed drafts for retry.
+
+Pairing owns one isolated attempt. It compares verification codes and saves the receiver's encrypted identity before acknowledgment. Closing or locking the page ends the attempt.

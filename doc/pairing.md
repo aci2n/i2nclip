@@ -1,10 +1,6 @@
 # Device pairing
 
-Web and Firefox extension clients can copy an unlocked library identity to a
-fresh library entry. Both clients unlock their own master vaults first. Pairing copies the full
-identity: there is no per-device revocation or restricted sharing. Media encryption, request signatures, registration, pairing packets and local
-generation checks retain their existing formats. Recovery uses the independent
-password-protected manifest described in [the service design](client-service.md).
+The web app can copy an unlocked library identity to a client with no library configured. Both clients unlock their own password-protected local state first. Pairing copies the full identity: there is no per-device revocation or restricted sharing. Media encryption, request signatures, registration, and pairing packets retain their formats. Recovery independently protects one identity; see [client ownership](session.md).
 
 ## Code and authentication
 
@@ -14,7 +10,7 @@ The alphabet is `23456789ABCDEFGHJKLMNPQRSTUVWXYZ`. Input is case-insensitive an
 ignores spaces and hyphens. The secret never appears in a request or URL.
 
 The sending device creates a temporary OPAQUE setup and registration record
-locally. `@serenity-kit/opaque` 1.1.0 performs the PAKE in the client service;
+locally. `@serenity-kit/opaque` 1.1.0 performs the PAKE in the pairing workflow;
 its default memory-constrained Argon2 configuration is used. The receiver is the
 OPAQUE client and the sending device is the OPAQUE server. The Rust relay is
 neither endpoint and never receives the OPAQUE setup or registration record.
@@ -24,15 +20,15 @@ verification-code` and `sender verification-code` respectively. Verification
 support is therefore authenticated: both devices must use updated clients;
 mixed old/new clients fail authentication with no fallback. The context prefix
 remains `i2nclip/pairing/v1`, and all packet versions and relay steps stay at v1.
-Each worker accepts one authentication attempt only.
+Each executor accepts one authentication attempt only.
 
-After authentication, each worker independently derives a 40-bit verification
+After authentication, each executor independently derives a 40-bit verification
 value with HKDF-SHA256 from the OPAQUE session key, using the pairing context as
 salt and `verification-code` as info. Encode the five derived bytes in base-32
 with the pairing alphabet, most significant bits first, and display as
-`XXXX-XXXX`. These bits use a separate purpose from encryption keys. The worker
+`XXXX-XXXX`. These bits use a separate purpose from encryption keys. The executor
 exposes the formatted code only in the authenticated sender/receiver phases;
-session keys remain inside the worker.
+session keys remain inside the executor.
 
 Both devices display **Verification code**. The original pairing code is hidden
 on the sender after authentication. Compare the displayed codes on the intended
@@ -56,21 +52,7 @@ direction and protocol step. JSON packets contain `v: 1`, `iv`, and `ct` encoded
 as unpadded base64url. The identity plaintext contains `v`, `serverUrl`,
 `privateKey`, and `publicKey`; the acknowledgment contains `v: 1, saved: true`.
 
-The receiver validates the identity and selected server inside the browser
-service, checks that no library/pending registration exists, and saves the identity inside the destination
-client’s encrypted vault. The master password is never transferred. IndexedDB commit must complete before
-acknowledgment. The unlocked key stays in owner memory, and restarting the owner
-requires the client’s master password.
-
-The shared [browser service](client-service.md) owns pairing and its private
-operation handles. Reset/server changes invalidate pairing immediately. Transfer
-and acknowledgment validate the current operation inside the owner's serialized
-identity queue; no UI page receives private credentials or chooses a lock.
-
-All connected clients receive the same pairing code, verification, status and
-controls. Any tab can approve, reject verification or cancel. Closing the starting
-tab leaves the attempt running in the service; owner shutdown ends it. Expiry and
-bounded relay retries remain enforced by the owner.
+The receiver validates the identity and selected server, checks that no library is configured, and saves the encrypted identity to localStorage before acknowledgment. The master password is never transferred. Session and pairing stores own operation handles and cancellation. Locking, forgetting, replacement, and disposal end the attempt; stale transfers and acknowledgments are rejected. Closing the page ends pairing. Expiry and bounded relay retries remain enforced.
 
 ## Relay API
 
@@ -141,25 +123,6 @@ ended-pairing error; existing creation and recovery restore remain available.
 
 ## Verification
 
-Unit tests cover the real OPAQUE exchange, wrong secrets, session bindings,
-tampering, direction separation, replay rejection, bounded reads, sender approval,
-durable-save acknowledgment, cancellation, and serialized identity import.
-Verification tests include independent HKDF vectors, matching real OPAQUE codes,
-distinct sessions, mixed-client rejection, worker phase restrictions, mismatch
-cancellation, and stale-code cleanup. Firefox tests compare both displays in
-all web/extension directions and verify mismatch cancellation without import.
-Rust tests cover role capabilities, ordering/idempotency, room/rate/body limits,
-source spoofing, saturated read admission, permit release, and expiry. Client
-regressions cover stalled reset/server changes, stale persisted credentials,
-and owner command ordering across pages. Firefox tests use independent browser
-contexts and the real Rust API for every web/extension direction, independent-vault
-unlock, wrong codes, and reset
-cancellation. The extension needs packaged WASM enabled by its narrowly scoped
-`wasm-unsafe-eval` CSP permission.
+Unit tests cover real OPAQUE exchange, wrong secrets, session bindings, independent HKDF verification vectors, tampering, direction separation, bounded reads, explicit approval, durable-save acknowledgment, cancellation, expiry, and idempotent retries.
 
-`make test-extension-pairing` builds the add-on, installs a temporary copy in a
-fresh headless Firefox profile, and runs the packaged service-owned OPAQUE executors under the
-actual manifest CSP, including verification-code derivation and agreement.
-It needs a Firefox version accepted by the manifest;
-`I2N_TEST_FIREFOX` overrides the default `/usr/bin/firefox`. It does not access
-existing profiles or user identities.
+Firefox and Chromium tests use independent browser contexts and the real Rust API to transfer an identity after comparing both verification displays. Rust tests cover role capabilities, ordering/idempotency, room/rate/body limits, source spoofing, admission, permit release, and expiry.

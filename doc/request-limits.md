@@ -49,7 +49,7 @@ Handlers reject oversized Content-Length before reading. Upload then acquires it
 - Completed: four authenticated stalled upload streams hold all slots. A fifth waits without polling its body and proceeds when a slot is released. Non-upload requests and invalid signatures still return their normal statuses while slots are occupied.
 - Completed: failed reads, timeouts, invalid frames, and successful writes release capacity. Cancelling an HTTP task during body reading releases its permit. Cancellation during async work drops its buffer/permit and rolls back pending transactions.
 - Existing signature-before-body, replay, ownership, duplicate-upload, registration, and shared Rust/JavaScript vector tests still pass.
-- Completed: `make test` under Node 22, touched-file formatting checks, and `make extension`; the limits/statuses are documented in `protocol.md`.
+- Completed: `make test` under Node 22, touched-file formatting checks, and `make web`; the limits/statuses are documented in `protocol.md`.
 
 ## Implemented download streaming
 
