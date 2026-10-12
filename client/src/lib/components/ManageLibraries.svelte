@@ -33,7 +33,7 @@ async function run(action) {
 </script>
 
 <details id="rename-library-settings" class="panel">
-	<summary>Manage Library</summary>
+	<summary>Manage library</summary>
 	<fieldset class="stack" aria-label="Manage Library">
 		<legend hidden>Manage Library</legend>
 		<form
