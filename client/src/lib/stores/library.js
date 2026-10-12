@@ -1,219 +1,344 @@
 import { get, writable } from "svelte/store";
+import * as api from "../api.js";
+import { sendUpload } from "../media/upload.js";
 import { createMediaItem } from "./media-item.js";
 
-export function createLibrary(client, platform, initial = {}) {
-	const viewId = crypto.randomUUID();
-	const cards = new Map();
+export function createLibrary(
+	session,
+	{
+		http = api,
+		send = sendUpload,
+		mediaOptions = {},
+		confirm = (message) => globalThis.confirm(message),
+	} = {},
+) {
 	const state = writable({
-		items: [],
 		cards: [],
-		selected: null,
+		query: "",
+		searchDraft: "",
 		next: null,
-		query: initial.query || "",
-		searchDraft: initial.draft || "",
 		loading: false,
 		empty: null,
 		status: "",
 		uploading: false,
 		uploadProgress: null,
-		uploadJobs: [],
-		visibleUploadJobs: [],
 		uploadFailures: [],
 		uploadCompleted: [],
 		uploadStatus: "",
+		selected: null,
 	});
+	const cards = new Map();
 	let disposed = false;
-	let viewInstance;
-	let opening = false;
+	let searchController;
+	let revision = 0;
+	let uploadRevision = 0;
 	let previewRevision = 0;
-	let uploadStatus = "";
-	function clear() {
-		previewRevision++;
-		for (const media of cards.values()) {
-			media.dispose();
+	let lastEpoch = session.epoch;
+	let failures = [];
+	let batchActive = false;
+	function publishCards() {
+		state.update((v) => ({
+			...v,
+			cards: [...cards.values()].map((row) => row.value),
+		}));
+	}
+	function clearCards() {
+		for (const row of cards.values()) {
+			row.unsubscribe();
+			row.media.dispose();
 		}
 		cards.clear();
+		publishCards();
 	}
-	function open(value) {
-		if (
-			opening ||
-			!value.connected ||
-			!value.session.unlocked ||
-			viewInstance === value.clientId
-		) {
+	function add(item) {
+		if (cards.has(item.id)) {
 			return;
 		}
-		opening = true;
-		client
-			.command("view.open", { id: viewId, query: get(state).query })
-			.then(() => {
-				viewInstance = value.clientId;
-			})
-			.catch((error) => {
-				if (!disposed) {
-					state.update((current) => ({ ...current, status: error.message }));
-				}
-			})
-			.finally(() => {
-				opening = false;
-			});
+		const media = createMediaItem(item, session, { http, ...mediaOptions });
+		const row = { media, value: get(media), unsubscribe: null };
+		cards.set(item.id, row);
+		row.unsubscribe = media.subscribe((value) => {
+			row.value = value;
+			if (!disposed) {
+				publishCards();
+			}
+		});
 	}
-	const unsubscribe = client.subscribe((value) => {
+	function reset() {
+		revision++;
+		uploadRevision++;
+		previewRevision++;
+		searchController?.abort();
+		clearCards();
+		failures = [];
+		batchActive = false;
+		state.update((v) => ({
+			...v,
+			next: null,
+			loading: false,
+			empty: null,
+			status: "",
+			selected: null,
+			uploading: false,
+			uploadProgress: null,
+			uploadFailures: [],
+			uploadCompleted: [],
+			uploadStatus: "",
+		}));
+	}
+	async function search(query = get(state).searchDraft, more = false) {
+		if (
+			disposed ||
+			!get(session).configured ||
+			!get(session).unlocked ||
+			get(session).busy
+		) {
+			return false;
+		}
+		const previous = get(state);
+		if (more && (previous.loading || !previous.next)) {
+			return false;
+		}
+		searchController?.abort();
+		searchController = new AbortController();
+		const signal = AbortSignal.any([searchController.signal, session.signal]);
+		const own = ++revision;
+		const submitted = more ? previous.query : query;
+		if (!more) {
+			previewRevision++;
+			clearCards();
+		}
+		state.update((v) => ({
+			...v,
+			query: submitted,
+			loading: true,
+			empty: null,
+			status: "",
+			selected: more ? v.selected : null,
+			next: more ? v.next : null,
+		}));
+		try {
+			const page = await http.list({
+				...session.credentials(),
+				tags: submitted,
+				after: more ? previous.next : null,
+				signal,
+			});
+			if (disposed || signal.aborted || own !== revision) {
+				return false;
+			}
+			for (const item of page.items) {
+				add(item);
+			}
+			state.update((v) => ({
+				...v,
+				next: page.next,
+				empty: cards.size ? null : submitted.trim() ? "search" : "library",
+			}));
+			return true;
+		} catch (error) {
+			if (!disposed && own === revision && !signal.aborted) {
+				state.update((v) => ({ ...v, status: error.message }));
+			}
+			return false;
+		} finally {
+			if (!disposed && own === revision) {
+				state.update((v) => ({ ...v, loading: false }));
+			}
+		}
+	}
+	const unsubscribe = session.subscribe((value) => {
 		if (disposed) {
 			return;
 		}
-		open(value);
-		const view = value.views[viewId];
-		const ids =
-			value.connected && value.session.unlocked ? view?.ids || [] : [];
-		for (const [id, media] of cards) {
-			if (!ids.includes(id)) {
-				media.dispose();
-				cards.delete(id);
-			}
+		if (value.epoch !== lastEpoch) {
+			lastEpoch = value.epoch;
+			reset();
 		}
-		const items = ids.map((id) => value.media[id]).filter(Boolean);
-		for (const item of items) {
-			if (!cards.has(item.id)) {
-				cards.set(item.id, createMediaItem(item, client, platform));
-			}
+		if (
+			value.configured &&
+			value.unlocked &&
+			!value.busy &&
+			!get(state).loading &&
+			!cards.size &&
+			get(state).empty === null &&
+			!get(state).status
+		) {
+			void search(get(state).query);
 		}
-		const active = value.uploads.find((job) =>
-			["preparing", "uploading"].includes(job.status),
-		);
-		const batch = active
-			? value.uploads.filter((job) => job.batchId === active.batchId)
-			: [];
-		const failures = value.uploads
-			.filter((job) => ["failed", "interrupted", "paused"].includes(job.status))
-			.map((job) => ({
-				...job,
-				file: { name: job.name || "upload" },
-				error:
-					job.status === "interrupted"
-						? "Interrupted. It may already be saved on the server; check before retrying."
-						: job.status === "paused"
-							? "Queued before restart. Retry to continue."
-							: job.error,
-			}));
-		state.update((current) => ({
-			...current,
-			...(view || {}),
-			query: view?.query ?? current.query,
-			items,
-			cards: items.map((item) => ({ item, media: cards.get(item.id) })),
-			selected:
-				current.selected &&
-				ids.includes(current.selected.id) &&
-				value.session.unlocked
-					? current.selected
-					: null,
-			uploading: value.uploads.some((job) =>
-				["queued", "preparing", "uploading"].includes(job.status),
-			),
-			uploadProgress: active
-				? {
-						name: active.name,
-						index: batch.indexOf(active) + 1,
-						total: batch.length,
-						percent: active.progress || 0,
-					}
-				: null,
-			uploadJobs: value.uploads,
-			visibleUploadJobs: value.uploads.filter((job) =>
-				["queued", "preparing", "uploading", "completed"].includes(job.status),
-			),
-			uploadFailures: failures,
-			uploadCompleted: value.uploads
-				.filter((job) => job.status === "completed")
-				.map((job) => job.id),
-			uploadStatus,
-		}));
 	});
-	async function action(name, payload) {
-		try {
-			return await client.command(name, payload);
-		} catch (error) {
-			if (!disposed) {
-				state.update((value) => ({ ...value, status: error.message }));
-			}
+	async function upload(files) {
+		if (
+			disposed ||
+			batchActive ||
+			!files.length ||
+			!get(session).unlocked ||
+			!get(session).configured ||
+			get(session).busy
+		) {
 			return false;
 		}
+		batchActive = true;
+		const own = ++uploadRevision;
+		const signal = session.signal;
+		const credentials = session.credentials();
+		state.update((v) => ({
+			...v,
+			uploading: true,
+			uploadStatus: "",
+			uploadCompleted: [],
+		}));
+		const failed = [];
+		for (const [index, file] of files.entries()) {
+			if (disposed || signal.aborted || own !== uploadRevision) {
+				break;
+			}
+			state.update((v) => ({
+				...v,
+				uploadProgress: {
+					name: file.name,
+					index: index + 1,
+					total: files.length,
+					percent: 0,
+				},
+			}));
+			let finished = false;
+			try {
+				const item = await send({
+					file,
+					credentials,
+					signal,
+					onProgress: (percent) => {
+						if (
+							!finished &&
+							!disposed &&
+							!signal.aborted &&
+							own === uploadRevision
+						) {
+							state.update((v) => ({
+								...v,
+								uploadProgress: {
+									name: file.name,
+									index: index + 1,
+									total: files.length,
+									percent,
+								},
+							}));
+						}
+					},
+				});
+				if (!disposed && !signal.aborted && own === uploadRevision) {
+					state.update((v) => ({
+						...v,
+						uploadCompleted: [
+							...v.uploadCompleted,
+							{ id: item.id, name: file.name },
+						],
+					}));
+				}
+			} catch (error) {
+				if (!disposed && !signal.aborted && own === uploadRevision) {
+					failed.push({ file, error: error.message });
+				}
+			} finally {
+				finished = true;
+			}
+		}
+		if (disposed || signal.aborted || own !== uploadRevision) {
+			return false;
+		}
+		failures = [...failures, ...failed];
+		batchActive = false;
+		state.update((v) => ({
+			...v,
+			uploading: false,
+			uploadProgress: null,
+			uploadFailures: failures.map(({ file, error }) => ({
+				name: file.name,
+				error,
+			})),
+			uploadStatus: failed.length
+				? `${failed.length} file(s) failed. Retry the failed files.`
+				: "Upload complete.",
+		}));
+		await search(get(state).query);
+		return !failed.length;
 	}
 	return {
 		subscribe: state.subscribe,
-		query: () => get(state).query,
-		draft: () => get(state).searchDraft,
-		editDraft: (searchDraft) =>
-			state.update((value) => ({ ...value, searchDraft })),
-		search: (query = get(state).query) =>
-			action("view.search", { id: viewId, query }),
-		more: () => action("view.more", { id: viewId }),
-		media: (item) => cards.get(item.id),
-		async upload(files) {
-			const result = await action("uploads.submit", {
-				sources: files.map((file) => ({ blob: file, name: file.name })),
-			});
-			if (result?.failures?.length) {
-				uploadStatus = result.failures
-					.map((failure) => `${failure.name}: ${failure.error}`)
-					.join(" | ");
-				state.update((value) => ({ ...value, uploadStatus }));
+		editDraft: (searchDraft) => state.update((v) => ({ ...v, searchDraft })),
+		search,
+		more: () => search(get(state).query, true),
+		upload,
+		retryUploads() {
+			if (batchActive) {
+				return false;
+			}
+			const files = failures.map((v) => v.file);
+			failures = [];
+			state.update((v) => ({ ...v, uploadFailures: [] }));
+			return upload(files);
+		},
+		discardUploads() {
+			if (!batchActive) {
+				failures = [];
+				state.update((v) => ({ ...v, uploadFailures: [], uploadStatus: "" }));
 			}
 		},
-		retryUploads: () =>
-			action("uploads.retry", {
-				ids: get(state).uploadFailures.map((job) => job.id),
-			}),
-		discardUploads: () =>
-			action("uploads.discard", {
-				ids: get(state).uploadFailures.map((job) => job.id),
-			}),
 		dismissCompleted: () =>
-			action("uploads.discard", { ids: get(state).uploadCompleted }),
+			state.update((v) => ({ ...v, uploadCompleted: [] })),
 		async reveal(id, opener) {
-			const media = cards.get(id);
-			const version = ++previewRevision;
-			const url = await media?.reveal();
+			const row = cards.get(id);
+			const own = ++previewRevision;
+			const url = await row?.media.reveal();
 			if (
-				!url ||
-				disposed ||
-				version !== previewRevision ||
-				cards.get(id) !== media
+				url &&
+				!disposed &&
+				own === previewRevision &&
+				cards.get(id) === row &&
+				row.value.metadata?.content_type?.startsWith("image/")
 			) {
-				return;
-			}
-			const metadata = get(media).metadata;
-			if (metadata?.content_type?.startsWith("image/")) {
-				state.update((value) => ({
-					...value,
-					selected: { id, url, name: metadata.name || id, opener },
+				state.update((v) => ({
+					...v,
+					selected: { url, name: row.value.metadata.name, opener },
 				}));
 			}
 		},
 		closePreview() {
 			previewRevision++;
-			state.update((value) => ({ ...value, selected: null }));
+			state.update((v) => ({ ...v, selected: null }));
 		},
+		download: (id) => cards.get(id)?.media.download(),
+		retag: (id, tags) => cards.get(id)?.media.retag(tags),
 		async remove(id) {
-			const media = cards.get(id);
+			const row = cards.get(id);
 			if (
-				!media ||
-				get(media).busy ||
-				!platform.confirm(
-					`Delete ${get(media).metadata?.name || id}? This cannot be undone.`,
+				!row ||
+				row.value.busy ||
+				!confirm(
+					`Delete ${row.value.metadata?.name || id}? This cannot be undone.`,
 				)
 			) {
-				return;
+				return false;
 			}
-			return media.remove();
+			if (await row.media.remove()) {
+				row.unsubscribe();
+				row.media.dispose();
+				cards.delete(id);
+				publishCards();
+				state.update((v) => ({
+					...v,
+					selected: null,
+					empty: cards.size ? null : v.query.trim() ? "search" : "library",
+				}));
+				return true;
+			}
+			return false;
 		},
-		retag: (id, tags) => cards.get(id)?.retag(tags),
 		dispose() {
 			disposed = true;
 			unsubscribe();
-			clear();
-			void client.command("view.close", { id: viewId }).catch(() => {});
+			reset();
 		},
 	};
 }

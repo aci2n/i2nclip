@@ -2,46 +2,46 @@
 import { fileSize, fileType, uploadedAt } from "../media/format.js";
 import TagEditor from "./TagEditor.svelte";
 
-let { item, media, library } = $props();
-const type = $derived($media.metadata?.content_type || "");
-const name = $derived($media.metadata?.name || item.id);
+let { media, onreveal, ondownload, onremove, onretag } = $props();
+const type = $derived(media.metadata?.content_type || "");
+const name = $derived(media.metadata?.name || media.id);
 const summary = $derived(
-	[fileType(type), fileSize($media.metadata?.size)].filter(Boolean).join(" · "),
+	[fileType(type), fileSize(media.metadata?.size)].filter(Boolean).join(" · "),
 );
 </script>
 
-<article class="panel card" class:deleted={$media.deleted}>
+<article class="panel card" class:deleted={media.deleted}>
 	<div class="media">
-		{#if type.startsWith("image/") && ($media.preview || $media.url)}
+		{#if type.startsWith("image/") && (media.preview || media.url)}
 			<button
 				type="button"
 				class="image-button"
 				aria-label={`Open ${name}`}
-				onclick={(event) => library.reveal(item.id, event.currentTarget)}
-				disabled={$media.busy || $media.deleted}
+				onclick={(event) => onreveal(event.currentTarget)}
+				disabled={media.busy || media.deleted}
 			>
 				<img
-					src={$media.shown || !$media.preview ? $media.url : $media.preview}
+					src={media.shown || !media.preview ? media.url : media.preview}
 					alt={name}
 				>
 			</button>
 		{:else if type.startsWith("audio/") || type.startsWith("video/")}
-			{#if $media.shown}
+			{#if media.shown}
 				{#if type.startsWith("audio/")}
-					{#if $media.preview}
-						<img src={$media.preview} alt={name}>
+					{#if media.preview}
+						<img src={media.preview} alt={name}>
 					{:else}
 						<span class="file-type">{fileType(type)}</span>
 					{/if}
-					<audio controls autoplay src={$media.url}></audio>
+					<audio controls autoplay src={media.url}></audio>
 				{:else}
-					<video controls autoplay src={$media.url}>
+					<video controls autoplay src={media.url}>
 						<track kind="captions">
 					</video>
 				{/if}
 			{:else}
-				{#if $media.preview}
-					<img src={$media.preview} alt={name}>
+				{#if media.preview}
+					<img src={media.preview} alt={name}>
 				{:else}
 					<span class="file-type">{fileType(type)}</span>
 				{/if}
@@ -50,38 +50,38 @@ const summary = $derived(
 					class="play"
 					data-act="play"
 					aria-label={`Play ${name}`}
-					onclick={(event) => library.reveal(item.id, event.currentTarget)}
-					disabled={$media.busy || $media.deleted}
+					onclick={(event) => onreveal(event.currentTarget)}
+					disabled={media.busy || media.deleted}
 				>
 					▶
 				</button>
 			{/if}
-		{:else if type.startsWith("image/") && !$media.deleted}
+		{:else if type.startsWith("image/") && !media.deleted}
 			<button
 				type="button"
 				class="image-button file-type"
-				onclick={(event) => library.reveal(item.id, event.currentTarget)}
-				disabled={$media.busy}
+				onclick={(event) => onreveal(event.currentTarget)}
+				disabled={media.busy}
 			>
 				Open image
 			</button>
-		{:else if $media.preview}
-			<img src={$media.preview} alt={name}>
+		{:else if media.preview}
+			<img src={media.preview} alt={name}>
 		{:else}
 			<span class="file-type">{fileType(type)}</span>
 		{/if}
-		{#if $media.progress !== null}
-			<span class="pct">{$media.progress}%</span>
+		{#if media.progress !== null}
+			<span class="pct">{media.progress}%</span>
 		{/if}
 	</div>
 	<strong class="card-title" title={name}>{name}</strong>
 	<p class="meta">{summary}</p>
-	{#if $media.metadata}
+	{#if media.metadata}
 		<TagEditor
-			tags={$media.metadata.tags || []}
+			tags={media.metadata.tags || []}
 			{name}
-			disabled={$media.busy || $media.deleted || $media.metadataUnavailable}
-			onsave={(tags) => library.retag(item.id, tags)}
+			disabled={media.busy || media.deleted || media.metadataUnavailable}
+			onsave={(tags) => onretag(tags)}
 		/>
 	{/if}
 	<details class="card-details">
@@ -90,25 +90,25 @@ const summary = $derived(
 			<dt>Filename</dt>
 			<dd>{name}</dd>
 			<dt>Uploaded</dt>
-			<dd>{uploadedAt(item.createdAt)}</dd>
+			<dd>{uploadedAt(media.createdAt)}</dd>
 			{#if type}
 				<dt>Type</dt>
 				<dd>{type}</dd>
 			{/if}
-			{#if $media.metadata?.image}
+			{#if media.metadata?.image}
 				<dt>Dimensions</dt>
-				<dd>{$media.metadata.image.width} × {$media.metadata.image.height}</dd>
+				<dd>{media.metadata.image.width} × {media.metadata.image.height}</dd>
 			{/if}
 		</dl>
 	</details>
-	<output class="feedback" class:error={$media.error}>{$media.message}</output>
+	<output class="feedback" class:error={media.error}>{media.message}</output>
 	<div class="bar actions">
 		<button
 			type="button"
 			class="secondary"
 			data-act="download"
-			onclick={media.download}
-			disabled={$media.busy || $media.deleted}
+			onclick={ondownload}
+			disabled={media.busy || media.deleted}
 		>
 			Download
 		</button>
@@ -116,8 +116,8 @@ const summary = $derived(
 			type="button"
 			class="secondary danger"
 			data-act="delete"
-			onclick={() => library.remove(item.id)}
-			disabled={$media.busy || $media.deleted}
+			onclick={() => onremove()}
+			disabled={media.busy || media.deleted}
 		>
 			Delete
 		</button>

@@ -2,27 +2,23 @@
 import ImageDialog from "../components/ImageDialog.svelte";
 import MediaCard from "../components/MediaCard.svelte";
 import Uploads from "../components/Uploads.svelte";
-import { pickFiles, selectFiles } from "../stores/dom.js";
+import { pickFiles, selectFiles } from "../ui/dom.js";
 
-let { session, library, settingsHref, onsettings } = $props();
+let { session, library, onsettings } = $props();
 let filesInput = $state();
 </script>
-
 {#if !$session.configured}
-	<section id="setup" class="panel empty stack">
+	<section class="panel empty stack">
 		<h2>Your library starts here</h2>
 		<p>
-			<a href={settingsHref} onclick={onsettings}
+			<a href="?page=settings" onclick={onsettings}
 				>Create or restore your library</a
 			>
 			to start saving encrypted media.
 		</p>
 	</section>
-{:else if !$session.unlocked}
-	<p role="status">Library operation in progress…</p>
 {:else}
 	<form
-		id="find"
 		class="bar toolbar"
 		onsubmit={(event) => {
 			event.preventDefault();
@@ -30,7 +26,6 @@ let filesInput = $state();
 		}}
 	>
 		<input
-			id="tags"
 			type="search"
 			placeholder="Search tags"
 			aria-label="Tags, separated by commas"
@@ -40,70 +35,80 @@ let filesInput = $state();
 		<label class="file"
 			>Upload<input
 				bind:this={filesInput}
-				id="files"
 				type="file"
 				multiple
+				disabled={$library.uploading || $session.busy}
 				onchange={(event) => selectFiles(event, library.upload)}
 			></label
 		>
 	</form>
-{/if}
-<p id="status" role="status">
-	{[
-		$library.status,
-		!$session.configured || $session.unlocked ? $session.error : "",
-	]
-		.filter(Boolean)
-		.join(" | ")}
-</p>
-{#if $session.unlocked}
-	<Uploads {library} />
-{/if}
-{#if $session.unlocked && $library.empty}
-	<section id="empty-library" class="panel empty stack">
-		{#if $library.empty === "library"}
-			<h2>Your library is empty</h2>
-			<p>Upload a photo, video, or audio file to get started.</p>
-			<button
-				type="button"
-				disabled={$library.uploading}
-				onclick={() => pickFiles(filesInput)}
-			>
-				Upload files
-			</button>
-		{:else}
-			<h2>No files match your search</h2>
-			<p>Try different tags or clear your search to see all files.</p>
-			<button
-				type="button"
-				class="secondary"
-				onclick={() => {
-					library.editDraft("");
-					library.search("");
-				}}
-			>
-				Clear search
-			</button>
-		{/if}
-	</section>
-{/if}
-<div id="results">
-	{#each $library.cards as { item, media } (media)}
-		<MediaCard {item} {media} {library} />
-	{/each}
-</div>
-{#if $library.next}
-	<button
-		id="more"
-		type="button"
-		disabled={$library.loading}
-		onclick={library.more}
-	>
-		More
-	</button>
+	{#if $library.status}
+		<p class="feedback error" role="alert">{$library.status}</p>
+	{/if}
+	{#if $library.loading}
+		<p role="status">Loading…</p>
+	{/if}
+	<Uploads
+		uploading={$library.uploading}
+		progress={$library.uploadProgress}
+		failures={$library.uploadFailures}
+		completed={$library.uploadCompleted}
+		status={$library.uploadStatus}
+		onretry={library.retryUploads}
+		ondiscard={library.discardUploads}
+		ondismiss={library.dismissCompleted}
+	/>
+	{#if $library.empty}
+		<section class="panel empty stack">
+			{#if $library.empty === "library"}
+				<h2>Your library is empty</h2>
+				<p>Upload a photo, video, audio file, or document to get started.</p>
+				<button
+					type="button"
+					disabled={$library.uploading}
+					onclick={() => pickFiles(filesInput)}
+				>
+					Upload files
+				</button>
+			{:else}
+				<h2>No files match your search</h2>
+				<p>Try different tags or clear your search to see all files.</p>
+				<button
+					type="button"
+					class="secondary"
+					onclick={() => {
+						library.editDraft("");
+						library.search("");
+					}}
+				>
+					Clear search
+				</button>
+			{/if}
+		</section>
+	{/if}
+	<div class="results">
+		{#each $library.cards as media (media.id)}
+			<MediaCard
+				{media}
+				onreveal={(opener) => library.reveal(media.id, opener)}
+				ondownload={() => library.download(media.id)}
+				onremove={() => library.remove(media.id)}
+				onretag={(tags) => library.retag(media.id, tags)}
+			/>
+		{/each}
+	</div>
+	{#if $library.next}
+		<button
+			class="more"
+			type="button"
+			disabled={$library.loading}
+			onclick={library.more}
+		>
+			More
+		</button>
+	{/if}
 {/if}
 <ImageDialog selected={$library.selected} onclose={library.closePreview} />
-
 <style>
 .file {
 	font: inherit;
@@ -139,16 +144,12 @@ let filesInput = $state();
 	text-align: center;
 	padding: 3rem 1rem;
 }
-#results {
+.results {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(min(17rem, 100%), 1fr));
 	gap: 1rem;
 }
-#status {
-	min-height: 1.5rem;
-	margin: 0 0 0.5rem;
-}
-#more {
+.more {
 	display: block;
 	margin: 1.5rem auto;
 }

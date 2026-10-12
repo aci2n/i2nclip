@@ -1,13 +1,13 @@
 <script>
 import { repository, version } from "../../../package.json";
-import { modal } from "../stores/dom.js";
+import { modal } from "../ui/dom.js";
 
 let { open, onclose } = $props();
 </script>
 
 <dialog
 	use:modal={open}
-	aria-labelledby="about-heading"
+	aria-label="About i2nclip"
 	onclick={(event) => {
 		if (event.target === event.currentTarget) {
 			onclose();
@@ -25,7 +25,7 @@ let { open, onclose } = $props();
 	}}
 >
 	<section class="stack">
-		<h2 id="about-heading">About i2nclip</h2>
+		<h2>About i2nclip</h2>
 		<p>Version {version}</p>
 		<p>
 			i2nclip is an encrypted media library. Your files, filenames, tags, and

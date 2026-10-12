@@ -1,11 +1,11 @@
 <script>
-import { modal } from "../stores/dom.js";
+import { modal } from "../ui/dom.js";
 
 let { selected, onclose } = $props();
 </script>
 
 <dialog
-	id="full"
+	aria-label="Image preview"
 	use:modal={selected}
 	onclick={(event) => {
 		if (event.target === event.currentTarget) {
@@ -37,17 +37,17 @@ let { selected, onclose } = $props();
 </dialog>
 
 <style>
-#full {
+dialog {
 	padding: 0;
 	border: 0;
 	background: transparent;
 	max-width: 95vw;
 	max-height: 95vh;
 }
-#full::backdrop {
+dialog::backdrop {
 	background: #000b;
 }
-#full img {
+dialog img {
 	display: block;
 	max-width: 95vw;
 	max-height: 95vh;

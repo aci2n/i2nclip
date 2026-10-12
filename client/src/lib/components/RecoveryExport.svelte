@@ -1,81 +1,55 @@
 <script>
-let { vault, libraryId } = $props();
+let { busy, status, error, onexport } = $props();
 let password = $state("");
 let confirmation = $state("");
-let busy = $state(false);
-let message = $state("");
-let error = $state(false);
-const prefix = $derived(libraryId ? "library-recovery" : "vault-recovery");
-async function submit(event) {
+let localError = $state("");
+function submit(event) {
 	event.preventDefault();
-	if (busy) {
-		return;
-	}
-	message = "";
-	error = false;
+	localError = "";
 	if (password !== confirmation) {
-		message = "Passwords do not match.";
-		error = true;
+		localError = "Recovery passwords do not match.";
 		return;
 	}
-	const secret = password;
-	password = "";
-	confirmation = "";
-	busy = true;
-	try {
-		await vault.exportRecovery(secret, libraryId);
-		message =
-			"Recovery download started. Keep the file and its recovery password somewhere safe.";
-	} catch (failure) {
-		message = failure.message;
-		error = true;
-	} finally {
-		busy = false;
-	}
+	onexport(password);
 }
 </script>
-<form class="stack" onsubmit={submit}>
-	<p>
-		{libraryId ? "Export this library" : "Back up all libraries"}
-		with a separate recovery password. The file contains library keys, names and
-		servers, and excludes pending uploads.
-	</p>
-	<div class="field">
-		<label for={`${prefix}-password`}>Recovery password</label>
-		<input
-			id={`${prefix}-password`}
-			type="password"
-			required
-			minlength="8"
-			autocomplete="new-password"
-			bind:value={password}
-			disabled={busy}
+<details class="panel">
+	<summary>Download recovery file</summary>
+	<form class="stack" onsubmit={submit}>
+		<p>
+			A recovery file gives full access to this library. Its password is
+			independent of your master password.
+		</p>
+		<label class="field"
+			>Recovery password<input
+				type="password"
+				required
+				minlength="8"
+				autocomplete="new-password"
+				bind:value={password}
+				disabled={busy}
+			></label
 		>
-	</div>
-	<div class="field">
-		<label for={`${prefix}-confirm`}>Confirm recovery password</label>
-		<input
-			id={`${prefix}-confirm`}
-			type="password"
-			required
-			minlength="8"
-			autocomplete="new-password"
-			bind:value={confirmation}
-			disabled={busy}
+		<label class="field"
+			>Confirm recovery password<input
+				type="password"
+				required
+				minlength="8"
+				autocomplete="new-password"
+				bind:value={confirmation}
+				disabled={busy}
+			></label
 		>
-	</div>
-	<button
-		id={libraryId ? "backup" : "backup-vault"}
-		type="submit"
-		disabled={busy}
-	>
-		{busy
-			? "Exporting…"
-			: libraryId
-				? "Export recovery file"
-				: "Back up all libraries"}
-	</button>
-	{#if message}
-		<p role={error ? "alert" : "status"} class:error>{message}</p>
-	{/if}
-</form>
+		<button type="submit" disabled={busy}>Download recovery file</button>
+		{#if localError || error}
+			<p role="alert" class="error">{localError || error}</p>
+		{:else if status}
+			<p role="status">{status}</p>
+		{/if}
+	</form>
+</details>
+<style>
+form {
+	margin-top: 1rem;
+}
+</style>

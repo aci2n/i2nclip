@@ -1,187 +1,147 @@
 <script>
-import { onMount } from "svelte";
 import Pairing from "../components/Pairing.svelte";
+import RecoveryExport from "../components/RecoveryExport.svelte";
 import Setup from "../components/Setup.svelte";
 import VaultSettings from "../components/VaultSettings.svelte";
 
-let {
-	session,
-	settings,
-	pairing,
-	management,
-	setup,
-	vault,
-	onRestore,
-	forget,
-	onForget,
-} = $props();
-onMount(() => {
-	if (!$session.configured) {
-		setup.start();
-	}
-});
-const setupSession = $derived(setup.session);
-const setupPairing = $derived(setup.pairing);
-const feedback = $derived($settings.feedback);
-const feedbackAt = $derived(
-	$session.configured && ["create", "restore"].includes(feedback.scope)
-		? "library"
-		: feedback.scope,
-);
+let { session, pairing } = $props();
+let feedback = $state({ scope: "", text: "", error: false });
+let name = $state($session.name);
+const busy = $derived($session.busy || $pairing.active);
+async function action(scope, work, success) {
+	feedback = { scope, text: "", error: false };
+	const done = await work();
+	feedback = { scope, text: done ? success : $session.error, error: !done };
+}
 </script>
-
-{#snippet notice(
-	scope,
-)}
-	{#if feedbackAt === scope && feedback.text}
-		<p
-			id="status"
-			class="feedback"
-			class:error={feedback.error}
-			role={feedback.error ? "alert" : "status"}
-		>
-			{feedback.text}
-		</p>
-	{/if}
-{/snippet}
-
-<div id="settings" class="settings">
+<div class="settings stack">
 	{#if !$session.configured}
-		<section class="panel stack">
-			<h2>Your encrypted library</h2>
-			<p>Files are encrypted in your browser before upload.</p>
-			{@render notice("setup")}
-			<Setup
-				session={setup.session}
-				settings={setup.settings}
-				pairingState={$setupPairing}
-				pairingBusy={$setupSession.busy}
-				onReceive={setup.pairing.receive}
-				onApprove={setup.pairing.approve}
-				onRejectVerification={setup.pairing.rejectVerification}
-				onCancel={setup.pairing.cancel}
-				{vault}
-				{onRestore}
-			/>
-		</section>
+		<Setup
+			{busy}
+			defaultServer={$session.serverUrl}
+			error={$session.error}
+			pairingState={$pairing}
+			oncreate={session.create}
+			onrestore={session.restore}
+			onreceive={pairing.receive}
+			onapprove={pairing.approve}
+			onreject={pairing.rejectVerification}
+			oncancel={pairing.cancel}
+		/>
 	{:else}
-		<section id="configured" class="panel stack">
+		<section class="panel stack">
 			<h2>Your library</h2>
-			<p class="server-address">
-				{$session.libraryName}
-				· {$session.serverUrl}
-			</p>
+			<p class="address">{$session.name} · {$session.serverUrl}</p>
 			<p>
-				Keep recovery files and their recovery passwords safe. Your master
-				password protects this client.
+				Keep your recovery file and its password safe. Your master password
+				protects this client.
 			</p>
-			{@render notice("library")}
-			{@render notice("backup")}
 		</section>
-	{/if}
-	{#if $session.configured}
+		<details class="panel">
+			<summary>Rename library</summary>
+			<form
+				class="stack"
+				onsubmit={(event) => {
+					event.preventDefault();
+					action("rename", () => session.rename(name), "Library renamed.");
+				}}
+			>
+				<label class="field"
+					>Library name<input
+						required
+						maxlength="80"
+						bind:value={name}
+						disabled={busy}
+					></label
+				><button type="submit" disabled={busy}>Save name</button>
+				{#if feedback.scope === "rename" && feedback.text}
+					<p
+						class:error={feedback.error}
+						role={feedback.error ? "alert" : "status"}
+					>
+						{feedback.text}
+					</p>
+				{/if}
+			</form>
+		</details>
+		<RecoveryExport
+			{busy}
+			error={feedback.scope === "recovery" && feedback.error
+				? feedback.text
+				: ""}
+			status={feedback.scope === "recovery" && !feedback.error
+				? feedback.text
+				: ""}
+			onexport={(password) =>
+				action(
+					"recovery",
+					() => session.downloadRecovery(password),
+					"Recovery file downloaded.",
+				)}
+		/>
 		<Pairing
 			state={$pairing}
-			configured={$session.configured}
+			server={$session.serverUrl}
+			configured
 			busy={$session.busy}
 			onSend={pairing.send}
 			onReceive={pairing.receive}
 			onApprove={pairing.approve}
 			onRejectVerification={pairing.rejectVerification}
 			onCancel={pairing.cancel}
-			server={$session.serverUrl}
 		/>
-		{@render management?.()}
-	{/if}
-
-	{#if $session.configured && $session.catalog.length}
-		<details id="add-library-settings" class="panel" open={$setup.open}>
-			<!-- biome-ignore lint/a11y/noStaticElementInteractions: summary is a native keyboard-operable disclosure control. -->
-			<summary
-				onclick={(event) => {
-					event.preventDefault();
-					if ($setup.open) {
-						setup.close();
-					} else {
-						setup.start();
-					}
-				}}
-			>
-				Add library
-			</summary>
-			<div class="stack disclosure-body">
-				<Setup
-					session={setup.session}
-					settings={setup.settings}
-					pairingState={$setupPairing}
-					pairingBusy={$setupSession.busy}
-					onReceive={setup.pairing.receive}
-					onApprove={setup.pairing.approve}
-					onRejectVerification={setup.pairing.rejectVerification}
-					onCancel={setup.pairing.cancel}
-					{vault}
-					{onRestore}
-					additional
-				/>
-			</div>
-		</details>
-	{/if}
-	<VaultSettings {vault} />
-	{#if $session.configured}
 		<details class="panel">
-			<summary class="danger">Forget library</summary>
-			<div class="stack disclosure-body">
-				<p>Keep a recovery file first. Uploads on the server stay saved.</p>
+			<summary>Forget this library</summary>
+			<div class="stack content">
+				<p>
+					This removes the saved library identity from this device. Server files
+					remain.
+				</p>
 				<button
-					id="forget-library"
 					type="button"
 					class="secondary danger"
-					disabled={$session.busy || $forget.busy}
-					onclick={onForget}
+					disabled={busy}
+					onclick={() => {
+						if (
+							confirm(
+								"Forget this library? Keep a recovery file before continuing.",
+							)
+						) {
+							session.forget();
+						}
+					}}
 				>
-					Forget this library
+					Forget library
 				</button>
-				{#if $forget.error}
-					<p role="alert" class="error">{$forget.error}</p>
+				{#if $session.error}
+					<p role="alert" class="error">{$session.error}</p>
 				{/if}
 			</div>
 		</details>
 	{/if}
-	<details id="reset-settings" class="panel">
-		<summary class="danger">Reset browser</summary>
-		<div class="stack disclosure-body">
-			<p>Keep a recovery file first. Uploads on the server stay saved.</p>
-			<button
-				id="reset"
-				type="button"
-				class="secondary danger"
-				disabled={$session.busy}
-				onclick={vault.reset}
-			>
-				Reset everything
-			</button>
-			{@render notice("reset")}
-		</div>
-	</details>
-	{#if $session.error && !feedback.text}
-		<p class="feedback error" role="alert">{$session.error}</p>
-	{/if}
+	<VaultSettings
+		{busy}
+		error={feedback.scope === "password" && feedback.error ? feedback.text : ""}
+		status={feedback.scope === "password" && !feedback.error
+			? feedback.text
+			: ""}
+		onpassword={(current, password) =>
+			action(
+				"password",
+				() => session.changePassword(current, password),
+				"Master password changed.",
+			)}
+	/>
 </div>
-
 <style>
-.danger {
-	color: var(--error);
-}
 .settings {
 	max-width: 42rem;
-	display: grid;
-	gap: 1rem;
-	margin: auto;
 }
-.disclosure-body {
-	margin-top: 1rem;
-}
-.server-address {
+.address {
 	overflow-wrap: anywhere;
+}
+form,
+.content {
+	margin-top: 1rem;
 }
 </style>

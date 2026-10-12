@@ -1,4 +1,4 @@
-// HTTP calls. `fetch` exists in Firefox extension pages, browsers, and Node.
+// Browser HTTP calls.
 // HTTP requests contain signatures and ciphertext, never the private key.
 
 import { sniffContentType } from "./media/metadata.js";
@@ -21,7 +21,6 @@ import {
 	MAX_META_PLAINTEXT,
 } from "./protocol/meta-plain.js";
 import { uniqueTags } from "./protocol/tags.js";
-import { errorDetails, traceEvent, traceRequest } from "./service/trace.js";
 
 // Plaintext limit. The server allows this plus a small encryption header.
 export const MAX_FILE_BYTES = 32 * 1024 * 1024;
@@ -219,40 +218,20 @@ export async function remove({ serverUrl, privateKey, id, signal }) {
 /** Register a base64url public key with an invitation code. */
 export async function registerKey({ serverUrl, publicKey, otc, signal }) {
 	const url = new URL("/api/register-key", serverUrl);
-	const response = await traceRequest("POST", "/api/register-key", () =>
-		fetch(url, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				otc: String(otc).trim(),
-				public_key: String(publicKey).trim(),
-			}),
-			cache: "no-store",
-			signal,
+	const response = await fetch(url, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			otc: String(otc).trim(),
+			public_key: String(publicKey).trim(),
 		}),
-	);
+		cache: "no-store",
+		signal,
+	});
 	if (response.status === 204) {
 		return;
 	}
 	throw await responseError(response);
-}
-
-// A signed read proves registration without spending another invitation.
-export async function registerAuthenticatedKey({
-	serverUrl,
-	privateKey,
-	publicKey,
-	signal,
-}) {
-	await sendBytes(
-		serverUrl,
-		await loadKey(privateKey),
-		"POST",
-		"/api/register-key/authenticated",
-		new TextEncoder().encode(JSON.stringify({ public_key: publicKey })),
-		undefined,
-		signal,
-	);
 }
 
 // A signed read proves registration without spending another invitation.
@@ -396,10 +375,6 @@ async function readBody(response, onProgress, signal) {
 			}
 		}
 	} catch (error) {
-		traceEvent("download.body.failed", {
-			...errorDetails(error),
-			receivedBytes: received,
-		});
 		await reader.cancel().catch(() => {});
 		throw error;
 	} finally {
@@ -440,28 +415,24 @@ async function signedFetch(
 	const url = new URL(path, serverUrl);
 	const headers = { authorization, "content-type": "application/octet-stream" };
 	const payload = method === "GET" || method === "DELETE" ? undefined : body;
-	// fetch() cannot report how much of the body has been sent. The upload
-	// events on XMLHttpRequest can.
-	return traceRequest(method, path, () => {
-		if (onProgress && payload && typeof XMLHttpRequest !== "undefined") {
-			return requestWithProgress(
-				method,
-				url,
-				headers,
-				payload,
-				onProgress,
-				signal,
-			);
-		}
-		return fetch(url, {
+	if (onProgress && payload && typeof XMLHttpRequest !== "undefined") {
+		return requestWithProgress(
 			method,
+			url,
 			headers,
+			payload,
+			onProgress,
 			signal,
-			body: payload,
-			// A media id never changes, and that response allows a private cache.
-			// Lists stay uncached because the server marks them no-store.
-			cache: method === "GET" ? "default" : "no-store",
-		});
+		);
+	}
+	return fetch(url, {
+		method,
+		headers,
+		signal,
+		body: payload,
+		// A media id never changes, and that response allows a private cache.
+		// Lists stay uncached because the server marks them no-store.
+		cache: method === "GET" ? "default" : "no-store",
 	});
 }
 

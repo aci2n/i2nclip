@@ -5,11 +5,10 @@ import {
 	loadKey,
 } from "../protocol/crypto.js";
 import { pairingContext, pairingOrigin } from "../protocol/pairing.js";
-import { traceRequest } from "../service/trace.js";
 
 const MAX_BODY = 16_384;
 
-// Each service-owned adapter executes one isolated, disposable PAKE attempt.
+// Each pairing adapter executes one isolated, disposable PAKE attempt.
 export function pairingCrypto() {
 	let disposed = false;
 	let running = false;
@@ -144,20 +143,18 @@ export function pairingRelay(serverUrl, signal) {
 		const deadline = AbortSignal.timeout(10_000);
 		const combined = AbortSignal.any([signal, deadline]);
 		combined.throwIfAborted();
-		const response = await traceRequest(method, path, () =>
-			fetch(new URL(path, origin), {
-				method,
-				body,
-				headers: {
-					"content-type": "application/json",
-					...(authorization ? { authorization } : {}),
-				},
-				signal: combined,
-				cache: "no-store",
-				credentials: "omit",
-				redirect: "error",
-			}),
-		);
+		const response = await fetch(new URL(path, origin), {
+			method,
+			body,
+			headers: {
+				"content-type": "application/json",
+				...(authorization ? { authorization } : {}),
+			},
+			signal: combined,
+			cache: "no-store",
+			credentials: "omit",
+			redirect: "error",
+		});
 		if (!response.ok) {
 			await response.body?.cancel();
 			const errors = {

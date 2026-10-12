@@ -1,13 +1,44 @@
 <script>
-import { onDestroy, untrack } from "svelte";
+import { tick } from "svelte";
 import { splitTags } from "../protocol/tags.js";
-import { focus } from "../stores/dom.js";
-import { createTagEditor } from "../stores/tag-editor.js";
 
 let { tags = [], disabled = false, name, onsave } = $props();
-const editor = untrack(() => createTagEditor((next) => onsave(next)));
-const locked = $derived(disabled || $editor.saving);
-onDestroy(editor.dispose);
+let editing = $state(false);
+let draft = $state("");
+let saving = $state(false);
+let input = $state();
+let button = $state();
+const locked = $derived(disabled || saving);
+async function open() {
+	editing = true;
+	await tick();
+	input?.focus();
+}
+async function cancel() {
+	if (locked) {
+		return;
+	}
+	editing = false;
+	draft = "";
+	await tick();
+	button?.focus();
+}
+async function persist(next, clear = false) {
+	if (locked) {
+		return;
+	}
+	const submitted = draft;
+	saving = true;
+	try {
+		if ((await onsave(next)) && clear && draft === submitted) {
+			draft = "";
+		}
+	} finally {
+		saving = false;
+		await tick();
+		input?.focus();
+	}
+}
 </script>
 
 <fieldset class="tag-list" aria-label={`Tags for ${name}`}>
@@ -18,29 +49,28 @@ onDestroy(editor.dispose);
 				type="button"
 				aria-label={`Remove tag ${tag}`}
 				disabled={locked}
-				onclick={() =>
-					editor.remove(tags.filter((existing) => existing !== tag))}
+				onclick={() => persist(tags.filter((existing) => existing !== tag))}
 			>
 				×
 			</button></span
 		>
 	{/each}
-	{#if $editor.editing}
+	{#if editing}
 		<form
 			class="tags"
 			onsubmit={(event) => {
 				event.preventDefault();
 				if (!locked) {
-					editor.add(tags);
+					persist([...tags, draft], true);
 				}
 			}}
 		>
 			<div class="entry">
 				<input
 					class="chip"
-					use:focus={$editor.inputFocus}
-					bind:value={() => $editor.value, editor.edit}
-					disabled={disabled && !$editor.saving}
+					bind:this={input}
+					bind:value={draft}
+					disabled={disabled && !saving}
 					aria-label={`New tag for ${name}`}
 					placeholder="New tag"
 					autocomplete="on"
@@ -48,7 +78,7 @@ onDestroy(editor.dispose);
 						if (event.key === "Escape") {
 							event.preventDefault();
 							if (!locked) {
-								editor.cancel();
+								cancel();
 							}
 						}
 					}}
@@ -57,7 +87,7 @@ onDestroy(editor.dispose);
 					class="chip"
 					type="submit"
 					aria-label="Save tag"
-					disabled={locked || !splitTags($editor.value).length}
+					disabled={locked || !splitTags(draft).length}
 				>
 					✓
 				</button>
@@ -66,7 +96,7 @@ onDestroy(editor.dispose);
 					type="button"
 					aria-label="Cancel adding tag"
 					disabled={locked}
-					onclick={editor.cancel}
+					onclick={cancel}
 				>
 					×
 				</button>
@@ -74,12 +104,12 @@ onDestroy(editor.dispose);
 		</form>
 	{:else}
 		<button
-			use:focus={$editor.buttonFocus}
+			bind:this={button}
 			class="chip"
 			type="button"
 			aria-label={`Add tag to ${name}`}
 			disabled={locked}
-			onclick={editor.open}
+			onclick={open}
 		>
 			+
 		</button>

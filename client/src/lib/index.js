@@ -1,14 +1,9 @@
-// Public API for the extension and for any other JavaScript host.
-// Pass the internal identity document returned by generatePrivateKey().
-// This module has no Firefox or UI dependencies.
-
 export {
 	getContent,
 	getMetadata,
 	isKeyRegistered,
 	list,
 	MAX_FILE_BYTES,
-	registerAuthenticatedKey,
 	registerKey,
 	remove,
 	updateMetadata,

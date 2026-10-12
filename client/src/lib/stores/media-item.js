@@ -1,197 +1,192 @@
 import { get, writable } from "svelte/store";
+import * as api from "../api.js";
+import { audioArt } from "../media/audio-art.js";
 import { downloadName } from "../media/format.js";
 import { sniffContentType } from "../media/metadata.js";
+import { uniqueTags } from "../protocol/tags.js";
 
-// UI resource owner. Fetching/decryption/mutations are service commands.
-export function createMediaItem(initialItem, client, platform) {
-	const urls = new Set();
-	const controller = new AbortController();
-	let disposed = false;
-	let loading = false;
-	let content;
-	let thumb;
-	const makeUrl = (blob) => {
-		const url = URL.createObjectURL(blob);
-		urls.add(url);
-		return url;
-	};
+export function createMediaItem(
+	initial,
+	session,
+	{ http = api, urls = URL, download = saveDownload } = {},
+) {
 	const state = writable({
-		...initialItem,
+		...initial,
 		busy: false,
+		deleted: false,
 		shown: false,
 		url: "",
 		preview: "",
 		message: "",
-		progress: null,
 		error: false,
+		progress: null,
 	});
-	const revoke = () => {
-		for (const url of urls) {
-			URL.revokeObjectURL(url);
-		}
-		urls.clear();
-		content = null;
-	};
-	const epoch = get(client).session.epoch;
-	const instance = get(client).instanceId;
-	const unsubscribe = client.subscribe((value) => {
-		if (disposed) {
-			return;
-		}
-		if (
-			!value.connected ||
-			value.instanceId !== instance ||
-			value.session.epoch !== epoch
-		) {
-			revoke();
-			controller.abort();
-			state.update((current) => ({
-				...current,
-				url: "",
-				preview: "",
-				shown: false,
-			}));
-			return;
-		}
-		const item = value.media[initialItem.id];
-		if (!item) {
-			return;
-		}
-		if (item.deleted) {
-			revoke();
-			controller.abort();
-		}
-		let preview = get(state).preview;
-		const sameThumb =
-			thumb &&
-			item.thumb?.length === thumb.length &&
-			item.thumb.every((byte, index) => byte === thumb[index]);
-		if (!sameThumb && item.thumb?.length && !item.deleted) {
-			thumb = item.thumb;
-			if (preview) {
-				URL.revokeObjectURL(preview);
-				urls.delete(preview);
-			}
-			preview = makeUrl(new Blob([item.thumb], { type: "image/webp" }));
-		}
-		state.update((current) => ({
-			...current,
-			...item,
-			busy: item.busy || loading,
-			preview: item.deleted ? "" : preview,
-			url: item.deleted ? "" : current.url,
-			shown: item.deleted ? false : current.shown,
-		}));
-	});
+	const controller = new AbortController();
+	const epoch = session.epoch;
+	const signal = AbortSignal.any([controller.signal, session.signal]);
+	const ownedUrls = new Set();
+	let bytes;
+	let disposed = false;
 	function current() {
-		return (
-			!disposed &&
-			!controller.signal.aborted &&
-			get(client).connected &&
-			get(client).instanceId === instance &&
-			get(client).session.epoch === epoch &&
-			!get(state).deleted
-		);
+		return !disposed && !signal.aborted && session.epoch === epoch;
 	}
-	async function run(action) {
-		if (!current() || get(state).busy) {
-			return null;
+	function makeUrl(blob) {
+		if (!current()) {
+			return "";
 		}
-		loading = true;
-		state.update((value) => ({
-			...value,
-			busy: true,
-			message: "",
-			error: false,
+		const url = urls.createObjectURL(blob);
+		ownedUrls.add(url);
+		return url;
+	}
+	function dispose() {
+		disposed = true;
+		controller.abort();
+		bytes = null;
+		for (const url of ownedUrls) {
+			urls.revokeObjectURL(url);
+		}
+		ownedUrls.clear();
+		state.update((v) => ({
+			...v,
+			url: "",
+			preview: "",
+			shown: false,
+			busy: false,
+			progress: null,
 		}));
+	}
+	const onAbort = () => dispose();
+	signal.addEventListener("abort", onAbort, { once: true });
+	if (initial.thumb?.length) {
+		state.update((v) => ({
+			...v,
+			preview: makeUrl(new Blob([initial.thumb], { type: "image/webp" })),
+		}));
+	}
+	async function run(work) {
+		if (!current() || get(state).busy || get(state).deleted) {
+			return false;
+		}
+		state.update((v) => ({ ...v, busy: true, message: "", error: false }));
 		try {
-			return await action();
+			const result = await work();
+			if (!current() && !get(state).deleted) {
+				return false;
+			}
+			return result ?? true;
 		} catch (error) {
 			if (current()) {
-				state.update((value) => ({
-					...value,
-					message: error.message,
-					error: true,
-				}));
+				state.update((v) => ({ ...v, message: error.message, error: true }));
 			}
-			return null;
+			return false;
 		} finally {
-			loading = false;
 			if (current()) {
-				state.update((value) => ({
-					...value,
-					busy: get(client).media[initialItem.id]?.busy || false,
-				}));
+				state.update((v) => ({ ...v, busy: false, progress: null }));
 			}
 		}
 	}
 	async function receive() {
-		if (content) {
-			return content;
+		if (bytes) {
+			return;
 		}
-		const result = await client.command(
-			"media.content",
-			{ id: initialItem.id },
-			{ signal: controller.signal },
-		);
+		const result = await http.getContent({
+			...session.credentials(),
+			id: initial.id,
+			signal,
+			onProgress: (progress) => {
+				if (current()) {
+					state.update((v) => ({ ...v, progress }));
+				}
+			},
+		});
 		if (!current()) {
-			return null;
+			return;
 		}
-		content = result;
-		const url = makeUrl(result.blob);
-		state.update((value) => ({ ...value, url }));
-		return result;
+		bytes = result;
+		const value = get(state);
+		const url = makeUrl(
+			new Blob([bytes], {
+				type: value.metadata?.content_type || "application/octet-stream",
+			}),
+		);
+		let preview = value.preview;
+		if (value.metadata?.content_type?.startsWith("audio/")) {
+			const art = audioArt(bytes);
+			if (art) {
+				preview = makeUrl(new Blob([art], { type: sniffContentType(art, "") }));
+			}
+		}
+		state.update((v) => ({ ...v, url, preview }));
 	}
 	return {
 		subscribe: state.subscribe,
 		reveal: () =>
 			run(async () => {
-				const result = await receive();
-				if (!result || !current()) {
-					return null;
+				await receive();
+				if (!current()) {
+					return false;
 				}
-				const preview = result.art
-					? makeUrl(
-							new Blob([result.art], {
-								type: sniffContentType(result.art, ""),
-							}),
-						)
-					: get(state).preview;
-				state.update((value) => ({ ...value, shown: true, preview }));
+				state.update((v) => ({ ...v, shown: true }));
 				return get(state).url;
 			}),
 		download: () =>
 			run(async () => {
-				if (!(await receive()) || !current()) {
-					return;
+				await receive();
+				if (current()) {
+					const v = get(state);
+					await download(
+						v.url,
+						downloadName(v.metadata?.name || v.id, v.metadata?.content_type),
+					);
 				}
-				const value = get(state);
-				await platform.download(
-					value.url,
-					downloadName(
-						value.metadata?.name || initialItem.id,
-						value.metadata?.content_type,
-					),
-				);
 			}),
 		retag: (tags) =>
-			run(() =>
-				client.command("media.retag", {
-					id: initialItem.id,
-					tags,
-					metaHash: get(state).metaHash,
-				}),
-			),
+			run(async () => {
+				const value = get(state);
+				if (!value.metadata) {
+					throw new Error("File metadata is unavailable.");
+				}
+				const metadata = { ...value.metadata, tags: uniqueTags(tags) };
+				const result = await http.updateMetadata({
+					...session.credentials(),
+					id: value.id,
+					metadata,
+					thumb: value.thumb,
+					prevMetaHash: value.metaHash,
+					signal,
+				});
+				if (!current()) {
+					return false;
+				}
+				if (result.conflict) {
+					state.update((v) => ({ ...v, ...result.item }));
+					throw new Error(
+						"Tags changed on another device. Review the current tags and retry.",
+					);
+				}
+				state.update((v) => ({ ...v, ...result, metadata }));
+				return true;
+			}),
 		remove: () =>
-			run(() => client.command("media.remove", { id: initialItem.id })),
+			run(async () => {
+				await http.remove({ ...session.credentials(), id: initial.id, signal });
+				if (!current()) {
+					return false;
+				}
+				dispose();
+				state.update((v) => ({ ...v, deleted: true }));
+				return true;
+			}),
 		dispose() {
-			if (disposed) {
-				return;
-			}
-			disposed = true;
-			controller.abort();
-			unsubscribe();
-			revoke();
+			signal.removeEventListener("abort", onAbort);
+			dispose();
 		},
 	};
+}
+
+export function saveDownload(url, filename) {
+	const anchor = document.createElement("a");
+	anchor.href = url;
+	anchor.download = filename;
+	anchor.click();
 }
