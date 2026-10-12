@@ -68,6 +68,16 @@ export function createServiceEngine(options) {
 		clients = new Map();
 	const instanceId = crypto.randomUUID(),
 		uploadLane = uploadScheduler();
+	const configured = new Map();
+	let catalogRevision = 0;
+	async function notifyCatalog() {
+		const revision = ++catalogRevision;
+		const records = await repository.libraries();
+		if (!disposed && revision === catalogRevision)
+			options.platform?.onCatalog?.(
+				records.filter((row) => row.identity?.wrappedKey),
+			);
+	}
 	let disposed = false,
 		order = 0,
 		tail = Promise.resolve();
@@ -92,8 +102,18 @@ export function createServiceEngine(options) {
 		}
 	}
 	function snapshot(client) {
+		const entries = [...rows.values()].map(({ id, name, setup }) => ({
+			id,
+			name,
+			setup,
+		}));
 		return {
-			catalog: [...rows.values()].map(({ id, name }) => ({ id, name })),
+			catalog: entries.filter(
+				(row) => client.states.get(row.id)?.session.configured,
+			),
+			setups: entries.filter(
+				(row) => !client.states.get(row.id)?.session.configured,
+			),
 			libraries: Object.fromEntries(
 				[...rows.keys()].map((id) => [
 					id,
@@ -135,6 +155,13 @@ export function createServiceEngine(options) {
 				else state[message.topic] = message.value;
 				client.states.set(id, state);
 				send(client, { type: "state", topic: "library", value: { id, state } });
+				if (message.topic === "session") {
+					if (configured.get(id) !== message.value.configured) {
+						configured.set(id, message.value.configured);
+						void notifyCatalog().catch(() => {});
+					}
+					publish();
+				}
 			} else send(client, { ...message, libraryId: id });
 		});
 		client.connections.set(id, connection);
@@ -143,6 +170,7 @@ export function createServiceEngine(options) {
 		traceEvent("library.install", { libraryId: row.id });
 		if (disposed) throw new Error("Service ended.");
 		rows.set(row.id, row);
+		configured.set(row.id, Boolean(row.identity?.wrappedKey));
 		const runtime = createLibraryRuntime({
 			...options,
 			repository: repository.scope(row.id),
@@ -177,17 +205,18 @@ export function createServiceEngine(options) {
 			throw new Error("That library name is already used.");
 		return name;
 	}
-	async function add(name, serverUrl = defaultServerUrl) {
+	async function add(name, serverUrl = defaultServerUrl, setup) {
 		checkServer(serverUrl);
 		const row = {
 			id: crypto.randomUUID(),
 			name: validateName(name),
 			identity: { serverUrl },
+			setup,
 		};
 		await repository.putLibrary(row);
 		const runtime = install(row);
 		await runtime.ready;
-		options.platform?.onCatalog?.([...rows.values()]);
+		await notifyCatalog();
 		publish();
 		return row.id;
 	}
@@ -198,7 +227,7 @@ export function createServiceEngine(options) {
 		for (const row of stored) install(row);
 		if (!stored.length) await add("Personal");
 		await Promise.all([...runtimes.values()].map((runtime) => runtime.ready));
-		options.platform?.onCatalog?.([...rows.values()]);
+		await notifyCatalog();
 	})();
 	function disconnect(id) {
 		traceEvent("client.disconnect", { clientId: id });
@@ -209,7 +238,18 @@ export function createServiceEngine(options) {
 			connection.disconnect();
 	}
 	async function catalogCommand(name, payload) {
-		if (name === "libraries.add") return add(payload.name, payload.serverUrl);
+		const onlySetups = name === "libraries.discardSetup";
+		if (name === "libraries.add" || name === "libraries.beginSetup") {
+			if (
+				name === "libraries.beginSetup" &&
+				!["create", "authorize", "pair", "restore"].includes(payload.method)
+			)
+				throw new Error("Choose a setup method.");
+			return add(payload.name, payload.serverUrl, {
+				method: payload.method || "create",
+				authorizerLibraryId: payload.authorizerLibraryId || "",
+			});
+		}
 		if (name === "libraries.rename") {
 			const row = (await repository.libraries()).find(
 				(row) => row.id === payload.libraryId,
@@ -218,9 +258,17 @@ export function createServiceEngine(options) {
 			row.name = validateName(payload.name, row.id);
 			await repository.renameLibrary(row.id, row.name);
 			rows.set(row.id, row);
-			options.platform?.onCatalog?.([...rows.values()]);
+			await notifyCatalog();
 			publish();
 			return true;
+		}
+		if (name === "libraries.discardSetup") {
+			const config = await repository.scope(payload.libraryId).getConfig();
+			if (config.wrappedKey)
+				throw new Error(
+					"Setup completed. Keep the saved library and its recovery file.",
+				);
+			name = "libraries.forget";
 		}
 		if (name === "libraries.forget" || name === "libraries.reset") {
 			const ids =
@@ -249,7 +297,7 @@ export function createServiceEngine(options) {
 				}
 			}
 			try {
-				await repository.deleteLibraries(ids, replacement);
+				await repository.deleteLibraries(ids, replacement, onlySetups);
 			} catch (error) {
 				for (const row of saved) install(row);
 				await Promise.all(saved.map((row) => runtimes.get(row.id).ready));
@@ -258,7 +306,7 @@ export function createServiceEngine(options) {
 			}
 			if (replacement) await install(replacement).ready;
 
-			options.platform?.onCatalog?.([...rows.values()]);
+			await notifyCatalog();
 			publish();
 			return true;
 		}
@@ -269,7 +317,9 @@ export function createServiceEngine(options) {
 		instanceId,
 		async catalog() {
 			await ready;
-			return [...rows.values()].map(({ id, name }) => ({ id, name }));
+			return (await repository.libraries())
+				.filter((row) => row.identity?.wrappedKey)
+				.map(({ id, name }) => ({ id, name }));
 		},
 		async config(id) {
 			await ready;
@@ -278,8 +328,12 @@ export function createServiceEngine(options) {
 		async contextUpload(source, withTags, libraryId) {
 			await ready;
 			if (!libraryId) {
-				if (rows.size !== 1) throw new Error("Choose a destination library.");
-				libraryId = rows.keys().next().value;
+				const registered = (await repository.libraries()).filter(
+					(row) => row.identity?.wrappedKey,
+				);
+				if (registered.length !== 1)
+					throw new Error("Choose a destination library.");
+				libraryId = registered[0].id;
 			}
 			const runtime = runtimes.get(libraryId);
 			if (!runtime) throw new Error("Library is no longer saved.");

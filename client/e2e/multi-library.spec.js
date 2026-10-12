@@ -25,9 +25,10 @@ async function add(page, name) {
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await page.locator("#add-library-settings > summary").click();
 	await page.locator("#new-library-name").fill(name);
-	await page.getByRole("button", { name: "Add library", exact: true }).click();
-	await expect(page.locator("#create")).toBeVisible();
-	return page.locator("#library-selector").inputValue();
+	await expect(page.locator("#authorize-tab")).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
 }
 async function upload(page, name) {
 	await page.getByRole("link", { name: "Library", exact: true }).click();
@@ -47,11 +48,13 @@ for (const kind of ["web", "extension"]) {
 		const other = await page.context().newPage();
 		await other.goto(url(kind, app, "library"));
 		await expect(other.locator(".card-title")).toHaveText("private.txt");
-		const team = await add(page, "Team");
-		await page.locator("#authorizer").selectOption(personal);
-		await page.locator("#pass").fill("team-password");
-		await page.locator("#pass").press("Enter");
-		await expect(page.locator("#configured")).toBeVisible();
+		await add(page, "Team");
+		await page.locator("#authorize-pass").fill("team-password");
+		await page.locator("#authorize-pass").press("Enter");
+		await expect
+			.poll(() => new URL(page.url()).searchParams.get("library"))
+			.not.toBe(personal);
+		const team = new URL(page.url()).searchParams.get("library");
 		await upload(page, "team.txt");
 		await expect(other.locator("#library-selector")).toHaveValue(personal);
 		await expect(other.locator(".card-title")).toHaveText("private.txt");
@@ -74,14 +77,12 @@ for (const kind of ["web", "extension"]) {
 			const receiver = await context.newPage();
 			const receiverPersonal = await createPersonal(receiver, kind, app);
 			await upload(receiver, "receiver-private.txt");
-			const incoming = await add(receiver, "Friends here");
+			await add(receiver, "Friends here");
 			await page.locator("#pairing-settings > summary").click();
 			await page.locator("#pairing-start").click();
 			await expect(page.locator("#pairing-code")).toBeVisible();
 			const code = await page.locator("#pairing-code").textContent();
-			await receiver
-				.getByRole("button", { name: "Connect existing library", exact: true })
-				.click();
+			await receiver.getByRole("tab", { name: "Pair", exact: true }).click();
 			await receiver.locator("#pairing-input").fill(code);
 			await receiver
 				.locator("#pairing-password")
@@ -94,7 +95,10 @@ for (const kind of ["web", "extension"]) {
 				await page.locator("#pairing-verification-code").textContent(),
 			);
 			await page.locator("#pairing-approve").click();
-			await expect(receiver.locator("#configured")).toBeVisible();
+			await expect
+				.poll(() => new URL(receiver.url()).searchParams.get("library"))
+				.not.toBe(receiverPersonal);
+			const incoming = new URL(receiver.url()).searchParams.get("library");
 			await receiver
 				.getByRole("link", { name: "Library", exact: true })
 				.click();

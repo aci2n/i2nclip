@@ -69,6 +69,8 @@ export function createLibraryRuntime({
 				? {
 						serverUrl: value.pendingRegistration.serverUrl,
 						publicKey: value.pendingRegistration.publicKey,
+						method: value.pendingRegistration.method,
+						authorizerLibraryId: value.pendingRegistration.authorizerLibraryId,
 					}
 				: null,
 			epoch: value.epoch,

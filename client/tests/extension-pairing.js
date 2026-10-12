@@ -128,7 +128,7 @@ function connect() {
  const pending = new Map();
  let resolveReady; const ready = new Promise(resolve => { resolveReady = resolve; });
  port.onMessage.addListener(message => {
-  if (message.type === "snapshot") { state = {...message, value: message.value.libraries[message.value.catalog[0].id], libraryId: message.value.catalog[0].id}; resolveReady(); }
+  if (message.type === "snapshot") { state = {...message, value: message.value.libraries[(message.value.catalog[0] || message.value.setups[0]).id], libraryId: (message.value.catalog[0] || message.value.setups[0]).id}; resolveReady(); }
   if (message.type === "state") {
    if (message.topic === "library" && message.value.id === state.libraryId) state.value = message.value.state;
    if (message.topic === "uploads") state.value.uploads = message.value;

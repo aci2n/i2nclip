@@ -1,6 +1,6 @@
 import { writable } from "svelte/store";
 
-export function createPairing(client) {
+export function createPairing(client, { beforeReceive } = {}) {
 	const state = writable({
 		active: false,
 		code: "",
@@ -12,8 +12,14 @@ export function createPairing(client) {
 	const unsubscribe = client.subscribe((value) => state.set(value.pairing));
 	async function action(name, payload) {
 		try {
+			if (name === "receive") await beforeReceive?.();
 			return await client.command(`pairing.${name}`, payload);
-		} catch {
+		} catch (error) {
+			state.update((value) => ({
+				...value,
+				status: error.message,
+				error: true,
+			}));
 			return false;
 		}
 	}

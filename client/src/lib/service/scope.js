@@ -23,6 +23,7 @@ export function createLibraryClient(
 	let selected = initialId,
 		selection = 0;
 	const unsubscribe = client.subscribe((value) => {
+		const entries = [...(value.catalog || []), ...(value.setups || [])];
 		if (jobId) {
 			const destination = Object.entries(value.libraries || {}).find(
 				([, state]) => state.uploads.some((job) => job.id === jobId),
@@ -33,11 +34,8 @@ export function createLibraryClient(
 				onSelect(selected);
 			}
 		}
-		if (
-			value.catalog?.length &&
-			!value.catalog.some((row) => row.id === selected)
-		) {
-			selected = value.catalog[0].id;
+		if (entries.length && !entries.some((row) => row.id === selected)) {
+			selected = entries[0].id;
 			selection++;
 			onSelect(selected);
 		}
@@ -53,6 +51,7 @@ export function createLibraryClient(
 				instanceId: `${value.instanceId}:${scoped.runtimeId}:${selected}:${selection}`,
 				clientId: value.clientId,
 				libraryId: selected,
+				libraryName: entries.find((row) => row.id === selected)?.name,
 				catalog,
 			});
 		else if (value.session) state.set(value); // Internal single-runtime test adapter.
@@ -62,7 +61,11 @@ export function createLibraryClient(
 		subscribe: state.subscribe,
 		id: () => selected,
 		select(id) {
-			if (!get(client).catalog.some((row) => row.id === id))
+			if (
+				![...get(client).catalog, ...(get(client).setups || [])].some(
+					(row) => row.id === id,
+				)
+			)
 				throw new Error("Library is no longer saved.");
 			selected = id;
 			selection++;
@@ -73,6 +76,10 @@ export function createLibraryClient(
 				instanceId: `${get(client).instanceId}:${get(client).libraries[id].runtimeId}:${id}:${selection}`,
 				clientId: get(client).clientId,
 				libraryId: id,
+				libraryName: [
+					...get(client).catalog,
+					...(get(client).setups || []),
+				].find((row) => row.id === id)?.name,
 				catalog: get(client).catalog.map((row) => ({
 					...row,
 					...get(client).libraries[row.id]?.session,

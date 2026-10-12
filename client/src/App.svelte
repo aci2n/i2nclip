@@ -67,10 +67,18 @@ onDestroy(app.dispose);
 		<p role="status">Loading…</p>
 	{:else if page === "options"}
 		{#key $app.libraryId}
-			<Settings {session} settings={app.settings} pairing={app.pairing}>
-				{#snippet management()}
+			<Settings
+				{session}
+				settings={app.settings}
+				pairing={app.pairing}
+				setup={app.setup}
+			>
+				{#snippet management(
+					serverControls,
+				)}
 					<ManageLibraries
 						{app}
+						{serverControls}
 						catalog={$app.catalog}
 						libraryId={$app.libraryId}
 					/>

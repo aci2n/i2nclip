@@ -1,8 +1,14 @@
 import { get, writable } from "svelte/store";
 
-export function createSettings(session, platform) {
+export function createSettings(
+	session,
+	platform,
+	{ followServer = true } = {},
+) {
 	const initial = {
 		mode: "create",
+		libraryName: "Personal",
+		authorizePassword: "",
 		server: "",
 		password: "",
 		otc: "",
@@ -26,6 +32,14 @@ export function createSettings(session, platform) {
 			running = false;
 			state.set({
 				...initial,
+				mode:
+					value.pendingRegistration?.method ||
+					(value.catalog?.length ? "authorize" : "create"),
+				authorizerLibraryId:
+					value.pendingRegistration?.authorizerLibraryId ||
+					value.catalog?.[0]?.id ||
+					"",
+				libraryName: value.libraryName || "Personal",
 				...drafts.get(libraryId),
 				server: value.serverUrl,
 			});
@@ -33,7 +47,8 @@ export function createSettings(session, platform) {
 		}
 		if (serverUrl !== value.serverUrl) {
 			serverUrl = value.serverUrl;
-			state.update((current) => ({ ...current, server: serverUrl }));
+			if (followServer || !get(state).server)
+				state.update((current) => ({ ...current, server: serverUrl }));
 		}
 	});
 	async function action(
@@ -74,24 +89,44 @@ export function createSettings(session, platform) {
 	}
 	return {
 		subscribe: state.subscribe,
+		resetDraft(overrides = {}) {
+			attempt++;
+			running = false;
+			drafts.clear();
+			state.set({ ...initial, server: get(session).serverUrl, ...overrides });
+		},
 		edit(field, value) {
 			if (!disposed)
 				state.update((current) => ({ ...current, [field]: value }));
 		},
 		create() {
-			const { server, password, otc, authorizerLibraryId } = get(state);
+			const {
+				server,
+				password,
+				authorizePassword,
+				otc,
+				authorizerLibraryId,
+				mode,
+				libraryName,
+			} = get(state);
+			const authorizer = get(session).catalog?.find(
+				(row) => row.id === authorizerLibraryId,
+			);
 			return action(
 				"create",
 				() =>
 					session.create({
-						serverUrl: server.trim(),
-						password,
-						otc,
-						authorizerLibraryId,
+						serverUrl:
+							mode === "authorize" ? authorizer?.serverUrl : server.trim(),
+						password: mode === "authorize" ? authorizePassword : password,
+						otc: mode === "authorize" ? "" : otc,
+						authorizerLibraryId:
+							mode === "authorize" ? authorizerLibraryId : undefined,
+						libraryName,
 					}),
 				"Library created. Download your recovery file before uploading.",
 				"Creating library…",
-				{ password: "", otc: "" },
+				{ password: "", authorizePassword: "", otc: "" },
 			);
 		},
 		discardCreation() {
@@ -113,10 +148,10 @@ export function createSettings(session, platform) {
 			);
 		},
 		restore() {
-			const { recoveryFiles, restorePassword } = get(state);
+			const { recoveryFiles, restorePassword, libraryName } = get(state);
 			return action(
 				"restore",
-				() => session.restore(recoveryFiles?.[0], restorePassword),
+				() => session.restore(recoveryFiles?.[0], restorePassword, libraryName),
 				"Library restored and unlocked.",
 				"Restoring library…",
 				{ restorePassword: "", recoveryFiles: undefined },

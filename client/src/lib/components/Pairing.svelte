@@ -1,11 +1,11 @@
 <script>
 import Unlock from "./Unlock.svelte";
 
-let { session, pairing, server } = $props();
+let { session, pairing, server, embedded = false } = $props();
 let code = $state("");
 let password = $state("");
 let open = $state(false);
-const configured = $derived(Boolean($session.configured));
+const configured = $derived(!embedded && Boolean($session.configured));
 const disabled = $derived(
 	$pairing.active || $session.busy || Boolean($session.pendingRegistration),
 );
@@ -21,12 +21,12 @@ async function connect(event) {
 
 <svelte:element
 	this={configured ? "details" : "section"}
-	class="panel"
+	class={embedded ? "embedded" : "panel"}
 	id="pairing-settings"
 >
 	{#if configured}
 		<summary>Connect another device</summary>
-	{:else}
+	{:else if !embedded}
 		<h2>Connect existing library</h2>
 	{/if}
 	<div class="pairing">
@@ -58,7 +58,7 @@ async function connect(event) {
 					Use a code from an unlocked device. Both devices must use the same
 					server.
 				</p>
-				{#if !open}
+				{#if !open && !embedded}
 					<button
 						type="button"
 						class="secondary"

@@ -200,11 +200,24 @@ Binary data is summarized by type and size; long arrays and deep objects are bou
 
 ## Multiple libraries
 
+Setup has four tabs: OTC (an invitation), Authorize (an existing registered
+library), Pair (another device), and Restore (a recovery file). Authorize is the
+default when a registered library exists and offers inline unlock; the selected
+source determines its server. OTC and Pair keep their own server choices, while
+Restore uses the recovery file's server.
+
+Add library expands the same form without changing the current selection.
+Unsubmitted fields stay local. Submitted setups have service-owned provisional
+records, appear in the picker only after their identities are saved, and retain
+failed registrations for Resume setup after reload. Retrying reuses the encrypted
+identity. Manage Library groups rename, server configuration and forgetting;
+Reset Browser is always the final disclosure and affects all local libraries.
+
 Each tab chooses its own named library. The catalog and per-library unlock,
 uploads, pairing and media state are service-owned; names are local and never
 sent to the server. Settings can rename or forget the selected library. Adding a
-library opens Create/Restore/Connect without replacing existing entries. Create
-can use an invitation or an unlocked library registered on the same server.
+library uses the four-tab setup form without replacing existing entries.
+OTC and Authorize create independent identities; Pair and Restore connect existing ones.
 
 The schema starts a fresh `i2nclip-libraries` IndexedDB database. Export development
 recovery files before upgrading and restore them as separate named entries; the

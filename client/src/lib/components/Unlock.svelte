@@ -1,5 +1,6 @@
 <script>
 let { session, id = "unlock", statusId = "unlock-status" } = $props();
+const passwordId = $derived(id === "unlock" ? "pass" : `${id}-password`);
 let password = $state("");
 function submit(event) {
 	event.preventDefault();
@@ -11,10 +12,10 @@ function submit(event) {
 	<h2>Unlock your library</h2>
 	<p>Your library stays unlocked while the app service is running.</p>
 	<div class="field">
-		<label for="pass">Unlock password</label>
+		<label for={passwordId}>Unlock password</label>
 		<div class="bar">
 			<input
-				id="pass"
+				id={passwordId}
 				type="password"
 				required
 				autocomplete="current-password"

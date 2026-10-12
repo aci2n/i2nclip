@@ -24,7 +24,7 @@ async function receive(page, code, app) {
 	await openServer(page);
 	await page.locator("#server").fill(app.origin);
 	await page
-		.getByRole("button", { name: "Connect existing library", exact: true })
+		.getByRole("tab", { name: "Pair", exact: true })
 		.click();
 	await page.locator("#pairing-input").fill(code);
 	await page.locator("#pairing-password").fill("different-device-password");

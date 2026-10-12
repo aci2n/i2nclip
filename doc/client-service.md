@@ -34,7 +34,7 @@ names stay local to each installation.
 The client interface is `ready`, `command(name, payload)`, `subscribe(listener)`,
 and `dispose()`. Commands are requests, never direct access to service storage or
 credentials. Each connection receives an initial snapshot and ordered events.
-Snapshots contain the catalog and per-library session, upload, pairing, media
+Snapshots contain the completed-library catalog, provisional `setups`, and per-library session, upload, pairing, media
 and that client's view state.
 Content and recovery files are unicast replies. Passwords and private keys are
 never part of snapshots. The UI uses `unlocked`, not a private-key flag.

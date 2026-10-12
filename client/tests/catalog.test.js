@@ -3,10 +3,95 @@ import test from "node:test";
 import { get } from "svelte/store";
 import { createServiceEngine } from "../src/lib/service/engine.js";
 import { createLibraryClient } from "../src/lib/service/scope.js";
+import { createSetup } from "../src/lib/stores/setup.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
 import { wrapPrivateKey } from "../src/lib/protocol/vault.js";
 import { engineClient, memoryRepository, until } from "./service-helpers.js";
 import { deferred } from "./helpers.js";
+
+test("authorization follows the source server, preserves other drafts, and aborts when the source changes", async (t) => {
+	const sending = deferred();
+	let granted;
+	const f = await fixture(t, {
+		api: {
+			list: async () => ({ items: [], next: null }),
+			registerAuthenticatedKey: (options) => {
+				granted = options;
+				return sending.promise;
+			},
+		},
+	});
+	await f.b.command("identity.setServer", {
+		serverUrl: "https://other.example",
+	});
+	await f.b.command("identity.unlock", { password: "password123" });
+	const setup = createSetup(
+		f.root,
+		{ confirm: () => true },
+		() => "lib-1",
+		() => assert.fail("Must not promote stale authorization"),
+	);
+	t.after(setup.dispose);
+	setup.start();
+	assert.equal(get(setup.settings).authorizerLibraryId, "lib-1");
+	assert.equal(get(setup.settings).server, "https://other.example");
+	setup.settings.edit("server", "https://invitation.example");
+	setup.settings.edit("libraryName", "Separate");
+	setup.settings.edit("authorizePassword", "new-password");
+	setup.close();
+	setup.start();
+	assert.equal(get(setup.settings).libraryName, "Separate");
+	const creating = setup.settings.create();
+	await until(() => granted);
+	assert.equal(granted.serverUrl, "https://other.example");
+	assert.equal(granted.privateKey, f.keys[1].privateKey);
+	assert.equal(get(setup.settings).server, "https://invitation.example");
+	await f.b.command("identity.setServer", {
+		serverUrl: "https://changed.example",
+	});
+	sending.resolve();
+	assert.equal(await creating, false);
+	assert.equal(get(f.root).catalog.length, 2);
+	assert.equal(get(f.root).setups.length, 1);
+	assert.equal(
+		get(f.root).libraries[get(f.root).setups[0].id].session.pendingRegistration
+			.serverUrl,
+		"https://other.example",
+	);
+	await assert.rejects(
+		f.root.command("libraries.discardSetup", { libraryId: "lib-0" }),
+		/Setup completed/,
+	);
+});
+
+test("global reset removes provisional setup and clears its form secrets", async (t) => {
+	const f = await fixture(t, {
+		api: {
+			list: async () => ({ items: [], next: null }),
+			registerAuthenticatedKey: async () => {
+				throw new Error("offline");
+			},
+		},
+	});
+	await f.a.command("identity.unlock", { password: "password123" });
+	const setup = createSetup(
+		f.root,
+		{ confirm: () => true },
+		() => "lib-0",
+		() => {},
+	);
+	t.after(setup.dispose);
+	setup.start();
+	setup.settings.edit("libraryName", "Pending");
+	setup.settings.edit("authorizePassword", "new-password");
+	await setup.settings.create();
+	assert(get(setup).id);
+	await f.root.command("libraries.reset");
+	assert.equal(get(setup).id, undefined);
+	assert.equal(get(setup).open, false);
+	assert.equal(get(setup.settings).authorizePassword, "");
+	assert.equal(get(f.root).catalog.length, 0);
+});
 
 function catalogRepository(records) {
 	const rows = new Map(records.map((row) => [row.id, structuredClone(row)])),
@@ -86,6 +171,63 @@ async function fixture(t, extra = {}) {
 	t.after(b.dispose);
 	return { root, a, b, engine, repository, keys };
 }
+test("setup keeps a failed registration out of the catalog, resumes its identity and promotes after retry", async (t) => {
+	let attempts = 0;
+	t.mock.method(
+		globalThis,
+		"fetch",
+		async () => new Response(null, { status: 401 }),
+	);
+	const f = await fixture(t, {
+		api: {
+			list: async () => ({ items: [], next: null }),
+			registerAuthenticatedKey: async () => {
+				if (++attempts === 1) throw new Error("offline");
+			},
+		},
+	});
+	const completed = [];
+	const platform = { confirm: () => true };
+	const setup = createSetup(
+		f.root,
+		platform,
+		() => "lib-0",
+		(id) => completed.push(id),
+	);
+	t.after(setup.dispose);
+	setup.start();
+	assert.equal(get(setup.settings).mode, "authorize");
+	await assert.rejects(setup.unlockSource("lib-0", "wrong"));
+	await setup.unlockSource("lib-0", "password123");
+	setup.settings.edit("libraryName", "Team");
+	setup.settings.edit("authorizePassword", "new-password");
+	assert.equal(await setup.settings.create(), false);
+	assert.equal(get(f.root).catalog.length, 2);
+	const row = get(f.root).setups.find((row) => row.name === "Team");
+	assert(row);
+	const pending = (await f.repository.scope(row.id).getConfig())
+		.pendingRegistration;
+	assert(pending);
+	assert.equal(get(setup.settings).feedback.error, true);
+	const resumed = createSetup(
+		f.root,
+		platform,
+		() => "lib-0",
+		(id) => completed.push(id),
+	);
+	t.after(resumed.dispose);
+	resumed.resume(row.id);
+	assert.equal(get(resumed.settings).mode, "authorize");
+	resumed.settings.edit("authorizePassword", "new-password");
+	assert.equal(await resumed.settings.create(), true);
+	await until(() => completed.includes(row.id));
+	assert.equal(get(f.root).catalog.length, 3);
+	assert.equal(get(f.root).setups.length, 0);
+	assert.equal(
+		(await f.repository.scope(row.id).getConfig()).publicKey,
+		pending.publicKey,
+	);
+});
 test("library selection and unlock are independent; catalog renames retain identity", async (t) => {
 	const f = await fixture(t);
 	await f.a.command("identity.unlock", { password: "password123" });

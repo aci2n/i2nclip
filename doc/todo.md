@@ -59,8 +59,12 @@ VM21:1 Uncaught ReferenceError: Worker is not defined
 
 27. [x] Separate Rename library and Add library disclosures in Settings, collapsed by default. The compact header picker appears only for multiple libraries. Shared create/rename/pair/switch/forget flows pass in both browsers; checker/lint pass and Firefox narrow light/dark screenshots were inspected. Original request: Move the "rename library" and "library name for new library" controls to a dedicated "rename library"/"add library" fieldsets. Move the library picker inline with the header, and make it smaller. Only show it if there is more than one library. Review the user experience for this flow, the current controls are very intrusive.
 
-28. Reorganize the settings page with multi-libaries in mind from scratch. Right now it's shoehorned and hard to understand. Rethink the full setup, which controls belong together, etc. The current layout is good but the distribution of the controls is unintuitive. "Add library" should only be visible if there is a registered library. Adding a library should always use the authorized registration flow, no OTC. 
+28. [x] Implemented OTC / Authorize / Pair / Restore tabs, inline authorizer unlock and server-bound authorization, provisional service-owned setups with durable retry, and selection only after successful setup. Manage Library groups selected-library controls; Reset Browser is always last and warning-colored. Shared browser scenarios, owner regression tests and installed-extension checks verify the flow; narrow Firefox screenshots were inspected. Original request: Reorganize the settings page with multi-libaries in mind from scratch. Right now it's shoehorned and hard to understand. Rethink the full setup, which controls belong together, etc. The current layout is good but the distribution of the controls is unintuitive. "Add library" should only be visible if there is a registered library.
 
-PRIORITY (highest prio first): 14, 22, 23, 18+19+20+21, 27, 25, 26, 28
+29. While uploads are in progress, should all of them with a % bar next to the file name. When all are complete, automatically discard automatically after 5 seconds (leave the user option to clear immediately).
+
+30. For key auth checks, we are doing /api/media API calls I believe. Let's have a authed ping endpoint in the server that can be used for this purpose.
+
+PRIORITY (highest prio first): 14, 22, 23, 18+19+20+21, 27, 25, 26, 28, 29, 30
 
 DEFERRED: 15, 16, 24

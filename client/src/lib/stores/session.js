@@ -23,6 +23,7 @@ export function createSession(client, platform) {
 			...value.session,
 			catalog: value.catalog || [],
 			libraryId: value.libraryId,
+			libraryName: value.libraryName,
 			error: localError || value.session.error,
 		});
 	});
@@ -39,11 +40,33 @@ export function createSession(client, platform) {
 			return false;
 		}
 	}
+	async function renameForSetup(name) {
+		if (name === undefined || !client.rootCommand) return;
+		const captured = get(client);
+		if (!captured.libraryId) return;
+		await client.rootCommand("libraries.rename", {
+			libraryId: captured.libraryId,
+			name,
+		});
+		const latest = get(client);
+		if (
+			latest.libraryId !== captured.libraryId ||
+			latest.instanceId !== captured.instanceId ||
+			latest.session.epoch !== captured.session.epoch
+		)
+			throw new Error("Library changed. Start setup again.");
+	}
 	return {
 		subscribe: state.subscribe,
 		ready: client.ready,
-		create: (payload) => action("create", payload),
-		restore: (file, password) => action("restore", { file, password }),
+		create: async (payload) => {
+			await renameForSetup(payload.libraryName);
+			return action("create", payload);
+		},
+		restore: async (file, password, libraryName) => {
+			await renameForSetup(libraryName);
+			return action("restore", { file, password });
+		},
 		unlock: (password) => action("unlock", { password }),
 		setServer: (serverUrl) => action("setServer", { serverUrl }),
 		discardCreation: () => action("discardCreation"),

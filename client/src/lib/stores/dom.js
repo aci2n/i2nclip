@@ -37,17 +37,25 @@ export function modal(node, selected) {
 	};
 }
 
-export function selectTab(event, current, select) {
+export function selectTab(
+	event,
+	current,
+	select,
+	tabs = ["create", "restore"],
+) {
 	if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
 	event.preventDefault();
 	const next =
 		event.key === "Home"
-			? "create"
+			? tabs[0]
 			: event.key === "End"
-				? "restore"
-				: current === "create"
-					? "restore"
-					: "create";
+				? tabs.at(-1)
+				: tabs[
+						(tabs.indexOf(current) +
+							(event.key === "ArrowLeft" ? -1 : 1) +
+							tabs.length) %
+							tabs.length
+					];
 	select(next);
 	event.currentTarget.querySelector(`#${next}-tab`).focus();
 }

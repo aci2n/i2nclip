@@ -68,17 +68,20 @@ async function storage(page) {
 
 async function expectSetup(page) {
 	await expect(
-		page.getByRole("tab", { name: "Create", exact: true }),
+		page.getByRole("tab", { name: "OTC", exact: true }),
 	).toBeVisible();
 	await expect(
 		page.getByRole("tab", { name: "Restore", exact: true }),
 	).toBeVisible();
 	await expect(page.locator("#configured")).toBeHidden();
-	await expect(page.locator("#reset-settings")).toBeHidden();
+	await expect(page.locator("#reset-settings")).toBeVisible();
 }
 
 async function openServer(page) {
 	const details = page.locator("#server-details");
+	if (!(await details.count())) return;
+	if (!(await details.isVisible()))
+		await page.locator("#rename-library-settings > summary").click();
 	if (!(await details.evaluate((element) => element.open)))
 		await details.locator("summary").click();
 }
@@ -267,7 +270,8 @@ function installBrowser() {
 						instanceId = message.instanceId;
 						const libraryId =
 							new URLSearchParams(location.search).get("library") ||
-							message.value.catalog?.[0]?.id;
+							message.value.catalog?.[0]?.id ||
+							message.value.setups?.[0]?.id;
 						const selected =
 							message.value.libraries?.[libraryId] || message.value;
 						epoch = selected.session.epoch;
@@ -275,6 +279,7 @@ function installBrowser() {
 							resolve({
 								...selected,
 								catalog: message.value.catalog,
+								setups: message.value.setups,
 								libraries: message.value.libraries,
 							});
 							return;

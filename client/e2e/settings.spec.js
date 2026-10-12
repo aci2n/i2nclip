@@ -71,6 +71,7 @@ test("invalid recovery and invalid server input preserve form drafts and saved c
 	app,
 }) => {
 	const created = await createLibrary(page, app);
+	await openServer(page);
 	await page.locator("#server").fill("https://user:pass@example.com");
 	await page.getByRole("button", { name: "Update URL" }).click();
 	await expect(page.locator("#status")).not.toHaveText("Server URL updated.");

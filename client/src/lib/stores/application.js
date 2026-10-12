@@ -5,6 +5,7 @@ import { createPairing } from "./pairing.js";
 import { createPendingUpload } from "./pending-upload.js";
 import { createSession } from "./session.js";
 import { createSettings } from "./settings.js";
+import { createSetup } from "./setup.js";
 
 // The application owns workflows across view changes; views only render them.
 export function createApplication(platform, initialPage, browser = window) {
@@ -26,7 +27,23 @@ export function createApplication(platform, initialPage, browser = window) {
 		new URLSearchParams(browser.location.search).get("id"),
 	);
 	const session = createSession(client, platform);
-	const pairing = createPairing(client);
+	const pairing = createPairing(client, {
+		beforeReceive: async () => {
+			const id = client.id();
+			const captured = get(client);
+			await root.command("libraries.rename", {
+				libraryId: id,
+				name: get(settings).libraryName,
+			});
+			const latest = get(client);
+			if (
+				client.id() !== id ||
+				latest.instanceId !== captured.instanceId ||
+				latest.session.epoch !== captured.session.epoch
+			)
+				throw new Error("Library changed. Start pairing again.");
+		},
+	});
 	const settings = createSettings(session, platform);
 	const standalone = !initialPage;
 	const pageAtLocation = () => {
@@ -123,6 +140,19 @@ export function createApplication(platform, initialPage, browser = window) {
 		lastSelection = id;
 		state.update((value) => ({ ...value, library, libraryId: id }));
 	}
+	const setup = createSetup(
+		root,
+		platform,
+		() => client.id(),
+		(id) => {
+			selectLibrary(id);
+			settings.edit("feedback", {
+				scope: "library",
+				text: "Library saved. Download your recovery file before uploading.",
+				error: false,
+			});
+		},
+	);
 	const restore = () => {
 		const id = new URLSearchParams(browser.location.search).get("library");
 		if (id && id !== client.id()) selectLibrary(id);
@@ -134,17 +164,9 @@ export function createApplication(platform, initialPage, browser = window) {
 		session,
 		pairing,
 		settings,
+		setup,
 		href,
 		selectLibrary,
-		async addLibrary(name) {
-			const id = await root.command("libraries.add", {
-				name,
-				serverUrl: get(client).session.serverUrl,
-			});
-			selectLibrary(id);
-			browser.history.pushState({}, "", href("options"));
-			show("options");
-		},
 		async renameLibrary(name) {
 			await root.command("libraries.rename", { libraryId: client.id(), name });
 		},
@@ -178,6 +200,7 @@ export function createApplication(platform, initialPage, browser = window) {
 			pending?.dispose();
 			disposeLibrary();
 			settings.dispose();
+			setup.dispose();
 			pairing.dispose();
 			session.dispose();
 			unsubscribeCatalog();

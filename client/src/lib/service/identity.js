@@ -174,6 +174,8 @@ export function createIdentity(
 						serverUrl,
 						publicKey: created.publicKey,
 						wrappedKey: await wrapPrivateKey(key, password),
+						method: authorizerLibraryId ? "authorize" : "create",
+						authorizerLibraryId: authorizerLibraryId || "",
 					};
 					signal.throwIfAborted();
 					await repository.setConfig({
@@ -209,7 +211,7 @@ export function createIdentity(
 				} catch (error) {
 					signal.throwIfAborted();
 					throw new Error(
-						`Registration failed: ${error.message}. Your encrypted identity is saved. Check your invitation code and retry with the original password.`,
+						`Registration failed: ${error.message}. Your encrypted identity is saved. Check your registration method and retry with the original password.`,
 					);
 				}
 				await save(serverUrl, key, pending.wrappedKey, signal);

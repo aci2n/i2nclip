@@ -141,14 +141,32 @@ export function createRepository(indexedDB = globalThis.indexedDB) {
 					tx.objectStore("libraries").put({ ...request.result, name }, id);
 				};
 			}),
-		deleteLibraries: (ids, replacement) =>
+		deleteLibraries: (ids, replacement, onlySetups = false) =>
 			run(["libraries", "jobs", "sources"], "readwrite", (tx) => {
-				for (const id of ids) {
-					tx.objectStore("libraries").delete(id);
-					clearJobs(tx, id);
-				}
-				if (replacement)
-					tx.objectStore("libraries").put(replacement, replacement.id);
+				const remove = () => {
+					for (const id of ids) {
+						tx.objectStore("libraries").delete(id);
+						clearJobs(tx, id);
+					}
+					if (replacement)
+						tx.objectStore("libraries").put(replacement, replacement.id);
+				};
+				if (!onlySetups) return remove();
+				const request = tx.objectStore("libraries").getAll();
+				request.onsuccess = () => {
+					if (
+						request.result.some(
+							(row) => ids.includes(row.id) && row.identity?.wrappedKey,
+						)
+					) {
+						tx.failure = new Error(
+							"Setup completed. Keep the saved library and its recovery file.",
+						);
+						tx.abort();
+						return;
+					}
+					remove();
+				};
 			}),
 		scope,
 		jobs: () =>
