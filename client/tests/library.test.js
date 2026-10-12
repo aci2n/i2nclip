@@ -15,16 +15,17 @@ test("all clients see per-file progress and only fully successful batches expire
 				onProgress(37);
 				await transfer.promise;
 			}
-			if (source.name === "second.txt" && ++attempt === 1)
+			if (source.name === "second.txt" && ++attempt === 1) {
 				throw new Error("offline");
+			}
 			return { id: source.name };
 		},
 	});
 	const second = engineClient(f.engine);
 	t.after(second.dispose);
 	await second.ready;
-	const a = createLibrary(f.client, {}),
-		b = createLibrary(second, {});
+	const a = createLibrary(f.client, {});
+	const b = createLibrary(second, {});
 	t.after(a.dispose);
 	t.after(b.dispose);
 	await a.upload([
@@ -103,8 +104,8 @@ test("uploads append matching cards without list refresh and survive older searc
 });
 
 test("deletion preserves cards in all views without refreshing until an explicit search", async (t) => {
-	let lists = 0,
-		deleted = false;
+	let lists = 0;
+	let deleted = false;
 	const f = await serviceFixture(t, {
 		api: {
 			list: async () => {
@@ -119,13 +120,13 @@ test("deletion preserves cards in all views without refreshing until an explicit
 	const second = engineClient(f.engine);
 	t.after(second.dispose);
 	await second.ready;
-	const a = createLibrary(f.client, { confirm: () => true }),
-		b = createLibrary(second, {});
+	const a = createLibrary(f.client, { confirm: () => true });
+	const b = createLibrary(second, {});
 	t.after(a.dispose);
 	t.after(b.dispose);
 	await until(() => get(a).cards.length && get(b).cards.length);
-	const cardA = get(a).cards[0].media,
-		cardB = get(b).cards[0].media;
+	const cardA = get(a).cards[0].media;
+	const cardB = get(b).cards[0].media;
 	const before = lists;
 	await a.remove("file");
 	assert.equal(lists, before);
@@ -150,8 +151,8 @@ test("library projections preserve independent searches and receive shared media
 	const second = engineClient(f.engine);
 	t.after(second.dispose);
 	await second.ready;
-	const a = createLibrary(f.client, {}),
-		b = createLibrary(second, {});
+	const a = createLibrary(f.client, {});
+	const b = createLibrary(second, {});
 	t.after(a.dispose);
 	t.after(b.dispose);
 	await until(() => get(a).items.length && get(b).items.length);
@@ -219,15 +220,17 @@ test("all tabs see failed uploads and can retry retained sources", async (t) => 
 	let uploads = 0;
 	const f = await serviceFixture(t, {
 		upload: async () => {
-			if (++uploads === 1) throw new Error("offline");
+			if (++uploads === 1) {
+				throw new Error("offline");
+			}
 			return { id: "saved" };
 		},
 	});
 	const second = engineClient(f.engine);
 	t.after(second.dispose);
 	await second.ready;
-	const a = createLibrary(f.client, {}),
-		b = createLibrary(second, {});
+	const a = createLibrary(f.client, {});
+	const b = createLibrary(second, {});
 	t.after(a.dispose);
 	t.after(b.dispose);
 	const file = new File(["bytes"], "one.txt");

@@ -30,7 +30,9 @@ onDestroy(editor.dispose);
 			class="tags"
 			onsubmit={(event) => {
 				event.preventDefault();
-				if (!locked) editor.add(tags);
+				if (!locked) {
+					editor.add(tags);
+				}
 			}}
 		>
 			<div class="entry">
@@ -45,7 +47,9 @@ onDestroy(editor.dispose);
 					onkeydown={(event) => {
 						if (event.key === "Escape") {
 							event.preventDefault();
-							if (!locked) editor.cancel();
+							if (!locked) {
+								editor.cancel();
+							}
 						}
 					}}
 				>

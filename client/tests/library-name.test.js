@@ -15,8 +15,9 @@ test("library suggestions use the lowest unused Personal number", () => {
 			["Work", "Personal 0", "Personal x", "Personal 9007199254740992"],
 			"Personal 1",
 		],
-	])
+	]) {
 		assert.equal(defaultLibraryName(names.map((name) => ({ name }))), expected);
+	}
 });
 
 test("first setup uses an editable suggestion and switching preserves saved library names", async () => {

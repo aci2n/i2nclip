@@ -20,8 +20,8 @@ export function createLibraryClient(
 		views: {},
 		pairing: { active: false },
 	});
-	let selected = initialId,
-		selection = 0;
+	let selected = initialId;
+	let selection = 0;
 	const unsubscribe = client.subscribe((value) => {
 		const entries = [...(value.catalog || []), ...(value.setups || [])];
 		if (jobId) {
@@ -44,7 +44,7 @@ export function createLibraryClient(
 			...value.libraries?.[row.id]?.session,
 		}));
 		const scoped = value.libraries?.[selected];
-		if (scoped)
+		if (scoped) {
 			state.set({
 				...scoped,
 				connected: value.connected,
@@ -54,7 +54,7 @@ export function createLibraryClient(
 				libraryName: entries.find((row) => row.id === selected)?.name,
 				catalog,
 			});
-		else if (value.vault)
+		} else if (value.vault) {
 			state.set({
 				...value,
 				session: {
@@ -71,7 +71,9 @@ export function createLibraryClient(
 				media: {},
 				pairing: { active: false },
 			});
-		else if (value.session) state.set(value); // Internal single-runtime test adapter.
+		} else if (value.session) {
+			state.set(value); // Internal single-runtime test adapter.
+		}
 	});
 	return {
 		ready: client.ready,
@@ -82,8 +84,9 @@ export function createLibraryClient(
 				![...get(client).catalog, ...(get(client).setups || [])].some(
 					(row) => row.id === id,
 				)
-			)
+			) {
 				throw new Error("Library is no longer saved.");
+			}
 			selected = id;
 			selection++;
 			onSelect(id);

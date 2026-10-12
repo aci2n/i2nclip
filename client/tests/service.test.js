@@ -21,8 +21,8 @@ async function fixture(t, options = {}) {
 		...options,
 	});
 	t.after(engine.dispose);
-	const first = engineClient(engine),
-		second = engineClient(engine);
+	const first = engineClient(engine);
+	const second = engineClient(engine);
 	t.after(first.dispose);
 	t.after(second.dispose);
 	await Promise.all([first.ready, second.ready]);
@@ -47,8 +47,8 @@ test("one owner broadcasts unlock and reset without exposing private credentials
 
 test("identity acknowledgment waits for durable commit, including reset queued behind a stalled write", async (t) => {
 	const f = await fixture(t);
-	const entered = deferred(),
-		finish = deferred();
+	const entered = deferred();
+	const finish = deferred();
 	const save = f.repository.setConfig;
 	f.repository.setConfig = async (value) => {
 		entered.resolve();
@@ -202,7 +202,9 @@ test("a quota failure rejects the affected source but does not stop the remainin
 	const f = await fixture(t, { upload: async () => ({ id: "saved" }) });
 	const put = f.repository.putJob;
 	f.repository.putJob = async (job, source) => {
-		if (source?.name === "full") throw new Error("quota exceeded");
+		if (source?.name === "full") {
+			throw new Error("quota exceeded");
+		}
 		return put(job, source);
 	};
 	const result = await f.first.command("uploads.submit", {

@@ -1,6 +1,7 @@
 import { createSessionContext } from "../src/lib/service/identity-context.js";
 export function deferred() {
-	let resolve, reject;
+	let resolve;
+	let reject;
 	const promise = new Promise((yes, no) => {
 		resolve = yes;
 		reject = no;

@@ -8,7 +8,9 @@ let savedName = "";
 $effect(() => {
 	const latest = catalog.find((row) => row.id === libraryId)?.name || "";
 	untrack(() => {
-		if (name === savedName) name = latest;
+		if (name === savedName) {
+			name = latest;
+		}
 		savedName = latest;
 	});
 });
@@ -16,7 +18,9 @@ let error = $state("");
 let errorAt = $state("rename");
 let busy = $state(false);
 async function run(action, scope = "rename") {
-	if (busy) return;
+	if (busy) {
+		return;
+	}
 	busy = true;
 	error = "";
 	errorAt = scope;

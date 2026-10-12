@@ -56,7 +56,9 @@ export function createIdentity(
 		publish({ ready: true });
 	});
 	function queue(action) {
-		if (serialize) return serialize(action);
+		if (serialize) {
+			return serialize(action);
+		}
 		const result = tail.then(action);
 		tail = result.catch(() => {});
 		return result;
@@ -70,9 +72,12 @@ export function createIdentity(
 		context.invalidate();
 	}
 	async function mutate(action, { reset = false } = {}) {
-		if (disposed) throw new Error("Session ended.");
-		if (get(state).busy && !reset)
+		if (disposed) {
+			throw new Error("Session ended.");
+		}
+		if (get(state).busy && !reset) {
 			throw new Error("Session is busy. Try again.");
+		}
 		const id = ++mutation;
 		traceEvent("identity.mutation.start", { mutation: id, reset });
 		invalidate();
@@ -92,11 +97,17 @@ export function createIdentity(
 					mutation: id,
 					...errorDetails(error),
 				});
-				if (!disposed) config = await repository.getConfig();
-				if (id === mutation) publish({ error: error.message });
+				if (!disposed) {
+					config = await repository.getConfig();
+				}
+				if (id === mutation) {
+					publish({ error: error.message });
+				}
 				throw error;
 			} finally {
-				if (id === mutation) publish({ busy: false });
+				if (id === mutation) {
+					publish({ busy: false });
+				}
 			}
 		});
 	}
@@ -125,8 +136,9 @@ export function createIdentity(
 			return controller.signal;
 		},
 		credentials() {
-			if (disposed || !privateKey || get(state).busy)
+			if (disposed || !privateKey || get(state).busy) {
 				throw new Error("Unlock before uploading.");
+			}
 			return {
 				serverUrl: get(state).serverUrl,
 				privateKey,
@@ -136,34 +148,40 @@ export function createIdentity(
 		},
 		operation: context.operation,
 		async withIdentity(operation, action) {
-			if (!context.owns(operation))
+			if (!context.owns(operation)) {
 				throw new Error("Invalid session operation.");
+			}
 			await ready;
 			return queue(async () => {
 				operation.signal.throwIfAborted();
-				if (!context.matches(context.expected(operation), get(state)))
+				if (!context.matches(context.expected(operation), get(state))) {
 					throw new Error("Library changed. Start again.");
+				}
 				return action(identity.credentials());
 			});
 		},
 		create: ({ serverUrl, otc = "", authorizerLibraryId }) =>
 			mutate(async (signal) => {
 				checkServer(serverUrl);
-				if (config.privateKey)
+				if (config.privateKey) {
 					throw new Error("A library is already configured.");
-				if (!otc.trim() && !authorizerLibraryId)
+				}
+				if (!otc.trim() && !authorizerLibraryId) {
 					throw new Error("Enter an invitation code from the admin.");
+				}
 				let pending = config.pendingRegistration;
 				const retry = Boolean(pending);
 				let key;
 				if (pending) {
-					if (pending.serverUrl !== serverUrl)
+					if (pending.serverUrl !== serverUrl) {
 						throw new Error(
 							"Retry creation on its original server, or discard the pending creation first.",
 						);
+					}
 					key = pending.privateKey;
-					if ((await loadKey(key)).registrationKey !== pending.publicKey)
+					if ((await loadKey(key)).registrationKey !== pending.publicKey) {
 						throw new Error("Invalid pending identity.");
+					}
 				} else {
 					const created = await generatePrivateKey();
 					key = created.privateKey;
@@ -187,10 +205,11 @@ export function createIdentity(
 					if (
 						!retry ||
 						!(await isKeyRegistered({ serverUrl, privateKey: key, signal }))
-					)
+					) {
 						if (authorizerLibraryId) {
-							if (!authorizeRegistration)
+							if (!authorizeRegistration) {
 								throw new Error("Authenticated registration is unavailable.");
+							}
 							await authorizeRegistration(
 								authorizerLibraryId,
 								pending.publicKey,
@@ -205,6 +224,7 @@ export function createIdentity(
 								signal,
 							});
 						}
+					}
 				} catch (error) {
 					signal.throwIfAborted();
 					throw new Error(
@@ -216,10 +236,11 @@ export function createIdentity(
 		setServer: (serverUrl) =>
 			mutate(async (signal) => {
 				checkServer(serverUrl);
-				if (config.pendingRegistration)
+				if (config.pendingRegistration) {
 					throw new Error(
 						"Finish or discard the pending creation before changing servers.",
 					);
+				}
 				await repository.setConfig(
 					{ ...config, serverUrl },
 					{ clearUploads: true },
@@ -252,12 +273,14 @@ export function createIdentity(
 			await mutate(async (ownSignal) => {
 				signal.throwIfAborted();
 				checkServer(serverUrl);
-				if (config.privateKey || config.pendingRegistration)
+				if (config.privateKey || config.pendingRegistration) {
 					throw new Error(
 						"A library or pending creation is already configured.",
 					);
-				if ((await loadKey(key)).registrationKey !== publicKey)
+				}
+				if ((await loadKey(key)).registrationKey !== publicKey) {
 					throw new Error("Invalid paired identity.");
+				}
 				signal.throwIfAborted();
 				await save(serverUrl, key, AbortSignal.any([ownSignal, signal]));
 			});

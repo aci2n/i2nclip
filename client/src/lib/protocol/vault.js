@@ -38,10 +38,13 @@ export async function openBytes(key, record, purpose) {
 		record?.v !== 1 ||
 		!(typeof record.iv === "string" || record.iv instanceof Uint8Array) ||
 		!(typeof record.ct === "string" || record.ct instanceof Uint8Array)
-	)
+	) {
 		throw new Error("Invalid encrypted data.");
+	}
 	const iv = typeof record.iv === "string" ? b64ToBytes(record.iv) : record.iv;
-	if (iv.length !== 12) throw new Error("Invalid encrypted data.");
+	if (iv.length !== 12) {
+		throw new Error("Invalid encrypted data.");
+	}
 	return new Uint8Array(
 		await crypto.subtle.decrypt(
 			{ name: "AES-GCM", iv, additionalData: utf8(purpose) },
@@ -66,10 +69,13 @@ export async function passwordOpen(record, password, purpose) {
 		record.iterations < PBKDF2_ITERATIONS ||
 		record.iterations > 2_000_000 ||
 		typeof record.salt !== "string"
-	)
+	) {
 		throw new Error("Invalid encrypted data.");
+	}
 	const salt = b64ToBytes(record.salt);
-	if (salt.length !== 16) throw new Error("Invalid encrypted data.");
+	if (salt.length !== 16) {
+		throw new Error("Invalid encrypted data.");
+	}
 	const key = await wrappingKey(password, salt, record.iterations);
 	try {
 		return await openBytes(key, record, purpose);
@@ -78,7 +84,9 @@ export async function passwordOpen(record, password, purpose) {
 	}
 }
 export async function importVaultKey(bytes) {
-	if (bytes.length !== 32) throw new Error("Invalid vault key.");
+	if (bytes.length !== 32) {
+		throw new Error("Invalid vault key.");
+	}
 	return crypto.subtle.importKey("raw", bytes, { name: "AES-GCM" }, false, [
 		"encrypt",
 		"decrypt",

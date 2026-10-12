@@ -21,11 +21,13 @@ export function parsePrivateKey(text) {
 }
 
 function decodeKey(text) {
-	if (!/^[A-Za-z0-9_-]{43}$/.test(text))
+	if (!/^[A-Za-z0-9_-]{43}$/.test(text)) {
 		throw new Error("Invalid library identity.");
+	}
 	const bytes = b64urlToBytes(text);
-	if (bytes.length !== 32 || bytesToB64url(bytes) !== text)
+	if (bytes.length !== 32 || bytesToB64url(bytes) !== text) {
 		throw new Error("Invalid library identity.");
+	}
 	return bytes;
 }
 

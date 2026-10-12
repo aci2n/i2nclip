@@ -25,7 +25,9 @@ self.onconnect = ({ ports: [port] }) => {
 			clearInterval(timer);
 			void connection.receive(data);
 			port.close();
-		} else void connection.receive(data);
+		} else {
+			void connection.receive(data);
+		}
 	};
 	port.onmessageerror = () => {
 		clearInterval(timer);

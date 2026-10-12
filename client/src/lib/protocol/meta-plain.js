@@ -36,13 +36,17 @@ export function decodeMetaPlain(bytes) {
 }
 
 function readChunk(bytes, offset) {
-	if (bytes.length - offset < 4) throw new Error("truncated metadata");
+	if (bytes.length - offset < 4) {
+		throw new Error("truncated metadata");
+	}
 	const len = new DataView(
 		bytes.buffer,
 		bytes.byteOffset + offset,
 		4,
 	).getUint32(0);
 	offset += 4;
-	if (bytes.length - offset < len) throw new Error("truncated metadata");
+	if (bytes.length - offset < len) {
+		throw new Error("truncated metadata");
+	}
 	return bytes.subarray(offset, offset + len);
 }

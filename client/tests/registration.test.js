@@ -17,8 +17,8 @@ function open(t, repository) {
 
 test("lost registration response retries the durable encrypted identity without spending another invitation", async (t) => {
 	const repository = memoryRepository();
-	let posts = 0,
-		publicKey;
+	let posts = 0;
+	let publicKey;
 	t.mock.method(globalThis, "fetch", async (_url, options) => {
 		if (options.method === "POST") {
 			posts++;
@@ -65,10 +65,12 @@ test("registration is never sent before the pending identity commits", async (t)
 test("a final save failure retains pending identity and retry verifies registration", async (t) => {
 	const repository = memoryRepository();
 	const save = repository.setConfig;
-	let fail = true,
-		posts = 0;
+	let fail = true;
+	let posts = 0;
 	repository.setConfig = async (value) => {
-		if (value.privateKey && fail) throw new Error("disk full");
+		if (value.privateKey && fail) {
+			throw new Error("disk full");
+		}
 		return save(value);
 	};
 	t.mock.method(globalThis, "fetch", async (_url, options) => {

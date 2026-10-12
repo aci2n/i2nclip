@@ -12,10 +12,14 @@ export async function thumbnail(blob, signal) {
 	try {
 		if (type.startsWith("audio/")) {
 			const art = audioArt(await blob.bytes());
-			if (!art) return null;
+			if (!art) {
+				return null;
+			}
 			return await fromBitmap(new Blob([art]), signal);
 		}
-		if (type.startsWith("video/")) return await fromVideo(blob, signal);
+		if (type.startsWith("video/")) {
+			return await fromVideo(blob, signal);
+		}
 		return await fromBitmap(blob, signal);
 	} catch {
 		return null;
@@ -27,7 +31,9 @@ async function fromBitmap(blob, signal) {
 	try {
 		signal?.throwIfAborted();
 		const thumb = await webp(bitmap);
-		if (!thumb) return null;
+		if (!thumb) {
+			return null;
+		}
 		return { thumb, image: { width: bitmap.width, height: bitmap.height } };
 	} finally {
 		bitmap.close();
@@ -37,7 +43,9 @@ async function fromBitmap(blob, signal) {
 async function webp(source) {
 	const width = source.videoWidth || source.width;
 	const height = source.videoHeight || source.height;
-	if (!width || !height) return null;
+	if (!width || !height) {
+		return null;
+	}
 	const scale = Math.min(1, EDGE / Math.max(width, height));
 	const targetWidth = Math.max(1, Math.round(width * scale));
 	const targetHeight = Math.max(1, Math.round(height * scale));
@@ -65,7 +73,9 @@ function fromVideo(blob, signal) {
 		video.preload = "auto";
 		let settled = false;
 		const finish = (value) => {
-			if (settled) return;
+			if (settled) {
+				return;
+			}
 			settled = true;
 			clearTimeout(timer);
 			signal?.removeEventListener("abort", abort);

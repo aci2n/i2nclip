@@ -26,14 +26,18 @@ export function createMediaItem(initialItem, client, platform) {
 		error: false,
 	});
 	const revoke = () => {
-		for (const url of urls) URL.revokeObjectURL(url);
+		for (const url of urls) {
+			URL.revokeObjectURL(url);
+		}
 		urls.clear();
 		content = null;
 	};
 	const epoch = get(client).session.epoch;
 	const instance = get(client).instanceId;
 	const unsubscribe = client.subscribe((value) => {
-		if (disposed) return;
+		if (disposed) {
+			return;
+		}
 		if (
 			!value.connected ||
 			value.instanceId !== instance ||
@@ -50,7 +54,9 @@ export function createMediaItem(initialItem, client, platform) {
 			return;
 		}
 		const item = value.media[initialItem.id];
-		if (!item) return;
+		if (!item) {
+			return;
+		}
 		if (item.deleted) {
 			revoke();
 			controller.abort();
@@ -88,7 +94,9 @@ export function createMediaItem(initialItem, client, platform) {
 		);
 	}
 	async function run(action) {
-		if (!current() || get(state).busy) return null;
+		if (!current() || get(state).busy) {
+			return null;
+		}
 		loading = true;
 		state.update((value) => ({
 			...value,
@@ -99,30 +107,36 @@ export function createMediaItem(initialItem, client, platform) {
 		try {
 			return await action();
 		} catch (error) {
-			if (current())
+			if (current()) {
 				state.update((value) => ({
 					...value,
 					message: error.message,
 					error: true,
 				}));
+			}
 			return null;
 		} finally {
 			loading = false;
-			if (current())
+			if (current()) {
 				state.update((value) => ({
 					...value,
 					busy: get(client).media[initialItem.id]?.busy || false,
 				}));
+			}
 		}
 	}
 	async function receive() {
-		if (content) return content;
+		if (content) {
+			return content;
+		}
 		const result = await client.command(
 			"media.content",
 			{ id: initialItem.id },
 			{ signal: controller.signal },
 		);
-		if (!current()) return null;
+		if (!current()) {
+			return null;
+		}
 		content = result;
 		const url = makeUrl(result.blob);
 		state.update((value) => ({ ...value, url }));
@@ -133,7 +147,9 @@ export function createMediaItem(initialItem, client, platform) {
 		reveal: () =>
 			run(async () => {
 				const result = await receive();
-				if (!result || !current()) return null;
+				if (!result || !current()) {
+					return null;
+				}
 				const preview = result.art
 					? makeUrl(
 							new Blob([result.art], {
@@ -146,7 +162,9 @@ export function createMediaItem(initialItem, client, platform) {
 			}),
 		download: () =>
 			run(async () => {
-				if (!(await receive()) || !current()) return;
+				if (!(await receive()) || !current()) {
+					return;
+				}
 				const value = get(state);
 				await platform.download(
 					value.url,
@@ -167,7 +185,9 @@ export function createMediaItem(initialItem, client, platform) {
 		remove: () =>
 			run(() => client.command("media.remove", { id: initialItem.id })),
 		dispose() {
-			if (disposed) return;
+			if (disposed) {
+				return;
+			}
 			disposed = true;
 			controller.abort();
 			unsubscribe();

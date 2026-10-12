@@ -5,8 +5,9 @@ export const webPlatform = {
 	createService() {
 		return createServiceClient(
 			() => {
-				if (!globalThis.SharedWorker)
+				if (!globalThis.SharedWorker) {
 					throw new Error("SharedWorker is unavailable in this browser.");
+				}
 				const worker = new SharedWorker(
 					new URL("../service/web-worker.js", import.meta.url),
 					{ type: "module", name: "i2nclip-service" },

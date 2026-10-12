@@ -18,12 +18,14 @@ export function createSettings(
 	let disposed = false;
 	let running = false;
 	let serverUrl;
-	let libraryId,
-		attempt = 0;
+	let libraryId;
+	let attempt = 0;
 	const drafts = new Map();
 	const unsubscribe = session.subscribe((value) => {
 		if (value.libraryId !== libraryId) {
-			if (libraryId) drafts.set(libraryId, get(state));
+			if (libraryId) {
+				drafts.set(libraryId, get(state));
+			}
 			libraryId = value.libraryId;
 			attempt++;
 			running = false;
@@ -47,8 +49,9 @@ export function createSettings(
 		}
 		if (serverUrl !== value.serverUrl) {
 			serverUrl = value.serverUrl;
-			if (followServer || !get(state).server)
+			if (followServer || !get(state).server) {
 				state.update((current) => ({ ...current, server: serverUrl }));
+			}
 		}
 	});
 	async function action(
@@ -58,7 +61,9 @@ export function createSettings(
 		pending = "Working…",
 		clear = {},
 	) {
-		if (disposed || running || get(session).busy) return false;
+		if (disposed || running || get(session).busy) {
+			return false;
+		}
 		running = true;
 		const ownAttempt = ++attempt;
 		state.update((value) => ({
@@ -72,10 +77,16 @@ export function createSettings(
 		} catch (failure) {
 			error = failure.message;
 		}
-		if (ownAttempt !== attempt && scope !== "reset") return false;
-		if (scope === "reset" && success) drafts.clear();
+		if (ownAttempt !== attempt && scope !== "reset") {
+			return false;
+		}
+		if (scope === "reset" && success) {
+			drafts.clear();
+		}
 		running = false;
-		if (disposed) return false;
+		if (disposed) {
+			return false;
+		}
 		state.update((value) => ({
 			...value,
 			...(success ? clear : {}),
@@ -96,8 +107,9 @@ export function createSettings(
 			state.set({ ...initial, server: get(session).serverUrl, ...overrides });
 		},
 		edit(field, value) {
-			if (!disposed)
+			if (!disposed) {
 				state.update((current) => ({ ...current, [field]: value }));
+			}
 		},
 		create() {
 			const { server, otc, authorizerLibraryId, mode, libraryName } =
@@ -130,8 +142,9 @@ export function createSettings(
 				!platform.confirm(
 					"Discard this pending identity? Its invitation may already be used, and any library registered with this identity will become inaccessible.",
 				)
-			)
+			) {
 				return;
+			}
 			return action(
 				"create",
 				session.discardCreation,

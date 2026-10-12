@@ -20,7 +20,9 @@ test("fresh uploads have distinct content hashes and immutable verified download
 	const ids = Object.keys(state.media);
 	expect(ids).toHaveLength(2);
 	expect(ids[0]).not.toBe(ids[1]);
-	for (const id of ids) expect(id).toMatch(/^[0-9a-f]{64}$/);
+	for (const id of ids) {
+		expect(id).toMatch(/^[0-9a-f]{64}$/);
+	}
 	const content = await page.evaluate(async (id) => {
 		const result = await window.serviceTest("media.content", { id });
 		return result.blob.text();

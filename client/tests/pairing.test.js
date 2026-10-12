@@ -45,11 +45,16 @@ test("verification codes preserve all 40 derived bits and match independent HKDF
 		formatVerificationCode(new Uint8Array(5).fill(255)),
 		"ZZZZ-ZZZZ",
 	);
-	for (const invalid of [new Uint8Array(4), new Uint8Array(6), [0, 0, 0, 0, 0]])
+	for (const invalid of [
+		new Uint8Array(4),
+		new Uint8Array(6),
+		[0, 0, 0, 0, 0],
+	]) {
 		assert.throws(
 			() => formatVerificationCode(invalid),
 			/Invalid verification/,
 		);
+	}
 	// Generated independently with node:crypto hkdfSync, SHA-256, and info
 	// "verification-code". The five-byte outputs are 0d44e1160e,
 	// a7f11eafa1, and 5cb7887629 respectively.
@@ -85,8 +90,9 @@ test("pairing codes preserve all eight secret characters and normalize typing", 
 		"K7MP-W4TX-N9R0",
 		"K7MP-W4TX-N9RI",
 		"K7MP-W4TX-N9R!",
-	])
+	]) {
 		assert.throws(() => parsePairingCode(code), /12-character/);
+	}
 	assert.equal(
 		pairingOrigin("http://127.0.0.1:8080/path"),
 		"http://127.0.0.1:8080",
@@ -112,8 +118,8 @@ async function authenticate(
 }
 
 test("real OPAQUE pairing transfers identity and verifies an encrypted save acknowledgment", async () => {
-	const sender = createPairingCrypto(),
-		receiver = createPairingCrypto();
+	const sender = createPairingCrypto();
+	const receiver = createPairingCrypto();
 	await assert.rejects(sender("verificationCode", {}), /Invalid pairing step/);
 	await assert.rejects(
 		receiver("verificationCode", {}),
@@ -150,8 +156,8 @@ test("wrong secret and altered session bindings cannot complete authentication",
 		[context, "W4TXN9RD"],
 		[`${context} other-room`, "W4TXN9RC"],
 	]) {
-		const sender = createPairingCrypto(),
-			receiver = createPairingCrypto();
+		const sender = createPairingCrypto();
+		const receiver = createPairingCrypto();
 		await assert.rejects(authenticate(sender, receiver, binding, secret));
 		await assert.rejects(
 			sender("verificationCode", {}),
@@ -175,8 +181,8 @@ test("wrong secret and altered session bindings cannot complete authentication",
 test("separate OPAQUE sessions using the same original secret have different verification codes", async () => {
 	const codes = [];
 	for (let attempt = 0; attempt < 2; attempt++) {
-		const sender = createPairingCrypto(),
-			receiver = createPairingCrypto();
+		const sender = createPairingCrypto();
+		const receiver = createPairingCrypto();
 		await authenticate(sender, receiver);
 		const code = await sender("verificationCode", {});
 		assert.equal(await receiver("verificationCode", {}), code);
@@ -312,8 +318,9 @@ function fixture(t, receiverImport, options = {}) {
 		},
 		async submit(_room, step, message) {
 			signal.throwIfAborted();
-			if (step === 5 && options.rejectAck)
+			if (step === 5 && options.rejectAck) {
 				throw new Error("Acknowledgment failed.");
+			}
 			if (snapshot.step >= step) {
 				assert.equal(transcript[step - 1], message);
 				return { ...snapshot };
@@ -563,8 +570,8 @@ for (const mutation of ["reset", "setServer"]) {
 		await until(() => Boolean(get(f.sender).code));
 		const receiving = f.receiver.receive(get(f.sender).code, origin);
 		await until(() => get(f.sender).approval);
-		const entered = deferred(),
-			finish = deferred();
+		const entered = deferred();
+		const finish = deferred();
 		const original = repository[mutation === "reset" ? "reset" : "setConfig"];
 		repository[mutation === "reset" ? "reset" : "setConfig"] = async (
 			...args
@@ -638,8 +645,8 @@ test("expired pairing cannot transfer a key even when the relay still offers app
 });
 
 test("canceling during receiver save prevents acknowledgment and stale completion", async (t) => {
-	const entered = deferred(),
-		finish = deferred();
+	const entered = deferred();
+	const finish = deferred();
 	const f = fixture(t, async (value) => {
 		entered.resolve();
 		await finish.promise;

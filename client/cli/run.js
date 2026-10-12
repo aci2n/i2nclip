@@ -75,22 +75,27 @@ function parse(argv) {
 		throw new UsageError(error.message);
 	}
 	const { values, positionals } = parsed;
-	if (values.help) return { help: true };
+	if (values.help) {
+		return { help: true };
+	}
 	const [command, ...args] = positionals;
-	if (!Object.hasOwn(commandOptions, command ?? ""))
+	if (!Object.hasOwn(commandOptions, command ?? "")) {
 		throw new UsageError("Choose a command; use --help for usage.");
+	}
 	const allowed = [...commandOptions[command], "recovery", "password-file"];
 	for (const option of Object.keys(values)) {
-		if (!allowed.includes(option))
+		if (!allowed.includes(option)) {
 			throw new UsageError(`--${option} is not supported by ${command}.`);
+		}
 	}
 	const count = ["upload", "download", "delete", "tags"].includes(command)
 		? 1
 		: 0;
-	if (args.length !== count)
+	if (args.length !== count) {
 		throw new UsageError(
 			`${command} requires ${count === 1 ? "exactly one argument" : "no positional arguments"}.`,
 		);
+	}
 	for (const option of command === "create"
 		? ["server"]
 		: command === "register"
@@ -98,18 +103,21 @@ function parse(argv) {
 			: command === "download"
 				? ["output"]
 				: []) {
-		if (!values[option]?.trim())
+		if (!values[option]?.trim()) {
 			throw new UsageError(`--${option} is required.`);
+		}
 	}
 	if (["create", "register"].includes(command)) {
 		if (
 			Boolean(values.otc?.trim()) === Boolean(values["authorize-with"]?.trim())
-		)
+		) {
 			throw new UsageError("Choose exactly one of --otc or --authorize-with.");
-		if (values["authorizer-password-file"] && !values["authorize-with"])
+		}
+		if (values["authorizer-password-file"] && !values["authorize-with"]) {
 			throw new UsageError(
 				"--authorizer-password-file requires --authorize-with.",
 			);
+		}
 	}
 	for (const option of [
 		"recovery",
@@ -119,27 +127,32 @@ function parse(argv) {
 		"authorize-with",
 		"authorizer-password-file",
 	]) {
-		if (values[option] !== undefined && !values[option].trim())
+		if (values[option] !== undefined && !values[option].trim()) {
 			throw new UsageError(`--${option} must not be empty.`);
+		}
 	}
 	if (
 		["download", "delete", "tags"].includes(command) &&
 		!/^[a-f0-9]{64}$/.test(args[0])
-	)
+	) {
 		throw new UsageError(
 			"Expected a 64-character lowercase hexadecimal media ID.",
 		);
+	}
 	if (command === "tags") {
 		const replace = values.tags !== undefined;
 		const modify = values.add !== undefined || values.remove !== undefined;
-		if (replace === modify)
+		if (replace === modify) {
 			throw new UsageError("Use either --tags or --add/--remove.");
+		}
 	}
 	return { command, args, values };
 }
 
 export function editTags(current, values, api = library) {
-	if (values.tags !== undefined) return api.uniqueTags(values.tags);
+	if (values.tags !== undefined) {
+		return api.uniqueTags(values.tags);
+	}
 	const removed = new Set(
 		api.uniqueTags(values.remove ?? []).map(api.normalizeTag),
 	);
@@ -171,10 +184,18 @@ export async function run(
 	const { command, args, values } = parsed;
 	// Validate tags and server before asking for a password or doing any I/O.
 	try {
-		if (values.tags !== undefined) api.uniqueTags(values.tags);
-		if (values.add) api.uniqueTags(values.add);
-		if (values.remove) api.uniqueTags(values.remove);
-		if (command === "create") api.checkServer(values.server);
+		if (values.tags !== undefined) {
+			api.uniqueTags(values.tags);
+		}
+		if (values.add) {
+			api.uniqueTags(values.add);
+		}
+		if (values.remove) {
+			api.uniqueTags(values.remove);
+		}
+		if (command === "create") {
+			api.checkServer(values.server);
+		}
 	} catch (error) {
 		throw new UsageError(error.message);
 	}
@@ -187,10 +208,11 @@ export async function run(
 				);
 	async function singleRecovery(text, secret) {
 		const manifest = await api.openRecovery(text, secret);
-		if (manifest.scope !== "library")
+		if (manifest.scope !== "library") {
 			throw new Error(
 				"CLI requires an individual-library recovery file. Export one from Manage Library.",
 			);
+		}
 		return manifest.libraries[0];
 	}
 
@@ -199,8 +221,9 @@ export async function run(
 		: await prompt("Password: ", signal);
 	const emit = (value) => stdout(`${JSON.stringify(value)}\n`);
 	async function register(publicKey, serverUrl) {
-		if (!values["authorize-with"])
+		if (!values["authorize-with"]) {
 			return api.registerKey({ serverUrl, publicKey, otc: values.otc, signal });
+		}
 		const authorizerText = (
 			await readFileBounded(
 				values["authorize-with"],
@@ -212,8 +235,9 @@ export async function run(
 			? await passwordFromFile(values["authorizer-password-file"], signal)
 			: await prompt("Authorizing library password: ", signal);
 		const authorizer = await singleRecovery(authorizerText, secret);
-		if (new URL(authorizer.serverUrl).origin !== new URL(serverUrl).origin)
+		if (new URL(authorizer.serverUrl).origin !== new URL(serverUrl).origin) {
 			throw new UsageError("Authorizing library must use the same server.");
+		}
 		const authorizerKey = authorizer.privateKey;
 		return api.registerAuthenticatedKey({
 			serverUrl,
@@ -223,13 +247,15 @@ export async function run(
 		});
 	}
 	if (command === "create") {
-		if (password.length < 8)
+		if (password.length < 8) {
 			throw new Error("Password must have at least 8 characters.");
+		}
 		if (
 			!values["password-file"] &&
 			password !== (await prompt("Confirm password: ", signal))
-		)
+		) {
 			throw new Error("Passwords do not match.");
+		}
 		const identity = await api.generatePrivateKey();
 		await saveRecovery(
 			path,
@@ -265,8 +291,9 @@ export async function run(
 	const credentials = { serverUrl: recovery.serverUrl, privateKey, signal };
 	switch (command) {
 		case "register": {
-			if (!(await api.isKeyRegistered(credentials)))
+			if (!(await api.isKeyRegistered(credentials))) {
 				await register(key.registrationKey, recovery.serverUrl);
+			}
 			emit({ registered: true });
 			break;
 		}
@@ -308,8 +335,9 @@ export async function run(
 			break;
 		case "tags": {
 			const item = await api.getMetadata({ ...credentials, id: args[0] });
-			if (!item.metadata)
+			if (!item.metadata) {
 				throw new Error("Could not decrypt metadata; tags were not changed.");
+			}
 			const tags = editTags(item.metadata.tags ?? [], values, api);
 			const result = await api.updateMetadata({
 				...credentials,
@@ -318,10 +346,11 @@ export async function run(
 				thumb: item.thumb,
 				prevMetaHash: item.metaHash,
 			});
-			if (result.conflict)
+			if (result.conflict) {
 				throw new Error(
 					"Metadata changed concurrently; retry the command to read the current tags.",
 				);
+			}
 			emit({ id: args[0], tags, metaHash: result.metaHash });
 			break;
 		}

@@ -52,8 +52,9 @@ async function master(page, password = PASSWORD) {
 	await expect(page.locator("#master-password, header").first()).toBeVisible();
 	if (await page.locator("#master-password").isVisible()) {
 		await page.locator("#master-password").fill(password);
-		if (await page.locator("#master-confirmation").isVisible())
+		if (await page.locator("#master-confirmation").isVisible()) {
 			await page.locator("#master-confirmation").fill(password);
+		}
 		await page.locator("#unlock-vault").click();
 		await expect(page.locator("#master-password")).toBeHidden();
 	}
@@ -90,17 +91,22 @@ async function expectSetup(page) {
 async function openServer(page) {
 	await master(page);
 	const details = page.locator("#server-details");
-	if (!(await details.count())) return;
-	if (!(await details.isVisible()))
+	if (!(await details.count())) {
+		return;
+	}
+	if (!(await details.isVisible())) {
 		await page.locator("#rename-library-settings > summary").click();
-	if (!(await details.evaluate((element) => element.open)))
+	}
+	if (!(await details.evaluate((element) => element.open))) {
 		await details.locator("summary").click();
+	}
 }
 
 async function openReset(page) {
 	const details = page.locator("#reset-settings");
-	if (!(await details.evaluate((element) => element.open)))
+	if (!(await details.evaluate((element) => element.open))) {
 		await details.locator("summary").click();
+	}
 }
 
 async function chooseRestore(page) {
@@ -130,8 +136,9 @@ async function createLibrary(page, app) {
 
 async function downloadRecovery(page) {
 	const manage = page.locator("#rename-library-settings");
-	if (!(await manage.evaluate((element) => element.open)))
+	if (!(await manage.evaluate((element) => element.open))) {
 		await manage.locator(":scope > summary").click();
+	}
 	await page.locator("#library-recovery-password").fill(PASSWORD);
 	await page.locator("#library-recovery-confirm").fill(PASSWORD);
 	await page.locator("#backup").click();
@@ -145,8 +152,11 @@ async function resetLibrary(page, accept = true) {
 	await page.bringToFront();
 	page.once("dialog", async (dialog) => {
 		expect(dialog.type()).toBe("confirm");
-		if (accept) await dialog.accept();
-		else await dialog.dismiss();
+		if (accept) {
+			await dialog.accept();
+		} else {
+			await dialog.dismiss();
+		}
 	});
 	await openReset(page);
 	await page
@@ -204,8 +214,8 @@ function installBrowser() {
 				name: extension ? "i2nclip-extension-test" : "i2nclip-service",
 			},
 		);
-		const listeners = new Set(),
-			disconnects = new Set();
+		const listeners = new Set();
+		const disconnects = new Set();
 		const port = {
 			name: "i2nclip-service",
 			postMessage: (message) => worker.port.postMessage(message),
@@ -223,10 +233,14 @@ function installBrowser() {
 			},
 		};
 		worker.port.onmessage = ({ data }) => {
-			for (const listener of listeners) listener(data);
+			for (const listener of listeners) {
+				listener(data);
+			}
 		};
 		worker.onerror = () => {
-			for (const listener of disconnects) listener();
+			for (const listener of disconnects) {
+				listener();
+			}
 		};
 		worker.port.start();
 		connectionListeners.add(port);
@@ -277,21 +291,21 @@ function installBrowser() {
 							});
 							return;
 						}
-						if (name === "config")
+						if (name === "config") {
 							port.postMessage({ type: "test.config", requestId, libraryId });
-						else if (name === "pauseUploads" || name === "resumeUploads")
+						} else if (name === "pauseUploads" || name === "resumeUploads") {
 							port.postMessage({ type: `test.${name}`, requestId });
-						else if (name === "context")
+						} else if (name === "context") {
 							port.postMessage({
 								type: "test.context",
 								requestId,
 								libraryId,
 								...payload,
 							});
-						else if (name === "restart") {
+						} else if (name === "restart") {
 							port.postMessage({ type: "test.restart" });
 							resolve(true);
-						} else
+						} else {
 							port.postMessage({
 								type: "command",
 								instanceId,
@@ -299,13 +313,17 @@ function installBrowser() {
 								name,
 								payload: { ...payload, epoch, libraryId },
 							});
+						}
 					}
 					if (
 						["reply", "test.reply"].includes(message.type) &&
 						message.requestId === requestId
 					) {
-						if (message.error) reject(new Error(message.error.message));
-						else resolve(message.value);
+						if (message.error) {
+							reject(new Error(message.error.message));
+						} else {
+							resolve(message.value);
+						}
 					}
 				});
 			});

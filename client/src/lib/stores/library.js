@@ -28,7 +28,9 @@ export function createLibrary(client, platform, initial = {}) {
 	let uploadStatus = "";
 	function clear() {
 		previewRevision++;
-		for (const media of cards.values()) media.dispose();
+		for (const media of cards.values()) {
+			media.dispose();
+		}
 		cards.clear();
 	}
 	function open(value) {
@@ -37,8 +39,9 @@ export function createLibrary(client, platform, initial = {}) {
 			!value.connected ||
 			!value.session.unlocked ||
 			viewInstance === value.clientId
-		)
+		) {
 			return;
+		}
 		opening = true;
 		client
 			.command("view.open", { id: viewId, query: get(state).query })
@@ -46,28 +49,34 @@ export function createLibrary(client, platform, initial = {}) {
 				viewInstance = value.clientId;
 			})
 			.catch((error) => {
-				if (!disposed)
+				if (!disposed) {
 					state.update((current) => ({ ...current, status: error.message }));
+				}
 			})
 			.finally(() => {
 				opening = false;
 			});
 	}
 	const unsubscribe = client.subscribe((value) => {
-		if (disposed) return;
+		if (disposed) {
+			return;
+		}
 		open(value);
 		const view = value.views[viewId];
 		const ids =
 			value.connected && value.session.unlocked ? view?.ids || [] : [];
-		for (const [id, media] of cards)
+		for (const [id, media] of cards) {
 			if (!ids.includes(id)) {
 				media.dispose();
 				cards.delete(id);
 			}
+		}
 		const items = ids.map((id) => value.media[id]).filter(Boolean);
-		for (const item of items)
-			if (!cards.has(item.id))
+		for (const item of items) {
+			if (!cards.has(item.id)) {
 				cards.set(item.id, createMediaItem(item, client, platform));
+			}
+		}
 		const active = value.uploads.find((job) =>
 			["preparing", "uploading"].includes(job.status),
 		);
@@ -121,8 +130,9 @@ export function createLibrary(client, platform, initial = {}) {
 		try {
 			return await client.command(name, payload);
 		} catch (error) {
-			if (!disposed)
+			if (!disposed) {
 				state.update((value) => ({ ...value, status: error.message }));
+			}
 			return false;
 		}
 	}
@@ -166,14 +176,16 @@ export function createLibrary(client, platform, initial = {}) {
 				disposed ||
 				version !== previewRevision ||
 				cards.get(id) !== media
-			)
+			) {
 				return;
+			}
 			const metadata = get(media).metadata;
-			if (metadata?.content_type?.startsWith("image/"))
+			if (metadata?.content_type?.startsWith("image/")) {
 				state.update((value) => ({
 					...value,
 					selected: { id, url, name: metadata.name || id, opener },
 				}));
+			}
 		},
 		closePreview() {
 			previewRevision++;
@@ -187,8 +199,9 @@ export function createLibrary(client, platform, initial = {}) {
 				!platform.confirm(
 					`Delete ${get(media).metadata?.name || id}? This cannot be undone.`,
 				)
-			)
+			) {
 				return;
+			}
 			return media.remove();
 		},
 		retag: (id, tags) => cards.get(id)?.retag(tags),

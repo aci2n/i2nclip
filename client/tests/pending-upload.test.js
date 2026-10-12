@@ -48,8 +48,8 @@ test("locked pages hide pending sources and discard previews arriving after lock
 
 test("two pending pages observe one service job and cannot submit it twice", async (t) => {
 	const transfer = deferred();
-	let sends = 0,
-		closes = 0;
+	let sends = 0;
+	let closes = 0;
 	const f = await serviceFixture(t, {
 		platform: {
 			fetchMedia: async () =>

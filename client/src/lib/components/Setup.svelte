@@ -118,13 +118,14 @@ const blocked = $derived(
 		tabindex="-1"
 		aria-label="Library setup"
 		onkeydown={(event) => {
-			if (!blocked)
+			if (!blocked) {
 				selectTab(event, mode, (next) => settings.edit("mode", next), [
 					"create",
 					"authorize",
 					"pair",
 					"restore",
 				]);
+			}
 		}}
 	>
 		{#each [

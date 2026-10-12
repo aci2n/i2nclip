@@ -12,7 +12,9 @@ import { decodeSource, encodeSource } from "./source-record.js";
 export function createRepository(indexedDB = globalThis.indexedDB) {
 	let database;
 	const ready = new Promise((resolve, reject) => {
-		if (!indexedDB) return reject(new Error("Local database is unavailable."));
+		if (!indexedDB) {
+			return reject(new Error("Local database is unavailable."));
+		}
 		const request = indexedDB.open("i2nclip-vault", 1);
 		request.onupgradeneeded = () => request.result.createObjectStore("vault");
 		request.onerror = () => reject(request.error);
@@ -55,13 +57,21 @@ export function createRepository(indexedDB = globalThis.indexedDB) {
 					reject(tx.error || new Error("Local database write canceled."));
 				};
 				const store = tx.objectStore("vault");
-				if (clear) store.clear();
-				for (const id of remove) store.delete(id);
-				for (const [id, value] of entries) store.put(value, id);
+				if (clear) {
+					store.clear();
+				}
+				for (const id of remove) {
+					store.delete(id);
+				}
+				for (const [id, value] of entries) {
+					store.put(value, id);
+				}
 			});
 		},
 		abort() {
-			for (const tx of active) tx.abort();
+			for (const tx of active) {
+				tx.abort();
+			}
 		},
 		close() {
 			database?.close();
@@ -72,21 +82,24 @@ export function createRepository(indexedDB = globalThis.indexedDB) {
 
 // Also used with an in-memory ciphertext backend by owner tests.
 export function createEncryptedRepository(storage) {
-	let key,
-		header,
-		data,
-		epoch = 0,
-		tail = Promise.resolve();
+	let key;
+	let header;
+	let data;
+	let epoch = 0;
+	let tail = Promise.resolve();
 	const ready = Promise.resolve(storage.ready).then(async () => {
 		header = await storage.get("header");
 	});
 	const empty = () => ({ libraries: [], jobs: [] });
 	const guard = (captured) => {
-		if (captured !== epoch)
+		if (captured !== epoch) {
 			throw new Error("Vault context ended. Unlock and try again.");
+		}
 	};
 	const requireKey = () => {
-		if (!key || !data) throw new Error("Unlock the client first.");
+		if (!key || !data) {
+			throw new Error("Unlock the client first.");
+		}
 	};
 	const aad = (part) => `i2nclip/local-vault/1/${header.id}/${part}`;
 	const queue = (action) => {
@@ -140,10 +153,11 @@ export function createEncryptedRepository(storage) {
 					new URL(row.identity.serverUrl).origin ===
 						new URL(identity.serverUrl).origin,
 			)
-		)
+		) {
 			throw new Error(
 				"This library is already saved. Select its existing entry.",
 			);
+		}
 	}
 	const scope = (libraryId) => ({
 		async getConfig() {
@@ -152,7 +166,9 @@ export function createEncryptedRepository(storage) {
 		setConfig(identity, { clearUploads = false } = {}) {
 			return write((next) => {
 				const row = next.libraries.find((row) => row.id === libraryId);
-				if (!row) throw new Error("Library is no longer saved.");
+				if (!row) {
+					throw new Error("Library is no longer saved.");
+				}
 				validateIdentity(next, libraryId, identity);
 				row.identity = identity;
 				return { remove: clearUploads ? clearJobs(next, [libraryId]) : [] };
@@ -169,10 +185,13 @@ export function createEncryptedRepository(storage) {
 				requireKey();
 				if (
 					!data.jobs.some((job) => job.id === id && job.libraryId === libraryId)
-				)
+				) {
 					return undefined;
+				}
 				const sealed = await storage.get(`source:${id}`);
-				if (!sealed) return undefined;
+				if (!sealed) {
+					return undefined;
+				}
 				const bytes = await openBytes(key, sealed, aad(`source:${id}`));
 				guard(captured);
 				return decodeSource(bytes);
@@ -182,7 +201,9 @@ export function createEncryptedRepository(storage) {
 			return write(async (next) => {
 				next.jobs = next.jobs.filter((item) => item.id !== job.id);
 				next.jobs.push({ ...job, libraryId });
-				if (source === undefined) return;
+				if (source === undefined) {
+					return;
+				}
 				const bytes = await encodeSource(source);
 				return {
 					entries: [
@@ -207,8 +228,9 @@ export function createEncryptedRepository(storage) {
 			return write((next) => {
 				if (
 					!next.jobs.some((job) => job.id === id && job.libraryId === libraryId)
-				)
+				) {
 					return;
+				}
 				next.jobs = next.jobs.filter((job) => job.id !== id);
 				return { remove: [`source:${id}`] };
 			});
@@ -227,9 +249,12 @@ export function createEncryptedRepository(storage) {
 		async initialize(password) {
 			await ready;
 			return queue(async (captured) => {
-				if (header) throw new Error("A master password is already configured.");
-				if (password.length < 8)
+				if (header) {
+					throw new Error("A master password is already configured.");
+				}
+				if (password.length < 8) {
 					throw new Error("Password must be at least 8 characters.");
+				}
 				const bytes = crypto.getRandomValues(new Uint8Array(32));
 				const id = crypto.randomUUID();
 				const nextHeader = {
@@ -264,7 +289,9 @@ export function createEncryptedRepository(storage) {
 		async unlock(password) {
 			await ready;
 			return queue(async (captured) => {
-				if (!header) throw new Error("Create a master password first.");
+				if (!header) {
+					throw new Error("Create a master password first.");
+				}
 				const bytes = await passwordOpen(
 					header.wrappedKey,
 					password,
@@ -278,8 +305,9 @@ export function createEncryptedRepository(storage) {
 						await openBytes(nextKey, sealed, aad("catalog")),
 					),
 				);
-				if (!Array.isArray(next.libraries) || !Array.isArray(next.jobs))
+				if (!Array.isArray(next.libraries) || !Array.isArray(next.jobs)) {
 					throw new Error("Invalid saved vault.");
+				}
 				guard(captured);
 				key = nextKey;
 				data = next;
@@ -294,8 +322,9 @@ export function createEncryptedRepository(storage) {
 		changePassword(currentPassword, password) {
 			return queue(async (captured) => {
 				requireKey();
-				if (password.length < 8)
+				if (password.length < 8) {
 					throw new Error("Password must be at least 8 characters.");
+				}
 				const bytes = await passwordOpen(
 					header.wrappedKey,
 					currentPassword,
@@ -354,7 +383,9 @@ export function createEncryptedRepository(storage) {
 		renameLibrary(id, name) {
 			return write((next) => {
 				const row = next.libraries.find((row) => row.id === id);
-				if (!row) throw new Error("Library is no longer saved.");
+				if (!row) {
+					throw new Error("Library is no longer saved.");
+				}
 				row.name = name;
 			});
 		},
@@ -365,12 +396,15 @@ export function createEncryptedRepository(storage) {
 					next.libraries.some(
 						(row) => ids.includes(row.id) && row.identity?.privateKey,
 					)
-				)
+				) {
 					throw new Error(
 						"Setup completed. Keep the saved library and its recovery file.",
 					);
+				}
 				next.libraries = next.libraries.filter((row) => !ids.includes(row.id));
-				if (replacement) next.libraries.push(replacement);
+				if (replacement) {
+					next.libraries.push(replacement);
+				}
 				return { remove: clearJobs(next, ids) };
 			});
 		},

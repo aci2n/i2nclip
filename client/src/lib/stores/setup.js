@@ -6,11 +6,11 @@ import { createSettings } from "./settings.js";
 
 // A local form draft backed by an owner runtime only after submission.
 export function createSetup(root, platform, currentLibrary, onComplete) {
-	let id,
-		starting,
-		draftStarted = false,
-		disposed = false,
-		promoted = false;
+	let id;
+	let starting;
+	let draftStarted = false;
+	let disposed = false;
+	let promoted = false;
 	let wasUnlocked = false;
 	const state = writable({ open: false, id: null, resumable: [] });
 	const projection = writable({
@@ -90,8 +90,9 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 			promoted = true;
 			state.update((v) => ({ ...v, open: false }));
 			queueMicrotask(() => {
-				if (!disposed && promoted && id === completedId)
+				if (!disposed && promoted && id === completedId) {
 					onComplete(completedId);
+				}
 			});
 		}
 	}
@@ -100,8 +101,9 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 		subscribe: projection.subscribe,
 		ready: root.ready,
 		async command(name, payload = {}, options) {
-			if (!id && !["identity.create", "pairing.receive"].includes(name))
+			if (!id && !["identity.create", "pairing.receive"].includes(name)) {
 				return true;
+			}
 			if (!id) {
 				const captured = get(root);
 				starting ||= root
@@ -118,8 +120,9 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 							latest.instanceId !== captured.instanceId ||
 							latest.vault?.epoch !== captured.vault?.epoch ||
 							(latest.vault && latest.vault.status !== "unlocked")
-						)
+						) {
 							throw new Error("Vault context ended. Try again.");
+						}
 						id = value;
 						publish();
 						return id;
@@ -178,7 +181,9 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 		start,
 		resume(value) {
 			const row = get(root).setups.find((row) => row.id === value);
-			if (!row) return;
+			if (!row) {
+				return;
+			}
 			draftStarted = true;
 			id = value;
 			promoted = false;
@@ -198,16 +203,23 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 		},
 		async discard() {
 			try {
-				if (promoted) return;
+				if (promoted) {
+					return;
+				}
 				if (
 					id &&
 					!platform.confirm(
 						"Discard this unfinished setup? Its invitation may already be used. A registered library without its recovery key may become inaccessible.",
 					)
-				)
+				) {
 					return;
-				if (id) await pairing.cancel();
-				if (id) await root.command("libraries.discardSetup", { libraryId: id });
+				}
+				if (id) {
+					await pairing.cancel();
+				}
+				if (id) {
+					await root.command("libraries.discardSetup", { libraryId: id });
+				}
 				id = undefined;
 				draftStarted = false;
 				promoted = false;

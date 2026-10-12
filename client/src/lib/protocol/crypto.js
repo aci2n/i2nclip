@@ -39,7 +39,9 @@ export function normalizeTag(tag) {
 
 /** Split user-entered tags while preserving spelling in encrypted metadata. */
 export function splitTags(text) {
-	if (Array.isArray(text)) return text.flatMap(splitTags);
+	if (Array.isArray(text)) {
+		return text.flatMap(splitTags);
+	}
 	return String(text ?? "")
 		.split(",")
 		.map((tag) => tag.trim())
@@ -82,7 +84,9 @@ export async function tagTokens(key, tags) {
 	const out = [];
 	for (const tag of parseTagList(tags)) {
 		const token = await tagToken(key, tag);
-		if (!out.includes(token)) out.push(token);
+		if (!out.includes(token)) {
+			out.push(token);
+		}
 	}
 	return out;
 }
@@ -175,8 +179,12 @@ export function freshNonce() {
 }
 
 async function seedOf(key) {
-	if (key instanceof Uint8Array) return key;
-	if (key.seed) return key.seed;
+	if (key instanceof Uint8Array) {
+		return key;
+	}
+	if (key.seed) {
+		return key.seed;
+	}
 	return (await loadKey(key.privateKey ?? key)).seed;
 }
 
@@ -212,8 +220,9 @@ async function materialFromSeed(seed, publicKey) {
 		signature,
 		probe,
 	);
-	if (!matches)
+	if (!matches) {
 		throw new Error("Library identity does not match its public key");
+	}
 	return { privateCryptoKey, publicKey };
 }
 

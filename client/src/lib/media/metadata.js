@@ -7,29 +7,34 @@ export function sniffContentType(bytes, fallback) {
 		.toLowerCase()
 		.split(";")[0]
 		.trim();
-	if (given && given !== "application/octet-stream") return given;
+	if (given && given !== "application/octet-stream") {
+		return given;
+	}
 	if (
 		bytes.length >= 3 &&
 		bytes[0] === 0xff &&
 		bytes[1] === 0xd8 &&
 		bytes[2] === 0xff
-	)
+	) {
 		return "image/jpeg";
+	}
 	if (
 		bytes.length >= 8 &&
 		bytes[0] === 0x89 &&
 		bytes[1] === 0x50 &&
 		bytes[2] === 0x4e &&
 		bytes[3] === 0x47
-	)
+	) {
 		return "image/png";
+	}
 	if (
 		bytes.length >= 6 &&
 		bytes[0] === 0x47 &&
 		bytes[1] === 0x49 &&
 		bytes[2] === 0x46
-	)
+	) {
 		return "image/gif";
+	}
 	if (
 		bytes.length >= 12 &&
 		bytes[0] === 0x52 &&
@@ -38,8 +43,12 @@ export function sniffContentType(bytes, fallback) {
 		bytes[3] === 0x46
 	) {
 		const kind = new TextDecoder().decode(bytes.subarray(8, 12));
-		if (kind === "WEBP") return "image/webp";
-		if (kind === "WAVE") return "audio/wav";
+		if (kind === "WEBP") {
+			return "image/webp";
+		}
+		if (kind === "WAVE") {
+			return "audio/wav";
+		}
 	}
 	if (
 		bytes.length >= 12 &&
@@ -73,7 +82,8 @@ export function sniffContentType(bytes, fallback) {
 		bytes[0] === 0x49 &&
 		bytes[1] === 0x44 &&
 		bytes[2] === 0x33
-	)
+	) {
 		return "audio/mpeg";
+	}
 	return given || "application/octet-stream";
 }

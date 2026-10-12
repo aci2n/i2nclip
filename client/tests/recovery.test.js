@@ -12,8 +12,8 @@ import { generatePrivateKey } from "../src/lib/protocol/identity.js";
 import { exportRecovery, openRecovery } from "../src/lib/protocol/recovery.js";
 
 test("portable recovery preserves content decryption, normalized tags and public identity", async () => {
-	const created = await generatePrivateKey(),
-		original = await loadKey(created.privateKey);
+	const created = await generatePrivateKey();
+	const original = await loadKey(created.privateKey);
 	const text = await exportRecovery(
 		[
 			{
@@ -27,15 +27,15 @@ test("portable recovery preserves content decryption, normalized tags and public
 	);
 	assert(!text.includes(JSON.parse(created.privateKey).seed));
 	await assert.rejects(openRecovery(text, "wrong"), /Wrong password/);
-	const recovered = await openRecovery(text, "test password"),
-		restored = await loadKey(recovered.libraries[0].privateKey);
+	const recovered = await openRecovery(text, "test password");
+	const restored = await loadKey(recovered.libraries[0].privateKey);
 	assert.equal(restored.registrationKey, original.registrationKey);
 	assert.equal(
 		await tagToken(restored, "vacation"),
 		await tagToken(original, "vacation"),
 	);
-	const aad = contentAad("test"),
-		ciphertext = await encrypt(original, aad, utf8("original upload"));
+	const aad = contentAad("test");
+	const ciphertext = await encrypt(original, aad, utf8("original upload"));
 	assert.equal(
 		new TextDecoder().decode(await decrypt(restored, aad, ciphertext)),
 		"original upload",
@@ -46,7 +46,7 @@ test("portable recovery preserves content decryption, normalized tags and public
 		{ encrypted: { ...JSON.parse(text).encrypted, iterations: 9_000_000 } },
 		{ encrypted: { ...JSON.parse(text).encrypted, salt: "AAAA" } },
 		{ encrypted: { ...JSON.parse(text).encrypted, iv: "AAAA" } },
-	])
+	]) {
 		await assert.rejects(
 			openRecovery(
 				JSON.stringify({ ...JSON.parse(text), ...changed }),
@@ -54,6 +54,7 @@ test("portable recovery preserves content decryption, normalized tags and public
 			),
 			/Invalid|Wrong password/,
 		);
+	}
 	await assert.rejects(
 		exportRecovery(
 			[

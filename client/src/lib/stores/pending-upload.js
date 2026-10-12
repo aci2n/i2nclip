@@ -23,7 +23,9 @@ export function createPendingUpload(
 	let epoch;
 	const update = (patch) => state.update((value) => ({ ...value, ...patch }));
 	async function source() {
-		if (requesting || preview || disposed) return;
+		if (requesting || preview || disposed) {
+			return;
+		}
 		requesting = true;
 		const captured = get(client);
 		const current = () =>
@@ -34,8 +36,12 @@ export function createPendingUpload(
 			get(client).session.epoch === captured.session.epoch;
 		try {
 			const result = await client.command("pending.get", { id });
-			if (!current()) return;
-			if (!result) attempted = false;
+			if (!current()) {
+				return;
+			}
+			if (!result) {
+				attempted = false;
+			}
 			if (!disposed && result?.blob?.type.startsWith("image/")) {
 				preview = URL.createObjectURL(result.blob);
 				update({ preview });
@@ -52,22 +58,29 @@ export function createPendingUpload(
 					latest.connected &&
 					latest.session.unlocked &&
 					latest.uploads.some((job) => job.id === id)
-				)
+				) {
 					void source();
+				}
 			}
 		}
 	}
 	const unsubscribe = client.subscribe((value) => {
-		if (disposed) return;
+		if (disposed) {
+			return;
+		}
 		if (epoch !== value.session.epoch || !value.connected) {
-			if (preview) URL.revokeObjectURL(preview);
+			if (preview) {
+				URL.revokeObjectURL(preview);
+			}
 			preview = "";
 			update({ preview });
 		}
 		epoch = value.session.epoch;
 		if (!value.connected || !value.session.unlocked) {
 			tags.set("");
-			if (preview) URL.revokeObjectURL(preview);
+			if (preview) {
+				URL.revokeObjectURL(preview);
+			}
 			preview = "";
 			attempted = false;
 			update({
@@ -81,7 +94,9 @@ export function createPendingUpload(
 			return;
 		}
 		const job = value.uploads.find((job) => job.id === id);
-		if (!value.session.ready) return;
+		if (!value.session.ready) {
+			return;
+		}
 		const busy = ["queued", "preparing", "uploading"].includes(job?.status);
 		update({
 			ready: true,
@@ -100,7 +115,9 @@ export function createPendingUpload(
 			attempted = true;
 			void source();
 		}
-		if (job?.status === "completed" && (sent || auto)) platform.close();
+		if (job?.status === "completed" && (sent || auto)) {
+			platform.close();
+		}
 	});
 	const ready = client.ready;
 	return {
@@ -108,18 +125,24 @@ export function createPendingUpload(
 		ready,
 		tags,
 		async send(tags) {
-			if (disposed || get(state).busy || !get(state).available) return;
+			if (disposed || get(state).busy || !get(state).available) {
+				return;
+			}
 			sent = true;
 			try {
 				await client.command("pending.send", { id, tags });
 			} catch (error) {
-				if (!disposed) update({ status: error.message });
+				if (!disposed) {
+					update({ status: error.message });
+				}
 			}
 		},
 		dispose() {
 			disposed = true;
 			unsubscribe();
-			if (preview) URL.revokeObjectURL(preview);
+			if (preview) {
+				URL.revokeObjectURL(preview);
+			}
 		},
 	};
 }

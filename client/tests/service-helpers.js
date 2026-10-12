@@ -2,8 +2,8 @@ import { createServiceClient } from "../src/lib/service/client.js";
 
 export function memoryRepository(initial = {}) {
 	let config = structuredClone(initial);
-	const jobs = new Map(),
-		sources = new Map();
+	const jobs = new Map();
+	const sources = new Map();
 	return {
 		getConfig: async () => structuredClone(config),
 		setConfig: async (value, { clearUploads = false } = {}) => {
@@ -17,7 +17,9 @@ export function memoryRepository(initial = {}) {
 		getSource: async (id) => structuredClone(sources.get(id)),
 		putJob: async (job, source) => {
 			jobs.set(job.id, structuredClone(job));
-			if (source !== undefined) sources.set(job.id, structuredClone(source));
+			if (source !== undefined) {
+				sources.set(job.id, structuredClone(source));
+			}
 		},
 		finishJob: async (job) => {
 			jobs.set(job.id, structuredClone(job));
@@ -69,7 +71,9 @@ export function engineClient(engine, options = {}) {
 export async function until(check, message = "Condition did not settle") {
 	const deadline = Date.now() + 5000;
 	while (!check()) {
-		if (Date.now() > deadline) throw new Error(message);
+		if (Date.now() > deadline) {
+			throw new Error(message);
+		}
 		await new Promise((resolve) => setTimeout(resolve, 5));
 	}
 }

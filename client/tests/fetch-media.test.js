@@ -45,7 +45,9 @@ for (const phase of ["headers", "body"]) {
 						once: true,
 					});
 				});
-			if (phase === "headers") return pending();
+			if (phase === "headers") {
+				return pending();
+			}
 			return {
 				ok: true,
 				body: {
@@ -67,7 +69,9 @@ for (const phase of ["headers", "body"]) {
 		await tick();
 		assert.equal(remoteSignal.aborted, true);
 		assert.equal(context.__i2nclipMediaRequests, undefined);
-		if (phase === "body") assert.equal(released, true);
+		if (phase === "body") {
+			assert.equal(released, true);
+		}
 	});
 }
 
@@ -80,13 +84,14 @@ test("cancelling one tab request preserves another request", async (t) => {
 			signal.addEventListener("abort", () => reject(signal.reason), {
 				once: true,
 			});
-			if (calls === 2)
+			if (calls === 2) {
 				complete = () =>
 					resolve(
 						new Response(new Uint8Array([1, 2]), {
 							headers: { "content-type": "image/png" },
 						}),
 					);
+			}
 		});
 	});
 	const controller = new AbortController();
@@ -160,8 +165,9 @@ test("failed fetch injection removes its registered controller", async (t) => {
 	const context = tab(t, async () => {});
 	const execute = browser.scripting.executeScript;
 	browser.scripting.executeScript = (options) => {
-		if (options.args.length === 4)
+		if (options.args.length === 4) {
 			return Promise.reject(new Error("frame unavailable"));
+		}
 		return execute(options);
 	};
 	await assert.rejects(fetchMedia(source), /frame unavailable/);

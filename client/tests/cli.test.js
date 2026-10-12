@@ -576,8 +576,8 @@ test("Node executable supports stdin passwords and returns meaningful exit codes
 
 test("authenticated CLI creation and retry use a separate authorizing recovery and password", async (t) => {
 	const f = await fixture(t);
-	const destination = join(f.dir, "team.json"),
-		destinationPassword = join(f.dir, "team-password");
+	const destination = join(f.dir, "team.json");
+	const destinationPassword = join(f.dir, "team-password");
 	await writeFile(destinationPassword, "team-password\n");
 	const flags = [
 		"--recovery",
@@ -589,8 +589,8 @@ test("authenticated CLI creation and retry use a separate authorizing recovery a
 		"--authorizer-password-file",
 		f.passwordFile,
 	];
-	let publicKey,
-		calls = 0;
+	let publicKey;
+	let calls = 0;
 	const api = {
 		...library,
 		registerAuthenticatedKey: async (options) => {
@@ -605,7 +605,9 @@ test("authenticated CLI creation and retry use a separate authorizing recovery a
 			).libraries[0];
 			const key = await library.loadKey(saved.privateKey);
 			assert.equal(key.registrationKey, publicKey);
-			if (calls === 1) throw new Error("lost response");
+			if (calls === 1) {
+				throw new Error("lost response");
+			}
 		},
 		isKeyRegistered: async () => false,
 	};

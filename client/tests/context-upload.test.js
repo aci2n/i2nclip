@@ -22,13 +22,14 @@ test("context sources get distinct durable IDs and with-tags does not automatica
 	assert.equal(new Set(opened.map(([id]) => id)).size, 2);
 	assert.equal(sends, 0);
 	await until(() => get(f.client).uploads.every((job) => job.name));
-	for (const job of get(f.client).uploads)
+	for (const job of get(f.client).uploads) {
 		assert((await f.repository.getSource(job.id)).blob instanceof Blob);
+	}
 });
 
 test("failed context uploads retain their source and open a retry page", async (t) => {
-	const opened = [],
-		notices = [];
+	const opened = [];
+	const notices = [];
 	const f = await serviceFixture(t, {
 		platform: {
 			fetchMedia: async () => new Response("bytes"),
@@ -51,8 +52,8 @@ test("failed context uploads retain their source and open a retry page", async (
 for (const completedFirst of [false, true]) {
 	test(`late source capture cannot overwrite ${completedFirst ? "completed" : "uploading"} job state`, async (t) => {
 		const { deferred } = await import("./helpers.js");
-		const captured = deferred(),
-			uploaded = deferred();
+		const captured = deferred();
+		const uploaded = deferred();
 		let fetches = 0;
 		const f = await serviceFixture(t, {
 			platform: {

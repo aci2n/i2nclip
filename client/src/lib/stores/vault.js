@@ -32,8 +32,9 @@ export function createVault(root, platform) {
 				!platform.confirm(
 					"Delete this client's vault, all libraries and pending uploads? Server files remain saved. You need recovery files or pairing from another client to regain access.",
 				)
-			)
+			) {
 				return false;
+			}
 			return command("reset");
 		},
 		async exportRecovery(password, libraryId) {
@@ -46,8 +47,9 @@ export function createVault(root, platform) {
 				latest.instanceId !== captured.instanceId ||
 				latest.vault?.epoch !== captured.vault?.epoch ||
 				latest.vault?.status !== "unlocked"
-			)
+			) {
 				throw new Error("Vault locked. Export again after unlocking.");
+			}
 			const url = URL.createObjectURL(blob);
 			try {
 				await platform.download(

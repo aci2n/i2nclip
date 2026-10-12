@@ -106,8 +106,11 @@ const feedbackAt = $derived(
 			<summary
 				onclick={(event) => {
 					event.preventDefault();
-					if ($setup.open) setup.close();
-					else setup.start();
+					if ($setup.open) {
+						setup.close();
+					} else {
+						setup.start();
+					}
 				}}
 			>
 				Add library

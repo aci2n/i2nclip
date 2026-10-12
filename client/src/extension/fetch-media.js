@@ -6,8 +6,9 @@ export async function fetchMedia(
 	{ srcUrl, pageUrl, tabId, frameId = 0 },
 	signal,
 ) {
-	if (srcUrl.startsWith("blob:") && tabId != null)
+	if (srcUrl.startsWith("blob:") && tabId != null) {
 		return fetchInTab(tabId, frameId, srcUrl, signal);
+	}
 	let direct;
 	try {
 		direct = await fetch(srcUrl, {
@@ -15,15 +16,21 @@ export async function fetchMedia(
 			referrer: pageUrl || undefined,
 			signal,
 		});
-		if (direct.ok) return direct;
-		if (![401, 403].includes(direct.status))
+		if (direct.ok) {
+			return direct;
+		}
+		if (![401, 403].includes(direct.status)) {
 			throw new Error(`Could not fetch the file (${direct.status}).`);
+		}
 	} catch (error) {
 		signal?.throwIfAborted();
-		if (tabId == null || (direct && ![401, 403].includes(direct.status)))
+		if (tabId == null || (direct && ![401, 403].includes(direct.status))) {
 			throw error;
+		}
 	}
-	if (tabId != null) return fetchInTab(tabId, frameId, srcUrl, signal);
+	if (tabId != null) {
+		return fetchInTab(tabId, frameId, srcUrl, signal);
+	}
 	throw new Error(`Could not fetch the file (${direct.status}).`);
 }
 
@@ -53,7 +60,9 @@ async function fetchInTab(tabId, frameId, srcUrl, signal) {
 				func: (key, id) => {
 					globalThis[key]?.get(id)?.abort();
 					globalThis[key]?.delete(id);
-					if (globalThis[key]?.size === 0) delete globalThis[key];
+					if (globalThis[key]?.size === 0) {
+						delete globalThis[key];
+					}
 				},
 				args: [key, id],
 			})
@@ -64,7 +73,9 @@ async function fetchInTab(tabId, frameId, srcUrl, signal) {
 	};
 	signal?.addEventListener("abort", abort, { once: true });
 	try {
-		if (signal?.aborted) abort();
+		if (signal?.aborted) {
+			abort();
+		}
 		const request = signal?.aborted
 			? aborted
 			: browser.scripting.executeScript({
@@ -72,7 +83,9 @@ async function fetchInTab(tabId, frameId, srcUrl, signal) {
 					// executeScript serializes this function: keep it self-contained.
 					func: async (key, id, url, max) => {
 						const controller = globalThis[key]?.get(id);
-						if (!controller) return { error: "Media request cancelled." };
+						if (!controller) {
+							return { error: "Media request cancelled." };
+						}
 						let reader;
 						try {
 							const response = await fetch(url, {
@@ -91,9 +104,13 @@ async function fetchInTab(tabId, frameId, srcUrl, signal) {
 							while (reader) {
 								const { done, value } = await reader.read();
 								controller.signal.throwIfAborted();
-								if (done) break;
+								if (done) {
+									break;
+								}
 								size += value.length;
-								if (size > max) return { error: "File is larger than 32 MB." };
+								if (size > max) {
+									return { error: "File is larger than 32 MB." };
+								}
 								chunks.push(value);
 							}
 							const bytes = new Uint8Array(size);
@@ -112,7 +129,9 @@ async function fetchInTab(tabId, frameId, srcUrl, signal) {
 							} finally {
 								reader?.releaseLock();
 								globalThis[key]?.delete(id);
-								if (globalThis[key]?.size === 0) delete globalThis[key];
+								if (globalThis[key]?.size === 0) {
+									delete globalThis[key];
+								}
 							}
 						}
 					},
@@ -121,10 +140,11 @@ async function fetchInTab(tabId, frameId, srcUrl, signal) {
 		const [injected] = await Promise.race([request, aborted]);
 		signal?.throwIfAborted();
 		const result = injected?.result;
-		if (!result?.bytes)
+		if (!result?.bytes) {
 			throw new Error(
 				result?.error || "Could not fetch the file from this tab.",
 			);
+		}
 		return new Response(result.bytes, {
 			headers: { "content-type": result.type },
 		});

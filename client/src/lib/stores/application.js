@@ -42,8 +42,9 @@ export function createApplication(platform, initialPage, browser = window) {
 				client.id() !== id ||
 				latest.instanceId !== captured.instanceId ||
 				latest.session.epoch !== captured.session.epoch
-			)
+			) {
 				throw new Error("Library changed. Start pairing again.");
+			}
 		},
 	});
 	const settings = createSettings(session, platform);
@@ -86,11 +87,12 @@ export function createApplication(platform, initialPage, browser = window) {
 	let lastSelection;
 	function disposeLibrary() {
 		if (library) {
-			if (lastSelection)
+			if (lastSelection) {
 				searchDrafts.set(lastSelection, {
 					query: library.query(),
 					draft: library.draft(),
 				});
+			}
 			library.dispose();
 		}
 	}
@@ -108,8 +110,9 @@ export function createApplication(platform, initialPage, browser = window) {
 			isUnlocked &&
 			!library &&
 			["library", "options"].includes(get(state).page)
-		)
+		) {
 			library = newLibrary();
+		}
 		vaultWasUnlocked = isUnlocked;
 		const id = client.id();
 		if (id !== lastSelection && lastSelection) {
@@ -132,16 +135,28 @@ export function createApplication(platform, initialPage, browser = window) {
 	let disposed = false;
 	const href = (name) => {
 		const query = new URLSearchParams();
-		if (standalone) query.set("page", name);
-		if (client.id()) query.set("library", client.id());
-		if (popupPage && params.has("id")) query.set("id", params.get("id"));
-		if (popupPage && auto) query.set("auto", "");
+		if (standalone) {
+			query.set("page", name);
+		}
+		if (client.id()) {
+			query.set("library", client.id());
+		}
+		if (popupPage && params.has("id")) {
+			query.set("id", params.get("id"));
+		}
+		if (popupPage && auto) {
+			query.set("auto", "");
+		}
 		const path = standalone ? "" : `${name}.html`;
 		return query.size ? `${path}?${query}` : path;
 	};
 	function show(page) {
-		if (disposed) return;
-		if (["library", "options"].includes(page)) library ??= newLibrary();
+		if (disposed) {
+			return;
+		}
+		if (["library", "options"].includes(page)) {
+			library ??= newLibrary();
+		}
 		library?.closePreview();
 		state.update((value) => ({
 			...value,
@@ -176,7 +191,9 @@ export function createApplication(platform, initialPage, browser = window) {
 	);
 	const restore = () => {
 		const id = new URLSearchParams(browser.location.search).get("library");
-		if (id && id !== client.id()) selectLibrary(id);
+		if (id && id !== client.id()) {
+			selectLibrary(id);
+		}
 		show(pageAtLocation());
 	};
 	browser.addEventListener("popstate", restore);
@@ -191,7 +208,9 @@ export function createApplication(platform, initialPage, browser = window) {
 		href,
 		selectLibrary,
 		restoredLibrary(id, result) {
-			if (disposed || get(vault).status !== "unlocked") return;
+			if (disposed || get(vault).status !== "unlocked") {
+				return;
+			}
 			selectLibrary(id);
 			settings.edit("feedback", {
 				scope: "library",
@@ -214,8 +233,9 @@ export function createApplication(platform, initialPage, browser = window) {
 				platform.confirm(
 					"Forget this library and its unfinished uploads? Server files stay saved. Keep a recovery file first.",
 				)
-			)
+			) {
 				await root.command("libraries.forget", { libraryId: client.id() });
+			}
 		},
 		navigate(event, page) {
 			if (
@@ -225,15 +245,20 @@ export function createApplication(platform, initialPage, browser = window) {
 				event.ctrlKey ||
 				event.shiftKey ||
 				event.altKey
-			)
+			) {
 				return;
+			}
 			event.preventDefault();
-			if (get(state).page === page) return;
+			if (get(state).page === page) {
+				return;
+			}
 			browser.history.pushState({}, "", href(page));
 			show(page);
 		},
 		dispose() {
-			if (disposed) return;
+			if (disposed) {
+				return;
+			}
 			disposed = true;
 			browser.removeEventListener("popstate", restore);
 			pending?.dispose();

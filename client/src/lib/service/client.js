@@ -42,23 +42,27 @@ export function createServiceClient(
 	let resyncing = false;
 	let hidden = false;
 	let connecting = false;
-	let resolveReady, rejectReady;
+	let resolveReady;
+	let rejectReady;
 	const ready = new Promise((resolve, reject) => {
 		resolveReady = resolve;
 		rejectReady = reject;
 	});
 	ready.catch(() => {});
 	function rejectPending() {
-		for (const job of pending.values())
+		for (const job of pending.values()) {
 			job.reject(
 				new Error(
 					"Service disconnected. The action may have completed; check its status before retrying.",
 				),
 			);
+		}
 		pending.clear();
 	}
 	function lost() {
-		if (disposed) return;
+		if (disposed) {
+			return;
+		}
 		connecting = false;
 		unlisten?.();
 		unDisconnect?.();
@@ -79,7 +83,9 @@ export function createServiceClient(
 		reconnect = setTimeout(start, 250);
 	}
 	function receive(message) {
-		if (disposed) return;
+		if (disposed) {
+			return;
+		}
 		lastMessage = Date.now();
 		if (message.type === "snapshot") {
 			for (const [id, job] of pending) {
@@ -100,7 +106,9 @@ export function createServiceClient(
 			}
 			connecting = false;
 			const changed = instanceId && instanceId !== message.instanceId;
-			if (changed) rejectPending();
+			if (changed) {
+				rejectPending();
+			}
 			instanceId = message.instanceId;
 			sequence = message.sequence;
 			resyncing = false;
@@ -127,8 +135,9 @@ export function createServiceClient(
 			}));
 			return;
 		}
-		if (message.instanceId !== instanceId || message.sequence <= sequence)
+		if (message.instanceId !== instanceId || message.sequence <= sequence) {
 			return;
+		}
 		if (message.sequence !== sequence + 1) {
 			if (!resyncing) {
 				resyncing = true;
@@ -137,7 +146,7 @@ export function createServiceClient(
 			return;
 		}
 		sequence = message.sequence;
-		if (message.type === "state")
+		if (message.type === "state") {
 			state.update((value) => {
 				switch (message.topic) {
 					case "library":
@@ -170,15 +179,20 @@ export function createServiceClient(
 						return value;
 				}
 			});
+		}
 		if (message.type === "reply") {
 			const job = pending.get(message.requestId);
-			if (!job) return;
+			if (!job) {
+				return;
+			}
 			pending.delete(message.requestId);
 			if (message.error) {
 				const error = new Error(message.error.message);
 				error.name = message.error.name;
 				job.reject(error);
-			} else job.resolve(message.value);
+			} else {
+				job.resolve(message.value);
+			}
 		}
 		if (message.type === "helper") {
 			const currentTransport = transport;
@@ -186,24 +200,29 @@ export function createServiceClient(
 				.then(() => helper?.(message.name, message.payload))
 				.catch(() => null)
 				.then((value) => {
-					if (!disposed && transport === currentTransport)
+					if (!disposed && transport === currentTransport) {
 						transport.send({
 							type: "helperResult",
 							helperId: message.helperId,
 							libraryId: message.libraryId,
 							value: value ?? null,
 						});
+					}
 				});
 		}
 	}
 	function start() {
-		if (disposed || connecting) return;
+		if (disposed || connecting) {
+			return;
+		}
 		connecting = true;
 		try {
 			transport = connect();
 			const currentTransport = transport;
 			unlisten = transport.listen((message) => {
-				if (transport === currentTransport) receive(message);
+				if (transport === currentTransport) {
+					receive(message);
+				}
 			});
 			unDisconnect = transport.onDisconnect?.(lost);
 			lastMessage = Date.now();
@@ -226,8 +245,9 @@ export function createServiceClient(
 	async function command(name, payload = {}, { signal } = {}) {
 		await ready;
 		signal?.throwIfAborted();
-		if (disposed || !get(state).connected)
+		if (disposed || !get(state).connected) {
 			throw new Error("Service is disconnected. Try again.");
+		}
 		const requestId = crypto.randomUUID();
 		let rejectAbort;
 		const result = new Promise((resolve, reject) => {
@@ -278,16 +298,20 @@ export function createServiceClient(
 	}
 	const resume = () => {
 		hidden = false;
-		if (get(state).connected) void command("snapshot").catch(() => {});
-		else if (!disposed) {
+		if (get(state).connected) {
+			void command("snapshot").catch(() => {});
+		} else if (!disposed) {
 			clearTimeout(reconnect);
 			start();
 		}
 	};
 	const heartbeat = setInterval(() => {
-		if (disposed || hidden) return;
-		if (Date.now() - lastMessage > 30_000) lost();
-		else {
+		if (disposed || hidden) {
+			return;
+		}
+		if (Date.now() - lastMessage > 30_000) {
+			lost();
+		} else {
 			try {
 				transport?.send({ type: "ping" });
 			} catch {
@@ -328,7 +352,9 @@ export function createServiceClient(
 		ready,
 		command,
 		dispose() {
-			if (disposed) return;
+			if (disposed) {
+				return;
+			}
 			disposed = true;
 			clearTimeout(reconnect);
 			clearInterval(heartbeat);

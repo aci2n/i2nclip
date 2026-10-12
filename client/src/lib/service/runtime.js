@@ -84,15 +84,18 @@ export function createLibraryRuntime({
 		[...jobs.values()].map(({ source: _source, ...job }) => ({ ...job }));
 	const pairingState = () => ({ ...get(pairing) });
 	function publishPairing() {
-		for (const client of clients.values())
+		for (const client of clients.values()) {
 			send(client, {
 				type: "state",
 				topic: "pairing",
 				value: pairingState(),
 			});
+		}
 	}
 	function send(client, message) {
-		if (!clients.has(client.id)) return;
+		if (!clients.has(client.id)) {
+			return;
+		}
 		try {
 			const outgoing = {
 				...message,
@@ -100,29 +103,38 @@ export function createLibraryRuntime({
 				sequence: ++client.sequence,
 				clientId: client.id,
 			};
-			if (serviceTracing) traceMessage("owner → client", client.id, outgoing);
+			if (serviceTracing) {
+				traceMessage("owner → client", client.id, outgoing);
+			}
 			client.send(outgoing);
 		} catch {
 			disconnect(client.id);
 		}
 	}
 	function broadcast(topic, value) {
-		for (const client of clients.values())
+		for (const client of clients.values()) {
 			send(client, { type: "state", topic, value });
+		}
 	}
 	function publishUploads() {
-		if (disposed) return;
+		if (disposed) {
+			return;
+		}
 		broadcast("uploads", uploadState());
 		clearTimeout(completionTimer);
 		const batches = new Map();
 		for (const job of jobs.values()) {
-			if (!batches.has(job.batchId)) batches.set(job.batchId, []);
+			if (!batches.has(job.batchId)) {
+				batches.set(job.batchId, []);
+			}
 			batches.get(job.batchId).push(job);
 		}
 		const complete = [...batches.values()].filter((batch) =>
 			batch.every((job) => job.status === "completed"),
 		);
-		if (!complete.length || disposed) return;
+		if (!complete.length || disposed) {
+			return;
+		}
 		const deadline = Math.min(
 			...complete.map(
 				(batch) =>
@@ -136,14 +148,17 @@ export function createLibraryRuntime({
 		completionTimer = setTimeout(
 			() => {
 				void enqueue(async () => {
-					if (disposed) return;
+					if (disposed) {
+						return;
+					}
 					for (const batch of complete) {
 						if (
 							batch.some(
 								(job) => jobs.get(job.id) !== job || job.status !== "completed",
 							)
-						)
+						) {
 							continue;
+						}
 						if (
 							Math.max(
 								...batch.map(
@@ -152,8 +167,9 @@ export function createLibraryRuntime({
 							) +
 								completedRetentionMs >
 							Date.now()
-						)
+						) {
 							continue;
+						}
 						for (const job of batch) {
 							await repository.removeJob(job.id);
 							jobs.delete(job.id);
@@ -184,8 +200,9 @@ export function createLibraryRuntime({
 	}
 	function publishView(view) {
 		const client = clients.get(view.clientId);
-		if (client)
+		if (client) {
 			send(client, { type: "state", topic: "view", value: viewState(view) });
+		}
 	}
 	function snapshot(client) {
 		return {
@@ -231,10 +248,14 @@ export function createLibraryRuntime({
 		}
 		broadcast("session", sessionState());
 		if (value.privateKey && !value.busy) {
-			for (const view of views.values())
-				if (!view.ids.length && !view.loading)
+			for (const view of views.values()) {
+				if (!view.ids.length && !view.loading) {
 					void search(view, view.query).catch(() => {});
-			if (!changingContext) void pump();
+				}
+			}
+			if (!changingContext) {
+				void pump();
+			}
 		}
 	});
 	const unsubscribePairing = pairing.subscribe(publishPairing);
@@ -242,11 +263,14 @@ export function createLibraryRuntime({
 		const stored = (await repository.jobs()).sort((a, b) => a.order - b.order);
 		for (const job of stored) {
 			nextOrder = Math.max(nextOrder, job.order || 0);
-			if (job.status === "completed" && !job.completedAt)
+			if (job.status === "completed" && !job.completedAt) {
 				job.completedAt = Date.now();
-			if (["uploading", "preparing"].includes(job.status))
+			}
+			if (["uploading", "preparing"].includes(job.status)) {
 				job.status = "interrupted";
-			else if (job.status === "queued") job.status = "paused";
+			} else if (job.status === "queued") {
+				job.status = "paused";
+			}
 			job.auto = false;
 			job.progress = null;
 			jobs.set(job.id, job);
@@ -259,7 +283,9 @@ export function createLibraryRuntime({
 	}
 	function guard(epoch, signal) {
 		signal?.throwIfAborted();
-		if (disposed || epoch !== identity.epoch) throw canceled();
+		if (disposed || epoch !== identity.epoch) {
+			throw canceled();
+		}
 	}
 	async function updateEntity(item, epoch, signal) {
 		guard(epoch, signal);
@@ -284,15 +310,18 @@ export function createLibraryRuntime({
 			if (
 				expected.length !== (item.tokens || []).length ||
 				expected.some((token) => !item.tokens?.includes(token))
-			)
+			) {
 				next.message = "Tags on the server do not match this file.";
+			}
 		}
 		media.set(item.id, next);
 		broadcast("media", next);
 		return next;
 	}
 	async function search(view, query, more = false, refresh = false) {
-		if (more && (view.loading || !view.next)) return;
+		if (more && (view.loading || !view.next)) {
+			return;
+		}
 		const captured = credentials();
 		view.controller?.abort();
 		const controller = new AbortController();
@@ -315,21 +344,33 @@ export function createLibraryRuntime({
 			more,
 			refresh,
 		});
-		if (!more) view.additions = new Set();
-		if (!more && !refresh) Object.assign(view, { ids: [], next: null });
+		if (!more) {
+			view.additions = new Set();
+		}
+		if (!more && !refresh) {
+			Object.assign(view, { ids: [], next: null });
+		}
 		publishView(view);
 		try {
 			const page = await http.list({ ...captured, tags: query, after, signal });
 			guard(epoch, signal);
-			if (version !== view.revision || !views.has(view.id)) return;
+			if (version !== view.revision || !views.has(view.id)) {
+				return;
+			}
 			for (const item of page.items) {
 				// A response begun before a local mutation cannot replace newer data.
-				if (changesAtStart !== mutationRevision && media.has(item.id)) continue;
-				if (mutations.has(item.id) || (more && media.has(item.id))) continue;
+				if (changesAtStart !== mutationRevision && media.has(item.id)) {
+					continue;
+				}
+				if (mutations.has(item.id) || (more && media.has(item.id))) {
+					continue;
+				}
 				await updateEntity(item, epoch, signal);
 			}
 			guard(epoch, signal);
-			if (version !== view.revision) return;
+			if (version !== view.revision) {
+				return;
+			}
 			view.ids = [
 				...new Set([
 					...(more ? view.ids : []),
@@ -355,8 +396,9 @@ export function createLibraryRuntime({
 				revision: version,
 				...errorDetails(error),
 			});
-			if (version === view.revision && !signal.aborted)
+			if (version === view.revision && !signal.aborted) {
 				view.status = error.message;
+			}
 		} finally {
 			if (version === view.revision) {
 				view.loading = false;
@@ -371,32 +413,43 @@ export function createLibraryRuntime({
 		}
 	}
 	function refreshViews() {
-		for (const view of views.values())
+		for (const view of views.values()) {
 			void search(view, view.query, false, true).catch(() => {});
+		}
 	}
 	async function publishUpload(item, epoch, signal) {
-		if (!item?.id) return;
+		if (!item?.id) {
+			return;
+		}
 		await updateEntity(item, epoch, signal);
 		const tags = new Set((item.metadata?.tags || []).map(normalizeTag));
 		for (const view of views.values()) {
-			if (!splitTags(view.query).every((tag) => tags.has(normalizeTag(tag))))
+			if (!splitTags(view.query).every((tag) => tags.has(normalizeTag(tag)))) {
 				continue;
+			}
 			view.additions.add(item.id);
-			if (!view.ids.includes(item.id)) view.ids.push(item.id);
+			if (!view.ids.includes(item.id)) {
+				view.ids.push(item.id);
+			}
 			view.empty = null;
 			publishView(view);
 		}
 	}
 	function ownedView(client, id) {
 		const view = views.get(id);
-		if (!view || view.clientId !== client.id)
+		if (!view || view.clientId !== client.id) {
 			throw new Error("Library view ended.");
+		}
 		return view;
 	}
 	async function mutateMedia(id, action) {
-		if (mutations.has(id)) throw new Error("This file is busy. Try again.");
+		if (mutations.has(id)) {
+			throw new Error("This file is busy. Try again.");
+		}
 		const item = media.get(id);
-		if (!item || item.deleted) throw new Error("This file is unavailable.");
+		if (!item || item.deleted) {
+			throw new Error("This file is unavailable.");
+		}
 		const epoch = identity.epoch;
 		const signal = identity.signal;
 		const captured = credentials();
@@ -414,8 +467,9 @@ export function createLibraryRuntime({
 				id,
 				...errorDetails(error),
 			});
-			if (epoch === identity.epoch)
+			if (epoch === identity.epoch) {
 				Object.assign(item, { message: error.message, error: true });
+			}
 			throw error;
 		} finally {
 			if (epoch === identity.epoch) {
@@ -429,10 +483,13 @@ export function createLibraryRuntime({
 		const captured = credentials();
 		const epoch = identity.epoch;
 		const item = media.get(id);
-		if (!item || item.deleted) throw new Error("This file is unavailable.");
+		if (!item || item.deleted) {
+			throw new Error("This file is unavailable.");
+		}
 		let entry = downloads.get(id);
-		if (entry?.controller.signal.aborted || entry?.epoch !== epoch)
+		if (entry?.controller.signal.aborted || entry?.epoch !== epoch) {
 			entry = null;
+		}
 		if (!entry) {
 			traceEvent("download.start", { libraryId, id, epoch });
 			const controller = new AbortController();
@@ -462,7 +519,9 @@ export function createLibraryRuntime({
 					};
 				})
 				.finally(() => {
-					if (downloads.get(id) === entry) downloads.delete(id);
+					if (downloads.get(id) === entry) {
+						downloads.delete(id);
+					}
 					if (epoch === identity.epoch) {
 						item.progress = null;
 						broadcast("media", { ...item });
@@ -479,7 +538,9 @@ export function createLibraryRuntime({
 		});
 		const abort = () => {
 			entry.consumers.delete(consumer);
-			if (!entry.consumers.size) entry.controller.abort();
+			if (!entry.consumers.size) {
+				entry.controller.abort();
+			}
 			rejectAbort(callerSignal.reason);
 		};
 		callerSignal.addEventListener("abort", abort, { once: true });
@@ -487,7 +548,9 @@ export function createLibraryRuntime({
 			callerSignal.throwIfAborted();
 			const result = await Promise.race([entry.promise, interrupted]);
 			guard(epoch, callerSignal);
-			if (media.get(id)?.deleted || !clients.has(client.id)) throw canceled();
+			if (media.get(id)?.deleted || !clients.has(client.id)) {
+				throw canceled();
+			}
 			return result;
 		} finally {
 			callerSignal.removeEventListener("abort", abort);
@@ -496,7 +559,9 @@ export function createLibraryRuntime({
 	}
 	function requestHelper(clientId, job, blob) {
 		const client = clients.get(clientId);
-		if (!client) return Promise.resolve(null);
+		if (!client) {
+			return Promise.resolve(null);
+		}
 		const helperId = crypto.randomUUID();
 		return new Promise((resolve) => {
 			const finish = (value) => {
@@ -536,15 +601,21 @@ export function createLibraryRuntime({
 		sources,
 		{ auto = true, context = false } = {},
 	) {
-		if (!context) credentials();
+		if (!context) {
+			credentials();
+		}
 		const epoch = identity.epoch;
 		const batchId = crypto.randomUUID();
 		const accepted = [];
 		const failures = [];
 		for (const source of sources) {
 			try {
-				if (source.blob) checkFileSize(source.blob.size);
-				if (source.bytes) checkFileSize(source.bytes.byteLength);
+				if (source.blob) {
+					checkFileSize(source.blob.size);
+				}
+				if (source.bytes) {
+					checkFileSize(source.bytes.byteLength);
+				}
 				guard(epoch);
 				const job = {
 					...(libraryId ? { libraryId } : {}),
@@ -568,7 +639,9 @@ export function createLibraryRuntime({
 					await persistJob(job, source);
 				});
 				accepted.push(job.id);
-				if (context) void capture(job).catch(() => {});
+				if (context) {
+					void capture(job).catch(() => {});
+				}
 			} catch (error) {
 				failures.push({ name: source.name || "upload", error: error.message });
 			}
@@ -585,7 +658,9 @@ export function createLibraryRuntime({
 			await enqueue(async () => {
 				guard(epoch, signal);
 				const current = jobs.get(job.id);
-				if (!current || current.status === "completed") return;
+				if (!current || current.status === "completed") {
+					return;
+				}
 				await persistJob({ ...current, name: prepared.name }, prepared);
 			});
 			const current = jobs.get(job.id);
@@ -593,18 +668,22 @@ export function createLibraryRuntime({
 				current?.auto &&
 				sessionState().unlocked &&
 				current.status === "awaiting"
-			)
+			) {
 				await retry([job.id]);
+			}
 		} catch (error) {
-			if (signal.aborted || !jobs.has(job.id)) return;
+			if (signal.aborted || !jobs.has(job.id)) {
+				return;
+			}
 			await enqueue(async () => {
 				const current = jobs.get(job.id);
-				if (current?.status === "awaiting")
+				if (current?.status === "awaiting") {
 					await persistJob({
 						...current,
 						status: "failed",
 						error: error.message,
 					});
+				}
 			});
 			await platform.notify?.(error.message);
 		}
@@ -620,8 +699,9 @@ export function createLibraryRuntime({
 				if (
 					!job ||
 					!["failed", "interrupted", "paused", "awaiting"].includes(job.status)
-				)
+				) {
 					continue;
+				}
 				await persistJob({
 					...job,
 					status: "queued",
@@ -636,8 +716,9 @@ export function createLibraryRuntime({
 		return true;
 	}
 	async function pump() {
-		if (pumping || changingContext || disposed || !sessionState().unlocked)
+		if (pumping || changingContext || disposed || !sessionState().unlocked) {
 			return;
+		}
 		pumping = true;
 		try {
 			while (!disposed && sessionState().unlocked) {
@@ -646,7 +727,9 @@ export function createLibraryRuntime({
 						job.status === "queued" &&
 						job.serverUrl === sessionState().serverUrl,
 				);
-				if (!job) break;
+				if (!job) {
+					break;
+				}
 				const epoch = identity.epoch;
 				const signal = identity.signal;
 				const captured = credentials();
@@ -718,10 +801,11 @@ export function createLibraryRuntime({
 						jobId: job.id,
 						attemptId,
 					});
-					if (job.context)
+					if (job.context) {
 						void Promise.resolve(platform.notify?.("Uploaded.")).catch(
 							() => {},
 						);
+					}
 				} catch (error) {
 					traceEvent("upload.failed", {
 						libraryId,
@@ -731,7 +815,9 @@ export function createLibraryRuntime({
 						...errorDetails(error),
 					});
 					await enqueue(async () => {
-						if (disposed || !jobs.has(job.id)) return;
+						if (disposed || !jobs.has(job.id)) {
+							return;
+						}
 						if (epoch !== identity.epoch) {
 							// Never write old work after reset has cleared its database.
 							Object.assign(jobs.get(job.id), {
@@ -784,7 +870,9 @@ export function createLibraryRuntime({
 	}
 	async function dispatch(client, name, payload, signal) {
 		await ready;
-		if (!clients.has(client.id)) throw new Error("Connection ended.");
+		if (!clients.has(client.id)) {
+			throw new Error("Connection ended.");
+		}
 		if (name === "snapshot") {
 			send(client, { type: "snapshot", value: snapshot(client) });
 			return true;
@@ -798,9 +886,13 @@ export function createLibraryRuntime({
 				reset: [],
 				discardCreation: [],
 			}[action];
-			if (!args) throw new Error("Unknown identity command.");
+			if (!args) {
+				throw new Error("Unknown identity command.");
+			}
 			const destructive = ["reset", "setServer"].includes(action);
-			if (destructive) changingContext++;
+			if (destructive) {
+				changingContext++;
+			}
 			let result;
 			try {
 				result = await identity[action](...args);
@@ -808,12 +900,13 @@ export function createLibraryRuntime({
 				if (destructive) {
 					await enqueue(async () => {
 						const stored = await repository.jobs();
-						for (const job of stored)
+						for (const job of stored) {
 							if (["preparing", "uploading"].includes(job.status)) {
 								job.status = "interrupted";
 								job.auto = false;
 								await repository.putJob(job);
 							}
+						}
 						jobs = new Map(stored.map((job) => [job.id, job]));
 						publishUploads();
 					});
@@ -821,13 +914,18 @@ export function createLibraryRuntime({
 					void pump();
 				}
 			}
-			if (action === "unlock")
-				for (const job of jobs.values())
-					if (job.auto && job.status === "awaiting")
+			if (action === "unlock") {
+				for (const job of jobs.values()) {
+					if (job.auto && job.status === "awaiting") {
 						void retry([job.id]).catch(() => {});
+					}
+				}
+			}
 			return result;
 		}
-		if (payload.epoch !== identity.epoch) throw canceled();
+		if (payload.epoch !== identity.epoch) {
+			throw canceled();
+		}
 		switch (name) {
 			case "view.open": {
 				const existing = views.get(payload.id);
@@ -847,11 +945,14 @@ export function createLibraryRuntime({
 					empty: null,
 					revision: 0,
 				};
-				if (views.has(view.id)) throw new Error("View already exists.");
+				if (views.has(view.id)) {
+					throw new Error("View already exists.");
+				}
 				views.set(view.id, view);
 				publishView(view);
-				if (sessionState().unlocked)
+				if (sessionState().unlocked) {
 					void search(view, view.query).catch(() => {});
+				}
 				return view.id;
 			}
 			case "view.close": {
@@ -870,12 +971,14 @@ export function createLibraryRuntime({
 				return content(client, payload.id, signal);
 			case "media.retag":
 				return mutateMedia(payload.id, async (item, options) => {
-					if (!item.metadata || item.metadataUnavailable)
+					if (!item.metadata || item.metadataUnavailable) {
 						throw new Error("No metadata to update.");
-					if (payload.metaHash !== item.metaHash)
+					}
+					if (payload.metaHash !== item.metaHash) {
 						throw new Error(
 							"This file changed in another page. Latest tags loaded; review and try again.",
 						);
+					}
 					const metadata = { ...item.metadata, tags: uniqueTags(payload.tags) };
 					const result = await http.updateMetadata({
 						...options,
@@ -885,20 +988,23 @@ export function createLibraryRuntime({
 					});
 					guard(identity.epoch, options.signal);
 					if (result.conflict) {
-						if (result.item.metadata)
+						if (result.item.metadata) {
 							Object.assign(item, result.item, { metadataUnavailable: false });
-						else item.metadataUnavailable = true;
+						} else {
+							item.metadataUnavailable = true;
+						}
 						item.message = result.item.metadata
 							? "This file changed in another page. Latest tags loaded; review and try again."
 							: "This file changed in another page, but its metadata could not be opened. Your draft is preserved.";
 						item.error = true;
-					} else
+					} else {
 						Object.assign(item, {
 							metadata,
 							tokens: result.tokens,
 							metaHash: result.metaHash,
 							metadataUnavailable: false,
 						});
+					}
 					mutationRevision++;
 					refreshViews();
 					return !result.conflict;
@@ -920,8 +1026,9 @@ export function createLibraryRuntime({
 				return enqueue(async () => {
 					for (const id of payload.ids) {
 						const job = jobs.get(id);
-						if (["preparing", "uploading"].includes(job?.status))
+						if (["preparing", "uploading"].includes(job?.status)) {
 							throw new Error("Upload is busy.");
+						}
 						await repository.removeJob(id);
 						jobs.delete(id);
 					}
@@ -940,9 +1047,12 @@ export function createLibraryRuntime({
 					guard(payload.epoch);
 					credentials();
 					const job = jobs.get(payload.id);
-					if (!job || job.status === "completed") return false;
-					if (["queued", "preparing", "uploading"].includes(job.status))
+					if (!job || job.status === "completed") {
+						return false;
+					}
+					if (["queued", "preparing", "uploading"].includes(job.status)) {
 						return true;
+					}
 					await persistJob({
 						...job,
 						tags: payload.tags || "",
@@ -957,7 +1067,9 @@ export function createLibraryRuntime({
 				});
 			case "pairing.send":
 			case "pairing.receive": {
-				if (get(pairing).active) throw new Error("Pairing is already active.");
+				if (get(pairing).active) {
+					throw new Error("Pairing is already active.");
+				}
 				return name === "pairing.send"
 					? pairing.send()
 					: pairing.receive(
@@ -976,24 +1088,33 @@ export function createLibraryRuntime({
 	}
 	function disconnect(id) {
 		const client = clients.get(id);
-		if (!client) return;
+		if (!client) {
+			return;
+		}
 		clients.delete(id);
-		for (const controller of client.requests.values()) controller.abort();
-		for (const view of [...views.values()])
+		for (const controller of client.requests.values()) {
+			controller.abort();
+		}
+		for (const view of [...views.values()]) {
 			if (view.clientId === id) {
 				view.controller?.abort();
 				views.delete(view.id);
 			}
-		for (const helper of helpers.values())
-			if (helper.clientId === id) helper.finish(null);
+		}
+		for (const helper of helpers.values()) {
+			if (helper.clientId === id) {
+				helper.finish(null);
+			}
+		}
 	}
 	return {
 		ready,
 		instanceId,
 		async authorizeKey(publicKey, serverUrl, signal) {
 			const captured = credentials();
-			if (new URL(captured.serverUrl).origin !== new URL(serverUrl).origin)
+			if (new URL(captured.serverUrl).origin !== new URL(serverUrl).origin) {
 				throw new Error("Authorizing library must use the same server.");
+			}
 			const epoch = identity.epoch;
 			const combined = AbortSignal.any([identity.signal, signal]);
 			await http.registerAuthenticatedKey({
@@ -1019,8 +1140,9 @@ export function createLibraryRuntime({
 			return {
 				id: client.id,
 				async receive(message) {
-					if (serviceTracing)
+					if (serviceTracing) {
 						traceMessage("client → owner", client.id, message);
+					}
 					if (message.type === "detach") {
 						disconnect(client.id);
 						return;
@@ -1031,16 +1153,21 @@ export function createLibraryRuntime({
 					}
 					if (message.type === "helperResult") {
 						const helper = helpers.get(message.helperId);
-						if (helper?.clientId === client.id) helper.finish(message.value);
+						if (helper?.clientId === client.id) {
+							helper.finish(message.value);
+						}
 						return;
 					}
 					if (message.type === "cancel") {
 						client.requests.get(message.requestId)?.abort();
 						return;
 					}
-					if (message.type !== "command" || message.instanceId !== instanceId)
+					if (message.type !== "command" || message.instanceId !== instanceId) {
 						return;
-					if (client.requests.has(message.requestId)) return;
+					}
+					if (client.requests.has(message.requestId)) {
+						return;
+					}
 					const controller = new AbortController();
 					client.requests.set(message.requestId, controller);
 					try {
@@ -1086,14 +1213,17 @@ export function createLibraryRuntime({
 				);
 				return;
 			}
-			if (openWindow && (withTags || !sessionState().unlocked))
+			if (openWindow && (withTags || !sessionState().unlocked)) {
 				await platform.openUpload?.(id, withTags ? "upload" : "unlock");
+			}
 			return id;
 		},
 		dispose() {
 			disposed = true;
 			clearTimeout(completionTimer);
-			for (const id of [...clients.keys()]) disconnect(id);
+			for (const id of [...clients.keys()]) {
+				disconnect(id);
+			}
 			pairing.dispose();
 			identity.dispose();
 			unsubscribeIdentity();

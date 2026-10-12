@@ -8,7 +8,9 @@ let { selected, onclose } = $props();
 	id="full"
 	use:modal={selected}
 	onclick={(event) => {
-		if (event.target === event.currentTarget) onclose();
+		if (event.target === event.currentTarget) {
+			onclose();
+		}
 	}}
 	onkeydown={(event) => {
 		if (event.key === "Escape") {

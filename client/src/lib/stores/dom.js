@@ -3,10 +3,13 @@
 export function focus(node, request) {
 	let disposed = false;
 	const update = (request) => {
-		if (request)
+		if (request) {
 			queueMicrotask(() => {
-				if (!disposed && node.isConnected) node.focus();
+				if (!disposed && node.isConnected) {
+					node.focus();
+				}
 			});
+		}
 	};
 	update(request);
 	return {
@@ -25,14 +28,18 @@ export function modal(node, selected) {
 			node.showModal();
 		} else if (!selected && node.open) {
 			node.close();
-			if (opener?.isConnected) opener.focus();
+			if (opener?.isConnected) {
+				opener.focus();
+			}
 		}
 	};
 	update(selected);
 	return {
 		update,
 		destroy() {
-			if (node.open) node.close();
+			if (node.open) {
+				node.close();
+			}
 		},
 	};
 }
@@ -43,7 +50,9 @@ export function selectTab(
 	select,
 	tabs = ["create", "restore"],
 ) {
-	if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+	if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+		return;
+	}
 	event.preventDefault();
 	const next =
 		event.key === "Home"
@@ -61,7 +70,9 @@ export function selectTab(
 }
 
 export function validateInput(input, details) {
-	if (input.checkValidity()) return true;
+	if (input.checkValidity()) {
+		return true;
+	}
 	details.open = true;
 	input.reportValidity();
 	return false;
@@ -70,7 +81,9 @@ export function validateInput(input, details) {
 export function selectFiles(event, upload) {
 	const files = [...event.currentTarget.files];
 	event.currentTarget.value = "";
-	if (files.length) upload(files);
+	if (files.length) {
+		upload(files);
+	}
 }
 
 export const pickFiles = (input) => input.click();

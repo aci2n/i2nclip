@@ -12,20 +12,24 @@ export function fileName(url) {
 }
 
 export function checkFileSize(size) {
-	if (size > MAX_FILE_BYTES) throw new Error("File is larger than 32 MB.");
+	if (size > MAX_FILE_BYTES) {
+		throw new Error("File is larger than 32 MB.");
+	}
 }
 
 // Enforce the limit while reading, even when Content-Length is absent or incorrect.
 export async function readMedia(response, signal) {
-	if (!response.ok)
+	if (!response.ok) {
 		throw new Error(`Could not fetch the file (${response.status}).`);
+	}
 	const declared = Number(response.headers.get("content-length"));
 	if (declared > MAX_FILE_BYTES) {
 		await response.body?.cancel();
 		checkFileSize(declared);
 	}
-	if (!response.body)
+	if (!response.body) {
 		return new Blob([], { type: response.headers.get("content-type") || "" });
+	}
 	const reader = response.body.getReader();
 	const chunks = [];
 	let size = 0;
@@ -36,7 +40,9 @@ export async function readMedia(response, signal) {
 		while (true) {
 			const { done, value } = await reader.read();
 			signal?.throwIfAborted();
-			if (done) break;
+			if (done) {
+				break;
+			}
 			size += value.length;
 			checkFileSize(size);
 			chunks.push(value);

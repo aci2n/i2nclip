@@ -13,7 +13,9 @@ export function createTagEditor(save) {
 	});
 	let disposed = false;
 	function cancel() {
-		if (disposed || get(state).saving) return;
+		if (disposed || get(state).saving) {
+			return;
+		}
 		state.update((value) => ({
 			...value,
 			editing: false,
@@ -23,7 +25,9 @@ export function createTagEditor(save) {
 		}));
 	}
 	async function persist(tags, clearDraft = false) {
-		if (disposed || get(state).saving) return false;
+		if (disposed || get(state).saving) {
+			return false;
+		}
 		const submitted = get(state).value;
 		state.update((value) => ({
 			...value,
@@ -34,7 +38,7 @@ export function createTagEditor(save) {
 		try {
 			success = Boolean(await save(tags));
 		} finally {
-			if (!disposed)
+			if (!disposed) {
 				state.update((value) => ({
 					...value,
 					saving: false,
@@ -45,26 +49,31 @@ export function createTagEditor(save) {
 							: value.value,
 					inputFocus: value.inputFocus + 1,
 				}));
+			}
 		}
 		return success;
 	}
 	return {
 		subscribe: state.subscribe,
 		edit(value) {
-			if (!disposed) state.update((current) => ({ ...current, value }));
+			if (!disposed) {
+				state.update((current) => ({ ...current, value }));
+			}
 		},
 		open() {
-			if (!disposed)
+			if (!disposed) {
 				state.update((value) => ({
 					...value,
 					editing: true,
 					inputFocus: value.inputFocus + 1,
 				}));
+			}
 		},
 		cancel,
 		add(tags) {
-			if (splitTags(get(state).value).length)
+			if (splitTags(get(state).value).length) {
 				return persist([...tags, get(state).value], true);
+			}
 		},
 		remove: (tags) => persist(tags),
 		dispose() {

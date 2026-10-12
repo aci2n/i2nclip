@@ -25,8 +25,12 @@ const engine = createServiceEngine({
 });
 engine.ready.catch((error) => notify(error.message));
 browser.runtime.onConnect.addListener((port) => {
-	if (port.name !== "i2nclip-service" || port.sender?.id !== browser.runtime.id)
+	if (
+		port.name !== "i2nclip-service" ||
+		port.sender?.id !== browser.runtime.id
+	) {
 		return;
+	}
 	const connection = engine.connect((message) => port.postMessage(message));
 	port.onMessage.addListener((message) => {
 		void connection.receive(message);
@@ -37,9 +41,13 @@ browser.action.onClicked.addListener(() =>
 	browser.tabs.create({ url: browser.runtime.getURL("library.html") }),
 );
 browser.contextMenus.onClicked.addListener((info, tab) => {
-	if (!info.srcUrl) return notify("Nothing to upload.");
+	if (!info.srcUrl) {
+		return notify("Nothing to upload.");
+	}
 	const [action, libraryId] = String(info.menuItemId).split(":");
-	if (!["upload", "tags"].includes(action)) return;
+	if (!["upload", "tags"].includes(action)) {
+		return;
+	}
 	return engine
 		.contextUpload(
 			{
@@ -63,12 +71,13 @@ function rebuildMenus(rows) {
 				for (const [id, title] of [
 					["upload", "Unlock to upload"],
 					["tags", "Unlock to upload with tags"],
-				])
+				]) {
 					browser.contextMenus.create({
 						id,
 						title,
 						contexts: ["image", "video", "audio"],
 					});
+				}
 			}
 			for (const row of rows) {
 				const parentId = `library:${row.id}`;
@@ -80,13 +89,14 @@ function rebuildMenus(rows) {
 				for (const [action, title] of [
 					["upload", "Upload"],
 					["tags", "Upload with tags"],
-				])
+				]) {
 					browser.contextMenus.create({
 						id: `${action}:${row.id}`,
 						parentId,
 						title,
 						contexts: ["image", "video", "audio"],
 					});
+				}
 			}
 		})
 		.catch((error) => notify(error.message));

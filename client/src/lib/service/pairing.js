@@ -26,15 +26,18 @@ export function createPairing(session, services = {}) {
 		status: "",
 		error: false,
 	});
-	let task,
-		disposed = false;
+	let task;
+	let disposed = false;
 	const update = (patch) => {
-		if (!disposed) state.update((value) => ({ ...value, ...patch }));
+		if (!disposed) {
+			state.update((value) => ({ ...value, ...patch }));
+		}
 	};
 	function check(current) {
 		current.controller.signal.throwIfAborted();
-		if (now() >= current.deadline || Date.now() >= current.wallDeadline)
+		if (now() >= current.deadline || Date.now() >= current.wallDeadline) {
 			throw new Error("Pairing expired. Create a new code.");
+		}
 	}
 
 	function cleanup(current, remove) {
@@ -52,7 +55,9 @@ export function createPairing(session, services = {}) {
 		}
 	}
 	function stop(message = "Pairing canceled. Start again when ready.") {
-		if (!task) return;
+		if (!task) {
+			return;
+		}
 		traceEvent("pairing.cancel", { role: task.role });
 		const current = task;
 		task = null;
@@ -92,13 +97,16 @@ export function createPairing(session, services = {}) {
 			if (
 				room.id !== current.room.id ||
 				room.instance !== current.room.instance
-			)
+			) {
 				throw new Error("Pairing session changed. Create a new code.");
+			}
 			if (room.step === expected) {
 				traceEvent("pairing.step", { role: current.role, step: expected });
 				return room.message;
 			}
-			if (room.step > expected) throw new Error("Invalid pairing step.");
+			if (room.step > expected) {
+				throw new Error("Invalid pairing step.");
+			}
 			await wait(current);
 		}
 	}
@@ -107,7 +115,9 @@ export function createPairing(session, services = {}) {
 			return await action();
 		} catch (error) {
 			check(current);
-			if (!["TypeError", "TimeoutError"].includes(error.name)) throw error;
+			if (!["TypeError", "TimeoutError"].includes(error.name)) {
+				throw error;
+			}
 			// Polls and identical submissions are idempotent. Never repeat room
 			// creation/join or generate another PAKE message for this attempt.
 			await wait(current);
@@ -127,8 +137,9 @@ export function createPairing(session, services = {}) {
 			!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(
 				code,
 			)
-		)
+		) {
 			throw new Error("Invalid verification code. Create a new pairing code.");
+		}
 		return code;
 	}
 	async function submit(current, number, message) {
@@ -142,11 +153,14 @@ export function createPairing(session, services = {}) {
 			result.instance !== current.room.instance ||
 			result.step < number ||
 			result.step > Math.min(5, number + 1)
-		)
+		) {
 			throw new Error("Invalid pairing step.");
+		}
 	}
 	async function run(role, server, operation) {
-		if (disposed || task || get(session).busy) return false;
+		if (disposed || task || get(session).busy) {
+			return false;
+		}
 		traceEvent("pairing.start", { role });
 		const current = {
 			role,
@@ -177,7 +191,9 @@ export function createPairing(session, services = {}) {
 			current.relay = relayFactory(current.server, current.controller.signal);
 			current.crypto = cryptoFactory();
 			current.timer = setInterval(() => {
-				if (task !== current) return;
+				if (task !== current) {
+					return;
+				}
 				try {
 					check(current);
 					update({
@@ -194,7 +210,7 @@ export function createPairing(session, services = {}) {
 			}, 250);
 			await operation(current);
 			check(current);
-			if (task === current)
+			if (task === current) {
 				update({
 					active: false,
 					approval: false,
@@ -207,6 +223,7 @@ export function createPairing(session, services = {}) {
 							? "New device connected."
 							: "Library connected and unlocked. Download a recovery file for this device.",
 				});
+			}
 			cleanup(current, false);
 			traceEvent("pairing.completed", { role });
 			return true;
@@ -216,7 +233,7 @@ export function createPairing(session, services = {}) {
 				saved: current.saved,
 				...errorDetails(error),
 			});
-			if (task === current)
+			if (task === current) {
 				update({
 					active: false,
 					approval: false,
@@ -230,15 +247,19 @@ export function createPairing(session, services = {}) {
 							? "Pairing interrupted. Create a new code."
 							: error.message,
 				});
+			}
 			cleanup(current, !current.saved);
 			return false;
 		} finally {
-			if (task === current) task = null;
+			if (task === current) {
+				task = null;
+			}
 		}
 	}
 	function attach(current, room, id) {
-		if (room.id !== id || !/^[A-Za-z0-9_-]{43}$/.test(room.capability))
+		if (room.id !== id || !/^[A-Za-z0-9_-]{43}$/.test(room.capability)) {
 			throw new Error("Invalid pairing response.");
+		}
 		current.room = room;
 		current.context = pairingContext(current.server, room);
 		current.deadline = Math.min(
@@ -321,10 +342,11 @@ export function createPairing(session, services = {}) {
 		receive(code, server) {
 			return run("receiver", server, async (current) => {
 				const local = get(session);
-				if (local.configured || local.pendingRegistration)
+				if (local.configured || local.pendingRegistration) {
 					throw new Error(
 						"Reset or discard pending creation before connecting a library.",
 					);
+				}
 				const { id, secret } = parsePairingCode(code);
 				const initial = await call(current, "receiverStart", { secret });
 				attach(current, await current.relay.join(id, initial), id);
@@ -346,8 +368,9 @@ export function createPairing(session, services = {}) {
 					typeof value.privateKey !== "string" ||
 					value.privateKey.length > 4096 ||
 					typeof value.publicKey !== "string"
-				)
+				) {
 					throw new Error("Invalid paired identity.");
+				}
 				current.operation.dispose();
 				update({
 					verificationCode: "",
@@ -359,8 +382,9 @@ export function createPairing(session, services = {}) {
 					onInvalidated: () =>
 						stop("Library or server changed. Start pairing again."),
 				});
-				if (!savedOperation)
+				if (!savedOperation) {
 					throw new Error(get(session).error || "Could not save the library.");
+				}
 				current.saved = true;
 				current.operation = savedOperation;
 				await session.withIdentity(current.operation, async () => {
@@ -376,8 +400,9 @@ export function createPairing(session, services = {}) {
 			}
 		},
 		rejectVerification() {
-			if (get(state).verificationCode)
+			if (get(state).verificationCode) {
 				stop("Verification codes did not match. Create a new pairing code.");
+			}
 		},
 		cancel: () => stop(),
 		dispose() {

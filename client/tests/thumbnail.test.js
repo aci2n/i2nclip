@@ -3,8 +3,8 @@ import test from "node:test";
 import { thumbnail } from "../src/lib/media/thumbnail.js";
 
 test("cancelling a video thumbnail releases its temporary URL before the decode timeout", async (t) => {
-	let revoked = false,
-		detached = false;
+	let revoked = false;
+	let detached = false;
 	const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
 	Object.defineProperty(globalThis, "document", {
 		configurable: true,
@@ -19,8 +19,11 @@ test("cancelling a video thumbnail releases its temporary URL before the decode 
 		},
 	});
 	t.after(() => {
-		if (previous) Object.defineProperty(globalThis, "document", previous);
-		else delete globalThis.document;
+		if (previous) {
+			Object.defineProperty(globalThis, "document", previous);
+		} else {
+			delete globalThis.document;
+		}
 	});
 	t.mock.method(URL, "createObjectURL", () => "blob:video");
 	t.mock.method(URL, "revokeObjectURL", (url) => {

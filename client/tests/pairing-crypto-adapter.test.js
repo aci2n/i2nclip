@@ -17,8 +17,8 @@ function noNestedWorkers(t) {
 
 test("pairing completes with isolated owner crypto when nested Worker is unavailable", async (t) => {
 	noNestedWorkers(t);
-	const sender = pairingCrypto(),
-		receiver = pairingCrypto();
+	const sender = pairingCrypto();
+	const receiver = pairingCrypto();
 	t.after(sender.dispose);
 	t.after(receiver.dispose);
 	const context =

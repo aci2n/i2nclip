@@ -5,18 +5,26 @@ import { openPairing, pairingKeys, sealPairing } from "../protocol/pairing.js";
 // device; its setup and password file never leave that device.
 export function createPairingCrypto() {
 	let phase = "initial";
-	let context, setup, record, loginState, secret, keys;
+	let context;
+	let setup;
+	let record;
+	let loginState;
+	let secret;
+	let keys;
 	const identifiers = () => ({
 		client: `${context} receiver verification-code`,
 		server: `${context} sender verification-code`,
 	});
 	function expect(expected) {
-		if (phase !== expected) throw new Error("Invalid pairing step.");
+		if (phase !== expected) {
+			throw new Error("Invalid pairing step.");
+		}
 	}
 	const execute = async function execute(action, args) {
 		await opaque.ready;
-		if (phase === "disposed")
+		if (phase === "disposed") {
 			throw new DOMException("Pairing ended.", "AbortError");
+		}
 		switch (action) {
 			case "senderSetup": {
 				expect("initial");
@@ -73,7 +81,9 @@ export function createPairingCrypto() {
 					identifiers: identifiers(),
 				});
 				loginState = secret = undefined;
-				if (!result) throw new Error("Pairing authentication failed.");
+				if (!result) {
+					throw new Error("Pairing authentication failed.");
+				}
 				keys = await pairingKeys(result.sessionKey, context);
 				phase = "receiver-authenticated";
 				return result.finishLoginRequest;
@@ -91,8 +101,11 @@ export function createPairingCrypto() {
 				return null;
 			}
 			case "verificationCode": {
-				if (!["sender-authenticated", "receiver-authenticated"].includes(phase))
+				if (
+					!["sender-authenticated", "receiver-authenticated"].includes(phase)
+				) {
 					throw new Error("Invalid pairing step.");
+				}
 				return keys.verificationCode;
 			}
 			case "transfer": {
@@ -122,8 +135,9 @@ export function createPairingCrypto() {
 					"acknowledgment",
 					args.message,
 				);
-				if (value.v !== 1 || value.saved !== true)
+				if (value.v !== 1 || value.saved !== true) {
 					throw new Error("Invalid pairing acknowledgment.");
+				}
 				return null;
 			}
 			default:

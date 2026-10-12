@@ -43,8 +43,8 @@ test("a pending action disables overlapping actions within a card", async (t) =>
 });
 
 test("failed content retries and disposal releases page-owned URLs", async (t) => {
-	const created = [],
-		revoked = [];
+	const created = [];
+	const revoked = [];
 	let requests = 0;
 	t.mock.method(URL, "createObjectURL", () => {
 		const url = `blob:${created.length}`;
@@ -53,7 +53,9 @@ test("failed content retries and disposal releases page-owned URLs", async (t) =
 	});
 	t.mock.method(URL, "revokeObjectURL", (url) => revoked.push(url));
 	const f = fixture(t, async () => {
-		if (++requests === 1) throw new Error("offline");
+		if (++requests === 1) {
+			throw new Error("offline");
+		}
 		return { blob: new Blob(["bytes"], { type: "image/png" }) };
 	});
 	await f.media.download();

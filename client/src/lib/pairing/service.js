@@ -11,15 +11,19 @@ const MAX_BODY = 16_384;
 
 // Each service-owned adapter executes one isolated, disposable PAKE attempt.
 export function pairingCrypto() {
-	let disposed = false,
-		running = false,
-		execute,
-		pending;
+	let disposed = false;
+	let running = false;
+	let execute;
+	let pending;
 	const ended = () => new DOMException("Pairing ended.", "AbortError");
 	return {
 		call(action, args = {}) {
-			if (disposed) return Promise.reject(ended());
-			if (running) return Promise.reject(new Error("Pairing is busy."));
+			if (disposed) {
+				return Promise.reject(ended());
+			}
+			if (running) {
+				return Promise.reject(new Error("Pairing is busy."));
+			}
 			running = true;
 			return new Promise((resolve, reject) => {
 				const job = { reject };
@@ -27,7 +31,9 @@ export function pairingCrypto() {
 				let currentExecute;
 				(async () => {
 					const { createPairingCrypto } = await import("./crypto.js");
-					if (disposed) throw ended();
+					if (disposed) {
+						throw ended();
+					}
 					execute ||= createPairingCrypto();
 					currentExecute = execute;
 					return currentExecute(action, args);
@@ -38,8 +44,11 @@ export function pairingCrypto() {
 								pending = null;
 								running = false;
 							}
-							if (disposed) reject(ended());
-							else resolve(value);
+							if (disposed) {
+								reject(ended());
+							} else {
+								resolve(value);
+							}
 						},
 						() => {
 							if (pending === job) {
@@ -56,7 +65,9 @@ export function pairingCrypto() {
 						},
 					)
 					.finally(() => {
-						if (disposed) currentExecute?.dispose();
+						if (disposed) {
+							currentExecute?.dispose();
+						}
 					});
 			});
 		},
@@ -72,15 +83,21 @@ export function pairingCrypto() {
 
 export async function readPairingResponse(response) {
 	const reader = response.body?.getReader();
-	if (!reader) throw new Error("Invalid pairing response.");
+	if (!reader) {
+		throw new Error("Invalid pairing response.");
+	}
 	let size = 0;
 	const chunks = [];
 	try {
 		while (true) {
 			const { done, value } = await reader.read();
-			if (done) break;
+			if (done) {
+				break;
+			}
 			size += value.byteLength;
-			if (size > MAX_BODY) throw new Error("Pairing response is too large.");
+			if (size > MAX_BODY) {
+				throw new Error("Pairing response is too large.");
+			}
 			chunks.push(value);
 		}
 	} catch (error) {
@@ -107,10 +124,11 @@ export function pairingRelay(serverUrl, signal) {
 	async function request(method, path, payload, capability, privateKey) {
 		const body =
 			payload === undefined ? undefined : utf8(JSON.stringify(payload));
-		if (body?.length > MAX_BODY)
+		if (body?.length > MAX_BODY) {
 			throw new Error("Pairing message is too large.");
+		}
 		let authorization;
-		if (privateKey)
+		if (privateKey) {
 			authorization = await authorizationHeader({
 				key: await loadKey(privateKey),
 				origin,
@@ -120,7 +138,9 @@ export function pairingRelay(serverUrl, signal) {
 				path,
 				body,
 			});
-		else if (capability) authorization = `Bearer ${capability}`;
+		} else if (capability) {
+			authorization = `Bearer ${capability}`;
+		}
 		const deadline = AbortSignal.timeout(10_000);
 		const combined = AbortSignal.any([signal, deadline]);
 		combined.throwIfAborted();
@@ -149,7 +169,9 @@ export function pairingRelay(serverUrl, signal) {
 			};
 			throw new Error(errors[response.status] || "Pairing request failed.");
 		}
-		if (response.status === 204) return null;
+		if (response.status === 204) {
+			return null;
+		}
 		let value;
 		try {
 			value = await readPairingResponse(response);
@@ -167,8 +189,9 @@ export function pairingRelay(serverUrl, signal) {
 			value.remaining_secs > 120 ||
 			(value.step > 0 &&
 				(typeof value.message !== "string" || value.message.length > 8192))
-		)
+		) {
 			throw new Error("Invalid pairing response.");
+		}
 		return value;
 	}
 	return {

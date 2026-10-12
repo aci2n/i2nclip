@@ -14,7 +14,9 @@ export function createPairing(client, { beforeReceive } = {}) {
 	async function action(name, payload) {
 		const captured = get(client);
 		try {
-			if (name === "receive") await beforeReceive?.();
+			if (name === "receive") {
+				await beforeReceive?.();
+			}
 			return await client.command(`pairing.${name}`, payload);
 		} catch (error) {
 			const latest = get(client);
@@ -22,8 +24,9 @@ export function createPairing(client, { beforeReceive } = {}) {
 				disposed ||
 				latest.instanceId !== captured.instanceId ||
 				latest.session?.epoch !== captured.session?.epoch
-			)
+			) {
 				return false;
+			}
 			state.update((value) => ({
 				...value,
 				status: error.message,

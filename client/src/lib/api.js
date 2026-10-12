@@ -51,7 +51,9 @@ export async function upload({
 		size: bytes.length,
 		tags: plainTags,
 	};
-	if (image && Object.keys(image).length > 0) metadata.image = image;
+	if (image && Object.keys(image).length > 0) {
+		metadata.image = image;
+	}
 	const content = await encrypt(key, contentAad(), bytes);
 	const mediaId = await bodyHash(content);
 	const { meta, storedThumb } = await sealedMetadata(
@@ -89,8 +91,12 @@ export async function list({ serverUrl, privateKey, tags, after, signal }) {
 	const key = await loadKey(privateKey);
 	const tokens = tags ? await tagTokens(key, tags) : [];
 	const params = new URLSearchParams();
-	for (const token of tokens) params.append("tag", token);
-	if (after) params.set("after", after);
+	for (const token of tokens) {
+		params.append("tag", token);
+	}
+	if (after) {
+		params.set("after", after);
+	}
 	const query = params.toString();
 	const path = query ? `/api/media?${query}` : "/api/media";
 	const page = await send(
@@ -140,7 +146,9 @@ export async function getContent({
 		onProgress,
 		signal,
 	);
-	if ((await bodyHash(blob)) !== id) throw new Error("Content hash mismatch.");
+	if ((await bodyHash(blob)) !== id) {
+		throw new Error("Content hash mismatch.");
+	}
 	return decrypt(key, contentAad(), blob);
 }
 
@@ -184,7 +192,9 @@ export async function updateMetadata({
 			};
 		}
 	}
-	if (!response.ok) throw await responseError(response);
+	if (!response.ok) {
+		throw await responseError(response);
+	}
 	const saved = await response.json();
 	return {
 		conflict: false,
@@ -221,7 +231,9 @@ export async function registerKey({ serverUrl, publicKey, otc, signal }) {
 			signal,
 		}),
 	);
-	if (response.status === 204) return;
+	if (response.status === 204) {
+		return;
+	}
 	throw await responseError(response);
 }
 
@@ -254,8 +266,9 @@ export async function isKeyRegistered({ serverUrl, privateKey, signal }) {
 		undefined,
 		signal,
 	);
-	if (response.status !== 204 && response.status !== 401)
+	if (response.status !== 204 && response.status !== 401) {
 		throw await responseError(response);
+	}
 	await response.body?.cancel();
 	return response.status === 204;
 }
@@ -296,8 +309,12 @@ async function send(serverUrl, key, method, path, body, onProgress, signal) {
 		onProgress,
 		signal,
 	);
-	if (response.status === 204) return null;
-	if (!response.ok) throw await responseError(response);
+	if (response.status === 204) {
+		return null;
+	}
+	if (!response.ok) {
+		throw await responseError(response);
+	}
 	return response.json();
 }
 
@@ -319,7 +336,9 @@ async function sendBytes(
 		undefined,
 		signal,
 	);
-	if (!response.ok) throw await responseError(response);
+	if (!response.ok) {
+		throw await responseError(response);
+	}
 	return readBody(response, onProgress, signal);
 }
 
@@ -350,7 +369,9 @@ async function readBody(response, onProgress, signal) {
 		await response.body?.cancel();
 		throw new Error("File is larger than 32 MB.");
 	}
-	if (!response.body) return new Uint8Array();
+	if (!response.body) {
+		return new Uint8Array();
+	}
 	const reader = response.body.getReader();
 	const chunks = [];
 	let received = 0;
@@ -361,15 +382,18 @@ async function readBody(response, onProgress, signal) {
 			signal?.throwIfAborted();
 			const { done, value } = await reader.read();
 			signal?.throwIfAborted();
-			if (done) break;
+			if (done) {
+				break;
+			}
 			received += value.length;
 			if (received > MAX_ENCRYPTED_FILE_BYTES) {
 				await reader.cancel();
 				throw new Error("File is larger than 32 MB.");
 			}
 			chunks.push(value);
-			if (onProgress && total)
+			if (onProgress && total) {
 				onProgress(Math.min(100, Math.round((received / total) * 100)));
+			}
 		}
 	} catch (error) {
 		traceEvent("download.body.failed", {
@@ -419,7 +443,7 @@ async function signedFetch(
 	// fetch() cannot report how much of the body has been sent. The upload
 	// events on XMLHttpRequest can.
 	return traceRequest(method, path, () => {
-		if (onProgress && payload && typeof XMLHttpRequest !== "undefined")
+		if (onProgress && payload && typeof XMLHttpRequest !== "undefined") {
 			return requestWithProgress(
 				method,
 				url,
@@ -428,6 +452,7 @@ async function signedFetch(
 				onProgress,
 				signal,
 			);
+		}
 		return fetch(url, {
 			method,
 			headers,
@@ -449,13 +474,15 @@ function requestWithProgress(method, url, headers, body, onProgress, signal) {
 			action();
 		};
 		xhr.open(method, url);
-		for (const [name, value] of Object.entries(headers))
+		for (const [name, value] of Object.entries(headers)) {
 			xhr.setRequestHeader(name, value);
+		}
 		xhr.upload.onprogress = (event) => {
-			if (event.lengthComputable)
+			if (event.lengthComputable) {
 				onProgress(
 					Math.min(100, Math.round((event.loaded / event.total) * 100)),
 				);
+			}
 		};
 		xhr.onload = () =>
 			finish(() => {

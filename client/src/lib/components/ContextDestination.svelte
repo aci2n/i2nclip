@@ -6,7 +6,9 @@ let error = $state("");
 const destination = $derived(libraryId || $app.catalog[0]?.id || "");
 async function submit(event) {
 	event.preventDefault();
-	if (busy) return;
+	if (busy) {
+		return;
+	}
 	busy = true;
 	error = "";
 	try {

@@ -47,7 +47,9 @@ test("installed Firefox add-on runs service-owned OPAQUE and shares a background
 		let text = "";
 		request.on("data", (chunk) => {
 			text += chunk;
-			if (text.length > 4096) request.destroy();
+			if (text.length > 4096) {
+				request.destroy();
+			}
 		});
 		request.on("end", () => {
 			try {
@@ -192,10 +194,11 @@ try {
 				stdio: ["ignore", "pipe", "pipe"],
 			},
 		);
-		for (const stream of [child.stdout, child.stderr])
+		for (const stream of [child.stdout, child.stderr]) {
 			stream.on("data", (chunk) => {
 				logs = `${logs}${chunk}`.slice(-8192);
 			});
+		}
 		child.on("error", (error) => resolveReport({ error: error.message }));
 		child.on("exit", (code) =>
 			resolveReport({ error: `web-ext exited: ${code}` }),

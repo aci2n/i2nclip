@@ -114,8 +114,8 @@ test("a new owner rejects uncertain commands and old replies are ignored", async
 
 test("pageshow and focus during initial handshake cannot create competing connections", async (t) => {
 	const events = new Map();
-	let connections = 0,
-		receive;
+	let connections = 0;
+	let receive;
 	const client = createServiceClient(
 		() => {
 			connections++;

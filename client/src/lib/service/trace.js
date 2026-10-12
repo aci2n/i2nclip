@@ -24,18 +24,28 @@ const traceFields = new Set([
 ]);
 
 export function summarizeMessage(value, depth = 0) {
-	if (value instanceof Blob)
+	if (value instanceof Blob) {
 		return { binary: "Blob", size: value.size, type: value.type };
-	if (value instanceof ArrayBuffer || ArrayBuffer.isView(value))
+	}
+	if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
 		return { binary: value.constructor.name, byteLength: value.byteLength };
-	if (typeof value === "string") return value.slice(0, 160);
-	if (!value || typeof value !== "object") return value;
-	if (depth >= 6) return "[nested object]";
+	}
+	if (typeof value === "string") {
+		return value.slice(0, 160);
+	}
+	if (!value || typeof value !== "object") {
+		return value;
+	}
+	if (depth >= 6) {
+		return "[nested object]";
+	}
 	if (Array.isArray(value)) {
 		const items = value
 			.slice(0, 20)
 			.map((item) => summarizeMessage(item, depth + 1));
-		if (value.length > 20) items.push(`[${value.length - 20} more items]`);
+		if (value.length > 20) {
+			items.push(`[${value.length - 20} more items]`);
+		}
 		return items;
 	}
 	return Object.fromEntries(
@@ -84,7 +94,9 @@ export function errorDetails(error) {
 }
 
 export function traceEvent(event, details = {}) {
-	if (!serviceTracing) return;
+	if (!serviceTracing) {
+		return;
+	}
 	// Logging must never prevent delivery or turn successful work into a failure.
 	try {
 		console.debug(`[i2nclip service] ${event}`, summarizeMessage(details));

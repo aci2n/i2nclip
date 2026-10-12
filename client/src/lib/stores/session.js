@@ -34,16 +34,22 @@ export function createSession(client) {
 			await client.command(`identity.${name}`, payload);
 			return true;
 		} catch (error) {
-			if (disposed || get(client).libraryId !== ownLibrary) return false;
+			if (disposed || get(client).libraryId !== ownLibrary) {
+				return false;
+			}
 			localError = error.message;
 			state.update((value) => ({ ...value, error: localError }));
 			return false;
 		}
 	}
 	async function renameForSetup(name) {
-		if (name === undefined || !client.rootCommand) return;
+		if (name === undefined || !client.rootCommand) {
+			return;
+		}
 		const captured = get(client);
-		if (!captured.libraryId) return;
+		if (!captured.libraryId) {
+			return;
+		}
 		await client.rootCommand("libraries.rename", {
 			libraryId: captured.libraryId,
 			name,
@@ -53,8 +59,9 @@ export function createSession(client) {
 			latest.libraryId !== captured.libraryId ||
 			latest.instanceId !== captured.instanceId ||
 			latest.session.epoch !== captured.session.epoch
-		)
+		) {
 			throw new Error("Library changed. Start setup again.");
+		}
 	}
 	return {
 		subscribe: state.subscribe,

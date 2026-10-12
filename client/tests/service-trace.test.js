@@ -6,8 +6,11 @@ test("browser traces correlate requests without exposing URLs, pairing capabilit
 	const previous = globalThis.self;
 	globalThis.self = {};
 	const trace = await import("../src/lib/service/trace.js?browser-test");
-	if (previous === undefined) delete globalThis.self;
-	else globalThis.self = previous;
+	if (previous === undefined) {
+		delete globalThis.self;
+	} else {
+		globalThis.self = previous;
+	}
 	const logs = [];
 	t.mock.method(console, "debug", (...args) => logs.push(args));
 	const response = new Response(null, { status: 204 });

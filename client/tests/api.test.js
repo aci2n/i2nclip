@@ -89,8 +89,11 @@ test("upload progress uses the same response handling as fetch", async (t) => {
 	const requests = [];
 	const original = globalThis.XMLHttpRequest;
 	t.after(() => {
-		if (original === undefined) delete globalThis.XMLHttpRequest;
-		else globalThis.XMLHttpRequest = original;
+		if (original === undefined) {
+			delete globalThis.XMLHttpRequest;
+		} else {
+			globalThis.XMLHttpRequest = original;
+		}
 	});
 	globalThis.XMLHttpRequest = class {
 		upload = {};
@@ -165,7 +168,9 @@ test("reencrypting an upload uses fresh sealed content after a lost response", a
 
 	t.mock.method(globalThis, "fetch", async (_url, options) => {
 		bodies.push(options.body);
-		if (bodies.length === 1) throw new Error("lost response");
+		if (bodies.length === 1) {
+			throw new Error("lost response");
+		}
 		return new Response(
 			JSON.stringify({ id: await bodyHash(contentOf(options.body)) }),
 			{ status: 201 },

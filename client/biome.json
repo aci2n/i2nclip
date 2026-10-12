@@ -18,6 +18,13 @@
 			"preset": "recommended",
 			"a11y": {
 				"useMediaCaption": "off"
+			},
+			"style": {
+				"useBlockStatements": "error",
+				"useSingleVarDeclarator": "error"
+			},
+			"suspicious": {
+				"noVar": "error"
 			}
 		}
 	},

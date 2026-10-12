@@ -8,7 +8,9 @@ let error = $state(false);
 const prefix = $derived(libraryId ? "library-recovery" : "vault-recovery");
 async function submit(event) {
 	event.preventDefault();
-	if (busy) return;
+	if (busy) {
+		return;
+	}
 	message = "";
 	error = false;
 	if (password !== confirmation) {

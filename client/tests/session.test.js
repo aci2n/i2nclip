@@ -35,13 +35,14 @@ test("fabricated, foreign, disposed and invalidated operation handles cannot aut
 	for (const handle of [
 		{ signal: new AbortController().signal },
 		other.operation(),
-	])
+	]) {
 		await assert.rejects(
 			f.identity.withIdentity(handle, () =>
 				assert.fail("invalid handle accepted"),
 			),
 			/Invalid session operation/,
 		);
+	}
 	operation.dispose();
 	await assert.rejects(
 		f.identity.withIdentity(operation, () => {}),

@@ -66,7 +66,9 @@ async function fixture(t, { create = false, origin = serverUrl } = {}) {
 		},
 		submit: async (_participant, step, message) => {
 			signal.throwIfAborted();
-			if (state.pairingFailure === step) throw httpError(503, password);
+			if (state.pairingFailure === step) {
+				throw httpError(503, password);
+			}
 			assert.equal(step, room.step + 1);
 			state.pairingSteps.push(step);
 			room = { ...room, step, message };
@@ -84,7 +86,9 @@ async function fixture(t, { create = false, origin = serverUrl } = {}) {
 		registerKey: async (options) => {
 			assert.equal(options.otc, otc);
 			state.registrations++;
-			if (state.registrationFailure) throw httpError(403, `${otc} ${password}`);
+			if (state.registrationFailure) {
+				throw httpError(403, `${otc} ${password}`);
+			}
 			state.registered = true;
 		},
 		upload: async (options) => {
@@ -105,11 +109,15 @@ async function fixture(t, { create = false, origin = serverUrl } = {}) {
 				metaHash: "initial",
 				payload,
 			});
-			if (state.onUpload) await state.onUpload(options);
+			if (state.onUpload) {
+				await state.onUpload(options);
+			}
 			return { id, metadata, metaHash: "initial" };
 		},
 		list: async (options) => {
-			if (state.onList) await state.onList(options);
+			if (state.onList) {
+				await state.onList(options);
+			}
 			const tokens = library.parseTagList(options.tags);
 			return {
 				items: [...state.items.values()]
@@ -122,7 +130,9 @@ async function fixture(t, { create = false, origin = serverUrl } = {}) {
 			};
 		},
 		getContent: async (options) => {
-			if (state.corruptDownload) return new Uint8Array([255]);
+			if (state.corruptDownload) {
+				return new Uint8Array([255]);
+			}
 			return readFile(state.items.get(options.id).payload);
 		},
 		getMetadata: async (options) => {
@@ -141,16 +151,22 @@ async function fixture(t, { create = false, origin = serverUrl } = {}) {
 			return { conflict: false, metaHash: item.metaHash };
 		},
 		remove: async (options) => {
-			if (state.deleteFailure)
+			if (state.deleteFailure) {
 				throw httpError(503, `${otc} ${password} ${privateKey}`);
-			if (!state.items.delete(options.id)) throw httpError(404);
+			}
+			if (!state.items.delete(options.id)) {
+				throw httpError(404);
+			}
 		},
 	};
 	const cli = async (args, options) => {
 		state.calls.push({ command: args[0], signal: options.signal });
-		if (args[0] === "upload") state.localPaths.push(args[1]);
-		if (args[0] === "download")
+		if (args[0] === "upload") {
+			state.localPaths.push(args[1]);
+		}
+		if (args[0] === "download") {
 			state.localPaths.push(args[args.indexOf("--output") + 1]);
+		}
 		await run(args, { ...options, api });
 	};
 	return {
@@ -194,10 +210,12 @@ test("smoke defaults include a maximum-size file and verify the complete CLI wor
 	);
 	assert.equal(f.state.deletedMetadataChecked, true);
 	assert.match(f.state.logs.at(-1), /PASS smoketest/);
-	for (const path of f.state.localPaths)
+	for (const path of f.state.localPaths) {
 		await assert.rejects(stat(path), { code: "ENOENT" });
-	for (const secret of [password, otc])
+	}
+	for (const secret of [password, otc]) {
 		assert.ok(!f.state.logs.join("\n").includes(secret));
+	}
 });
 
 test("pairing failure cancels its room before any upload and hides secrets", async (t) => {
@@ -257,8 +275,9 @@ test("cleanup discovers an upload whose successful response was lost", async (t)
 	assert.equal(f.state.items.size, 0);
 	assert.ok(f.state.logs.includes("PASS cleanup"));
 	assert.ok(!f.state.logs.join("\n").includes(password));
-	for (const path of f.state.localPaths)
+	for (const path of f.state.localPaths) {
 		await assert.rejects(stat(path), { code: "ENOENT" });
+	}
 });
 
 test("byte verification failures clean up every uploaded item", async (t) => {
@@ -332,14 +351,20 @@ test("cleanup errors identify remaining IDs without exposing secrets", async (t)
 	await assert.rejects(smoketest(f), /download verification/);
 	assert.equal(f.state.items.size, 3);
 	const logs = f.state.logs.join("\n");
-	for (const id of f.state.items.keys()) assert.ok(logs.includes(id));
-	for (const secret of [password, otc]) assert.ok(!logs.includes(secret));
+	for (const id of f.state.items.keys()) {
+		assert.ok(logs.includes(id));
+	}
+	for (const secret of [password, otc]) {
+		assert.ok(!logs.includes(secret));
+	}
 });
 
 test("cleanup failure makes an otherwise successful smoke test fail", async (t) => {
 	const f = await fixture(t);
 	f.state.onList = () => {
-		if (f.state.deletedMetadataChecked) throw httpError(503);
+		if (f.state.deletedMetadataChecked) {
+			throw httpError(503);
+		}
 	};
 	await assert.rejects(smoketest(f), /failed at cleanup/);
 	assert.equal(f.state.items.size, 0);

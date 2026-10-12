@@ -45,7 +45,9 @@ test("browser UI accesses no raw identity storage, credentials or API workflows"
 				await inspect(path);
 				continue;
 			}
-			if (!/\.(js|svelte)$/.test(entry.name)) continue;
+			if (!/\.(js|svelte)$/.test(entry.name)) {
+				continue;
+			}
 			const source = await readFile(path, "utf8");
 			assert(
 				!/indexedDB|localStorage|sessionStorage|browser\.storage|platform\.(?:local|session)|\.privateKey\b|\.\/api\.js|protocol\/(?:crypto|vault|identity)\.js/.test(
@@ -55,6 +57,7 @@ test("browser UI accesses no raw identity storage, credentials or API workflows"
 			);
 		}
 	}
-	for (const name of ["stores", "components", "views"])
+	for (const name of ["stores", "components", "views"]) {
 		await inspect(new URL(`../src/lib/${name}/`, import.meta.url));
+	}
 });

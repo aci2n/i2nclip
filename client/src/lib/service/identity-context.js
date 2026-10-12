@@ -22,7 +22,9 @@ export function createSessionContext(state) {
 	const snapshots = new WeakMap();
 	return {
 		invalidate() {
-			for (const operation of [...operations]) operation.abort(stale());
+			for (const operation of [...operations]) {
+				operation.abort(stale());
+			}
 		},
 		observe(listener, { includeUnlocked = true } = {}) {
 			let previous;
@@ -30,8 +32,9 @@ export function createSessionContext(state) {
 				if (
 					!value.ready ||
 					(previous && !changed(previous, value, includeUnlocked))
-				)
+				) {
 					return;
+				}
 				previous = value;
 				listener(Object.freeze({ ...value }));
 			});
@@ -47,12 +50,16 @@ export function createSessionContext(state) {
 				unlocked: Boolean(expected.privateKey),
 				signal: combined,
 				abort(reason) {
-					if (controller.signal.aborted || disposed) return;
+					if (controller.signal.aborted || disposed) {
+						return;
+					}
 					controller.abort(reason);
 					onInvalidated?.();
 				},
 				dispose() {
-					if (disposed) return;
+					if (disposed) {
+						return;
+					}
 					disposed = true;
 					operations.delete(operation);
 					unsubscribe();
@@ -60,7 +67,9 @@ export function createSessionContext(state) {
 				},
 			};
 			const unsubscribe = state.subscribe((value) => {
-				if (changed(expected, value)) operation.abort(stale());
+				if (changed(expected, value)) {
+					operation.abort(stale());
+				}
 			});
 			operations.add(operation);
 			snapshots.set(operation, expected);

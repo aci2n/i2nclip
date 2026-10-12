@@ -7,7 +7,9 @@ export function uniqueTags(text) {
 	const seen = new Set();
 	return splitTags(text).filter((tag) => {
 		const key = normalizeTag(tag);
-		if (seen.has(key)) return false;
+		if (seen.has(key)) {
+			return false;
+		}
 		seen.add(key);
 		return true;
 	});

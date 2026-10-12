@@ -18,7 +18,9 @@ export const FILES = [
 ];
 
 function check(condition) {
-	if (!condition) throw new Error("Smoke assertion failed.");
+	if (!condition) {
+		throw new Error("Smoke assertion failed.");
+	}
 }
 
 function same(value, expected) {
@@ -26,8 +28,12 @@ function same(value, expected) {
 }
 
 function status(error) {
-	if (Number.isInteger(error?.status)) return ` (HTTP ${error.status})`;
-	if (error?.name === "TimeoutError") return " (timeout)";
+	if (Number.isInteger(error?.status)) {
+		return ` (HTTP ${error.status})`;
+	}
+	if (error?.name === "TimeoutError") {
+		return " (timeout)";
+	}
 	const code = error?.cause?.code ?? error?.code;
 	const connectionErrors = [
 		"ETIMEDOUT",
@@ -118,7 +124,9 @@ export async function smoketest({
 				)
 			).libraries[0];
 		} catch (error) {
-			if (error.code !== "ENOENT") throw error;
+			if (error.code !== "ENOENT") {
+				throw error;
+			}
 		}
 		if (recovery) {
 			stage = "recovery server origin";
@@ -131,8 +139,9 @@ export async function smoketest({
 			.toString("utf8")
 			.trim();
 		check(otc.length > 0);
-		if (recovery) await command(["register", "--otc", otc]);
-		else {
+		if (recovery) {
+			await command(["register", "--otc", otc]);
+		} else {
 			await command(["create", "--server", serverUrl, "--otc", otc]);
 			recovery = (
 				await api.openRecovery(
@@ -291,7 +300,9 @@ export async function smoketest({
 			await getMetadata(id);
 			throw new Error("Deleted metadata is still present.");
 		} catch (error) {
-			if (error.status !== 404) throw error;
+			if (error.status !== 404) {
+				throw error;
+			}
 		}
 		report("PASS deletion and metadata 404");
 	} catch (error) {
@@ -317,7 +328,9 @@ export async function smoketest({
 				const cursors = new Set();
 				do {
 					const page = await search(tag, cleanupSignal, after);
-					for (const item of page.items) ids.add(item.id);
+					for (const item of page.items) {
+						ids.add(item.id);
+					}
 					after = page.next;
 					if (after) {
 						check(!cursors.has(after));
@@ -333,13 +346,19 @@ export async function smoketest({
 					await command(["delete", id], cleanupSignal);
 					ids.delete(id);
 				} catch (error) {
-					if (error.status === 404) ids.delete(id);
-					else cleanupFailed = true;
+					if (error.status === 404) {
+						ids.delete(id);
+					} else {
+						cleanupFailed = true;
+					}
 				}
 			}
-			if (ids.size)
+			if (ids.size) {
 				report(`FAIL cleanup; remaining IDs: ${[...ids].join(", ")}`);
-			if (!cleanupFailed) report("PASS cleanup");
+			}
+			if (!cleanupFailed) {
+				report("PASS cleanup");
+			}
 		}
 		if (temporary) {
 			try {
@@ -354,8 +373,9 @@ export async function smoketest({
 		const error = new Error(
 			`Smoke test failed at ${failure ? failedStage : "cleanup"}${status(failure)}.`,
 		);
-		if (signal?.aborted || failure?.name === "AbortError")
+		if (signal?.aborted || failure?.name === "AbortError") {
 			error.name = "AbortError";
+		}
 		throw error;
 	}
 	report("PASS smoketest (1 KiB, 1 MiB, 32 MiB)");

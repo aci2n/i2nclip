@@ -63,8 +63,9 @@ test("XPI contains referenced runtime assets without update metadata", async () 
 		"background.js",
 		"app.css",
 	];
-	for (const name of assets)
+	for (const name of assets) {
 		assert(names.includes(name), `Missing extension asset: ${name}`);
+	}
 	assert(
 		names.every(
 			(name) => assets.includes(name) || /^chunks\/[^/]+\.js$/.test(name),

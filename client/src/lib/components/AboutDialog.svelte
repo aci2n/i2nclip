@@ -9,7 +9,9 @@ let { open, onclose } = $props();
 	use:modal={open}
 	aria-labelledby="about-heading"
 	onclick={(event) => {
-		if (event.target === event.currentTarget) onclose();
+		if (event.target === event.currentTarget) {
+			onclose();
+		}
 	}}
 	onkeydown={(event) => {
 		if (event.key === "Escape") {

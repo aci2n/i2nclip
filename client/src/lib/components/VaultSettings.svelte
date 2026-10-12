@@ -10,7 +10,9 @@ let error = $state(false);
 let busy = $state(false);
 async function change(event) {
 	event.preventDefault();
-	if (busy) return;
+	if (busy) {
+		return;
+	}
 	error = false;
 	message = "";
 	if (password !== confirmation) {
@@ -18,8 +20,8 @@ async function change(event) {
 		message = "Passwords do not match.";
 		return;
 	}
-	const old = current,
-		secret = password;
+	const old = current;
+	const secret = password;
 	current = "";
 	password = "";
 	confirmation = "";

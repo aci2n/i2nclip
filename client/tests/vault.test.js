@@ -16,10 +16,16 @@ function backend() {
 		get: async (id) => structuredClone(records.get(id)),
 		async commit(entries, remove = [], clear = false) {
 			const next = clear ? new Map() : new Map(records);
-			for (const id of remove) next.delete(id);
-			for (const [id, value] of entries) next.set(id, structuredClone(value));
+			for (const id of remove) {
+				next.delete(id);
+			}
+			for (const [id, value] of entries) {
+				next.set(id, structuredClone(value));
+			}
 			records.clear();
-			for (const [id, value] of next) records.set(id, value);
+			for (const [id, value] of next) {
+				records.set(id, value);
+			}
 		},
 	};
 }
@@ -31,8 +37,8 @@ async function fixture(t, options = {}, storage = backend()) {
 		api: { list: async () => ({ items: [], next: null }) },
 		...options,
 	});
-	const first = engineClient(engine),
-		second = engineClient(engine);
+	const first = engineClient(engine);
+	const second = engineClient(engine);
 	t.after(() => {
 		first.dispose();
 		second.dispose();
@@ -61,8 +67,8 @@ async function addIdentity(
 }
 
 test("master password protects catalog, keys, job metadata and binary sources; password change rewrites only the wrapper", async () => {
-	const storage = backend(),
-		repository = createEncryptedRepository(storage);
+	const storage = backend();
+	const repository = createEncryptedRepository(storage);
 	await repository.ready;
 	await repository.initialize("master-password");
 	const key = await generatePrivateKey();
@@ -95,10 +101,11 @@ test("master password protects catalog, keys, job metadata and binary sources; p
 		"private-tag",
 		"private upload bytes",
 		"master-password",
-	])
+	]) {
 		assert(!saved.includes(secret));
-	const catalog = structuredClone(storage.records.get("catalog")),
-		bytes = structuredClone(storage.records.get("source:job"));
+	}
+	const catalog = structuredClone(storage.records.get("catalog"));
+	const bytes = structuredClone(storage.records.get("source:job"));
 	await repository.changePassword("master-password", "new-master-password");
 	assert.deepEqual(storage.records.get("catalog"), catalog);
 	assert.deepEqual(storage.records.get("source:job"), bytes);
@@ -149,8 +156,8 @@ test("all tabs unlock and lock together; owner restart hides every library until
 
 test("lock interrupts an active upload and restored jobs require explicit retry", async (t) => {
 	const pending = deferred();
-	let calls = 0,
-		signal;
+	let calls = 0;
+	let signal;
 	const f = await fixture(t, {
 		upload: (options) => {
 			calls++;
@@ -188,8 +195,8 @@ test("lock interrupts an active upload and restored jobs require explicit retry"
 test("recovery files use independent passwords, merge atomically across servers and skip duplicate identities", async (t) => {
 	const f = await fixture(t);
 	await f.first.command("vault.initialize", { password: "destination-master" });
-	const a = await generatePrivateKey(),
-		b = await generatePrivateKey();
+	const a = await generatePrivateKey();
+	const b = await generatePrivateKey();
 	const libraries = [
 		{
 			name: "Same",
@@ -208,8 +215,9 @@ test("recovery files use independent passwords, merge atomically across servers 
 		"one.example",
 		"Same",
 		"recovery-password",
-	])
+	]) {
 		assert(!text.includes(secret));
+	}
 	await assert.rejects(
 		openRecovery(text, "destination-master"),
 		/Wrong password/,
@@ -256,8 +264,8 @@ test("recovery files use independent passwords, merge atomically across servers 
 });
 
 test("failed commits preserve the old master password and cannot acknowledge source acceptance", async () => {
-	const storage = backend(),
-		repository = createEncryptedRepository(storage);
+	const storage = backend();
+	const repository = createEncryptedRepository(storage);
 	await repository.ready;
 	await repository.initialize("master-password");
 	const commit = storage.commit;
@@ -296,9 +304,9 @@ test("lock during unlock prevents partial activation; corrupt identities leave e
 	);
 	assert.equal(get(f.second).vault.status, "locked");
 	assert.deepEqual(get(f.second).libraries, {});
-	const opened = deferred(),
-		release = deferred(),
-		unlock = f.repository.unlock;
+	const opened = deferred();
+	const release = deferred();
+	const unlock = f.repository.unlock;
 	f.repository.unlock = async (...args) => {
 		opened.resolve();
 		await release.promise;
@@ -317,8 +325,8 @@ test("lock during unlock prevents partial activation; corrupt identities leave e
 });
 
 test("encrypted sources are bound to their identifier and cannot be substituted", async () => {
-	const storage = backend(),
-		repository = createEncryptedRepository(storage);
+	const storage = backend();
+	const repository = createEncryptedRepository(storage);
 	await repository.ready;
 	await repository.initialize("master-password");
 	await repository
@@ -332,13 +340,13 @@ test("encrypted sources are bound to their identifier and cannot be substituted"
 });
 
 test("locked context uploads stay transient until unlock and destination selection", async (t) => {
-	const opened = [],
-		f = await fixture(t, {
-			platform: {
-				openUpload: (...args) => opened.push(args),
-				fetchMedia: async () => new Response("bytes"),
-			},
-		});
+	const opened = [];
+	const f = await fixture(t, {
+		platform: {
+			openUpload: (...args) => opened.push(args),
+			fetchMedia: async () => new Response("bytes"),
+		},
+	});
 	await f.first.command("vault.initialize", { password: "master-password" });
 	await addIdentity(f, "lib");
 	await f.first.command("vault.lock");
@@ -359,8 +367,8 @@ test("locked context uploads stay transient until unlock and destination selecti
 test("lock invalidates queued unlock commands instead of reopening the vault", async (t) => {
 	const f = await fixture(t);
 	await f.first.command("vault.initialize", { password: "master-password" });
-	const entered = deferred(),
-		release = deferred();
+	const entered = deferred();
+	const release = deferred();
 	f.repository.changePassword = async () => {
 		entered.resolve();
 		await release.promise;
@@ -384,15 +392,15 @@ test("lock invalidates queued unlock commands instead of reopening the vault", a
 });
 
 test("source acceptance waits for one atomic encrypted catalog and source commit", async () => {
-	const storage = backend(),
-		repository = createEncryptedRepository(storage);
+	const storage = backend();
+	const repository = createEncryptedRepository(storage);
 	await repository.ready;
 	await repository.initialize("master-password");
-	const committed = deferred(),
-		release = deferred(),
-		commit = storage.commit;
-	let entries,
-		acknowledged = false;
+	const committed = deferred();
+	const release = deferred();
+	const commit = storage.commit;
+	let entries;
+	let acknowledged = false;
 	storage.commit = async (...args) => {
 		entries = args[0];
 		committed.resolve();
@@ -518,7 +526,9 @@ test("recovery review keeps secrets local and import completion survives its own
 	});
 	t.after(form.dispose);
 	const unsubscribe = f.first.subscribe((value) => {
-		if (value.catalog.length) form.dispose();
+		if (value.catalog.length) {
+			form.dispose();
+		}
 	});
 	t.after(unsubscribe);
 	form.edit("files", [file]);

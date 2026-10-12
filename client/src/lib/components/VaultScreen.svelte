@@ -7,7 +7,9 @@ let busy = $state(false);
 const creating = $derived($vault.status === "uninitialized");
 async function submit(event) {
 	event.preventDefault();
-	if (busy) return;
+	if (busy) {
+		return;
+	}
 	error = "";
 	if (creating && password !== confirmation) {
 		error = "Passwords do not match.";

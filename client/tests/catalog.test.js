@@ -91,14 +91,18 @@ test("global reset removes provisional setup and clears its form secrets", async
 });
 
 function catalogRepository(records) {
-	const rows = new Map(records.map((row) => [row.id, structuredClone(row)])),
-		scopes = new Map();
+	const rows = new Map(records.map((row) => [row.id, structuredClone(row)]));
+	const scopes = new Map();
 	const scope = (id) => {
-		if (scopes.has(id)) return scopes.get(id);
+		if (scopes.has(id)) {
+			return scopes.get(id);
+		}
 		const repo = memoryRepository(rows.get(id)?.identity);
 		const base = repo.setConfig;
 		repo.setConfig = async (identity, options) => {
-			if (!rows.has(id)) throw new Error("Library removed");
+			if (!rows.has(id)) {
+				throw new Error("Library removed");
+			}
 			if (
 				identity.publicKey &&
 				[...rows.values()].some(
@@ -107,8 +111,9 @@ function catalogRepository(records) {
 						row.identity?.publicKey === identity.publicKey &&
 						row.identity.serverUrl === identity.serverUrl,
 				)
-			)
+			) {
 				throw new Error("already saved");
+			}
 			await base(identity, options);
 			rows.get(id).identity = structuredClone(identity);
 		};
@@ -135,7 +140,9 @@ function catalogRepository(records) {
 				await scope(id).reset();
 				rows.delete(id);
 			}
-			if (replacement) rows.set(replacement.id, replacement);
+			if (replacement) {
+				rows.set(replacement.id, replacement);
+			}
 		},
 		close() {},
 	};
@@ -165,8 +172,8 @@ async function fixture(t, extra = {}) {
 	const root = engineClient(engine);
 	t.after(root.dispose);
 	await root.ready;
-	const a = createLibraryClient(root, "lib-0"),
-		b = createLibraryClient(root, "lib-1");
+	const a = createLibraryClient(root, "lib-0");
+	const b = createLibraryClient(root, "lib-1");
 	t.after(a.dispose);
 	t.after(b.dispose);
 	return { root, a, b, engine, repository, keys };
@@ -182,7 +189,9 @@ test("setup keeps a failed registration out of the catalog, resumes its identity
 		api: {
 			list: async () => ({ items: [], next: null }),
 			registerAuthenticatedKey: async () => {
-				if (++attempts === 1) throw new Error("offline");
+				if (++attempts === 1) {
+					throw new Error("offline");
+				}
 			},
 		},
 	});
@@ -250,14 +259,16 @@ test("library selection is independent and vault unlock applies to all libraries
 test("switching tabs does not retarget a running upload; the owner has one upload lane", async (t) => {
 	const gate = deferred();
 	const seen = [];
-	let active = 0,
-		max = 0;
+	let active = 0;
+	let max = 0;
 	const f = await fixture(t, {
 		upload: async (options) => {
 			active++;
 			max = Math.max(max, active);
 			seen.push(options.credentials.privateKey);
-			if (seen.length === 1) await gate.promise;
+			if (seen.length === 1) {
+				await gate.promise;
+			}
 			active--;
 			return { id: `media-${seen.length}` };
 		},

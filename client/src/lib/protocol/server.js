@@ -11,6 +11,7 @@ export function checkServer(serverUrl) {
 		!["http:", "https:"].includes(url.protocol) ||
 		url.username ||
 		url.password
-	)
+	) {
 		throw new Error("Invalid server URL.");
+	}
 }

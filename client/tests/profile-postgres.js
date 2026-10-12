@@ -89,7 +89,9 @@ async function signedHeaders(key, method, pathname, body) {
 
 async function upload(key, body, chunked) {
 	const headers = await signedHeaders(key, "POST", "/api/media", body);
-	if (!chunked) headers["content-length"] = body.length;
+	if (!chunked) {
+		headers["content-length"] = body.length;
+	}
 	const response = new Promise((resolve, reject) => {
 		const request = http.request(
 			`${origin}/api/media`,
@@ -107,11 +109,14 @@ async function upload(key, body, chunked) {
 		(async () => {
 			if (chunked) {
 				for (let offset = 0; offset < body.length; offset += 16 * 1024) {
-					if (!request.write(body.subarray(offset, offset + 16 * 1024)))
+					if (!request.write(body.subarray(offset, offset + 16 * 1024))) {
 						await once(request, "drain");
+					}
 				}
 				request.end();
-			} else request.end(body);
+			} else {
+				request.end(body);
+			}
 		})().catch(reject);
 	});
 	const result = await response;
@@ -143,7 +148,9 @@ async function receive(response, id, expectedContent) {
 		expectedContent.length,
 	);
 	const chunks = [];
-	for await (const chunk of response) chunks.push(chunk);
+	for await (const chunk of response) {
+		chunks.push(chunk);
+	}
 	const bytes = Buffer.concat(chunks);
 	assert.equal(await bodyHash(bytes), id);
 	assert.deepEqual(
@@ -190,9 +197,12 @@ async function run() {
 		});
 		const deadline = Date.now() + 30_000;
 		while (true) {
-			if (serverError) throw serverError;
-			if (server.exitCode !== null)
+			if (serverError) {
+				throw serverError;
+			}
+			if (server.exitCode !== null) {
 				throw new Error("profile server exited during startup");
+			}
 			try {
 				const response = await fetch(`${origin}/api/health`);
 				if (response.ok) {
@@ -300,7 +310,9 @@ async function run() {
 		}
 		stop = true;
 		await Promise.all([monitoring, healthMonitor, postgresMonitor]);
-		if (monitorError) throw monitorError;
+		if (monitorError) {
+			throw monitorError;
+		}
 		monitoring = undefined;
 		console.log(
 			JSON.stringify(
@@ -327,7 +339,9 @@ async function run() {
 		await Promise.allSettled(
 			[monitoring, healthMonitor, postgresMonitor].filter(Boolean),
 		);
-		for (const response of heldResponses) response.destroy();
+		for (const response of heldResponses) {
+			response.destroy();
+		}
 		if (server?.pid && server.exitCode === null) {
 			const exited = once(server, "exit");
 			server.kill("SIGTERM");
