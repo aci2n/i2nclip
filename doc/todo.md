@@ -19,4 +19,14 @@ Work through these in order. Details and reproductions are in [the audit report]
 
 12. [x] Device pairing with a 12-character code and OPAQUE. Backend only relays messages; see [the protocol](pairing.md). Explicit approval, encrypted transfer, and a new device password work across web and extension clients. Client/Rust tests, all 81 Firefox tests, final pairing regressions, installed-extension worker/CSP verification, lint, and package checks pass.
 
-13. multi-library: with pairing, a user may choose to share a library with other users, while keeping a personal library private. Libraries should be name-able client side. Backend should be mostly unchanged, but it shuold provide a authenticated API to register new public keys so we don't need to issue OTC every time.
+12.5 refactor client lock ownership model (shared worker/background service)
+
+13. [x] Remove custom margins from form labels and use container gaps where suitable. Reviewed the full UI for consistent spacing using Spectrum and GOV.UK design-system guidance. Forms, disclosures, cards, empty states, and About now use explicit spacing. Client tests (177), checker, lint, formatting, web/extension builds, and five focused Firefox runs pass; light/dark screenshots were inspected at narrow widths.
+
+14. multi-library: with pairing, a user may choose to share a library with other users, while keeping a personal library private. Libraries should be name-able client side. Backend should be mostly unchanged, but it should provide an authenticated API to register new public keys so we don't need to issue OTC every time.
+
+15. allow multiple pairing sessions for the same owner: if the pk is shared, multiple users may be pairing at the same time
+
+16. pairing state in DB (stateless servers)
+
+17. [x] Replace scripts/dev.sh with compose.yaml: explicit bridge network, PostgreSQL health-gated startup, persistent project-scoped storage, and loopback port/origin overrides. Make development targets now delegate to Podman Compose. Updated setup/reset documentation and shared build-context exclusions for both Compose providers. Verified full and cached image builds, API/web assets, invitation issuance, database readiness and persistence across teardown/restart, and unhealthy-database startup failure in disposable Compose projects.

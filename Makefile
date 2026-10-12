@@ -4,8 +4,11 @@ IMAGE ?= i2nclip
 TAG ?= latest
 PORT ?= 8080
 HOST ?= deploy@example.com
+COMPOSE ?= podman compose
 DEV_PORT ?= 8080
+DEV_DB_PORT ?= 5432
 DEV_ORIGIN ?= http://localhost:$(DEV_PORT)
+DEV_DB_URL ?= postgresql://i2nclip:i2nclip-dev@127.0.0.1:$(DEV_DB_PORT)/i2nclip?sslmode=disable
 SMOKE_SERVER ?= https://clip.i2n.duckdns.org
 SMOKE_DIR ?= $(HOME)/.config/i2nclip/smoke
 
@@ -24,12 +27,28 @@ web extension cli packages dev-extension:
 	$(MAKE) -C client $@
 
 run:
-	cargo run
+	I2N_ORIGIN="$(DEV_ORIGIN)" I2N_DATABASE_URL="$(DEV_DB_URL)" cargo run $(RUN_ARGS)
 
-# Local containers: only the web/API port is published, on loopback.
+debug:
+	rust-gdb target/debug/i2nclip
+
+# Local containers: web/API and PostgreSQL ports bind to loopback.
 .PHONY: dev dev-db dev-down dev-otc
-dev dev-db dev-down dev-otc:
-	DEV_PORT="$(DEV_PORT)" DEV_ORIGIN="$(DEV_ORIGIN)" sh scripts/dev.sh $@
+dev dev-db dev-down dev-otc: export DEV_PORT := $(DEV_PORT)
+dev dev-db dev-down dev-otc: export DEV_DB_PORT := $(DEV_DB_PORT)
+dev dev-db dev-down dev-otc: export DEV_ORIGIN := $(DEV_ORIGIN)
+
+dev:
+	$(COMPOSE) up --build --exit-code-from server server
+
+dev-db:
+	$(COMPOSE) up --detach --wait --wait-timeout 90 db
+
+dev-down:
+	$(COMPOSE) down
+
+dev-otc:
+	$(COMPOSE) exec -T server i2nclip otc issue
 
 # Tests and verification. Install toolchains and client dependencies first.
 .PHONY: test test-client test-packages test-extension-pairing test-db test-profile test-e2e test-smoke test-all

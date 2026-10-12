@@ -22,7 +22,7 @@ let { open, onclose } = $props();
 		onclose();
 	}}
 >
-	<section>
+	<section class="stack">
 		<h2 id="about-heading">About i2nclip</h2>
 		<p>Version {version}</p>
 		<p>

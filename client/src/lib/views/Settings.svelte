@@ -89,7 +89,7 @@ function create(event) {
 				aria-labelledby="create-tab"
 				hidden={mode !== "create"}
 			>
-				<form id="create" onsubmit={create}>
+				<form class="stack" id="create" onsubmit={create}>
 					{#if $session.pendingRegistration}
 						<p id="pending-creation">
 							Your encrypted identity is saved. Retry registration with the
@@ -97,36 +97,41 @@ function create(event) {
 							return later.
 						</p>
 					{/if}
-					<label for="otc">Invitation code</label>
-					<input
-						id="otc"
-						type="text"
-						required
-						autocomplete="off"
-						spellcheck="false"
-						bind:value={
-							() => $settings.otc,
-							(value) => settings.edit("otc", value)
-						}
-						disabled={$session.busy}
-					>
-					<label for="pass">Unlock password</label>
-					<input
-						id="pass"
-						type="password"
-						required
-						minlength="8"
-						autocomplete="new-password"
-						bind:value={
-							() => $settings.password,
-							(value) => settings.edit("password", value)
-						}
-						disabled={$session.busy}
-					>
-					<p>
-						Use at least 8 characters. Your password is never stored or sent to
-						the server.
-					</p>
+					<div class="field">
+						<label for="otc">Invitation code</label>
+						<input
+							id="otc"
+							type="text"
+							required
+							autocomplete="off"
+							spellcheck="false"
+							bind:value={
+								() => $settings.otc,
+								(value) => settings.edit("otc", value)
+							}
+							disabled={$session.busy}
+						>
+					</div>
+					<div class="field">
+						<label for="pass">Unlock password</label>
+						<input
+							id="pass"
+							aria-describedby="create-password-hint"
+							type="password"
+							required
+							minlength="8"
+							autocomplete="new-password"
+							bind:value={
+								() => $settings.password,
+								(value) => settings.edit("password", value)
+							}
+							disabled={$session.busy}
+						>
+						<p id="create-password-hint">
+							Use at least 8 characters. Your password is never stored or sent
+							to the server.
+						</p>
+					</div>
 					<button id="create-library" type="submit" disabled={$session.busy}>
 						{$session.pendingRegistration
 							? "Retry registration"
@@ -153,6 +158,7 @@ function create(event) {
 				hidden={mode !== "restore"}
 			>
 				<form
+					class="stack"
 					id="restore-settings"
 					onsubmit={(event) => {
 						event.preventDefault();
@@ -160,30 +166,34 @@ function create(event) {
 					}}
 				>
 					<p>Choose your recovery file and enter its password.</p>
-					<label for="file">Recovery file</label>
-					<input
-						id="file"
-						type="file"
-						required
-						accept=".json,application/json"
-						bind:files={
-							() => $settings.recoveryFiles,
-							(value) => settings.edit("recoveryFiles", value)
-						}
-						disabled={$session.busy}
-					>
-					<label for="restore-pass">Recovery password</label>
-					<input
-						id="restore-pass"
-						type="password"
-						required
-						autocomplete="current-password"
-						bind:value={
-							() => $settings.restorePassword,
-							(value) => settings.edit("restorePassword", value)
-						}
-						disabled={$session.busy}
-					>
+					<div class="field">
+						<label for="file">Recovery file</label>
+						<input
+							id="file"
+							type="file"
+							required
+							accept=".json,application/json"
+							bind:files={
+								() => $settings.recoveryFiles,
+								(value) => settings.edit("recoveryFiles", value)
+							}
+							disabled={$session.busy}
+						>
+					</div>
+					<div class="field">
+						<label for="restore-pass">Recovery password</label>
+						<input
+							id="restore-pass"
+							type="password"
+							required
+							autocomplete="current-password"
+							bind:value={
+								() => $settings.restorePassword,
+								(value) => settings.edit("restorePassword", value)
+							}
+							disabled={$session.busy}
+						>
+					</div>
 					<button id="restore" type="submit" disabled={$session.busy}>
 						Restore library
 					</button>
@@ -192,7 +202,7 @@ function create(event) {
 			</div>
 		</section>
 	{:else}
-		<section id="configured" class="panel">
+		<section id="configured" class="panel stack">
 			<h2>Your library</h2>
 			<p>
 				Keep a recovery file and remember your password. You need both to
@@ -211,17 +221,19 @@ function create(event) {
 		</section>
 		<details id="reset-settings" class="panel">
 			<summary>Reset this browser</summary>
-			<p>Keep a recovery file first. Uploads on the server stay saved.</p>
-			<button
-				id="reset"
-				type="button"
-				class="secondary danger"
-				disabled={$session.busy}
-				onclick={settings.reset}
-			>
-				Reset everything
-			</button>
-			{@render notice("reset")}
+			<div class="stack disclosure-body">
+				<p>Keep a recovery file first. Uploads on the server stay saved.</p>
+				<button
+					id="reset"
+					type="button"
+					class="secondary danger"
+					disabled={$session.busy}
+					onclick={settings.reset}
+				>
+					Reset everything
+				</button>
+				{@render notice("reset")}
+			</div>
 		</details>
 	{/if}
 	<Pairing {session} {pairing} server={$settings.server} />
@@ -230,32 +242,35 @@ function create(event) {
 			Server settings <span class="server-address">{savedServer}</span>
 		</summary>
 		<form
+			class="stack server-form"
 			id="server-settings"
 			onsubmit={(event) => {
 				event.preventDefault();
 				settings.setServer();
 			}}
 		>
-			<label for="server">Server URL</label>
-			<div class="bar server-bar">
-				<input
-					id="server"
-					bind:this={serverInput}
-					type="url"
-					required
-					bind:value={
-						() => $settings.server,
-						(value) => settings.edit("server", value)
-					}
-					disabled={$session.busy || Boolean($session.pendingRegistration)}
-				>
-				<button
-					id="save-server"
-					type="submit"
-					disabled={$session.busy || Boolean($session.pendingRegistration)}
-				>
-					Update URL
-				</button>
+			<div class="field">
+				<label for="server">Server URL</label>
+				<div class="bar server-bar">
+					<input
+						id="server"
+						bind:this={serverInput}
+						type="url"
+						required
+						bind:value={
+							() => $settings.server,
+							(value) => settings.edit("server", value)
+						}
+						disabled={$session.busy || Boolean($session.pendingRegistration)}
+					>
+					<button
+						id="save-server"
+						type="submit"
+						disabled={$session.busy || Boolean($session.pendingRegistration)}
+					>
+						Update URL
+					</button>
+				</div>
 			</div>
 			{@render notice("server")}
 		</form>
@@ -290,6 +305,10 @@ function create(event) {
 	color: var(--accent);
 	border-bottom-color: var(--accent);
 	font-weight: 600;
+}
+.server-form,
+.disclosure-body {
+	margin-top: 1rem;
 }
 .server-address {
 	overflow-wrap: anywhere;

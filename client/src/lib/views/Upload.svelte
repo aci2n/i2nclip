@@ -5,9 +5,9 @@ let { session, pending, auto = false, settingsHref } = $props();
 const tags = $derived(pending.tags);
 </script>
 
-<section class="panel">
+<section class="panel stack">
 	<h2>{auto ? "Save to your library" : "Upload with tags"}</h2>
-	<p id="name">{$pending.name}</p>
+	<p id="name" class="name">{$pending.name}</p>
 	{#if $pending.preview}
 		<img
 			id="preview"
@@ -25,6 +25,7 @@ const tags = $derived(pending.tags);
 		<Unlock {session} id={auto ? "form" : "unlock"} />
 	{:else}
 		<form
+			class="stack"
 			id="send"
 			onsubmit={(event) => {
 				event.preventDefault();
@@ -32,8 +33,10 @@ const tags = $derived(pending.tags);
 			}}
 		>
 			{#if !auto}
-				<label for="tags">Tags, separated by commas</label>
-				<input id="tags" bind:value={$tags} disabled={$pending.busy}>
+				<div class="field">
+					<label for="tags">Tags, separated by commas</label>
+					<input id="tags" bind:value={$tags} disabled={$pending.busy}>
+				</div>
 			{/if}
 			<button type="submit" disabled={!$pending.available || $pending.busy}>
 				{$pending.busy ? "Uploading…" : "Upload"}
@@ -44,10 +47,14 @@ const tags = $derived(pending.tags);
 </section>
 
 <style>
+.name {
+	overflow-wrap: anywhere;
+}
 .upload-preview {
 	display: block;
 	max-width: 100%;
 	max-height: 12rem;
-	margin: 1rem auto;
+	object-fit: contain;
+	margin: 0 auto;
 }
 </style>

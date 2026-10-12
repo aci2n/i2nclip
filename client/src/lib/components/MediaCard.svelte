@@ -129,6 +129,7 @@ const summary = $derived(
 	padding: 0.75rem;
 	display: flex;
 	flex-direction: column;
+	gap: 0.5rem;
 }
 .card-title {
 	display: -webkit-box;
@@ -139,11 +140,11 @@ const summary = $derived(
 	overflow-wrap: anywhere;
 	min-height: 2.8em;
 	line-height: 1.4;
-	margin-top: 0.75rem;
+	margin-top: 0.25rem;
 }
 .meta {
 	font-size: 0.85rem;
-	margin: 0.5rem 0;
+	margin: 0;
 }
 .card.deleted {
 	opacity: 0.2;
@@ -210,7 +211,7 @@ const summary = $derived(
 	color: white;
 }
 .card-details {
-	margin: 0.5rem 0;
+	margin: 0;
 	color: var(--muted);
 	font-size: 0.85rem;
 }
@@ -237,5 +238,6 @@ dd {
 }
 output {
 	display: block;
+	margin: 0;
 }
 </style>

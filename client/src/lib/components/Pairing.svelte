@@ -68,33 +68,38 @@ async function connect(event) {
 						Connect existing library
 					</button>
 				{:else}
-					<form id="pairing-receive" onsubmit={connect}>
-						<label for="pairing-input">Pairing code</label>
-						<input
-							id="pairing-input"
-							required
-							maxlength="32"
-							autocomplete="off"
-							autocapitalize="characters"
-							spellcheck="false"
-							placeholder="K7MP-W4TX-N9RC"
-							bind:value={code}
-							{disabled}
-						>
-						<label for="pairing-password">Password for this device</label>
-						<input
-							id="pairing-password"
-							type="password"
-							required
-							minlength="8"
-							autocomplete="new-password"
-							bind:value={password}
-							{disabled}
-						>
-						<p>
-							Use at least 8 characters. This password protects the key saved in
-							this browser.
-						</p>
+					<form class="stack" id="pairing-receive" onsubmit={connect}>
+						<div class="field">
+							<label for="pairing-input">Pairing code</label>
+							<input
+								id="pairing-input"
+								required
+								maxlength="32"
+								autocomplete="off"
+								autocapitalize="characters"
+								spellcheck="false"
+								placeholder="K7MP-W4TX-N9RC"
+								bind:value={code}
+								{disabled}
+							>
+						</div>
+						<div class="field">
+							<label for="pairing-password">Password for this device</label>
+							<input
+								id="pairing-password"
+								aria-describedby="pairing-password-hint"
+								type="password"
+								required
+								minlength="8"
+								autocomplete="new-password"
+								bind:value={password}
+								{disabled}
+							>
+							<p id="pairing-password-hint">
+								Use at least 8 characters. This password protects the key saved
+								in this browser.
+							</p>
+						</div>
 						<button type="submit" {disabled}>Connect library</button>
 					</form>
 				{/if}
@@ -150,8 +155,8 @@ async function connect(event) {
 <style>
 .pairing {
 	display: grid;
-	gap: 0.75rem;
-	margin-top: 0.75rem;
+	gap: 1rem;
+	margin-top: 1rem;
 }
 .pairing > button {
 	justify-self: start;
