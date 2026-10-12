@@ -1,5 +1,6 @@
 <script>
 import { onDestroy, untrack } from "svelte";
+import ManageLibraries from "./lib/components/ManageLibraries.svelte";
 import AboutDialog from "./lib/components/AboutDialog.svelte";
 import { createApplication } from "./lib/stores/application.js";
 import Library from "./lib/views/Library.svelte";
@@ -13,19 +14,6 @@ const session = app.session;
 const page = $derived($app.page);
 const library = $derived($app.library);
 let aboutOpen = $state(false);
-let libraryName = $state("");
-let catalogError = $state("");
-let adding = $state(false);
-async function catalogAction(action) {
-	catalogError = "";
-	try {
-		await action();
-		libraryName = "";
-		adding = false;
-	} catch (error) {
-		catalogError = error.message;
-	}
-}
 onDestroy(app.dispose);
 </script>
 
@@ -37,6 +25,18 @@ onDestroy(app.dispose);
 			onclick={(event) => app.navigate(event, "library")}
 			>i2nclip</a
 		>
+		{#if !$app.popupPage && $app.catalog.length > 1}
+			<select
+				id="library-selector"
+				aria-label="Library"
+				value={$app.libraryId}
+				onchange={(event) => app.selectLibrary(event.currentTarget.value)}
+			>
+				{#each $app.catalog as saved}
+					<option value={saved.id}>{saved.name}</option>
+				{/each}
+			</select>
+		{/if}
 		<nav aria-label="Main navigation">
 			{#if $app.popupPage}
 				<a
@@ -63,80 +63,19 @@ onDestroy(app.dispose);
 			<button type="button" onclick={() => (aboutOpen = true)}>About</button>
 		</nav>
 	</header>
-	{#if !$app.popupPage && $app.catalog.length}
-		<div class="catalog bar">
-			<label for="library-selector">Library</label>
-			<select
-				id="library-selector"
-				value={$app.libraryId}
-				onchange={(event) => app.selectLibrary(event.currentTarget.value)}
-			>
-				{#each $app.catalog as saved}
-					<option value={saved.id}>{saved.name}</option>
-				{/each}
-			</select>
-			<button
-				type="button"
-				class="secondary"
-				onclick={() => {
-					adding = !adding;
-					libraryName = "";
-				}}
-			>
-				Add library
-			</button>
-		</div>
-		{#if adding}
-			<form
-				class="bar catalog"
-				onsubmit={(event) => {
-					event.preventDefault();
-					catalogAction(() => app.addLibrary(libraryName));
-				}}
-			>
-				<label for="new-library-name">Library name</label>
-				<input
-					id="new-library-name"
-					bind:value={libraryName}
-					required
-					maxlength="80"
-				>
-				<button type="submit">Add</button>
-			</form>
-		{:else if page === "options"}
-			<form
-				class="bar catalog"
-				onsubmit={(event) => {
-					event.preventDefault();
-					catalogAction(() => app.renameLibrary(libraryName));
-				}}
-			>
-				<label for="rename-library">Rename library</label>
-				<input
-					id="rename-library"
-					bind:value={libraryName}
-					required
-					maxlength="80"
-				>
-				<button type="submit">Rename</button>
-				<button
-					type="button"
-					class="secondary danger"
-					onclick={() => catalogAction(app.forgetLibrary)}
-				>
-					Forget this library
-				</button>
-			</form>
-		{/if}
-		{#if catalogError}
-			<p role="alert">{catalogError}</p>
-		{/if}
-	{/if}
 	{#if !$session.ready}
 		<p role="status">Loading…</p>
 	{:else if page === "options"}
 		{#key $app.libraryId}
-			<Settings {session} settings={app.settings} pairing={app.pairing} />
+			<Settings {session} settings={app.settings} pairing={app.pairing}>
+				{#snippet management()}
+					<ManageLibraries
+						{app}
+						catalog={$app.catalog}
+						libraryId={$app.libraryId}
+					/>
+				{/snippet}
+			</Settings>
 		{/key}
 	{:else if page === "upload" || page === "unlock"}
 		<Upload
@@ -159,14 +98,13 @@ onDestroy(app.dispose);
 <AboutDialog open={aboutOpen} onclose={() => (aboutOpen = false)} />
 
 <style>
-.catalog {
-	flex-wrap: wrap;
-	margin-bottom: 1rem;
-	gap: 0.5rem;
-}
-.catalog select {
-	flex: 1;
+#library-selector {
+	width: auto;
+	max-width: min(12rem, 100%);
 	min-width: 0;
+	padding: 0.375rem 0.5rem;
+	font-size: 0.875rem;
+	margin-right: auto;
 }
 main {
 	max-width: 76rem;

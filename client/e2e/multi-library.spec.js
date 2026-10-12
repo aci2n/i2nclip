@@ -18,12 +18,14 @@ async function createPersonal(page, kind, app) {
 	await fillCreation(page, await issueOtc(app.data));
 	await page.locator("#pass").press("Enter");
 	await expect(page.locator("#configured")).toBeVisible();
-	return page.locator("#library-selector").inputValue();
+	await expect(page.locator("#library-selector")).toHaveCount(0);
+	return new URL(page.url()).searchParams.get("library");
 }
 async function add(page, name) {
-	await page.getByRole("button", { name: "Add library", exact: true }).click();
+	await page.getByRole("link", { name: "Settings", exact: true }).click();
+	await page.locator("#add-library-settings > summary").click();
 	await page.locator("#new-library-name").fill(name);
-	await page.getByRole("button", { name: "Add", exact: true }).click();
+	await page.getByRole("button", { name: "Add library", exact: true }).click();
 	await expect(page.locator("#create")).toBeVisible();
 	return page.locator("#library-selector").inputValue();
 }
@@ -58,6 +60,9 @@ for (const kind of ["web", "extension"]) {
 		await other.reload();
 		await expect(other.locator("#library-selector")).toHaveValue(team);
 		await page.getByRole("link", { name: "Settings", exact: true }).click();
+		await expect(page.locator("#rename-library")).toBeHidden();
+		await expect(page.locator("#new-library-name")).toBeHidden();
+		await page.locator("#rename-library-settings > summary").click();
 		await page.locator("#rename-library").fill("Friends");
 		await page.getByRole("button", { name: "Rename", exact: true }).click();
 		await expect(other.locator("#library-selector option:checked")).toHaveText(
@@ -107,13 +112,17 @@ for (const kind of ["web", "extension"]) {
 			await receiver
 				.getByRole("link", { name: "Settings", exact: true })
 				.click();
+			await shot(receiver, `manage-libraries-${kind}`);
+			await receiver.locator("#rename-library-settings > summary").click();
+			await shot(receiver, `rename-library-${kind}`);
 			receiver.once("dialog", (dialog) => dialog.accept());
 			await receiver
 				.getByRole("button", { name: "Forget this library", exact: true })
 				.click();
-			await expect(receiver.locator("#library-selector")).toHaveValue(
-				receiverPersonal,
-			);
+			await expect(receiver.locator("#library-selector")).toHaveCount(0);
+			await expect
+				.poll(() => new URL(receiver.url()).searchParams.get("library"))
+				.toBe(receiverPersonal);
 			await receiver
 				.getByRole("link", { name: "Library", exact: true })
 				.click();

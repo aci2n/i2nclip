@@ -2,7 +2,7 @@
 import Pairing from "../components/Pairing.svelte";
 import { selectTab, validateInput } from "../stores/dom.js";
 
-let { session, settings, pairing } = $props();
+let { session, settings, pairing, management } = $props();
 let serverInput = $state();
 let serverDetails = $state();
 const savedServer = $derived($session.serverUrl);
@@ -256,6 +256,7 @@ function create(event) {
 			</div>
 		</details>
 	{/if}
+	{@render management?.()}
 	<Pairing {session} {pairing} server={$settings.server} />
 	<details id="server-details" class="panel" bind:this={serverDetails}>
 		<summary>

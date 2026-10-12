@@ -57,7 +57,7 @@ VM21:1 Uncaught ReferenceError: Worker is not defined
 
 26. Tracing in production builds. Debugging the deployed application is difficult because the worker context runs network calls, absorbs failures, etc. I believe we can get rid of the "dev-only" plugin for the tracer and just include it always. Add tracing liberally, both to understand the flow of the application and to debug errors. Of course avoid logging sensitive data. If console is not on, console logs are free anyways.
 
-27. Move the "rename library" and "library name for new library" controls to the existing "Your library"/"Your encrypted library" fieldset. Move the library picker inline with the header, and make it smaller. Only show it if there is more than one library. Show the "add library" button only when there's an existing library selected, and put it at the same level as the other field sets, like "connect another device". Review the user experience for this flow, the current controls are very intrusive.
+27. [x] Separate Rename library and Add library disclosures in Settings, collapsed by default. The compact header picker appears only for multiple libraries. Shared create/rename/pair/switch/forget flows pass in both browsers; checker/lint pass and Firefox narrow light/dark screenshots were inspected. Original request: Move the "rename library" and "library name for new library" controls to a dedicated "rename library"/"add library" fieldsets. Move the library picker inline with the header, and make it smaller. Only show it if there is more than one library. Review the user experience for this flow, the current controls are very intrusive.
 
 
 PRIORITY (highest prio first): 14, 22, 23, 18+19+20+21, 27, 25, 26
