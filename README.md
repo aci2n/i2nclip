@@ -133,9 +133,8 @@ provide `I2N_TEST_DATABASE_URL` to use an existing disposable administrator conn
 the Linux maximum-size transfer profile, Firefox tests, and
 the live smoke test. It also runs lint and formatting checks. Rust tests execute once through
 `test-db`; standalone `make test` still runs Rust and client checks. Configure the
-private smoke credentials first. `client-test`, `e2e`, and `smoketest` remain
-aliases for `test-client`, `test-e2e`, and `test-smoke`. The optional advisory
-check `make audit` remains separate.
+private smoke credentials first. The optional advisory check `make audit`
+remains separate.
 
 `make test` runs client tests/checker and Rust tests that need no database. `make test-db` uses [testcontainers](https://docs.rs/testcontainers/0.28.0/testcontainers/) to start PostgreSQL 18, wait for readiness, run the database tests, and remove the container afterward, including when tests fail. Each fixture creates and cleans up an isolated database. Testcontainers is an optional tooling dependency; ordinary builds and tests do not enable it.
 
@@ -236,7 +235,7 @@ The source has three boundaries:
 
 Stores own session mutations, request cancellation, pagination, and upload batches. Media stores own and release their decrypted bytes and object URLs. Settings mutations use a Web Lock across open pages; tag changes and uploads prevent overlapping submissions. The tests cover stale completions, identity changes, retry behavior, and file-size limits as well as the full browser flows.
 
-`client/Makefile` owns the frontend targets; the root Makefile delegates with `make -C client`. `make -C client build` and `make -C client test` work independently. `make build` builds the Rust server and all three client bundles. `make client` builds just the standalone UI, extension, and Node CLI (`npm run build --prefix client`). `npm run e2e --prefix client` builds the extension and runs Firefox tests; `make e2e` also installs dependencies and Firefox.
+`client/Makefile` owns the frontend targets; the root Makefile delegates with `make -C client`. `make -C client build` and `make -C client test` work independently. `make build` builds the Rust server and all three client bundles. `make client` builds just the standalone UI, extension, and Node CLI (`npm run build --prefix client`). `npm run e2e --prefix client` builds the extension and runs Firefox tests; `make test-e2e` also installs dependencies and Firefox.
 
 The manifest's update URL now points to `client/public/updates.json`. Previously installed releases that use the old update URL need a manual update when this layout is published.
 

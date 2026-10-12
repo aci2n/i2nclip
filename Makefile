@@ -11,11 +11,16 @@ DEV_ORIGIN ?= http://localhost:$(DEV_PORT)
 DEV_DB_URL ?= postgresql://i2nclip:i2nclip-dev@127.0.0.1:$(DEV_DB_PORT)/i2nclip?sslmode=disable
 SMOKE_SERVER ?= https://clip.i2n.duckdns.org
 SMOKE_DIR ?= $(HOME)/.config/i2nclip/smoke
+export DOCKER_HOST ?= unix://$(or $(XDG_RUNTIME_DIR),/run/user/$(shell id -u))/podman/podman.sock
 
 -include local.mk
 
 .DEFAULT_GOAL := build
-.PHONY: build client web extension cli packages dev-extension run container push
+.PHONY: build client web extension cli packages dev-extension run
+.PHONY: dev dev-db dev-down dev-otc test test-client test-packages
+.PHONY: test-extension-pairing test-db test-profile test-e2e test-smoke test-all
+.PHONY: lint format-check format-write pre-commit audit
+.PHONY: container push
 
 build: client
 	cargo build
@@ -29,11 +34,7 @@ web extension cli packages dev-extension:
 run:
 	I2N_ORIGIN="$(DEV_ORIGIN)" I2N_DATABASE_URL="$(DEV_DB_URL)" cargo run $(RUN_ARGS)
 
-debug:
-	rust-gdb target/debug/i2nclip
-
 # Local containers: web/API and PostgreSQL ports bind to loopback.
-.PHONY: dev dev-db dev-down dev-otc
 dev dev-db dev-down dev-otc: export DEV_PORT := $(DEV_PORT)
 dev dev-db dev-down dev-otc: export DEV_DB_PORT := $(DEV_DB_PORT)
 dev dev-db dev-down dev-otc: export DEV_ORIGIN := $(DEV_ORIGIN)
@@ -51,8 +52,6 @@ dev-otc:
 	$(COMPOSE) exec -T server i2nclip otc issue
 
 # Tests and verification. Install toolchains and client dependencies first.
-.PHONY: test test-client test-packages test-extension-pairing test-db test-profile test-e2e test-smoke test-all
-.PHONY: lint format-check format-write pre-commit audit client-test e2e smoketest
 
 # Fast checks: client unit tests, Svelte type checking, and Rust unit/config tests.
 test: test-client
@@ -74,8 +73,7 @@ test-extension-pairing:
 # Rust PostgreSQL API/protocol tests using isolated databases; TEST_ARGS adds filters.
 # Provisions PostgreSQL through Docker/Podman unless I2N_TEST_DATABASE_URL is set.
 test-db:
-	DOCKER_HOST="$${DOCKER_HOST:-unix://$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/podman/podman.sock}" \
-	  cargo run --quiet --features test-containers --example postgres-tests -- \
+	cargo run --quiet --features test-containers --example postgres-tests -- \
 	  cargo test --features postgres-tests $(TEST_ARGS)
 
 # Verify maximum-size/chunked transfers and held downloads; report process resources.
@@ -83,15 +81,13 @@ test-db:
 test-profile:
 	cargo build --release
 	cargo build --example test-database
-	DOCKER_HOST="$${DOCKER_HOST:-unix://$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/podman/podman.sock}" \
-	  env -u I2N_TEST_DATABASE_URL cargo run --quiet --features test-containers --example postgres-tests -- \
+	env -u I2N_TEST_DATABASE_URL cargo run --quiet --features test-containers --example postgres-tests -- \
 	  $(MAKE) -C client test-profile
 
 # Firefox UI and packaged CLI flows against the real local API and isolated databases.
 # Provisions PostgreSQL; installs npm dependencies and Firefox when needed.
 test-e2e:
-	DOCKER_HOST="$${DOCKER_HOST:-unix://$${XDG_RUNTIME_DIR:-/run/user/$$(id -u)}/podman/podman.sock}" \
-	  cargo run --quiet --features test-containers --example postgres-tests -- \
+	cargo run --quiet --features test-containers --example postgres-tests -- \
 	  $(MAKE) -C client test-e2e
 
 # Live deployment: register/restore, upload random blobs, edit tags, verify downloads,
@@ -136,11 +132,6 @@ pre-commit:
 audit:
 	cargo audit
 	$(MAKE) -C client audit
-
-# Compatibility aliases for existing commands; canonical suite names use test-*.
-client-test: test-client
-e2e: test-e2e
-smoketest: test-smoke
 
 # Container build and deployment.
 container:

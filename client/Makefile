@@ -3,6 +3,8 @@ NODE ?= $(HOME)/.nvm/versions/node/v$(strip $(file <.nvmrc))/bin/node
 
 .DEFAULT_GOAL := build
 .PHONY: build web extension cli packages dev-extension
+.PHONY: audit test lint format-check format-write test-packages
+.PHONY: test-extension-pairing test-profile test-e2e test-smoke
 
 SMOKE_SERVER ?= https://clip.i2n.duckdns.org
 SMOKE_DIR ?= $(HOME)/.config/i2nclip/smoke
@@ -30,8 +32,6 @@ dev-extension:
 # -----------------------------------------------------------------------------
 # Tests and verification (repository Makefile lists all permission groups).
 # -----------------------------------------------------------------------------
-
-.PHONY: test lint format-check test-packages test-extension-pairing test-profile test-e2e test-smoke e2e smoketest
 
 audit:
 	npm audit
@@ -80,7 +80,3 @@ test-smoke:
 # Linux transfer/resource assertions; root target supplies the server build and database.
 test-profile:
 	"$(NODE)" tests/profile-postgres.js
-
-# Compatibility aliases.
-e2e: test-e2e
-smoketest: test-smoke
