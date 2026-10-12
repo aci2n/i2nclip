@@ -52,7 +52,7 @@ dev-otc:
 
 # Tests and verification. Install toolchains and client dependencies first.
 .PHONY: test test-client test-packages test-extension-pairing test-db test-profile test-e2e test-smoke test-all
-.PHONY: lint format-check audit client-test e2e smoketest
+.PHONY: lint format-check format-write pre-commit audit client-test e2e smoketest
 
 # Fast checks: client unit tests, Svelte type checking, and Rust unit/config tests.
 test: test-client
@@ -121,6 +121,16 @@ lint:
 format-check:
 	cargo fmt --all -- --check
 	$(MAKE) -C client format-check
+
+# Apply Rust and client formatting, then run the repository lint checks.
+format-write:
+	cargo fmt --all
+	$(MAKE) -C client format-write
+
+# Run before committing: format files, apply Biome fixes, then check lint and formatting.
+pre-commit: format-write
+	cd client && npm exec -- biome check --write --only=assist/source/organizeImports
+	$(MAKE) lint
 
 # Fetch Cargo vulnerability advisories; optional security check, outside test-all.
 # Requires cargo-audit and external network access.
