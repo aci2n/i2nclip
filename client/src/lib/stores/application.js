@@ -180,11 +180,14 @@ export function createApplication(platform, initialPage, browser = window) {
 		root,
 		platform,
 		() => client.id(),
-		(id) => {
+		(id, outcome) => {
 			selectLibrary(id);
 			settings.edit("feedback", {
 				scope: "library",
-				text: "Library saved. Download your recovery file before uploading.",
+				text:
+					outcome === "existing"
+						? "Existing library selected."
+						: "Library saved. Download your recovery file before uploading.",
 				error: false,
 			});
 		},

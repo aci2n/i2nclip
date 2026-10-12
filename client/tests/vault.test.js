@@ -540,3 +540,42 @@ test("recovery review keeps secrets local and import completion survives its own
 	assert.equal(completed, get(f.first).catalog[0].id);
 	assert.deepEqual(get(form).preview, []);
 });
+
+test("duplicate pairing identity lookup uses origin and atomic writes reject simultaneous duplicates", async () => {
+	const { existingIdentity, ExistingLibraryError } = await import(
+		"../src/lib/service/repository.js"
+	);
+	const repository = createEncryptedRepository(backend());
+	await repository.ready;
+	await repository.initialize("master-password");
+	const key = await generatePrivateKey();
+	const identity = {
+		...key,
+		serverUrl: "https://clip.example/path",
+		identityGeneration: "original",
+	};
+	for (const id of ["first", "second"]) {
+		await repository.putLibrary({ id, name: id, identity: {} });
+	}
+	const results = await Promise.allSettled(
+		["first", "second"].map((id) => repository.scope(id).setConfig(identity)),
+	);
+	assert.equal(results.filter((v) => v.status === "fulfilled").length, 1);
+	const rejected = results.find((v) => v.status === "rejected").reason;
+	assert.ok(rejected instanceof ExistingLibraryError);
+	const rows = await repository.libraries();
+	const saved = existingIdentity(rows, "receiver", {
+		...identity,
+		serverUrl: "https://clip.example/other",
+	});
+	assert.equal(saved.id, rejected.libraryId);
+	assert.equal(saved.identity.identityGeneration, "original");
+	assert.equal(existingIdentity(rows, saved.id, identity), undefined);
+	assert.equal(
+		existingIdentity(rows, "receiver", {
+			...identity,
+			serverUrl: "https://other.example",
+		}),
+		undefined,
+	);
+});

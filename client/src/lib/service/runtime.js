@@ -26,6 +26,7 @@ export function createLibraryRuntime({
 	upload = sendUpload,
 	pairing: pairingServices = {},
 	authorizeRegistration,
+	resolvePairing,
 	uploadLane,
 	nextJobOrder,
 	libraryId,
@@ -56,6 +57,7 @@ export function createLibraryRuntime({
 		defaultServerUrl,
 		enqueue,
 		authorizeRegistration,
+		resolvePairing,
 	);
 	const pairing = createPairing(identity, pairingServices);
 	const instanceId = crypto.randomUUID();
@@ -1070,12 +1072,16 @@ export function createLibraryRuntime({
 				if (get(pairing).active) {
 					throw new Error("Pairing is already active.");
 				}
-				return name === "pairing.send"
-					? pairing.send()
-					: pairing.receive(
-							payload.code,
-							payload.serverUrl || sessionState().serverUrl,
-						);
+				if (name === "pairing.send") {
+					return pairing.send();
+				}
+				const result = await pairing.receive(
+					payload.code,
+					payload.serverUrl || sessionState().serverUrl,
+				);
+				return result?.outcome
+					? { ...result, libraryId: result.libraryId || libraryId }
+					: result;
 			}
 			case "pairing.approve":
 			case "pairing.cancel":
@@ -1110,6 +1116,13 @@ export function createLibraryRuntime({
 	return {
 		ready,
 		instanceId,
+		pairingDestination(options) {
+			const operation = identity.operation(options);
+			return {
+				operation,
+				withIdentity: (action) => identity.withIdentity(operation, action),
+			};
+		},
 		async authorizeKey(publicKey, serverUrl, signal) {
 			const captured = credentials();
 			if (new URL(captured.serverUrl).origin !== new URL(serverUrl).origin) {

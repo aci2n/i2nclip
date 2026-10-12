@@ -38,4 +38,10 @@ Extend `pairing.test.js` for handshake/operation lifetime, `catalog.test.js` and
 
 ## Implementation notes
 
-Record the structured completion contract, guard/cleanup ordering, reproduction and race results. These are the interfaces item 36 must preserve.
+Implemented duplicate resolution by registration public key and server origin. Repository uniqueness failures use `ExistingLibraryError` with the destination ID; final-write races resolve the destination without parsing messages. Imported private keys are validated before lookup.
+
+Owner imports return a guarded save scope (`saved`/`existing`, destination ID, operation and acknowledgment callback). Only `{ outcome, libraryId }` crosses the transport after acknowledgment. Destination invalidation cancels acknowledgment; every scope is disposed, including imports interrupted during resolution. Setup waits for pairing to settle before promotion, selects an existing destination locally, then removes only its unfinished receiver after the reply has settled. Other pages retain selection. Lost acknowledgment retains the durable destination and existing uncertainty status.
+
+Verification: `make test-client` passed with local-server access; Svelte check reported zero errors/warnings. `npm run lint --prefix client` passed (RTK's npm lint formatter required `rtk proxy` to display usable output). `make extension` passed without warnings. Focused session/catalog/vault/pairing tests passed, including destination invalidation, invalid-key rejection before lookup, final-write duplicate races, same-origin equivalence and different-origin distinction. Disposable Podman PostgreSQL plus Firefox/Chromium ran 14 focused browser scenarios successfully: normal pairing, additional libraries, duplicate receivers with the destination already selected and with another library selected, for web and extension. IDs, keys, generations, catalog counts and independent page selection were preserved. Existing protocol-vector tests passed in the client suite.
+
+The new browser regression scopes verification-code lookup to Add Library because task 44's duplicate IDs exist when a saved sender and temporary receiver render in the same page. No component/store refactor was needed. Item 36 must preserve the completion contract and acknowledgment-before-receiver-disposal ordering.

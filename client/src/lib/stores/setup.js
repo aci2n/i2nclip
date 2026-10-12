@@ -85,7 +85,12 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 				(row) => row.id !== currentLibrary(),
 			),
 		}));
-		if (id && scoped?.session.configured && !promoted) {
+		if (
+			id &&
+			scoped?.session.configured &&
+			!scoped.pairing?.active &&
+			!promoted
+		) {
 			const completedId = id;
 			promoted = true;
 			state.update((v) => ({ ...v, open: false }));
@@ -133,7 +138,7 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 				await starting;
 			}
 			const snapshot = get(root).libraries[id];
-			return root.command(
+			const result = await root.command(
 				name,
 				{
 					...payload,
@@ -143,6 +148,22 @@ export function createSetup(root, platform, currentLibrary, onComplete) {
 				},
 				options,
 			);
+			if (name === "pairing.receive" && result?.outcome === "existing") {
+				const receiverId = id;
+				const latest = get(root);
+				if (
+					!disposed &&
+					latest.libraries?.[result.libraryId]?.session.configured
+				) {
+					promoted = true;
+					state.update((v) => ({ ...v, open: false }));
+					onComplete(result.libraryId, result.outcome);
+					await root.command("libraries.discardSetup", {
+						libraryId: receiverId,
+					});
+				}
+			}
+			return result;
 		},
 	};
 	const session = createSession(adapter, platform);

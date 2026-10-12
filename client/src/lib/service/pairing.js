@@ -226,7 +226,7 @@ export function createPairing(session, services = {}) {
 			}
 			cleanup(current, false);
 			traceEvent("pairing.completed", { role });
-			return true;
+			return current.completion || true;
 		} catch (error) {
 			traceEvent("pairing.failed", {
 				role,
@@ -386,11 +386,22 @@ export function createPairing(session, services = {}) {
 					throw new Error(get(session).error || "Could not save the library.");
 				}
 				current.saved = true;
-				current.operation = savedOperation;
-				await session.withIdentity(current.operation, async () => {
+				current.operation = savedOperation.operation || savedOperation;
+				current.completion = savedOperation.outcome
+					? {
+							outcome: savedOperation.outcome,
+							libraryId: savedOperation.libraryId,
+						}
+					: null;
+				const acknowledge = async () => {
 					check(current);
 					await submit(current, 5, await call(current, "acknowledge"));
-				});
+				};
+				if (savedOperation.withIdentity) {
+					await savedOperation.withIdentity(acknowledge);
+				} else {
+					await session.withIdentity(current.operation, acknowledge);
+				}
 			});
 		},
 		approve() {

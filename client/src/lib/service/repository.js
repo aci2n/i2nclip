@@ -8,6 +8,27 @@ import {
 } from "../protocol/vault.js";
 import { decodeSource, encodeSource } from "./source-record.js";
 
+export function existingIdentity(libraries, libraryId, identity) {
+	return (
+		identity.publicKey &&
+		libraries.find(
+			(row) =>
+				row.id !== libraryId &&
+				row.identity?.privateKey &&
+				row.identity.publicKey === identity.publicKey &&
+				new URL(row.identity.serverUrl).origin ===
+					new URL(identity.serverUrl).origin,
+		)
+	);
+}
+
+export class ExistingLibraryError extends Error {
+	constructor(libraryId) {
+		super("This library is already saved. Select its existing entry.");
+		this.libraryId = libraryId;
+	}
+}
+
 // Only the owner opens IDB. Crypto finishes before a short atomic transaction.
 export function createRepository(indexedDB = globalThis.indexedDB) {
 	let database;
@@ -144,19 +165,9 @@ export function createEncryptedRepository(storage) {
 		return removed;
 	};
 	function validateIdentity(next, libraryId, identity) {
-		if (
-			identity.publicKey &&
-			next.libraries.some(
-				(row) =>
-					row.id !== libraryId &&
-					row.identity?.publicKey === identity.publicKey &&
-					new URL(row.identity.serverUrl).origin ===
-						new URL(identity.serverUrl).origin,
-			)
-		) {
-			throw new Error(
-				"This library is already saved. Select its existing entry.",
-			);
+		const existing = existingIdentity(next.libraries, libraryId, identity);
+		if (existing) {
+			throw new ExistingLibraryError(existing.id);
 		}
 	}
 	const scope = (libraryId) => ({

@@ -136,3 +136,68 @@ for (const kind of ["web", "extension"]) {
 		}
 	});
 }
+
+for (const kind of ["web", "extension"]) {
+	for (const differentSelection of [false, true]) {
+		test(`${kind} duplicate pairing (different selection: ${differentSelection}) selects the existing library in the receiving page`, async ({
+			page,
+			app,
+		}) => {
+			const personal = await createPersonal(page, kind, app);
+			const original = await page.evaluate(() => window.serviceTest("config"));
+			const receiver = await page.context().newPage();
+			await receiver.goto(url(kind, app));
+			await expect(receiver.locator("#configured")).toBeVisible();
+			if (differentSelection) {
+				await add(receiver, "Other library");
+				await receiver.locator("#authorize-library").click();
+				await expect
+					.poll(() => new URL(receiver.url()).searchParams.get("library"))
+					.not.toBe(personal);
+			}
+			await add(receiver, "Duplicate draft");
+			await receiver.getByRole("tab", { name: "Pair", exact: true }).click();
+			await page.locator("#pairing-settings > summary").click();
+			await page.locator("#pairing-start").click();
+			await expect(page.locator("#pairing-code")).toBeVisible();
+			await receiver
+				.locator("#pairing-input")
+				.fill(await page.locator("#pairing-code").textContent());
+			await receiver
+				.getByRole("button", { name: "Connect library", exact: true })
+				.click();
+			await expect(page.locator("#pairing-approve")).toBeVisible();
+			await expect(
+				receiver.locator("#add-library-settings #pairing-verification-code"),
+			).toHaveText(
+				await page.locator("#pairing-verification-code").textContent(),
+			);
+			await page.locator("#pairing-approve").click();
+			await expect(page.locator("#pairing-status")).toContainText(
+				"New device connected",
+			);
+			await expect(receiver.locator("#status")).toContainText(
+				"Existing library selected.",
+			);
+			expect(new URL(receiver.url()).searchParams.get("library")).toBe(
+				personal,
+			);
+			expect(new URL(page.url()).searchParams.get("library")).toBe(personal);
+			expect(
+				await receiver.evaluate(() => window.serviceTest("config")),
+			).toEqual(original);
+			await expect(receiver.locator("#new-library-name")).toBeHidden();
+			if (differentSelection) {
+				await expect(receiver.locator("#library-selector")).toHaveValue(
+					personal,
+				);
+				await expect(receiver.locator("#library-selector option")).toHaveCount(
+					2,
+				);
+			} else {
+				await expect(receiver.locator("#library-selector")).toHaveCount(0);
+			}
+			await receiver.close();
+		});
+	}
+}

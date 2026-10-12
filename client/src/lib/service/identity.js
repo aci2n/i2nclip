@@ -4,6 +4,7 @@ import { loadKey } from "../protocol/crypto.js";
 import { generatePrivateKey } from "../protocol/identity.js";
 import { checkServer } from "../protocol/server.js";
 import { createSessionContext } from "./identity-context.js";
+import { ExistingLibraryError } from "./repository.js";
 import { errorDetails, traceEvent } from "./trace.js";
 
 // Private to the owner. Pairing uses operation handles; pages never receive them.
@@ -12,6 +13,7 @@ export function createIdentity(
 	defaultServerUrl,
 	serialize,
 	authorizeRegistration,
+	resolvePairing,
 ) {
 	let config = {};
 	let privateKey = "";
@@ -270,21 +272,67 @@ export function createIdentity(
 			signal,
 			onInvalidated,
 		}) => {
-			await mutate(async (ownSignal) => {
-				signal.throwIfAborted();
-				checkServer(serverUrl);
-				if (config.privateKey || config.pendingRegistration) {
-					throw new Error(
-						"A library or pending creation is already configured.",
-					);
-				}
-				if ((await loadKey(key)).registrationKey !== publicKey) {
-					throw new Error("Invalid paired identity.");
-				}
-				signal.throwIfAborted();
-				await save(serverUrl, key, AbortSignal.any([ownSignal, signal]));
-			});
-			return context.operation({ signal, onInvalidated });
+			let resolved;
+			let destination;
+			try {
+				destination = await mutate(async (ownSignal) => {
+					signal.throwIfAborted();
+					checkServer(serverUrl);
+					if (config.privateKey || config.pendingRegistration) {
+						throw new Error(
+							"A library or pending creation is already configured.",
+						);
+					}
+					if ((await loadKey(key)).registrationKey !== publicKey) {
+						throw new Error("Invalid paired identity.");
+					}
+					signal.throwIfAborted();
+					resolved = await resolvePairing?.({
+						serverUrl,
+						publicKey,
+						signal,
+						onInvalidated,
+					});
+					const existing = resolved;
+					ownSignal.throwIfAborted();
+					signal.throwIfAborted();
+					if (existing) {
+						return existing;
+					}
+					try {
+						await save(serverUrl, key, AbortSignal.any([ownSignal, signal]));
+					} catch (error) {
+						if (!(error instanceof ExistingLibraryError) || !resolvePairing) {
+							throw error;
+						}
+						resolved = await resolvePairing({
+							serverUrl,
+							publicKey,
+							signal,
+							onInvalidated,
+						});
+						const raced = resolved;
+						ownSignal.throwIfAborted();
+						signal.throwIfAborted();
+						if (!raced) {
+							throw error;
+						}
+						return raced;
+					}
+				});
+			} catch (error) {
+				resolved?.operation.dispose();
+				throw error;
+			}
+			if (destination !== true) {
+				return destination;
+			}
+			const operation = context.operation({ signal, onInvalidated });
+			return {
+				outcome: "saved",
+				operation,
+				withIdentity: (action) => identity.withIdentity(operation, action),
+			};
 		},
 		dispose() {
 			disposed = true;

@@ -5,6 +5,7 @@ import {
 	openRecovery,
 } from "../protocol/recovery.js";
 import { checkServer } from "../protocol/server.js";
+import { existingIdentity } from "./repository.js";
 import { createLibraryRuntime } from "./runtime.js";
 import { serviceTracing, traceEvent, traceMessage } from "./trace.js";
 
@@ -249,6 +250,28 @@ export function createServiceEngine(options) {
 			},
 			uploadLane,
 			nextJobOrder: () => ++order,
+			resolvePairing: async (options) => {
+				const epoch = vaultEpoch;
+				const existing = existingIdentity(
+					await repository.libraries(),
+					row.id,
+					options,
+				);
+				vaultGuard(epoch);
+				options.signal.throwIfAborted();
+				if (!existing) {
+					return null;
+				}
+				const destination = runtimes.get(existing.id);
+				if (!destination) {
+					throw new Error("Library changed. Start pairing again.");
+				}
+				return {
+					outcome: "existing",
+					libraryId: existing.id,
+					...destination.pairingDestination(options),
+				};
+			},
 			authorizeRegistration: (id, publicKey, serverUrl, signal) => {
 				const authorizer = runtimes.get(id);
 				if (!authorizer) {

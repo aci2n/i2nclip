@@ -85,9 +85,11 @@ test("a paired import uses the unlocked vault, persists before acknowledgment, a
 		f.identity.importPairing({ ...args, publicKey: "wrong" }),
 		/Invalid paired/,
 	);
-	const operation = await f.identity.importPairing(args);
+	const result = await f.identity.importPairing(args);
+	assert.equal(result.outcome, "saved");
+	const operation = result.operation;
 	let acknowledged = false;
-	await f.identity.withIdentity(operation, async (credentials) => {
+	await result.withIdentity(async (credentials) => {
 		assert.equal((await f.repository.getConfig()).publicKey, f.key.publicKey);
 		assert.equal(credentials.privateKey, f.key.privateKey);
 		acknowledged = true;
@@ -99,4 +101,91 @@ test("a paired import uses the unlocked vault, persists before acknowledgment, a
 	await reopened.ready;
 
 	assert.equal(get(reopened).privateKey, f.key.privateKey);
+});
+
+test("duplicate pairing validates keys before resolving and guards acknowledgment in the destination", async (t) => {
+	const f = await fixture(t);
+	const receiverRepository = memoryRepository({});
+	let resolutions = 0;
+	const receiver = createIdentity(
+		receiverRepository,
+		f.config.serverUrl,
+		undefined,
+		undefined,
+		async (options) => {
+			resolutions++;
+			const operation = f.identity.operation(options);
+			return {
+				outcome: "existing",
+				libraryId: "saved",
+				operation,
+				withIdentity: (action) => f.identity.withIdentity(operation, action),
+			};
+		},
+	);
+	t.after(receiver.dispose);
+	await receiver.ready;
+	const args = {
+		...f.key,
+		serverUrl: f.config.serverUrl,
+		signal: new AbortController().signal,
+	};
+	await assert.rejects(
+		receiver.importPairing({ ...args, publicKey: "wrong" }),
+		/Invalid paired/,
+	);
+	assert.equal(resolutions, 0);
+	const result = await receiver.importPairing(args);
+	assert.equal(result.libraryId, "saved");
+	assert.deepEqual(await receiverRepository.getConfig(), {});
+	await result.withIdentity((credentials) =>
+		assert.equal(credentials.privateKey, f.key.privateKey),
+	);
+	await f.identity.reset();
+	await assert.rejects(
+		result.withIdentity(() => assert.fail("stale acknowledgment")),
+		{ name: "AbortError" },
+	);
+	result.operation.dispose();
+});
+
+test("pairing resolves a duplicate committed between lookup and final save", async (t) => {
+	const { ExistingLibraryError } = await import(
+		"../src/lib/service/repository.js"
+	);
+	const f = await fixture(t);
+	const repository = memoryRepository({});
+	repository.setConfig = async () => {
+		throw new ExistingLibraryError("saved");
+	};
+	let lookups = 0;
+	const receiver = createIdentity(
+		repository,
+		f.config.serverUrl,
+		undefined,
+		undefined,
+		async (options) => {
+			if (++lookups === 1) {
+				return null;
+			}
+			const operation = f.identity.operation(options);
+			return {
+				outcome: "existing",
+				libraryId: "saved",
+				operation,
+				withIdentity: (action) => f.identity.withIdentity(operation, action),
+			};
+		},
+	);
+	t.after(receiver.dispose);
+	await receiver.ready;
+	const result = await receiver.importPairing({
+		...f.key,
+		serverUrl: f.config.serverUrl,
+		signal: new AbortController().signal,
+	});
+	assert.equal(result.outcome, "existing");
+	assert.equal(lookups, 2);
+	await result.withIdentity(() => {});
+	result.operation.dispose();
 });
