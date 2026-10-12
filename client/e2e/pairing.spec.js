@@ -99,22 +99,59 @@ for (const [from, to] of [
 	});
 }
 
-test("a follower observes pairing but cannot approve it and closing the initiator cancels it", async ({
-	page,
-	app,
-}) => {
-	await setup(page, "extension", app);
-	const follower = await page.context().newPage();
-	await follower.goto(url("extension", app));
-	await page.locator("#pairing-settings > summary").click();
-	await page.locator("#pairing-start").click();
-	await expect(page.locator("#pairing-code")).toBeVisible();
-	await follower.locator("#pairing-settings > summary").click();
-	await expect(follower.locator("#pairing-code")).toHaveCount(0);
-	await expect(
-		follower.getByRole("button", { name: "Cancel pairing", exact: true }),
-	).toBeDisabled();
-	await page.close();
-	await expect(follower.locator("#pairing-status")).toContainText("canceled");
-	await follower.close();
-});
+for (const kind of ["web", "extension"]) {
+	test(`${kind} pairing is shared and another tab can finish after both starting pages close`, async ({
+		page,
+		app,
+		browser,
+	}) => {
+		await setup(page, kind, app);
+		const follower = await page.context().newPage();
+		await follower.goto(url(kind, app));
+		await page.locator("#pairing-settings > summary").click();
+		await follower.locator("#pairing-settings > summary").click();
+		await page.locator("#pairing-start").click();
+		await expect(page.locator("#pairing-code")).toBeVisible();
+		const firstCode = await page.locator("#pairing-code").textContent();
+		await expect(follower.locator("#pairing-code")).toHaveText(firstCode);
+		await follower
+			.getByRole("button", { name: "Cancel pairing", exact: true })
+			.click();
+		await expect(page.locator("#pairing-status")).toContainText("canceled");
+		await expect(follower.locator("#pairing-status")).toContainText("canceled");
+		await page.locator("#pairing-start").click();
+		await expect(page.locator("#pairing-code")).toBeVisible();
+		const code = await page.locator("#pairing-code").textContent();
+		await expect(follower.locator("#pairing-code")).toHaveText(code);
+		await page.close();
+		await expect(follower.locator("#pairing-code")).toHaveText(code);
+		const context = await browser.newContext();
+		await context.addInitScript(installBrowser);
+		try {
+			const receiver = await context.newPage();
+			await receiver.goto(url(kind, app));
+			await receive(receiver, code, app);
+			await expect(follower.locator("#pairing-approve")).toBeVisible();
+			const observer = await context.newPage();
+			await observer.goto(url(kind, app));
+			const verification = await follower
+				.locator("#pairing-verification-code")
+				.textContent();
+			await expect(observer.locator("#pairing-verification-code")).toHaveText(
+				verification,
+			);
+			await receiver.close();
+			await follower.locator("#pairing-approve").click();
+			await expect(follower.locator("#pairing-status")).toContainText(
+				"New device connected.",
+			);
+			await expect(observer.locator("#pairing-status")).toContainText(
+				"Library connected and unlocked.",
+			);
+			await expect(observer.locator("#configured")).toBeVisible();
+		} finally {
+			await context.close();
+			await follower.close();
+		}
+	});
+}

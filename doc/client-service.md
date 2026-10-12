@@ -43,8 +43,9 @@ page; originals are accepted first. Extension video preparation runs in backgrou
 
 Searches remain independent. Canonical media changes broadcast to every client;
 affected searches refresh from their first page. Object URLs, playback and save
-dialogs remain local and are disposed on invalidation. Pairing is observable by
-all clients but controlled by its initiating connection, and ends on disconnect.
+dialogs remain local and are disposed on invalidation. Pairing state and controls
+are shared by all clients. Closing a page leaves pairing running in the service;
+explicit cancellation, expiry, identity changes or owner shutdown end it.
 
 Web uses a stable worker URL/name. Explicit detach plus five-second heartbeats
 and a thirty-second connection lease clean up vanished or suspended pages.
@@ -71,7 +72,7 @@ fresh snapshot. The shared JSDoc wire types are in `service/contract.js`.
 | `uploads.retry`, `discard` | job IDs; success |
 | `pending.get`, `send` | job ID and optional tags; source preview or acceptance |
 | `pairing.send`, `receive` | no arguments, or entered code/password/server |
-| `pairing.approve`, `rejectVerification`, `cancel` | initiator-only control |
+| `pairing.approve`, `rejectVerification`, `cancel` | shared service controls |
 | `snapshot` | resynchronize all shared state and the requesting client's views |
 
 The stable `/assets/web-worker.js` and crypto-worker entry revalidate instead of

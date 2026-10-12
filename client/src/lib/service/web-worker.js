@@ -23,7 +23,7 @@ self.onconnect = ({ ports: [port] }) => {
 		seen = Date.now();
 		if (data.type === "detach") {
 			clearInterval(timer);
-			connection.disconnect();
+			void connection.receive(data);
 			port.close();
 		} else void connection.receive(data);
 	};

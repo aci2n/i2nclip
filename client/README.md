@@ -34,6 +34,7 @@ command/event contract, engine, and IndexedDB repository. UI stores project
 service messages and own drafts, navigation, playback and object URLs.
 See [the full state audit and service contract](../doc/client-service.md).
 
+
 Private keys stay in owner memory. Restart locks the service, retains unfinished
 upload sources, and pauses recovery until explicit retry. Interrupted transfers
 may already have reached the server; refresh the library before retrying.
@@ -46,8 +47,8 @@ reset and successful server changes discard them. Video previews in the web
 build are optional page helpers; originals are accepted before preparation.
 
 Searches and cursors are independent per view. Canonical media edits and upload
-status broadcast across views. Pairing status is shared, but only the initiating
-connection can approve or cancel; disconnect cancels pairing. DOM confirmations,
+status broadcast across views. Pairing state and controls are shared; closing a
+page leaves the service's attempt running. DOM confirmations,
 save dialogs, playback and resource URLs remain in the requesting page.
 
 ## Verification
@@ -165,3 +166,17 @@ and CLI artifacts and tests the web client on the Rust listener's own origin.
 
 Browser ownership, messaging, and durable recovery
 are described in [the session service guide](../doc/session.md).
+
+## Service message tracing
+
+`npm run dev`, `npm run build:web:debug`, and `npm run build:extension:debug`
+enable message tracing. Extension development watchers also use debug mode.
+Normal builds and packages remove tracing from their JavaScript bundles.
+
+In Firefox, open `about:debugging#/runtime/this-firefox` and inspect the web
+SharedWorker (`web-worker.js`) or the i2nclip extension background context.
+Enable Debug/Verbose console messages and filter by `[i2nclip service]`.
+Each entry shows direction, client ID, message type/name, and a payload snapshot;
+request IDs and sequences correlate commands, replies, and broadcasts.
+Passwords, private/wrapped keys, invitations, and pairing codes are redacted.
+Binary data is summarized by type and size; long arrays and deep objects are bounded.

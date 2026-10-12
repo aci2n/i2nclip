@@ -114,14 +114,12 @@ async function connect(event) {
 			<p class="address">Server: {$pairing.server}</p>
 			<p>Expires in {$pairing.remaining} seconds.</p>
 			<div class="actions">
-				{#if $pairing.canControl &&
-					$pairing.approval &&
-					$pairing.verificationCode}
+				{#if $pairing.approval && $pairing.verificationCode}
 					<button type="button" id="pairing-approve" onclick={pairing.approve}>
 						Codes match — send library
 					</button>
 				{/if}
-				{#if $pairing.canControl && $pairing.verificationCode}
+				{#if $pairing.verificationCode}
 					<button
 						type="button"
 						id="pairing-mismatch"
@@ -131,12 +129,7 @@ async function connect(event) {
 						Codes don’t match
 					</button>
 				{/if}
-				<button
-					type="button"
-					class="secondary"
-					disabled={!$pairing.canControl}
-					onclick={pairing.cancel}
-				>
+				<button type="button" class="secondary" onclick={pairing.cancel}>
 					Cancel pairing
 				</button>
 			</div>

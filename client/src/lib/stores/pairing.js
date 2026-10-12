@@ -8,25 +8,13 @@ export function createPairing(client) {
 		status: "",
 		remaining: 0,
 		error: false,
-		canControl: false,
 	});
-	let disposed = false;
-	const unsubscribe = client.subscribe((value) =>
-		state.set({
-			...value.pairing,
-			canControl: value.pairing.owner === value.clientId,
-		}),
-	);
+	const unsubscribe = client.subscribe((value) => state.set(value.pairing));
 	async function action(name, payload) {
 		try {
-			await client.command(`pairing.${name}`, payload);
-		} catch (error) {
-			if (!disposed)
-				state.update((value) => ({
-					...value,
-					status: error.message,
-					error: true,
-				}));
+			return await client.command(`pairing.${name}`, payload);
+		} catch {
+			return false;
 		}
 	}
 	return {
@@ -38,7 +26,6 @@ export function createPairing(client) {
 		cancel: () => action("cancel"),
 		rejectVerification: () => action("rejectVerification"),
 		dispose() {
-			disposed = true;
 			unsubscribe();
 		},
 	};

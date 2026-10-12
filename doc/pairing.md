@@ -67,10 +67,10 @@ operation handles. Reset/server changes invalidate pairing immediately. Transfer
 and acknowledgment validate the current operation inside the owner's serialized
 identity queue; no UI page receives private credentials or chooses a lock.
 
-Pairing status is broadcast to connected clients. Only the initiating connection
-receives the initial pairing code and may approve, reject verification or cancel.
-Disconnect cancels its pairing attempt. Other tabs observe status without taking
-over approval. Expiry and bounded relay retries remain enforced by the owner.
+All connected clients receive the same pairing code, verification, status and
+controls. Any tab can approve, reject verification or cancel. Closing the starting
+tab leaves the attempt running in the service; owner shutdown ends it. Expiry and
+bounded relay retries remain enforced by the owner.
 
 ## Relay API
 

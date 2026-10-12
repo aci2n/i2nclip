@@ -10,6 +10,14 @@ import { promisify } from "node:util";
 const execute = promisify(execFile);
 const dist = fileURLToPath(new URL("../dist/", import.meta.url));
 
+test("release web and extension owners exclude debug tracing", async () => {
+	for (const file of ["web/assets/web-worker.js", "extension/background.js"]) {
+		const code = await readFile(join(dist, file), "utf8");
+		assert(!code.includes("[i2nclip service]"), file);
+		assert(!code.includes("summarizeMessage"), file);
+	}
+});
+
 async function entries(file, command, args) {
 	const { stdout } = await execute(command, [...args, join(dist, file)]);
 	return stdout

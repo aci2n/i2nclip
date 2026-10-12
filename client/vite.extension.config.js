@@ -2,8 +2,9 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { defineConfig } from "vite";
+import { serviceTracingPlugin } from "./service-tracing.config.js";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
 	base: "./",
 	publicDir: false,
 	worker: {
@@ -17,6 +18,7 @@ export default defineConfig({
 		},
 	},
 	plugins: [
+		serviceTracingPlugin(mode === "debug"),
 		svelte(),
 		{
 			name: "watch-extension-assets",
@@ -61,4 +63,4 @@ export default defineConfig({
 			},
 		},
 	},
-});
+}));

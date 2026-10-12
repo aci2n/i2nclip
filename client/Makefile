@@ -20,7 +20,7 @@ packages: web extension cli
 # web-ext is installed with npm ci. Ctrl-C also stops the build watcher.
 dev-extension: export PATH := $(dir $(NODE)):$(PATH)
 dev-extension:
-	@node node_modules/vite/bin/vite.js build --config vite.extension.config.js --watch & \
+	@node node_modules/vite/bin/vite.js build --config vite.extension.config.js --mode debug --watch & \
 	watcher=$$!; \
 	trap 'kill "$$watcher" 2>/dev/null || true; wait "$$watcher" 2>/dev/null || true' EXIT; \
 	trap 'exit 130' INT; \

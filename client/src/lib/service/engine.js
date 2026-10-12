@@ -7,6 +7,7 @@ import { splitTags, tagTokens } from "../protocol/crypto.js";
 import { uniqueTags } from "../protocol/tags.js";
 import { createIdentity } from "./identity.js";
 import { createPairing } from "./pairing.js";
+import { serviceTracing, traceMessage } from "./trace.js";
 
 const canceled = () =>
 	new DOMException("Library changed. Try again.", "AbortError");
@@ -30,7 +31,6 @@ export function createServiceEngine({
 	let disposed = false;
 	let pumping = false;
 	let changingContext = 0;
-	let pairingClient = null;
 	let mutationRevision = 0;
 	let lastEpoch = 0;
 	let jobTail = Promise.resolve();
@@ -64,28 +64,26 @@ export function createServiceEngine({
 	}
 	const uploadState = () =>
 		[...jobs.values()].map(({ source: _source, ...job }) => ({ ...job }));
-	const pairingState = (clientId) => ({
-		...get(pairing),
-		code: clientId === pairingClient ? get(pairing).code : "",
-		owner: pairingClient,
-	});
+	const pairingState = () => ({ ...get(pairing) });
 	function publishPairing() {
 		for (const client of clients.values())
 			send(client, {
 				type: "state",
 				topic: "pairing",
-				value: pairingState(client.id),
+				value: pairingState(),
 			});
 	}
 	function send(client, message) {
 		if (!clients.has(client.id)) return;
 		try {
-			client.send({
+			const outgoing = {
 				...message,
 				instanceId,
 				sequence: ++client.sequence,
 				clientId: client.id,
-			});
+			};
+			if (serviceTracing) traceMessage("owner → client", client.id, outgoing);
+			client.send(outgoing);
 		} catch {
 			disconnect(client.id);
 		}
@@ -114,7 +112,7 @@ export function createServiceEngine({
 		return {
 			session: sessionState(),
 			uploads: uploadState(),
-			pairing: pairingState(client.id),
+			pairing: pairingState(),
 			media: Object.fromEntries(media),
 			views: Object.fromEntries(
 				[...views.values()]
@@ -807,9 +805,7 @@ export function createServiceEngine({
 				});
 			case "pairing.send":
 			case "pairing.receive": {
-				if (get(pairing).active)
-					throw new Error("Pairing is already active in another page.");
-				pairingClient = client.id;
+				if (get(pairing).active) throw new Error("Pairing is already active.");
 				return name === "pairing.send"
 					? pairing.send()
 					: pairing.receive(
@@ -821,8 +817,6 @@ export function createServiceEngine({
 			case "pairing.approve":
 			case "pairing.cancel":
 			case "pairing.rejectVerification":
-				if (pairingClient !== client.id)
-					throw new Error("Pairing is controlled by its original page.");
 				pairing[name.slice(8)]();
 				return true;
 			default:
@@ -841,11 +835,6 @@ export function createServiceEngine({
 			}
 		for (const helper of helpers.values())
 			if (helper.clientId === id) helper.finish(null);
-		if (pairingClient === id) {
-			pairing.cancel();
-			pairingClient = null;
-			publishPairing();
-		}
 	}
 	return {
 		ready,
@@ -866,6 +855,8 @@ export function createServiceEngine({
 			return {
 				id: client.id,
 				async receive(message) {
+					if (serviceTracing)
+						traceMessage("client → owner", client.id, message);
 					if (message.type === "detach") {
 						disconnect(client.id);
 						return;
