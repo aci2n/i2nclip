@@ -128,24 +128,24 @@ const feedbackAt = $derived(
 	{/if}
 	<VaultSettings {vault} />
 	{#if $session.configured}
-    <details class="panel">
-      <summary class="danger">Forget library</summary>
-		  <div class="stack disclosure-body">
-        <p>Keep a recovery file first. Uploads on the server stay saved.</p>
-			<button
-				id="forget-library"
-				type="button"
-				class="secondary danger"
-				disabled={$session.busy || $forget.busy}
-				onclick={onForget}
-			>
-				Forget this library
-			</button>
-			{#if $forget.error}
-				<p role="alert" class="error">{$forget.error}</p>
-			{/if}
-		</div>
-    </details>
+		<details class="panel">
+			<summary class="danger">Forget library</summary>
+			<div class="stack disclosure-body">
+				<p>Keep a recovery file first. Uploads on the server stay saved.</p>
+				<button
+					id="forget-library"
+					type="button"
+					class="secondary danger"
+					disabled={$session.busy || $forget.busy}
+					onclick={onForget}
+				>
+					Forget this library
+				</button>
+				{#if $forget.error}
+					<p role="alert" class="error">{$forget.error}</p>
+				{/if}
+			</div>
+		</details>
 	{/if}
 	<details id="reset-settings" class="panel">
 		<summary class="danger">Reset browser</summary>
