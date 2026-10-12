@@ -35,6 +35,24 @@ test("per-file progress stays shared and completed history expires after five se
 		).toBe(true);
 		await page.evaluate(() => window.serviceTest("resumeUploads"));
 		await expect(page.locator(".card")).toHaveCount(3);
+		await expect(page.locator(".card-title")).toHaveText([
+			"Third.txt",
+			"Second.txt",
+			"First long filename.txt",
+		]);
+		await expect(other.locator(".card-title")).toHaveText([
+			"Third.txt",
+			"Second.txt",
+			"First long filename.txt",
+		]);
+		await expect(page.locator(".upload-list li small")).toHaveText([
+			"completed",
+			"completed",
+			"completed",
+		]);
+		for (const progress of await page.locator(".upload-list progress").all()) {
+			await expect(progress).toHaveAttribute("value", "100");
+		}
 		await expect(
 			page.getByRole("button", {
 				name: "Clear completed uploads",

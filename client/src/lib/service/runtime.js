@@ -204,6 +204,7 @@ export function createLibraryRuntime({
 			view.revision++;
 			view.additions.clear();
 			view.overrides.clear();
+			view.uploadHeads = [];
 			Object.assign(view, {
 				ids: [],
 				next: null,
@@ -327,6 +328,7 @@ export function createLibraryRuntime({
 		});
 		if (!more) {
 			view.overrides = new Map();
+			view.uploadHeads = [];
 			view.additions = new Set();
 		}
 		if (!more) {
@@ -355,6 +357,9 @@ export function createLibraryRuntime({
 			}
 			view.ids = [
 				...new Set([
+					...view.uploadHeads.filter((id) =>
+						matchesQuery(media.get(id), view.query),
+					),
 					...(more ? view.ids : []),
 					...page.items
 						.filter((item) => !media.get(item.id)?.deleted)
@@ -415,6 +420,7 @@ export function createLibraryRuntime({
 			} else {
 				view.ids = view.ids.filter((id) => id !== item.id);
 				view.additions.delete(item.id);
+				view.uploadHeads = view.uploadHeads.filter((id) => id !== item.id);
 			}
 			if (!view.loading) {
 				view.empty = view.ids.length
@@ -435,10 +441,13 @@ export function createLibraryRuntime({
 			if (!matchesQuery(media.get(item.id), view.query)) {
 				continue;
 			}
-			view.additions.add(item.id);
-			if (!view.ids.includes(item.id)) {
-				view.ids.push(item.id);
-			}
+			view.uploadHeads = [
+				item.id,
+				...view.uploadHeads.filter((id) => id !== item.id),
+			];
+			view.additions.delete(item.id);
+			view.overrides.set(item.id, true);
+			view.ids = [item.id, ...view.ids.filter((id) => id !== item.id)];
 			view.empty = null;
 			publishView(view);
 		}
@@ -947,6 +956,7 @@ export function createLibraryRuntime({
 					ids: [],
 					additions: new Set(),
 					overrides: new Map(),
+					uploadHeads: [],
 					next: null,
 					loading: false,
 					status: "",

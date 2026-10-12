@@ -48,7 +48,7 @@ test("all clients see per-file progress and completed jobs expire even beside fa
 	assert.equal(get(a).items.length, 2);
 });
 
-test("uploads append matching cards without list refresh and survive older search results", async (t) => {
+test("uploads prepend matching cards without list refresh and survive older search results", async (t) => {
 	const { tagTokens } = await import("../src/lib/protocol/crypto.js");
 	const stale = deferred();
 	let lists = 0;
@@ -85,10 +85,10 @@ test("uploads append matching cards without list refresh and survive older searc
 	await a.upload([new File(["bytes"], "new.txt")]);
 	await until(() => get(a).cards.length === 2 && get(b).cards.length === 1);
 	assert.equal(lists, before);
-	assert.equal(get(a).cards[0].media, card);
+	assert.equal(get(a).cards[1].media, card);
 	assert.deepEqual(
 		get(a).items.map((item) => item.id),
-		["old", "new"],
+		["new", "old"],
 	);
 	assert.equal(get(a).next, "cursor");
 	stale.resolve({ items: [], next: null });
@@ -100,7 +100,7 @@ test("uploads append matching cards without list refresh and survive older searc
 	await a.more();
 	assert.deepEqual(
 		get(a).items.map((item) => item.id),
-		["old", "new", "old2"],
+		["new", "old", "old2"],
 	);
 });
 
