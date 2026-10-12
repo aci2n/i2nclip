@@ -202,6 +202,8 @@ export function createLibraryRuntime({
 		for (const view of views.values()) {
 			view.controller?.abort();
 			view.revision++;
+			view.additions.clear();
+			view.overrides.clear();
 			Object.assign(view, {
 				ids: [],
 				next: null,
@@ -260,6 +262,7 @@ export function createLibraryRuntime({
 	}
 	async function updateEntity(item, epoch, signal) {
 		guard(epoch, signal);
+		const revision = mutationRevision;
 		const existing = media.get(item.id);
 		const retainFeedback =
 			Boolean(existing) && existing.metaHash === item.metaHash;
@@ -285,11 +288,19 @@ export function createLibraryRuntime({
 				next.message = "Tags on the server do not match this file.";
 			}
 		}
+		// Token verification yields; re-read authority before publishing an old list row.
+		if (
+			media.get(item.id) !== existing ||
+			mutations.has(item.id) ||
+			(existing && revision !== mutationRevision)
+		) {
+			return media.get(item.id);
+		}
 		media.set(item.id, next);
 		broadcast("media", next);
 		return next;
 	}
-	async function search(view, query, more = false, refresh = false) {
+	async function search(view, query, more = false) {
 		if (more && (view.loading || !view.next)) {
 			return;
 		}
@@ -313,12 +324,12 @@ export function createLibraryRuntime({
 			id: view.id,
 			revision: version,
 			more,
-			refresh,
 		});
 		if (!more) {
+			view.overrides = new Map();
 			view.additions = new Set();
 		}
-		if (!more && !refresh) {
+		if (!more) {
 			Object.assign(view, { ids: [], next: null });
 		}
 		publishView(view);
@@ -350,7 +361,7 @@ export function createLibraryRuntime({
 						.map((item) => item.id),
 					...[...view.additions].filter((id) => !media.get(id)?.deleted),
 				]),
-			];
+			].filter((id) => view.overrides.get(id) !== false);
 			Object.assign(view, {
 				next: page.next,
 				status: "",
@@ -383,9 +394,36 @@ export function createLibraryRuntime({
 			}
 		}
 	}
-	function refreshViews() {
+	function matchesQuery(item, query) {
+		if (!item || item.deleted || item.metadataUnavailable) {
+			return false;
+		}
+		const required = splitTags(query).map(normalizeTag);
+		const tags = new Set((item.metadata?.tags || []).map(normalizeTag));
+		return required.every((tag) => tags.has(tag));
+	}
+	function reconcileTags(item) {
+		broadcast("media", { ...item });
 		for (const view of views.values()) {
-			void search(view, view.query, false, true).catch(() => {});
+			const included = matchesQuery(item, view.query);
+			view.overrides.set(item.id, included);
+			if (included) {
+				if (!view.ids.includes(item.id)) {
+					view.additions.add(item.id);
+					view.ids.push(item.id);
+				}
+			} else {
+				view.ids = view.ids.filter((id) => id !== item.id);
+				view.additions.delete(item.id);
+			}
+			if (!view.loading) {
+				view.empty = view.ids.length
+					? null
+					: splitTags(view.query).length
+						? "search"
+						: "library";
+			}
+			publishView(view);
 		}
 	}
 	async function publishUpload(item, epoch, signal) {
@@ -393,9 +431,8 @@ export function createLibraryRuntime({
 			return;
 		}
 		await updateEntity(item, epoch, signal);
-		const tags = new Set((item.metadata?.tags || []).map(normalizeTag));
 		for (const view of views.values()) {
-			if (!splitTags(view.query).every((tag) => tags.has(normalizeTag(tag)))) {
+			if (!matchesQuery(media.get(item.id), view.query)) {
 				continue;
 			}
 			view.additions.add(item.id);
@@ -909,6 +946,7 @@ export function createLibraryRuntime({
 					query: payload.query || "",
 					ids: [],
 					additions: new Set(),
+					overrides: new Map(),
 					next: null,
 					loading: false,
 					status: "",
@@ -976,7 +1014,9 @@ export function createLibraryRuntime({
 						});
 					}
 					mutationRevision++;
-					refreshViews();
+					if (!result.conflict) {
+						reconcileTags(item);
+					}
 					return !result.conflict;
 				});
 			case "media.remove":

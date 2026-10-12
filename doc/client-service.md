@@ -66,8 +66,7 @@ One sequential queue accepts uploads from all libraries and pages. Vault locking
 thumbnail generation. Web video thumbnails are optional helpers in the submitting
 page; originals are accepted first. Extension video preparation runs in background.
 
-Searches remain independent. Canonical media changes broadcast to every client;
-affected searches refresh from their first page. Object URLs, playback and save
+Searches remain independent. Canonical metadata changes broadcast to every client. Successful tag edits reconcile each submitted query in memory, preserving cursor/order and avoiding list requests. Per-query membership overrides protect against older list responses; conflicts publish authoritative metadata and preserve the inline draft/card membership until review or explicit search. Object URLs, playback and save
 dialogs remain local and are disposed on invalidation. Sender pairing state and controls are shared by saved-library clients. Closing a sender page leaves its pairing running in the service; explicit cancellation, expiry, identity changes or owner shutdown end it. Temporary receiver pairing belongs to its initiating connection and ends with setup disposal.
 
 Web uses a stable worker URL/name. Explicit detach plus five-second heartbeats

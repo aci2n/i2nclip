@@ -13,11 +13,21 @@ test("extension views share metadata, uploads and deletion while retaining searc
 		.locator("#files")
 		.setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: png });
 	await expect(second.locator(".card-title")).toHaveText("photo.png");
+	let listRequests = 0;
+	page.context().on("request", (request) => {
+		if (
+			request.method() === "GET" &&
+			new URL(request.url()).pathname === "/api/media"
+		) {
+			listRequests++;
+		}
+	});
 	const card = page.locator(".card");
 	await card.getByRole("button", { name: "Add tag to photo.png" }).click();
 	await card.locator(".tags input").fill("One");
 	await card.locator(".tags input").press("Enter");
 	await expect(second.locator(".tag-text")).toHaveText(["One"]);
+	expect(listRequests).toBe(0);
 	await second.locator("#tags").fill("missing");
 	await second.locator("#tags").press("Enter");
 	await expect(second.locator("#empty-library")).toContainText(

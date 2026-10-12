@@ -243,7 +243,7 @@ test("all tabs see failed uploads and can retry retained sources", async (t) => 
 	assert.equal(uploads, 2);
 });
 
-test("metadata refresh preserves the rendered card and its inline editor resource owner", async (t) => {
+test("metadata edits preserve the rendered card and its inline editor without listing again", async (t) => {
 	const { tagTokens } = await import("../src/lib/protocol/crypto.js");
 	let item = {
 		id: "file",
@@ -251,12 +251,13 @@ test("metadata refresh preserves the rendered card and its inline editor resourc
 		tokens: [],
 		metaHash: "a",
 	};
-	const refresh = deferred();
 	let lists = 0;
 	const f = await serviceFixture(t, {
 		api: {
-			list: async () =>
-				++lists === 1 ? { items: [item], next: null } : refresh.promise,
+			list: async () => {
+				lists++;
+				return { items: [item], next: null };
+			},
 			updateMetadata: async ({ metadata, privateKey }) => {
 				item = {
 					...item,
@@ -275,7 +276,67 @@ test("metadata refresh preserves the rendered card and its inline editor resourc
 	assert.equal(await library.retag("file", ["New"]), true);
 	assert.equal(get(library).cards[0].media, card);
 	assert.deepEqual(get(card).metadata.tags, ["New"]);
-	refresh.resolve({ items: [item], next: null });
-	await until(() => !get(library).loading);
+	assert.equal(lists, 1);
+	assert.equal(get(library).loading, false);
 	assert.equal(get(library).cards[0].media, card);
+});
+
+test("retag reconciles normalized multi-tag queries and survives stale pagination without listing", async (t) => {
+	const { tagTokens } = await import("../src/lib/protocol/crypto.js");
+	const oldPage = deferred();
+	let lists = 0;
+	let item = {
+		id: "file",
+		metadata: { name: "file.txt", tags: ["One", "Two"] },
+		metaHash: "a",
+	};
+	const f = await serviceFixture(t, {
+		api: {
+			list: async ({ tags, after }) => {
+				lists++;
+				return after
+					? oldPage.promise
+					: { items: tags === "New" ? [] : [item], next: "cursor" };
+			},
+			updateMetadata: async ({ metadata, privateKey }) => {
+				item = {
+					...item,
+					metadata,
+					tokens: await tagTokens(privateKey, metadata.tags),
+					metaHash: "b",
+				};
+				return { ...item, conflict: false };
+			},
+		},
+	});
+	item.tokens = await tagTokens(f.key.privateKey, item.metadata.tags);
+	const a = createLibrary(f.client, {});
+	const b = createLibrary(f.client, {}, { query: "ONE two" });
+	const c = createLibrary(f.client, {}, { query: "New" });
+	t.after(() => {
+		a.dispose();
+		b.dispose();
+		c.dispose();
+	});
+	await until(
+		() => get(a).cards.length && get(b).cards.length && !get(c).loading,
+	);
+	const card = get(a).cards[0].media;
+	b.editDraft("unsubmitted text");
+	const staleItem = structuredClone(item);
+	const more = b.more();
+	await until(() => get(b).loading);
+	const before = lists;
+	await a.retag("file", ["New"]);
+	assert.equal(lists, before);
+	assert.equal(get(a).cards[0].media, card);
+	assert.equal(get(b).cards.length, 0);
+	assert.equal(get(c).cards[0].item.id, "file");
+	assert.equal(get(b).searchDraft, "unsubmitted text");
+	oldPage.resolve({ items: [staleItem], next: "next-cursor" });
+	await more;
+	assert.equal(get(b).cards.length, 0);
+	assert.equal(get(b).next, "next-cursor");
+	assert.deepEqual(get(card).metadata.tags, ["New"]);
+	assert.equal(lists, before);
 });
