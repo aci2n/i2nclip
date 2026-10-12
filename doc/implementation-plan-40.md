@@ -53,3 +53,5 @@ Update the search/metadata ownership statements in `doc/client-service.md` when 
 ## Implementation notes
 
 Implemented normalized all-tag membership reconciliation without list refresh. Each view keeps inclusion/exclusion overrides through pagination and resets them on explicit search. Matching known IDs retain position or append; exclusions remove only the changed card. Conflicts broadcast authoritative metadata/error without membership eviction. Entity writes recheck authority after asynchronous token verification, preventing stale metadata publication. Added regression coverage; combined verification is deferred until the end of TODOs 37–46. Item 41 uses the same matching/override merge.
+
+Combined checks completed: client tests/checker/lint, web/extension builds and all 64 browser scenarios are covered in [the verification report](verification-37-46.md). Actual narrow Firefox screenshots were inspected.

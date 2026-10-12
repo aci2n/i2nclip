@@ -40,3 +40,5 @@ Add unit coverage for eligibility/default normalization in existing catalog/sett
 Added shared eligibility/normalization helpers for configured, unlocked, idle, non-pairing authorizers. Idle defaults and selectors use only eligible rows; Pair/Restore are preserved, and in-flight submissions retain their captured authority. Owner revalidates source eligibility at final commit. Setup renders one dynamic tab descriptor list and removes the unavailable panel entirely; a DOM adapter restores focused removed tabs to the visible active tab. Updated empty-vault keyboard/browser expectations and eligibility unit coverage. Combined verification deferred until the end of TODOs 37–46.
 
 Failure settlement also normalizes unavailable authorizers back to OTC so the captured operation error remains beside a visible action. Its deferred-operation regression passed.
+
+Combined checks completed: client tests/checker/lint, web/extension builds and all 64 browser scenarios are covered in [the verification report](verification-37-46.md). Actual narrow Firefox screenshots were inspected.

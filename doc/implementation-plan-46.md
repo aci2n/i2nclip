@@ -34,3 +34,5 @@ Run client checks and `make web`/`make extension` once after the stylesheet chan
 ## Implementation notes
 
 Introduced global order `reset, base, controls, layout`: semantic/box reset, theme/typography, shared controls/focus, then layout/feedback primitives. Scoped component blocks remain unlayered. Native nesting groups button modifiers, container children and Pairing children; unrelated selectors stay flat. Restored the unlayered important hidden invariant after reviewing the existing FIXME: normal global layers cannot override component grid/flex semantics. No other important declarations or minification/toolchain changes. Current Biome config has no layered-styles restriction to weaken. Compiled CSS, cascade and representative screenshots will be inspected during combined end-of-batch verification.
+
+Combined checks completed: client tests/checker/lint, web/extension builds and all 64 browser scenarios are covered in [the verification report](verification-37-46.md). Actual narrow Firefox screenshots were inspected.

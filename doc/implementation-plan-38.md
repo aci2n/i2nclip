@@ -35,3 +35,5 @@ Run relevant settings/catalog/identity tests, focused settings/setup/pairing E2E
 ## Implementation notes
 
 Removed the saved-server form, snippet plumbing and editor-only settings/session actions. Saved URL remains in the configured summary. Browser helpers now explicitly open first-library setup inputs; OTC/Pair drafts remain editable and authorization uses the owner server. Retained `identity.setServer` for supported owner/context-invalidation tests. Replaced browser editor expectations with immutable saved-server assertions. Combined verification deferred until the end of TODOs 37–46.
+
+Combined checks completed: client tests/checker/lint, web/extension builds and all 64 browser scenarios are covered in [the verification report](verification-37-46.md). Actual narrow Firefox screenshots were inspected.

@@ -36,3 +36,5 @@ Update the append-order unit expectations deliberately; retain their card-identi
 ## Implementation notes
 
 Implemented newest-first `uploadHeads` per view, distinct from ordinary retag additions. Merge precedence is heads, prior pagination IDs, server IDs, then retag additions; overrides and normalized current-query matching prevent excluded/deleted promotion. Explicit searches/context resets clear heads; pagination preserves them. Updated existing order/card/cursor tests and two-page browser upload assertions. Combined verification deferred until the end of TODOs 37–46.
+
+Combined checks completed: client tests/checker/lint, web/extension builds and all 64 browser scenarios are covered in [the verification report](verification-37-46.md). Actual narrow Firefox screenshots were inspected.

@@ -1,4 +1,4 @@
-# Implementation plan: item 44 — Eliminate duplicate Pairing IDs
+# Implementation plan: item 44 — Remove Pairing IDs
 
 ## Goal and ID decisions
 
@@ -36,3 +36,5 @@ Put the document-ID/reference assertion in an existing E2E helper or focused set
 ## Implementation notes
 
 Pairing uses no HTML IDs or prefix/suffix API. After the user's follow-up, input and verification output labels wrap their controls, the sender is a native disclosure named “Connect another device,” and the receiver is a section named “Pair library.” Browser tests use those containers, accessible labels/actions and a local status class. Removed the data-embedded styling workaround in favor of a scoped modifier class. Setup feedback uses `initial-status` / `setup-status`; the root keeps `status`. Setup tab IDs remain meaningful ARIA references, and first/additional Setup instances are exclusive after 36. Added whole-document ID/IDREF assertions. Combined verification is recorded in [the batch report](verification-37-46.md). Item 45's plain-prop contract requires no ID plumbing.
+
+Combined checks completed: client tests/checker/lint, web/extension builds and all 64 browser scenarios are covered in [the verification report](verification-37-46.md). Actual narrow Firefox screenshots were inspected.

@@ -1,12 +1,12 @@
 import {
-	senderPairing,
-	receiverPairing,
 	assertDocumentIds,
 	expect,
 	fillCreation,
 	installBrowser,
 	issueOtc,
 	openSetupServer,
+	receiverPairing,
+	senderPairing,
 	shot,
 	test,
 } from "./fixtures.js";
