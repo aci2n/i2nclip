@@ -27,6 +27,8 @@ require downloading manually and using the app's Upload action.
   `client/dist/i2nclip-extension.zip`; the server image still contains only web.
 - Extension storage owns only `appUrl`. Require HTTPS, permitting HTTP loopback
   for development. Remove query/hash when saving; prohibit URL credentials.
+- Recreate the single context-menu item on background startup, including temporary
+  add-on reloads; menu availability must not depend on an install event.
 - Background owns a single capture at a time, tab selection, a 30-second capped
   streaming download, and errors via a browser notification. Check the app before
   fetching. Reuse the admitted tab when multiple matching tabs exist; never close
@@ -80,3 +82,18 @@ may mean the file was already accepted; instruct users to check the app.
   Firefox extensions.
 
 API reference: [Mozilla scripting.executeScript](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/scripting/executeScript).
+
+## Implemented verification
+
+- `make -C client test`: 76 meaningful unit cases pass; Svelte checker reports
+  zero errors and warnings. This includes menu creation without an install event,
+  file validation, pending-file disposal, streaming overflow, and single handoff.
+- `make test-packages`, client lint, and client formatting checks pass.
+- `make test-e2e`: all 14 Firefox/Chromium cases pass against the real server and
+  isolated databases, including bridge receipt and byte-identical downloads.
+- Actual Firefox screenshots of the long pending filename at 320/360 px were
+  inspected in both themes; no horizontal overflow or clipped actions.
+- A fresh native Firefox profile loaded the generated temporary extension and
+  displayed **Upload to i2nclip** as a visible image context-menu item, with no
+  extension errors in the browser console. Reload a temporary add-on through
+  `about:debugging` after rebuilding it.

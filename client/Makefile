@@ -28,7 +28,6 @@ format-check:
 format-write:
 	npm run format:write
 test-packages:
-	npm run pack:extension
 	npm run test:package
 test-e2e:
 	npx playwright install firefox chromium

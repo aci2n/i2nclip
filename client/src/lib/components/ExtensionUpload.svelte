@@ -5,7 +5,11 @@ let { name, canUpload, onupload, oncancel } = $props();
 <section class="panel stack pending" aria-label="File from extension">
 	<strong>File from extension</strong>
 	<p class="filename">{name}</p>
-	<p>Unlock your library to upload this file. Cancel to discard it.</p>
+	<p>
+		{canUpload
+			? "Ready to upload. Cancel to discard this file."
+			: "Unlock your library to upload this file. Cancel to discard it."}
+	</p>
 	<div class="bar">
 		<button type="button" disabled={!canUpload} onclick={onupload}>
 			Upload file

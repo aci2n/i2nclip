@@ -38,3 +38,25 @@ test("web ZIP contains only its entry page and bundled assets", async () => {
 		assert(names.includes(asset), `Missing web asset: ${asset}`);
 	}
 });
+
+test("extension ZIP contains only the bridge and its configuration page", async () => {
+	const names = await entries("i2nclip-extension.zip", "unzip", ["-Z1"]);
+	assert.deepEqual(names.sort(), [
+		"background.js",
+		"bridge.js",
+		"capture.js",
+		"icon.svg",
+		"manifest.json",
+		"options.css",
+		"options.html",
+		"options.js",
+	]);
+	const manifest = JSON.parse(
+		await readFile(join(dist, "extension/manifest.json"), "utf8"),
+	);
+	assert.equal(manifest.manifest_version, 3);
+	assert.deepEqual(manifest.background.scripts, ["background.js"]);
+	assert(!manifest.content_scripts);
+	assert(!manifest.externally_connectable);
+	assert(!manifest.permissions.includes("downloads"));
+});

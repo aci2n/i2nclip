@@ -16,6 +16,28 @@ Uploads run sequentially and continue after individual failures. Failures show s
 
 The project is greenfield; there are no client data or recovery-format migrations.
 
+## Firefox upload bridge
+
+Run `make extension` (Node from `client/.nvmrc` and zip are required). The unpacked
+extension is in `client/dist/extension/`; its archive is
+`client/dist/i2nclip-extension.zip`. In Firefox, open `about:debugging`, choose
+**This Firefox → Load Temporary Add-on**, and select the generated `manifest.json`.
+Temporary add-ons are removed on browser restart; permanent installation requires
+Mozilla signing. Open the extension's preferences and save your web-app URL.
+Use HTTPS, or HTTP loopback during development, and allow the requested website
+access for the app and media sources.
+
+Right-click an image, audio, or video and choose **Upload to i2nclip**. The bridge
+focuses your existing app tab or opens one. An unlocked library uploads normally;
+a locked tab holds one file until you unlock and choose **Upload file**, or Cancel.
+Set up the library before capturing. Only public HTTP(S) media up to 32 MB is
+supported; protected media and blob URLs need manual Upload.
+
+The extension stores only the app URL. Encryption, identity, progress, and errors
+remain in the web app. Pending files exist only in memory and disappear on reload,
+tab close, Cancel, or identity/session changes. If a handoff fails without a reply,
+check the app before retrying. See the [scope and ownership specification](doc/extension-bridge.md).
+
 Administrators issue invitations with the Rust executable:
 
 ```sh

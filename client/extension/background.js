@@ -1,6 +1,7 @@
 import { checkAppUrl, sendToApp } from "./capture.js";
 
-browser.runtime.onInstalled.addListener(() => {
+// Temporary add-on reloads must register the menu even without onInstalled.
+void browser.contextMenus.removeAll().then(() => {
 	browser.contextMenus.create({
 		id: "upload",
 		title: "Upload to i2nclip",
