@@ -1,4 +1,4 @@
-import { get, writable } from "svelte/store";
+import { get } from "svelte/store";
 import { MAX_FILE_BYTES } from "../api.js";
 
 // This root-owned receiver exists only in the tab admitted by the Web Lock.
@@ -8,7 +8,6 @@ export function createExtensionReceiver(
 	onupload,
 	browser = window,
 ) {
-	const state = writable({ name: "", canUpload: false });
 	let pending = null;
 	let epoch = session.epoch;
 	let disposed = false;
@@ -22,23 +21,30 @@ export function createExtensionReceiver(
 		}
 		return "";
 	}
-	function publish() {
-		const value = get(session);
-		state.set({
-			name: pending?.name || "",
-			canUpload: Boolean(
-				pending && value.unlocked && value.configured && !rejection(),
-			),
-		});
+	function complete(capture, ok) {
+		if (capture.closeWhenDone) {
+			browser.postMessage(
+				{
+					channel: "i2nclip-extension-v1",
+					type: "complete",
+					token: capture.token,
+					result: { ok },
+				},
+				browser.location.origin,
+			);
+		}
 	}
-	function cancel() {
+	function discard() {
+		const capture = pending;
 		pending = null;
-		publish();
+		if (capture) {
+			complete(capture, false);
+		}
 	}
-	function upload(file = pending) {
+	function upload(capture = pending) {
 		if (
 			disposed ||
-			!file ||
+			!capture ||
 			!get(session).unlocked ||
 			!get(session).configured ||
 			rejection()
@@ -46,19 +52,25 @@ export function createExtensionReceiver(
 			return false;
 		}
 		pending = null;
-		publish();
 		onupload();
-		void library.upload([file]);
+		void library.upload([capture.file]).then((ok) => {
+			if (!disposed) {
+				complete(capture, ok);
+			}
+		});
 		return true;
 	}
 	const unsubscribeSession = session.subscribe((value) => {
 		if (value.epoch !== epoch) {
 			epoch = value.epoch;
-			pending = null;
+			discard();
 		}
-		publish();
+		if (value.unlocked && !value.configured) {
+			discard();
+		}
+		upload();
 	});
-	const unsubscribeLibrary = library.subscribe(publish);
+	const unsubscribeLibrary = library.subscribe(() => upload());
 	function receive(event) {
 		const message = event.data;
 		if (
@@ -77,7 +89,7 @@ export function createExtensionReceiver(
 		try {
 			const error =
 				rejection() ||
-				(pending ? "Upload or cancel the pending file in i2nclip first." : "");
+				(pending ? "Unlock i2nclip to finish the pending upload first." : "");
 			if (error) {
 				throw new Error(error);
 			}
@@ -115,14 +127,18 @@ export function createExtensionReceiver(
 					bytes[index] = decoded.charCodeAt(index);
 				}
 				const file = new File([bytes], message.name, { type: message.mime });
+				const capture = {
+					file,
+					token: message.token,
+					closeWhenDone: message.closeWhenDone === true,
+				};
 				if (get(session).unlocked) {
-					upload(file);
+					upload(capture);
 				} else {
-					pending = file;
-					publish();
+					pending = capture;
 				}
 			}
-			result = { ok: true };
+			result = { ok: true, needsUnlock: !get(session).unlocked };
 		} catch (error) {
 			result = { ok: false, error: error.message };
 		}
@@ -138,15 +154,12 @@ export function createExtensionReceiver(
 	}
 	browser.addEventListener("message", receive);
 	return {
-		subscribe: state.subscribe,
-		upload: () => upload(),
-		cancel,
 		dispose() {
 			disposed = true;
 			browser.removeEventListener("message", receive);
 			unsubscribeSession();
 			unsubscribeLibrary();
-			cancel();
+			discard();
 		},
 	};
 }

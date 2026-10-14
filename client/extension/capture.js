@@ -101,17 +101,29 @@ export async function fetchFile(srcUrl, fetcher = fetch) {
 const pause = () => new Promise((resolve) => setTimeout(resolve, 100));
 
 export async function sendToApp(browser, appUrl, srcUrl, fetcher = fetch) {
-	const candidates = (await browser.tabs.query({})).filter((tab) =>
-		matchesApp(tab.url, appUrl),
+	const app = new URL(appUrl);
+	// Firefox match patterns omit ports; matchesApp checks the exact origin below.
+	const pattern = `${app.protocol}//${app.hostname}${app.pathname}*`;
+	const candidates = (await browser.tabs.query({ url: pattern })).filter(
+		(tab) => matchesApp(tab.url, appUrl),
 	);
+	let temporaryWindowId;
 	if (!candidates.length) {
-		candidates.push(await browser.tabs.create({ url: appUrl }));
+		const popup = await browser.windows.create({
+			url: appUrl,
+			type: "popup",
+			width: 440,
+			height: 640,
+			focused: false,
+		});
+		temporaryWindowId = popup.id;
+		candidates.push(popup.tabs[0]);
 	}
 	const request = async (tabId, message, timeout) => {
 		const [injection] = await browser.scripting.executeScript({
 			target: { tabId },
 			func: handoff,
-			args: [{ appUrl, request: message, timeout }],
+			args: [{ appUrl, request: message, timeout, temporaryWindowId }],
 		});
 		if (injection?.error) {
 			throw new Error(
@@ -146,16 +158,44 @@ export async function sendToApp(browser, appUrl, srcUrl, fetcher = fetch) {
 	if (!receiver) {
 		throw new Error("No active i2nclip tab replied. Open the app and retry.");
 	}
-	await browser.tabs.update(receiver.id, { active: true });
-	await browser.windows.update(receiver.windowId, { focused: true });
 	if (!ready.ok) {
 		throw new Error(ready.error);
 	}
 	const file = await fetchFile(srcUrl, fetcher);
+	file.closeWhenDone = temporaryWindowId !== undefined;
 	const reply = await request(receiver.id, file, 5000);
 	if (!reply?.ok) {
 		throw new Error(
 			reply?.error || "No reply from i2nclip. Check the app before retrying.",
 		);
+	}
+	if (reply.needsUnlock) {
+		await browser.tabs.update(receiver.id, { active: true });
+		await browser.windows.update(receiver.windowId, { focused: true });
+	}
+}
+
+export async function closeUploadedPopup(browser, message, sender) {
+	if (
+		message?.type !== "upload-complete" ||
+		sender.id !== browser.runtime.id ||
+		sender.frameId !== 0 ||
+		!sender.tab ||
+		message.windowId !== sender.tab.windowId
+	) {
+		return;
+	}
+	const { appUrl } = await browser.storage.local.get("appUrl");
+	if (!appUrl || !matchesApp(sender.url, appUrl)) {
+		return;
+	}
+	const popup = await browser.windows.get(message.windowId, { populate: true });
+	if (
+		popup.type === "popup" &&
+		popup.tabs.some(
+			(tab) => tab.id === sender.tab.id && matchesApp(tab.url, appUrl),
+		)
+	) {
+		await browser.windows.remove(popup.id);
 	}
 }

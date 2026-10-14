@@ -1,4 +1,8 @@
-import { checkAppUrl, sendToApp } from "./capture.js";
+import { checkAppUrl, closeUploadedPopup, sendToApp } from "./capture.js";
+
+browser.runtime.onMessage.addListener((message, sender) =>
+	closeUploadedPopup(browser, message, sender),
+);
 
 // Temporary add-on reloads must register the menu even without onInstalled.
 void browser.contextMenus.removeAll().then(() => {

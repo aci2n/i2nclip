@@ -1,7 +1,6 @@
 <script>
 import { onDestroy } from "svelte";
 import AboutDialog from "../components/AboutDialog.svelte";
-import ExtensionUpload from "../components/ExtensionUpload.svelte";
 import { createExtensionReceiver } from "../stores/extension.js";
 import { createLibrary } from "../stores/library.js";
 import { createPairing } from "../stores/pairing.js";
@@ -52,14 +51,6 @@ onDestroy(() => {
 </script>
 
 <main>
-	{#if $extension.name}
-		<ExtensionUpload
-			name={$extension.name}
-			canUpload={$extension.canUpload}
-			onupload={extension.upload}
-			oncancel={extension.cancel}
-		/>
-	{/if}
 	{#if $session.status !== "unlocked"}
 		<Unlock {session} />
 	{:else}
