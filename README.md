@@ -23,7 +23,8 @@ extension is in `client/dist/extension/`; its archive is
 `client/dist/i2nclip-extension.zip`. In Firefox, open `about:debugging`, choose
 **This Firefox → Load Temporary Add-on**, and select the generated `manifest.json`.
 Temporary add-ons are removed on browser restart; permanent installation requires
-Mozilla signing. Open the extension's preferences and save your web-app URL.
+Mozilla signing. In `about:addons`, select the extension, open its **Preferences**
+tab, and save your web-app URL. Settings use native HTML controls with no custom CSS.
 Use HTTPS, or HTTP loopback during development, and allow the requested website
 access for the app and media sources.
 

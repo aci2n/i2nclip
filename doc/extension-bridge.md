@@ -22,6 +22,40 @@ require downloading manually and using the app's Upload action.
 
 ## Interfaces and ownership
 
+### Firefox settings simplification
+
+Goal: configure the single app URL inside Firefox's standard `about:addons`
+settings container. Set `options_ui.open_in_tab` to false, remove all extension
+CSS and page decoration, and retain only a semantic HTML form with a URL label,
+input, Save button, and status output. A `color-scheme` meta tag enables native
+light/dark controls. Firefox requires extension-owned HTML; Manifest V3 no longer
+supports `browser_style`, so do not add browser-internal stylesheets, copied
+Firefox styles, UI frameworks, or a settings schema/generator.
+
+The options script continues to own loading, validating, and saving only `appUrl`
+through extension storage. Validation/storage failures remain beside Save and
+must preserve the last saved value. The form has no long-running work or pending
+files; closing settings discards unsaved input. No capture, handoff, upload,
+identity, protocol, or storage-format changes are included.
+
+Acceptance: the rebuilt archive contains no CSS; preferences open within
+`about:addons`; Save normalizes and persists a valid URL; invalid input shows an
+error without overwriting storage; reopening loads the saved URL. Inspect actual
+Firefox light/dark settings screenshots and run packaging/static checks.
+
+Verified in a disposable native Firefox profile: Preferences embeds the form in
+`about:addons`, both light/dark screenshots were inspected, and
+`http://localhost:8080/?page=settings#test` saves as `http://localhost:8080/`.
+Saving a non-loopback HTTP URL reports an error; reopening retains the localhost
+URL. Package checks, lint, and formatting pass. HTTP loopback admission remains
+the existing policy (`localhost`, `127.0.0.1`, and `[::1]`).
+
+References: [Firefox options_ui](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/options_ui),
+[uBlock Origin manifest](https://github.com/gorhill/uBlock/blob/master/platform/firefox/manifest.json),
+[Privacy Badger manifest](https://github.com/EFForg/privacybadger/blob/master/src/manifest.json).
+
+### Upload bridge
+
 - Extension source lives in `client/extension/`, with no additional npm project
   or dependencies. `make extension` copies these plain files and packages them in
   `client/dist/i2nclip-extension.zip`; the server image still contains only web.

@@ -47,7 +47,6 @@ test("extension ZIP contains only the bridge and its configuration page", async 
 		"capture.js",
 		"icon.svg",
 		"manifest.json",
-		"options.css",
 		"options.html",
 		"options.js",
 	]);
@@ -55,6 +54,7 @@ test("extension ZIP contains only the bridge and its configuration page", async 
 		await readFile(join(dist, "extension/manifest.json"), "utf8"),
 	);
 	assert.equal(manifest.manifest_version, 3);
+	assert.equal(manifest.options_ui.open_in_tab, false);
 	assert.deepEqual(manifest.background.scripts, ["background.js"]);
 	assert(!manifest.content_scripts);
 	assert(!manifest.externally_connectable);

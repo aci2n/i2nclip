@@ -3,30 +3,25 @@
 	<head>
 		<meta charset="UTF-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<title>i2nclip upload bridge</title>
-		<link rel="stylesheet" href="options.css">
+		<meta name="color-scheme" content="light dark">
+		<title>i2nclip settings</title>
 	</head>
 	<body>
-		<main>
-			<h1>i2nclip upload bridge</h1>
-			<p>Right-click an image, audio, or video and choose Upload to i2nclip.</p>
-			<form>
+		<form>
+			<p>
 				<label
-					>Web-app URL<input
+					>Web-app URL<br>
+					<input
 						name="appUrl"
 						type="url"
 						required
 						placeholder="https://clip.example.com/"
 					></label
 				>
-				<button type="submit">Save</button>
-				<output></output>
-			</form>
-			<p>
-				The web app handles encryption and uploads. Files are held only in
-				memory. Protected media and blob URLs require a manual upload.
 			</p>
-		</main>
+			<button type="submit">Save</button>
+			<p><output></output></p>
+		</form>
 		<script type="module" src="options.js"></script>
 	</body>
 </html>

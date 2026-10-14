@@ -14,7 +14,6 @@ for (const file of [
 	"bridge.js",
 	"options.html",
 	"options.js",
-	"options.css",
 	"icon.svg",
 ]) {
 	await copyFile(new URL(file, source), new URL(file, output));
