@@ -12,17 +12,21 @@ import {
 	updateMetadata,
 	upload,
 } from "../src/lib/api.js";
-import { bytesToB64 } from "../src/lib/protocol/bytes.js";
+import { bytesToB64, hexToBytes } from "../src/lib/protocol/bytes.js";
 import {
 	authorizationHeader,
 	bodyHash,
 	contentAad,
+	decrypt,
 	encrypt,
 	loadKey,
 	metaAad,
 } from "../src/lib/protocol/crypto.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
-import { encodeMetaPlain } from "../src/lib/protocol/meta-plain.js";
+import {
+	decodeMetaPlain,
+	encodeMetaPlain,
+} from "../src/lib/protocol/meta-plain.js";
 
 test("registration checks use a signed empty ping, distinguish unauthorized keys and propagate server failures", async (t) => {
 	const key = await generatePrivateKey();
@@ -218,6 +222,7 @@ test("metadata GET and PUT sign the meta route and preserve decrypted fields", a
 		size: 3,
 	};
 	const thumb = new Uint8Array([1, 2, 3]);
+	const renamed = { ...metadata, name: "Renamed photo — Córdoba.png" };
 	const meta = await encrypt(
 		key,
 		metaAad(id),
@@ -242,6 +247,21 @@ test("metadata GET and PUT sign the meta route and preserve decrypted fields", a
 			}),
 		);
 		methods.push(options.method);
+		if (options.method === "PUT") {
+			const body = options.body;
+			assert.deepEqual(body.subarray(0, 32), hexToBytes(await bodyHash(meta)));
+			const length = new DataView(
+				body.buffer,
+				body.byteOffset + 32,
+				4,
+			).getUint32(0);
+			const sealed = body.subarray(36, 36 + length);
+			assert.deepEqual(
+				decodeMetaPlain(await decrypt(key, metaAad(id), sealed)),
+				{ metadata: renamed, thumb },
+			);
+			assert(!new TextDecoder().decode(body).includes(renamed.name));
+		}
 		return Response.json({
 			id,
 			created_at: 123,
@@ -268,7 +288,7 @@ test("metadata GET and PUT sign the meta route and preserve decrypted fields", a
 	});
 	const saved = await updateMetadata({
 		...credentials,
-		metadata,
+		metadata: renamed,
 		thumb,
 		prevMetaHash: item.metaHash,
 	});

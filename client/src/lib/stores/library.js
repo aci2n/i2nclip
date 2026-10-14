@@ -294,7 +294,7 @@ export function createLibrary(
 			state.update((v) => ({ ...v, selected: null }));
 		},
 		download: (id) => cards.get(id)?.media.download(),
-		retag: (id, tags) => cards.get(id)?.media.retag(tags),
+		updateMetadata: (id, patch) => cards.get(id)?.media.updateMetadata(patch),
 		async remove(id) {
 			const row = cards.get(id);
 			if (

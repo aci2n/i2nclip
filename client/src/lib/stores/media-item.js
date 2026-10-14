@@ -140,13 +140,16 @@ export function createMediaItem(
 					);
 				}
 			}),
-		retag: (tags) =>
+		updateMetadata: (patch) =>
 			run(async () => {
 				const value = get(state);
 				if (!value.metadata) {
 					throw new Error("File metadata is unavailable.");
 				}
-				const metadata = { ...value.metadata, tags: uniqueTags(tags) };
+				const metadata = { ...value.metadata, ...patch };
+				if (Object.hasOwn(patch, "tags")) {
+					metadata.tags = uniqueTags(patch.tags);
+				}
 				const result = await http.updateMetadata({
 					...session.credentials(),
 					id: value.id,
@@ -161,7 +164,7 @@ export function createMediaItem(
 				if (result.conflict) {
 					state.update((v) => ({ ...v, ...result.item }));
 					throw new Error(
-						"Tags changed on another device. Review the current tags and retry.",
+						"Metadata changed on another device. Review the current metadata and retry.",
 					);
 				}
 				state.update((v) => ({ ...v, ...result, metadata }));

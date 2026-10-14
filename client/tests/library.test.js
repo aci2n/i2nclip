@@ -184,7 +184,7 @@ test("stale media downloads create no URLs or save dialogs; disposal revokes pre
 	assert.equal(downloads, 0);
 });
 
-test("overlapping media mutations are rejected and metadata conflicts refresh tags before retry", async (t) => {
+test("overlapping media mutations are rejected and conflicts load current metadata before retry", async (t) => {
 	const owner = session();
 	owner.configure();
 	const pending = deferred();
@@ -199,7 +199,7 @@ test("overlapping media mutations are rejected and metadata conflicts refresh ta
 		},
 	});
 	t.after(media.dispose);
-	const saving = media.retag(["mine"]);
+	const saving = media.updateMetadata({ name: "Renamed.txt", tags: ["mine"] });
 	assert.equal(await media.remove(), false);
 	assert.equal(calls, 1);
 	pending.resolve({
@@ -211,10 +211,109 @@ test("overlapping media mutations are rejected and metadata conflicts refresh ta
 		},
 	});
 	assert.equal(await saving, false);
+	assert.equal(get(media).metadata.name, "a");
 	assert.deepEqual(get(media).metadata.tags, ["other"]);
 	assert.match(get(media).message, /another device/);
 	assert.equal(await media.remove(), true);
 	assert.equal(get(media).deleted, true);
+});
+
+test("generic metadata updates rename files, preserve omitted fields and previews, and normalize supplied tags", async (t) => {
+	const initial = {
+		...item("a"),
+		metadata: {
+			name: "Original.txt",
+			tags: ["Keep"],
+			content_type: "text/plain",
+			size: 4,
+			extra: { source: "camera" },
+		},
+		thumb: new Uint8Array([1, 2, 3]),
+	};
+	const requests = [];
+	const downloaded = [];
+	const revoked = [];
+	const f = fixture(t, {
+		http: {
+			list: async () => ({ items: [initial], next: null }),
+			getContent: async () => new Uint8Array([1, 2, 3, 4]),
+			updateMetadata: async (request) => {
+				requests.push(request);
+				return { conflict: false, metaHash: `hash${requests.length}` };
+			},
+		},
+		mediaOptions: {
+			urls: {
+				createObjectURL: () => "blob:owned",
+				revokeObjectURL: (url) => revoked.push(url),
+			},
+			download: async (url, name) => downloaded.push({ url, name }),
+		},
+	});
+	f.owner.configure();
+	await tick();
+	assert.equal(
+		await f.library.updateMetadata("a", { name: "Renamed.txt" }),
+		true,
+	);
+	assert.deepEqual(requests[0].metadata, {
+		...initial.metadata,
+		name: "Renamed.txt",
+	});
+	assert.equal(requests[0].prevMetaHash, initial.metaHash);
+	assert.deepEqual(requests[0].thumb, initial.thumb);
+	assert.equal(get(f.library).cards[0].preview, "blob:owned");
+	await f.library.download("a");
+	assert.deepEqual(downloaded, [{ url: "blob:owned", name: "Renamed.txt" }]);
+	assert.equal(
+		await f.library.updateMetadata("a", {
+			tags: [" Vacation ", "vacation", "Keep"],
+		}),
+		true,
+	);
+	assert.deepEqual(requests[1].metadata, {
+		...initial.metadata,
+		name: "Renamed.txt",
+		tags: ["Vacation", "Keep"],
+	});
+	assert.equal(requests[1].prevMetaHash, "hash1");
+	assert.equal(
+		await f.library.updateMetadata("a", { name: "Final.txt", tags: ["Final"] }),
+		true,
+	);
+	assert.deepEqual(get(f.library).cards[0].metadata, {
+		...initial.metadata,
+		name: "Final.txt",
+		tags: ["Final"],
+	});
+	assert.deepEqual(revoked, []);
+});
+
+test("failed and stale metadata updates never publish an attempted filename", async (t) => {
+	const owner = session();
+	owner.configure();
+	const pending = deferred();
+	let fail = true;
+	const media = createMediaItem(item("Original.txt"), owner, {
+		http: {
+			updateMetadata: async () => {
+				if (fail) {
+					throw new Error("Unavailable");
+				}
+				return pending.promise;
+			},
+		},
+	});
+	t.after(media.dispose);
+	assert.equal(await media.updateMetadata({ name: "Failed.txt" }), false);
+	assert.equal(get(media).metadata.name, "Original.txt");
+	fail = false;
+	const updating = media.updateMetadata({ name: "Stale.txt" });
+	assert.equal(await media.updateMetadata({ name: "Overlapping.txt" }), false);
+	owner.lock();
+	pending.resolve({ conflict: false, metaHash: "new" });
+	assert.equal(await updating, false);
+	assert.equal(get(media).metadata.name, "Original.txt");
 });
 
 test("deleted cards retain their position and pagination, release URLs, and disappear on search", async (t) => {

@@ -28,7 +28,7 @@ pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route("/api/media", get(list).post(upload))
         .route("/api/media/{id}", get(download).delete(remove))
-        .route("/api/media/{id}/meta", get(metadata).put(retag))
+        .route("/api/media/{id}/meta", get(metadata).put(update_metadata))
 }
 
 const META_BODY_DEADLINE: Duration = Duration::from_secs(30);
@@ -229,7 +229,7 @@ async fn metadata(
     }
 }
 
-async fn retag(
+async fn update_metadata(
     State(state): State<AppState>,
     UrlPath(id): UrlPath<String>,
     media: MediaRequest,

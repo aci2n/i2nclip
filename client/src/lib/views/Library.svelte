@@ -91,7 +91,7 @@ let filesInput = $state();
 				onreveal={(opener) => library.reveal(media.id, opener)}
 				ondownload={() => library.download(media.id)}
 				onremove={() => library.remove(media.id)}
-				onretag={(tags) => library.retag(media.id, tags)}
+				onretag={(tags) => library.updateMetadata(media.id, { tags })}
 			/>
 		{/each}
 	</div>

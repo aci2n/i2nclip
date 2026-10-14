@@ -9,7 +9,7 @@
 //!   uint32be  length of the tag-token text
 //!   bytes     UTF-8 tokens separated by '\n'
 //!
-//! PUT /api/media/{id}
+//! PUT /api/media/{id}/meta
 //!   bytes     SHA-256 of the prior encrypted metadata (32 bytes)
 //!   uint32be  length of encrypted metadata
 //!   bytes     metadata blob

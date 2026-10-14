@@ -24,6 +24,14 @@ The client generates its identity locally. The server registers only the public 
 
 Metadata reads return the same media object as list entries, without content bytes, and use `Cache-Control: no-store`. Missing items and items owned by another identity return `404`. Metadata reads do not consume download slots. Metadata updates are available only at `/api/media/{id}/meta`; the old PUT route returns `405`.
 
+Metadata updates are generic: filenames, tags, and other metadata travel in the
+same encrypted frame. The server cannot read or patch plaintext fields. The
+client library exposes `updateMetadata(id, patch)` to merge changes such as
+`{ name: "New filename.png" }` or `{ tags: ["Vacation"] }` into the current
+metadata, preserving omitted fields and the thumbnail. Supplied tags are
+normalized and deduplicated. The prior encrypted metadata hash protects updates
+against concurrent changes; content bytes and their ID do not change.
+
 A media object contains `id`, `created_at` (server Unix seconds), `bytes` (encrypted content length), `tokens` (search fingerprints), and `meta` (encrypted metadata encoded using **standard padded base64**, not b64url).
 
 List queries accept repeated `tag=TOKEN` parameters and optional `after=CREATED_AT.ID`. All distinct requested tags must match. Pages contain at most 24 items, ordered by creation time descending and hash ascending. `next` is the last returned item's cursor only when another row exists. Pagination is not a snapshot: intervening mutations may change results. Unknown query keys are ignored, empty token values are ignored, and the last repeated `after` wins. The hand-written parser does not percent-decode values; use the literal token/cursor alphabet.
