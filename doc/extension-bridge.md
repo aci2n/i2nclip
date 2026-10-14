@@ -15,10 +15,14 @@ resource, targets an existing app tab or opens a temporary popup, and hands the
 bytes to the admitted web app. It focuses the app only when unlocking is needed. The web app uses its existing upload workflow.
 
 Exclude extension identities, crypto, API calls, library/tag UI, workers, queues,
-persisted files, upload retries, source-page injection, blob/data URLs, linked-file
+persisted files, upload retries, source-page fetching, blob/data URLs, linked-file
 capture, authenticated media fallbacks, Chrome packaging, and publishing/signing.
 The extension fetches HTTP(S) resources without credentials; protected media may
 require downloading manually and using the app's Upload action.
+
+Filename selection reads only the clicked element's descriptive attributes and
+page context through a transient source-frame script; see
+[descriptive capture filenames](extension-filenames.md).
 
 ## Interfaces and ownership
 

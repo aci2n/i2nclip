@@ -33,6 +33,8 @@ uses your existing app tab without changing focus while unlocked. It focuses the
 app only when unlocking is needed. If no app tab exists, it opens a small temporary
 popup that closes after a successful upload; failures leave it open. A locked app
 holds one file invisibly and uploads it automatically after unlock.
+Capture names use media alt/title/aria-label text, then the page title or URL,
+with an appropriate file extension.
 Set up the library before capturing. Only public HTTP(S) media up to 32 MB is
 supported; protected media and blob URLs need manual Upload.
 

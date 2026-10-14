@@ -1,12 +1,17 @@
-import { checkAppUrl, closeUploadedPopup, sendToApp } from "./capture.js";
+import {
+	checkAppUrl,
+	closeUploadedPopup,
+	readCaptureContext,
+	sendToApp,
+} from "./capture.js";
 
 browser.runtime.onMessage.addListener((message, sender) =>
 	closeUploadedPopup(browser, message, sender),
 );
 
 // Temporary add-on reloads must register the menu even without onInstalled.
-void browser.contextMenus.removeAll().then(() => {
-	browser.contextMenus.create({
+void browser.menus.removeAll().then(() => {
+	browser.menus.create({
 		id: "upload",
 		title: "Upload to i2nclip",
 		contexts: ["image", "audio", "video"],
@@ -22,7 +27,7 @@ const notify = (message) =>
 	});
 
 let capturing = false;
-browser.contextMenus.onClicked.addListener(async (info) => {
+browser.menus.onClicked.addListener(async (info, tab) => {
 	if (info.menuItemId !== "upload") {
 		return;
 	}
@@ -39,7 +44,8 @@ browser.contextMenus.onClicked.addListener(async (info) => {
 				"Save your web-app URL, then right-click the media again.",
 			);
 		}
-		await sendToApp(browser, checkAppUrl(appUrl), info.srcUrl);
+		const context = await readCaptureContext(browser, info, tab);
+		await sendToApp(browser, checkAppUrl(appUrl), info.srcUrl, fetch, context);
 	} catch (error) {
 		await notify(error.message);
 	} finally {

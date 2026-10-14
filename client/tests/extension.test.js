@@ -5,11 +5,14 @@ import { runInNewContext } from "node:vm";
 import { get, writable } from "svelte/store";
 import { handoff } from "../extension/bridge.js";
 import {
+	captureDetails,
+	captureName,
 	checkAppUrl,
 	closeUploadedPopup,
 	fetchFile,
 	MAX_FILE_BYTES,
 	matchesApp,
+	readCaptureContext,
 	sendToApp,
 } from "../extension/capture.js";
 import { MAX_FILE_BYTES as WEB_MAX_FILE_BYTES } from "../src/lib/api.js";
@@ -25,7 +28,7 @@ test("background startup restores the menu without an install event", async () =
 	let click;
 	const browser = {
 		runtime: { onMessage: { addListener() {} } },
-		contextMenus: {
+		menus: {
 			removeAll: async () => menus.clear(),
 			create: (menu) => menus.set(menu.id, menu),
 			onClicked: {
@@ -36,10 +39,11 @@ test("background startup restores the menu without an install event", async () =
 		},
 	};
 	// Run the real entry point in a fresh realm. No onInstalled event is sent.
-	runInNewContext(source.replace(/^import[^\n]+\n/, ""), {
+	runInNewContext(source.replace(/^import[\s\S]*?;\n/, ""), {
 		browser,
 		checkAppUrl,
 		closeUploadedPopup,
+		readCaptureContext,
 		sendToApp,
 	});
 	await Promise.resolve();
@@ -609,4 +613,132 @@ test("navigation settles an unfinished handoff and releases its listeners", asyn
 	assert.equal((await bridge.reply).ok, false);
 	assert.equal(bridge.listeners.size, 0);
 	assert.equal(bridge.closed.length, 0);
+});
+
+test("capture names prefer media descriptions, then page titles and page URLs", () => {
+	assert.equal(
+		captureName(
+			{ label: "  Córdoba   at sunset  ", title: "Page title" },
+			"image.php",
+			"image/jpeg",
+		),
+		"Córdoba at sunset.jpg",
+	);
+	assert.equal(
+		captureName({ label: "", title: "A portrait.png" }, "image", "image/png"),
+		"A portrait.png",
+	);
+	assert.equal(
+		captureName(
+			{
+				title: "  ",
+				url: "https://user:secret@example.com/trips/C%C3%B3rdoba?photo=42#view",
+			},
+			"image.png",
+			"image/png",
+		),
+		"example.com trips Córdoba photo=42#view.png",
+	);
+	assert.equal(
+		captureName(
+			{ url: "https://example.com/gallery?photo=43" },
+			"image.png",
+			"image/png",
+		),
+		"example.com gallery photo=43.png",
+	);
+	assert.equal(captureName({}, "Original.mp3", "audio/mpeg"), "Original.mp3");
+	assert.equal(
+		captureName(
+			{ label: 'Folder/Name\\:*?"<>|\nTitle' },
+			"image.png",
+			"image/png",
+		),
+		"Folder Name Title.png",
+	);
+	const long = captureName(
+		{ label: "A".repeat(600) },
+		"image.png",
+		"image/png",
+	);
+	assert.equal(long.length, 255);
+	assert(long.endsWith(".png"));
+});
+
+test("source inspection uses the exact clicked target and falls through blank attributes", async () => {
+	const elements = new Map([
+		[1, { alt: "First image" }],
+		[2, { alt: "  ", title: "Second image" }],
+		[3, { "aria-label": "Voice recording" }],
+	]);
+	const inspect = runInNewContext(`(${captureDetails.toString()})`, {
+		browser: {
+			menus: {
+				getTargetElement: (id) => {
+					const attributes = elements.get(id);
+					return attributes
+						? { getAttribute: (name) => attributes[name] || null }
+						: null;
+				},
+			},
+		},
+		document: { title: "Frame title" },
+		location: { href: "https://media.example/frame" },
+	});
+	assert.equal(inspect(1).label, "First image");
+	assert.equal(inspect(2).label, "Second image");
+	assert.equal(inspect(3).label, "Voice recording");
+	assert.equal(inspect(99).label, "");
+	let target;
+	const browser = {
+		scripting: {
+			executeScript: async (request) => {
+				target = request.target;
+				return [{ result: inspect(request.args[0]) }];
+			},
+		},
+	};
+	const details = await readCaptureContext(
+		browser,
+		{ frameId: 7, targetElementId: 2 },
+		{ id: 3, title: "Tab title" },
+	);
+	assert.deepEqual(target, { tabId: 3, frameIds: [7] });
+	assert.equal(details.label, "Second image");
+	assert.equal(details.title, "Frame title");
+	browser.scripting.executeScript = async () => {
+		throw new Error("Restricted frame");
+	};
+	assert.deepEqual(
+		await readCaptureContext(
+			browser,
+			{ frameUrl: "https://media.example/frame" },
+			{ id: 3, title: "Tab title" },
+		),
+		{ title: "Tab title", url: "https://media.example/frame" },
+	);
+});
+
+test("capture passes the descriptive filename to the ordinary handoff", async () => {
+	const browser = extensionBrowser([
+		{ id: 3, windowId: 2, url: "https://clip.example/", status: "complete" },
+	]);
+	let delivered;
+	browser.scripting.executeScript = async ({ args }) => {
+		if (args[0].request.type === "file") {
+			delivered = args[0].request;
+		}
+		return [{ result: { ok: true, needsUnlock: false } }];
+	};
+	await sendToApp(
+		browser,
+		"https://clip.example/",
+		"https://media.example/image.php",
+		async () =>
+			new Response("photo", { headers: { "content-type": "image/png" } }),
+		{ label: "A mountain portrait", title: "Page title" },
+	);
+	assert.equal(delivered.name, "A mountain portrait.png");
+	assert.equal(delivered.mime, "image/png");
+	assert.equal(Buffer.from(delivered.base64, "base64").toString(), "photo");
 });

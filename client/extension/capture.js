@@ -28,6 +28,86 @@ export function matchesApp(value, appUrl) {
 	}
 }
 
+// Serialized into the clicked frame. Read only the exact context-menu target.
+export function captureDetails(targetElementId) {
+	const element =
+		targetElementId == null
+			? null
+			: browser.menus.getTargetElement(targetElementId);
+	const labels = [
+		element?.getAttribute("alt"),
+		element?.getAttribute("title"),
+		element?.getAttribute("aria-label"),
+	];
+	return {
+		label: labels.find((text) => text?.trim()) || "",
+		title: document.title,
+		url: location.href,
+	};
+}
+
+export async function readCaptureContext(browser, info, tab) {
+	const fallback = {
+		title: tab?.title || "",
+		url: info.frameUrl || info.pageUrl || tab?.url || "",
+	};
+	if (tab?.id == null) {
+		return fallback;
+	}
+	try {
+		const [injection] = await browser.scripting.executeScript({
+			target: { tabId: tab.id, frameIds: [info.frameId ?? 0] },
+			func: captureDetails,
+			args: [info.targetElementId ?? null],
+		});
+		return injection?.result || fallback;
+	} catch {
+		return fallback;
+	}
+}
+
+export function captureName(context, originalName, type) {
+	let label = [context.label, context.title].find((text) => text?.trim()) || "";
+	if (!label && context.url) {
+		const page = new URL(context.url);
+		label = page.host + page.pathname + page.search + page.hash;
+		try {
+			label = decodeURIComponent(label);
+		} catch {
+			// A malformed URL escape still provides useful page context.
+		}
+	}
+	label = (label || originalName)
+		.replace(/[\\/:*?"<>|\p{Cc}]/gu, " ")
+		.replace(/\s+/g, " ")
+		.trim()
+		.replace(/[. ]+$/, "");
+	const extension =
+		{
+			"image/jpeg": "jpg",
+			"image/png": "png",
+			"image/gif": "gif",
+			"image/webp": "webp",
+			"image/avif": "avif",
+			"image/svg+xml": "svg",
+			"video/mp4": "mp4",
+			"video/webm": "webm",
+			"audio/mpeg": "mp3",
+			"audio/ogg": "ogg",
+			"audio/wav": "wav",
+			"audio/x-wav": "wav",
+		}[type] ||
+		originalName.match(/\.([a-z0-9]{1,8})$/i)?.[1] ||
+		"";
+	const suffix = extension ? `.${extension}` : "";
+	if (suffix && label.toLowerCase().endsWith(suffix.toLowerCase())) {
+		label = label.slice(0, -suffix.length);
+	}
+	return (
+		(label || "Captured media").slice(0, 255 - suffix.length).trim() + suffix
+	);
+}
+
 export async function fetchFile(srcUrl, fetcher = fetch) {
 	const url = new URL(srcUrl);
 	if (
@@ -100,7 +180,13 @@ export async function fetchFile(srcUrl, fetcher = fetch) {
 
 const pause = () => new Promise((resolve) => setTimeout(resolve, 100));
 
-export async function sendToApp(browser, appUrl, srcUrl, fetcher = fetch) {
+export async function sendToApp(
+	browser,
+	appUrl,
+	srcUrl,
+	fetcher = fetch,
+	context = {},
+) {
 	const app = new URL(appUrl);
 	// Firefox match patterns omit ports; matchesApp checks the exact origin below.
 	const pattern = `${app.protocol}//${app.hostname}${app.pathname}*`;
@@ -162,6 +248,7 @@ export async function sendToApp(browser, appUrl, srcUrl, fetcher = fetch) {
 		throw new Error(ready.error);
 	}
 	const file = await fetchFile(srcUrl, fetcher);
+	file.name = captureName(context, file.name, file.mime);
 	file.closeWhenDone = temporaryWindowId !== undefined;
 	const reply = await request(receiver.id, file, 5000);
 	if (!reply?.ok) {
