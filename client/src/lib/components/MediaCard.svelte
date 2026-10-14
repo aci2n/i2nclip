@@ -1,8 +1,9 @@
 <script>
 import { fileSize, fileType, uploadedAt } from "../media/format.js";
+import FilenameEditor from "./FilenameEditor.svelte";
 import TagEditor from "./TagEditor.svelte";
 
-let { media, onreveal, ondownload, onremove, onretag } = $props();
+let { media, onreveal, ondownload, onremove, onupdate } = $props();
 const type = $derived(media.metadata?.content_type || "");
 const name = $derived(media.metadata?.name || media.id);
 const summary = $derived(
@@ -75,14 +76,21 @@ const summary = $derived(
 			<span class="pct">{media.progress}%</span>
 		{/if}
 	</div>
-	<strong class="card-title" title={name}>{name}</strong>
+	<FilenameEditor
+		{name}
+		disabled={media.busy ||
+			media.deleted ||
+			media.metadataUnavailable ||
+			!media.metadata}
+		onsave={(name) => onupdate({ name })}
+	/>
 	<p class="meta">{summary}</p>
 	{#if media.metadata}
 		<TagEditor
 			tags={media.metadata.tags || []}
 			{name}
 			disabled={media.busy || media.deleted || media.metadataUnavailable}
-			onsave={(tags) => onretag(tags)}
+			onsave={(tags) => onupdate({ tags })}
 		/>
 	{/if}
 	<details class="card-details">
@@ -131,17 +139,6 @@ const summary = $derived(
 	display: flex;
 	flex-direction: column;
 	gap: 0.5rem;
-}
-.card-title {
-	display: -webkit-box;
-	-webkit-line-clamp: 2;
-	line-clamp: 2;
-	-webkit-box-orient: vertical;
-	overflow: hidden;
-	overflow-wrap: anywhere;
-	min-height: 2.8em;
-	line-height: 1.4;
-	margin-top: 0.25rem;
 }
 .meta {
 	font-size: 0.85rem;

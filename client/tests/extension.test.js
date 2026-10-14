@@ -8,8 +8,8 @@ import {
 	captureDetails,
 	captureName,
 	checkAppUrl,
-	closeUploadedPopup,
 	fetchFile,
+	handleUploadResult,
 	MAX_FILE_BYTES,
 	matchesApp,
 	readCaptureContext,
@@ -42,7 +42,7 @@ test("background startup restores the menu without an install event", async () =
 	runInNewContext(source.replace(/^import[\s\S]*?;\n/, ""), {
 		browser,
 		checkAppUrl,
-		closeUploadedPopup,
+		handleUploadResult,
 		readCaptureContext,
 		sendToApp,
 	});
@@ -207,11 +207,11 @@ test("failed unlock keeps the capture and invalidation or disposal discards it",
 	assert.equal(fixture.uploads.length, 0);
 });
 
-test("temporary captures emit completion only after the regular upload settles", async (t) => {
+test("captures emit completion only after the regular upload settles", async (t) => {
 	for (const ok of [true, false]) {
 		const result = deferred();
 		const fixture = app(t, {}, result.promise);
-		assert.equal(fixture.receive({ ...file, closeWhenDone: true }).ok, true);
+		assert.equal(fixture.receive(file).ok, true);
 		assert(!fixture.replies.some((message) => message.type === "complete"));
 		result.resolve(ok);
 		await tick();
@@ -520,8 +520,9 @@ test("focus follows the final locked receipt, including lock changes during fetc
 	}
 });
 
-test("popup closure validates the sender and never closes ordinary or navigated windows", async () => {
+test("upload results notify success or failure and only close successful temporary popups", async () => {
 	const removed = [];
+	const notifications = [];
 	let type = "popup";
 	let url = "https://clip.example/";
 	const browser = {
@@ -534,7 +535,14 @@ test("popup closure validates the sender and never closes ordinary or navigated 
 			remove: async (id) => removed.push(id),
 		},
 	};
-	const message = { type: "upload-complete", windowId: 4 };
+	const notify = async (message) => notifications.push(message);
+	const message = {
+		type: "upload-complete",
+		appUrl: "https://clip.example/",
+		temporaryWindowId: 4,
+		name: "Photo.png",
+		ok: true,
+	};
 	const sender = {
 		id: browser.runtime.id,
 		frameId: 0,
@@ -544,30 +552,42 @@ test("popup closure validates the sender and never closes ordinary or navigated 
 	for (const patch of [
 		{ id: "other" },
 		{ frameId: 1 },
-		{ tab: { id: 9, windowId: 5 } },
 		{ url: "https://other.example/" },
 	]) {
-		await closeUploadedPopup(browser, message, { ...sender, ...patch });
+		await handleUploadResult(browser, message, { ...sender, ...patch }, notify);
 	}
+	assert.deepEqual(notifications, []);
+	await handleUploadResult(browser, { ...message, ok: false }, sender, notify);
+	assert.match(notifications.at(-1), /Upload failed.*Photo.png/);
+	assert.deepEqual(removed, []);
 	type = "normal";
-	await closeUploadedPopup(browser, message, sender);
+	await handleUploadResult(browser, message, sender, notify);
+	assert.match(notifications.at(-1), /Uploaded Photo.png/);
+	assert.deepEqual(removed, []);
 	type = "popup";
 	url = "https://other.example/";
-	await closeUploadedPopup(browser, message, sender);
+	await handleUploadResult(browser, message, sender, notify);
 	assert.deepEqual(removed, []);
 	url = sender.url;
-	await closeUploadedPopup(browser, message, sender);
+	await handleUploadResult(
+		browser,
+		{ ...message, temporaryWindowId: undefined },
+		sender,
+		notify,
+	);
+	assert.deepEqual(removed, []);
+	await handleUploadResult(browser, message, sender, notify);
 	assert.deepEqual(removed, [4]);
 });
 
-function injectedBridge(request = { type: "file", closeWhenDone: true }) {
+function injectedBridge(request = { type: "file", name: "Photo.png" }) {
 	const listeners = new Map();
 	const window = {
 		addEventListener: (type, callback) => listeners.set(type, callback),
 		removeEventListener: (type) => listeners.delete(type),
 		postMessage() {},
 	};
-	const closed = [];
+	const reported = [];
 	const inject = runInNewContext(`(${handoff.toString()})`, {
 		window,
 		location: { origin: "https://clip.example", pathname: "/" },
@@ -576,7 +596,7 @@ function injectedBridge(request = { type: "file", closeWhenDone: true }) {
 		setTimeout,
 		clearTimeout,
 		browser: {
-			runtime: { sendMessage: async (message) => closed.push(message) },
+			runtime: { sendMessage: async (message) => reported.push(message) },
 		},
 	});
 	const reply = inject({
@@ -590,20 +610,21 @@ function injectedBridge(request = { type: "file", closeWhenDone: true }) {
 			origin: "https://clip.example",
 			data: { channel: "i2nclip-extension-v1", type, token, result },
 		});
-	return { listeners, closed, reply, emit };
+	return { listeners, reported, reply, emit };
 }
 
-test("temporary bridge closes only after correlated success and cleans up on failure", async () => {
+test("bridge reports correlated upload outcomes and releases completion listeners", async () => {
 	for (const ok of [true, false]) {
 		const bridge = injectedBridge();
 		bridge.emit("reply", { ok: true, needsUnlock: true });
 		assert.equal((await bridge.reply).ok, true);
-		assert.equal(bridge.closed.length, 0);
+		assert.equal(bridge.reported.length, 0);
 		bridge.emit("complete", { ok: true }, "other-request");
-		assert.equal(bridge.closed.length, 0);
+		assert.equal(bridge.reported.length, 0);
 		bridge.emit("complete", { ok });
 		assert.equal(bridge.listeners.size, 0);
-		assert.equal(bridge.closed.length, ok ? 1 : 0);
+		assert.equal(bridge.reported.length, 1);
+		assert.equal(bridge.reported[0].ok, ok);
 	}
 });
 
@@ -612,7 +633,7 @@ test("navigation settles an unfinished handoff and releases its listeners", asyn
 	bridge.listeners.get("pagehide")();
 	assert.equal((await bridge.reply).ok, false);
 	assert.equal(bridge.listeners.size, 0);
-	assert.equal(bridge.closed.length, 0);
+	assert.equal(bridge.reported.length, 0);
 });
 
 test("capture names prefer media descriptions, then page titles and page URLs", () => {
@@ -741,4 +762,13 @@ test("capture passes the descriptive filename to the ordinary handoff", async ()
 	assert.equal(delivered.name, "A mountain portrait.png");
 	assert.equal(delivered.mime, "image/png");
 	assert.equal(Buffer.from(delivered.base64, "base64").toString(), "photo");
+});
+
+test("cancelled captures release bridge listeners without notifications", async () => {
+	const bridge = injectedBridge();
+	bridge.emit("reply", { ok: true, needsUnlock: true });
+	await bridge.reply;
+	bridge.emit("complete", { ok: false, cancelled: true });
+	assert.equal(bridge.listeners.size, 0);
+	assert.equal(bridge.reported.length, 0);
 });

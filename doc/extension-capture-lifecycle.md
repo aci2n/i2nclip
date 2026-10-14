@@ -27,7 +27,7 @@ The accepted-file reply includes `needsUnlock`. Use the final receipt state, so
 locking or unlocking during media fetching does not focus an already unlocked
 app or miss a newly locked one. Only success acknowledgements trigger focus.
 
-For a newly created popup, the injected bridge listens for a correlated completion
+For every accepted capture, the injected bridge listens for a correlated completion
 event after acceptance. The receiver emits it when the ordinary upload finishes.
 The bridge notifies its own extension using `runtime.sendMessage`; the background
 validates extension ID, top-frame sender, configured URL, popup type, and the
@@ -51,8 +51,9 @@ Lost acknowledgements still require checking the app before retrying. Closing
 the popup cancels root-owned work through existing disposal behavior.
 
 Only `appUrl` persists in extension storage. No completion registry is saved;
-only the temporary bridge owns the created window's completion listener. Existing
-app tabs have neither the completion listener nor close-on-success behavior.
+each injected bridge owns its completion listener. Completion produces a Firefox
+notification for success or failure; cancellation is silent. Only newly created
+popups have close-on-success behavior.
 
 ## Acceptance checks
 

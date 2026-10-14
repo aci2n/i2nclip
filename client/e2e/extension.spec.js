@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { handoff } from "../extension/bridge.js";
 import {
 	createLibrary,
 	expect,
@@ -9,7 +8,43 @@ import {
 	test,
 } from "./fixtures.js";
 
-test("extension bridge hands a file to the real web upload flow", async ({
+// Exercise the app's public event interface; this page has no extension APIs.
+function receiveCapture(page, request, timeout = 5000) {
+	return page.evaluate(
+		({ request, timeout }) =>
+			new Promise((resolve) => {
+				const token = crypto.randomUUID();
+				const finish = (result) => {
+					clearTimeout(timer);
+					window.removeEventListener("message", reply);
+					resolve(result);
+				};
+				const reply = (event) => {
+					if (
+						event.source === window &&
+						event.origin === location.origin &&
+						event.data?.channel === "i2nclip-extension-v1" &&
+						event.data?.type === "reply" &&
+						event.data?.token === token
+					) {
+						finish(event.data.result);
+					}
+				};
+				const timer = setTimeout(
+					() => finish({ ok: false, unavailable: true }),
+					timeout,
+				);
+				window.addEventListener("message", reply);
+				window.postMessage(
+					{ ...request, channel: "i2nclip-extension-v1", token },
+					location.origin,
+				);
+			}),
+		{ request, timeout },
+	);
+}
+
+test("app receives captures through its public event interface and uploads after unlock", async ({
 	page,
 	app,
 	context,
@@ -28,8 +63,7 @@ test("extension bridge hands a file to the real web upload flow", async ({
 		base64: image.buffer.toString("base64"),
 	};
 	await page.getByRole("button", { name: "Lock", exact: true }).click();
-	const deliver = () =>
-		page.evaluate(handoff, { appUrl: `${app.origin}/`, request });
+	const deliver = () => receiveCapture(page, request);
 	expect(await deliver()).toEqual({ ok: true, needsUnlock: true });
 	await expect(page.getByText(image.name, { exact: true })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Upload file" })).toHaveCount(
@@ -71,10 +105,7 @@ test("extension bridge hands a file to the real web upload flow", async ({
 	// An unlocked app immediately uploads and returns to Library from Settings.
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	expect(
-		await page.evaluate(handoff, {
-			appUrl: `${app.origin}/`,
-			request: { ...request, name: "Second portrait.png" },
-		}),
+		await receiveCapture(page, { ...request, name: "Second portrait.png" }),
 	).toEqual({ ok: true, needsUnlock: false });
 	await expect(page.getByRole("searchbox")).toBeVisible();
 	await expect(page.getByRole("article")).toHaveCount(2);
@@ -91,18 +122,11 @@ test("extension bridge hands a file to the real web upload flow", async ({
 	try {
 		await other.goto(app.origin);
 		await expect(other.getByText(/already open in another tab/)).toBeVisible();
-		expect(
-			await other.evaluate(handoff, {
-				appUrl: `${app.origin}/`,
-				request: { type: "probe" },
-				timeout: 50,
-			}),
-		).toMatchObject({ ok: false, unavailable: true });
+		expect(await receiveCapture(other, { type: "probe" }, 50)).toMatchObject({
+			ok: false,
+			unavailable: true,
+		});
 	} finally {
 		await other.close();
 	}
-
-	expect(
-		await page.evaluate(handoff, { appUrl: "https://other.example/", request }),
-	).toMatchObject({ ok: false });
 });

@@ -23,10 +23,7 @@ export function handoff({
 				return;
 			}
 			replied = true;
-			accepted =
-				result?.ok === true &&
-				request.closeWhenDone === true &&
-				Number.isInteger(temporaryWindowId);
+			accepted = result?.ok === true && request.type === "file";
 			clearTimeout(timer);
 			if (!accepted) {
 				cleanup();
@@ -55,11 +52,14 @@ export function handoff({
 					finish(event.data.result);
 				} else if (event.data.type === "complete" && accepted) {
 					cleanup();
-					if (event.data.result?.ok === true) {
+					if (!event.data.result?.cancelled) {
 						void browser.runtime
 							.sendMessage({
 								type: "upload-complete",
-								windowId: temporaryWindowId,
+								ok: event.data.result?.ok === true,
+								name: request.name,
+								appUrl,
+								temporaryWindowId,
 							})
 							.catch(() => {});
 					}

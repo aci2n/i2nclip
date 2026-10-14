@@ -1,0 +1,66 @@
+# Inline filename editing and capture notifications
+
+## Goal and scope
+
+Make the filename editable inline: hover shows a subtle border, clicking opens a
+focused text input, Enter submits a generic `{ name }` metadata update, and blur
+returns to read-only without saving. Use the tag editor's presentation conventions
+and existing media-item store for asynchronous work. Add Firefox notifications
+after each extension capture's real upload succeeds or fails.
+
+Exclude new server endpoints, storage formats, identity/session caching, upload
+queues, broad transport refactors, and notifications for ordinary file-picker
+uploads. The existing app progress/error UI stays authoritative.
+
+## Interfaces and ownership
+
+- A `FilenameEditor` component owns editing state, draft text, and focus only.
+  It receives name/disabled props and an ordinary save callback. It has no store,
+  storage, or protocol access. Trim surrounding whitespace; require a nonempty
+  name and cap typed input at 255 characters. An unchanged name exits editing
+  without an HTTP write. Escape discards the draft and returns focus to the label.
+- Blur never submits and never moves focus from the user's next control. Keep
+  unsaved/failed drafts locally for reopening; successful saving clears the draft.
+  While a save is pending, keep the input read-only and prevent another submission.
+  Restore focus after Enter only if the user has not already moved elsewhere.
+- `MediaCard` exposes one generic metadata callback for filename and tags. The
+  library/media-item stores continue to own patching, busy state, cancellation,
+  concurrency conflicts, and failure feedback. Read-only/deleted/unavailable
+  metadata cards cannot enter editing.
+- The app reports completion for every accepted extension capture. It does not
+  know whether the receiving window is temporary. Remove `closeWhenDone` from
+  app messages and pending capture state; popup ownership stays in the extension.
+- The transient bridge listens for each file's completion, then sends the
+  extension a correlated result and the original filename. The background checks
+  the extension/top-frame sender and configured app URL, shows a success/failure
+  notification, and closes only a successful extension-created popup. Existing
+  app windows remain open. Notifications use the existing permission/API.
+  Completion carries the original app URL, so changing extension preferences
+  during an upload does not suppress that upload's result or popup closure.
+
+## Persistence, cancellation, and failures
+
+Filename drafts are presentation state and disappear with card/view disposal.
+Failures preserve the draft and show existing card metadata feedback. Conflicts
+load current metadata while preserving the local attempted draft for review.
+Blur during a pending request returns to read-only but does not cancel the
+store-owned request; a successful response updates the displayed filename.
+
+No new persistent state or resources are added. Pending captures invalidated by
+Lock/Reset/Forget/disposal report cancellation so the bridge releases listeners
+without a success/failure notification containing the hidden filename. Aborted
+uploads likewise do not leak a filename through a locked-screen notification.
+Real HTTP/upload failures notify and leave temporary popups open with the normal
+failure message. Lost acknowledgements retain the existing no-retry behavior.
+
+## Acceptance checks
+
+- Click/Enter renames through `/meta`; card title, detailed filename, image labels,
+  and downloads use the saved name. Tags and content bytes remain unchanged.
+- Hover/focus affordances, 320/360 px layout, long names, both themes, blur without
+  submission, Escape, failed draft retention, and busy/deleted states behave as
+  specified. Inspect actual Firefox screenshots.
+- Extension success/failure notifications occur after completion, never merely
+  after acceptance. Cancellation is silent, ordinary windows never close, and
+  only successful temporary popups close. Meaningful isolated tests cover the
+  completion flow and UI; build/checker and package/static checks pass.

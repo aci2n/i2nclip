@@ -21,24 +21,22 @@ export function createExtensionReceiver(
 		}
 		return "";
 	}
-	function complete(capture, ok) {
-		if (capture.closeWhenDone) {
-			browser.postMessage(
-				{
-					channel: "i2nclip-extension-v1",
-					type: "complete",
-					token: capture.token,
-					result: { ok },
-				},
-				browser.location.origin,
-			);
-		}
+	function complete(capture, ok, cancelled = false) {
+		browser.postMessage(
+			{
+				channel: "i2nclip-extension-v1",
+				type: "complete",
+				token: capture.token,
+				result: cancelled ? { ok: false, cancelled: true } : { ok },
+			},
+			browser.location.origin,
+		);
 	}
 	function discard() {
 		const capture = pending;
 		pending = null;
 		if (capture) {
-			complete(capture, false);
+			complete(capture, false, true);
 		}
 	}
 	function upload(capture = pending) {
@@ -52,10 +50,11 @@ export function createExtensionReceiver(
 			return false;
 		}
 		pending = null;
+		const own = epoch;
 		onupload();
 		void library.upload([capture.file]).then((ok) => {
 			if (!disposed) {
-				complete(capture, ok);
+				complete(capture, ok, own !== session.epoch);
 			}
 		});
 		return true;
@@ -70,7 +69,6 @@ export function createExtensionReceiver(
 		}
 		upload();
 	});
-	const unsubscribeLibrary = library.subscribe(() => upload());
 	function receive(event) {
 		const message = event.data;
 		if (
@@ -130,7 +128,6 @@ export function createExtensionReceiver(
 				const capture = {
 					file,
 					token: message.token,
-					closeWhenDone: message.closeWhenDone === true,
 				};
 				if (get(session).unlocked) {
 					upload(capture);
@@ -158,7 +155,6 @@ export function createExtensionReceiver(
 			disposed = true;
 			browser.removeEventListener("message", receive);
 			unsubscribeSession();
-			unsubscribeLibrary();
 			discard();
 		},
 	};

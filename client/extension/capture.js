@@ -249,7 +249,6 @@ export async function sendToApp(
 	}
 	const file = await fetchFile(srcUrl, fetcher);
 	file.name = captureName(context, file.name, file.mime);
-	file.closeWhenDone = temporaryWindowId !== undefined;
 	const reply = await request(receiver.id, file, 5000);
 	if (!reply?.ok) {
 		throw new Error(
@@ -262,21 +261,32 @@ export async function sendToApp(
 	}
 }
 
-export async function closeUploadedPopup(browser, message, sender) {
+export async function handleUploadResult(browser, message, sender, notify) {
 	if (
 		message?.type !== "upload-complete" ||
 		sender.id !== browser.runtime.id ||
 		sender.frameId !== 0 ||
 		!sender.tab ||
-		message.windowId !== sender.tab.windowId
+		typeof message.ok !== "boolean" ||
+		typeof message.name !== "string"
 	) {
 		return;
 	}
-	const { appUrl } = await browser.storage.local.get("appUrl");
-	if (!appUrl || !matchesApp(sender.url, appUrl)) {
+	const appUrl = message.appUrl;
+	if (!matchesApp(sender.url, appUrl)) {
 		return;
 	}
-	const popup = await browser.windows.get(message.windowId, { populate: true });
+	await notify(
+		message.ok
+			? `Uploaded ${message.name}.`
+			: `Upload failed for ${message.name}. Check i2nclip for details.`,
+	);
+	if (!message.ok || message.temporaryWindowId !== sender.tab.windowId) {
+		return;
+	}
+	const popup = await browser.windows.get(message.temporaryWindowId, {
+		populate: true,
+	});
 	if (
 		popup.type === "popup" &&
 		popup.tabs.some(

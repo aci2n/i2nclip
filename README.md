@@ -14,6 +14,8 @@ Each browser profile saves one password-protected library identity in localStora
 
 Uploads run sequentially and continue after individual failures. Failures show status messages; select failed files again through Upload to try again. Upload status survives navigation but is not saved across reloads. After an uncertain upload response, check the library before retrying to avoid duplicate copies.
 
+Click a filename to edit it. Enter saves its metadata; blur exits without saving, and Escape cancels the draft.
+
 The project is greenfield; there are no client data or recovery-format migrations.
 
 ## Firefox upload bridge
@@ -32,7 +34,8 @@ Right-click an image, audio, or video and choose **Upload to i2nclip**. The brid
 uses your existing app tab without changing focus while unlocked. It focuses the
 app only when unlocking is needed. If no app tab exists, it opens a small temporary
 popup that closes after a successful upload; failures leave it open. A locked app
-holds one file invisibly and uploads it automatically after unlock.
+holds one file invisibly and uploads it automatically after unlock. Firefox shows
+a notification when the upload succeeds or fails.
 Capture names use media alt/title/aria-label text, then the page title or URL,
 with an appropriate file extension.
 Set up the library before capturing. Only public HTTP(S) media up to 32 MB is

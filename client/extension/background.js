@@ -1,13 +1,9 @@
 import {
 	checkAppUrl,
-	closeUploadedPopup,
+	handleUploadResult,
 	readCaptureContext,
 	sendToApp,
 } from "./capture.js";
-
-browser.runtime.onMessage.addListener((message, sender) =>
-	closeUploadedPopup(browser, message, sender),
-);
 
 // Temporary add-on reloads must register the menu even without onInstalled.
 void browser.menus.removeAll().then(() => {
@@ -25,6 +21,10 @@ const notify = (message) =>
 		title: "i2nclip",
 		message,
 	});
+
+browser.runtime.onMessage.addListener((message, sender) =>
+	handleUploadResult(browser, message, sender, notify),
+);
 
 let capturing = false;
 browser.menus.onClicked.addListener(async (info, tab) => {
