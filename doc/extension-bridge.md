@@ -11,8 +11,8 @@ simplification plan explicitly anticipated a future extension as a web-app bridg
 
 One Firefox Manifest V3 extension offers **Upload to i2nclip** for HTTP(S) images,
 audio, and video. Its options contain only the web-app URL. It downloads one
-resource, focuses an existing tab at that app origin/path or opens one, and hands
-the bytes to the admitted web app. The web app uses its existing upload workflow.
+resource, targets an existing app tab or opens a temporary popup, and hands the
+bytes to the admitted web app. It focuses the app only when unlocking is needed. The web app uses its existing upload workflow.
 
 Exclude extension identities, crypto, API calls, library/tag UI, workers, queues,
 persisted files, upload retries, source-page injection, blob/data URLs, linked-file
@@ -76,8 +76,9 @@ References: [Firefox options_ui](https://developer.mozilla.org/en-US/docs/Mozill
   It validates source, origin, message shape, filename, MIME type, and the existing
   32 MiB limit before accepting a file. Components receive plain state/callbacks.
 - If unlocked and configured, switch to Library and start the existing upload.
-  A locked app retains one file in memory and displays its name plus Upload and
-  Cancel. Upload requires an unlocked, configured, idle session and idle library.
+  A locked app retains one hidden file in memory and automatically submits it
+  after unlock finishes. Upload requires a configured, idle session and library.
+  A new temporary popup closes only after successful upload; errors leave it open.
   A client requiring initial setup rejects capture with instructions to set up
   the library and retry. Acknowledgement means accepted, not uploaded; the app
   owns progress, completion, and errors after acceptance.
@@ -86,7 +87,7 @@ References: [Firefox options_ui](https://developer.mozilla.org/en-US/docs/Mozill
 
 Only the app URL survives an extension restart. No identity or file is stored by
 the extension. A pending file survives view navigation and unlocking, but is
-discarded on Cancel, reload, tab close, root disposal, or session epoch change
+discarded on reload, tab close, root disposal, or session epoch change
 (including Lock, Forget, Reset, identity/server replacement). Existing upload
 cancellation and failure behavior stays authoritative.
 
@@ -99,18 +100,19 @@ may mean the file was already accepted; instruct users to check the app.
 
 ## Acceptance checks
 
-- Reuse an existing admitted app tab; create one when absent; focus its window.
+- Reuse an existing admitted app tab without stealing focus; open a temporary
+  popup when absent and focus only when unlocking is needed.
 - Ignore unrelated origins/paths and refuse handoff after navigation.
 - Receive a real file through the bridge and upload/download identical bytes
   through the real web/API workflow; encryption remains in the web app.
-- Locked receipt, unlock then Upload, Cancel, busy rejection, stale session
-  cleanup, and disposal do not leak files or trigger unintended uploads.
+- Hidden locked receipt, automatic submission after unlock, busy rejection,
+  stale session cleanup, and disposal do not leak or duplicate uploads.
 - Enforce the limit during streaming even with missing/incorrect Content-Length;
   cancel owned streams on failures. Reject unsupported source URL schemes.
 - Package contains only the small extension; web archive remains independent.
 - Build and Svelte checker have no warnings; meaningful isolated unit tests cover
-  bridge/ownership/download behavior. Firefox screenshots review the pending UI
-  with long filenames at 320/360 px in both themes. Browser verification uses the
+  bridge/ownership/download behavior. Firefox screenshots verify the locked UI
+  shows no capture information at 320/360 px in both themes. Browser verification uses the
   existing real server/database fixtures. Manual Firefox installation verifies
   browser permissions and the native context menu when automation cannot load
   Firefox extensions.
@@ -125,8 +127,8 @@ API reference: [Mozilla scripting.executeScript](https://developer.mozilla.org/e
 - `make test-packages`, client lint, and client formatting checks pass.
 - `make test-e2e`: all 14 Firefox/Chromium cases pass against the real server and
   isolated databases, including bridge receipt and byte-identical downloads.
-- Actual Firefox screenshots of the long pending filename at 320/360 px were
-  inspected in both themes; no horizontal overflow or clipped actions.
+- The original pending-file panel is removed; the current lifecycle and checks
+  are specified in [extension-capture-lifecycle.md](extension-capture-lifecycle.md).
 - A fresh native Firefox profile loaded the generated temporary extension and
   displayed **Upload to i2nclip** as a visible image context-menu item, with no
   extension errors in the browser console. Reload a temporary add-on through

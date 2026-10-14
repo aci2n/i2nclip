@@ -16,7 +16,7 @@ export function handoff({
 		const cleanup = () => {
 			clearTimeout(timer);
 			window.removeEventListener("message", reply);
-			window.removeEventListener("pagehide", cleanup);
+			window.removeEventListener("pagehide", leave);
 		};
 		const finish = (result) => {
 			if (replied) {
@@ -32,6 +32,17 @@ export function handoff({
 				cleanup();
 			}
 			resolve(result);
+		};
+		const leave = () => {
+			if (!replied) {
+				finish({
+					ok: false,
+					unavailable: true,
+					error: "The i2nclip page closed or navigated away.",
+				});
+			} else {
+				cleanup();
+			}
 		};
 		const reply = (event) => {
 			if (
@@ -65,7 +76,7 @@ export function handoff({
 			timeout,
 		);
 		window.addEventListener("message", reply);
-		window.addEventListener("pagehide", cleanup, { once: true });
+		window.addEventListener("pagehide", leave, { once: true });
 		window.postMessage(
 			{ ...request, channel: "i2nclip-extension-v1", token },
 			app.origin,

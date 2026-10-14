@@ -70,3 +70,13 @@ app tabs have neither the completion listener nor close-on-success behavior.
   package/static checks pass, and generated artifacts are rebuilt.
 
 Reference: [Firefox externally_connectable](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/externally_connectable).
+
+## Verification
+
+All 81 client unit cases, the Svelte checker, package checks, lint, formatting, and
+all 14 Firefox/Chromium real-server browser cases pass. Locked screenshots at
+320/360 px were inspected in both themes: only the ordinary unlock UI appears.
+A disposable native Firefox profile exercised the actual extension context menu,
+created the popup against the real Rust API and isolated database, verified the
+capture remained hidden, unlocked through the UI, observed automatic popup
+closure, and reopened the app to confirm the captured photo was stored.

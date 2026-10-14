@@ -30,30 +30,33 @@ test("extension bridge hands a file to the real web upload flow", async ({
 	await page.getByRole("button", { name: "Lock", exact: true }).click();
 	const deliver = () =>
 		page.evaluate(handoff, { appUrl: `${app.origin}/`, request });
-	expect(await deliver()).toEqual({ ok: true });
-	const pending = page.getByRole("region", { name: "File from extension" });
-	await expect(pending.getByText(image.name, { exact: true })).toBeVisible();
-	await expect(
-		pending.getByRole("button", { name: "Upload file" }),
-	).toBeDisabled();
+	expect(await deliver()).toEqual({ ok: true, needsUnlock: true });
+	await expect(page.getByText(image.name, { exact: true })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Upload file" })).toHaveCount(
+		0,
+	);
 	expect((await deliver()).ok).toBe(false);
 	for (const width of [320, 360]) {
 		await page.setViewportSize({ width, height: 780 });
-		await shot(page, `extension-pending-${width}`);
+		await shot(page, `extension-locked-${width}`);
 		expect(
 			await page.evaluate(
 				() => document.documentElement.scrollWidth <= innerWidth,
 			),
 		).toBe(true);
 	}
-	await master(page);
+	await page
+		.getByLabel("Master password", { exact: true })
+		.fill("wrong-password");
+	await page.getByRole("button", { name: "Unlock", exact: true }).click();
 	await expect(
-		pending.getByRole("button", { name: "Upload file" }),
+		page.getByRole("button", { name: "Unlock", exact: true }),
 	).toBeEnabled();
-	await page.getByRole("link", { name: "Library", exact: true }).click();
-	await expect(page.getByRole("article")).toHaveCount(0);
-	await pending.getByRole("button", { name: "Upload file" }).click();
-	await expect(pending).toHaveCount(0);
+	await expect(
+		page.getByRole("navigation", { name: "Main navigation" }),
+	).toHaveCount(0);
+	await expect(page.getByText(image.name, { exact: true })).toHaveCount(0);
+	await master(page);
 	const card = page.getByRole("article");
 	await expect(card).toHaveCount(1);
 	await expect(
@@ -72,14 +75,16 @@ test("extension bridge hands a file to the real web upload flow", async ({
 			appUrl: `${app.origin}/`,
 			request: { ...request, name: "Second portrait.png" },
 		}),
-	).toEqual({ ok: true });
+	).toEqual({ ok: true, needsUnlock: false });
 	await expect(page.getByRole("searchbox")).toBeVisible();
 	await expect(page.getByRole("article")).toHaveCount(2);
 
 	await page.getByRole("button", { name: "Lock", exact: true }).click();
-	expect(await deliver()).toEqual({ ok: true });
-	await pending.getByRole("button", { name: "Cancel", exact: true }).click();
-	await expect(pending).toHaveCount(0);
+	expect(await deliver()).toEqual({ ok: true, needsUnlock: true });
+	// Reload discards a hidden capture rather than uploading it after unlock.
+	await page.reload();
+	await master(page);
+	await expect(page.getByRole("article")).toHaveCount(2);
 
 	// The rejected second tab has no receiver and cannot accept a file.
 	const other = await context.newPage();
