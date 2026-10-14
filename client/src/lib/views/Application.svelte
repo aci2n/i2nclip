@@ -1,6 +1,8 @@
 <script>
 import { onDestroy } from "svelte";
 import AboutDialog from "../components/AboutDialog.svelte";
+import ExtensionUpload from "../components/ExtensionUpload.svelte";
+import { createExtensionReceiver } from "../stores/extension.js";
 import { createLibrary } from "../stores/library.js";
 import { createPairing } from "../stores/pairing.js";
 import { createSession } from "../stores/session.js";
@@ -18,6 +20,10 @@ function pageAtLocation() {
 }
 let page = $state(pageAtLocation());
 let about = $state(false);
+const extension = createExtensionReceiver(session, library, () => {
+	page = "library";
+	history.replaceState({}, "", "?page=library");
+});
 function navigate(event, name) {
 	if (
 		event.button !== 0 ||
@@ -38,6 +44,7 @@ const popstate = () => {
 window.addEventListener("popstate", popstate);
 onDestroy(() => {
 	window.removeEventListener("popstate", popstate);
+	extension.dispose();
 	pairing.dispose();
 	library.dispose();
 	session.dispose();
@@ -45,6 +52,14 @@ onDestroy(() => {
 </script>
 
 <main>
+	{#if $extension.name}
+		<ExtensionUpload
+			name={$extension.name}
+			canUpload={$extension.canUpload}
+			onupload={extension.upload}
+			oncancel={extension.cancel}
+		/>
+	{/if}
 	{#if $session.status !== "unlocked"}
 		<Unlock {session} />
 	{:else}

@@ -17,6 +17,7 @@
 		"test": "node --test --test-timeout=60000 tests/*.test.js",
 		"e2e": "cargo build --bin i2nclip --example test-server --example test-database && npm run build && playwright test",
 		"pack": "npm run build && rm -f dist/i2nclip-web.zip && cd dist/web && zip -q -r ../i2nclip-web.zip .",
+		"pack:extension": "node extension/package.js",
 		"test:package": "npm run pack && node --test tests/packaging.js"
 	},
 	"dependencies": {

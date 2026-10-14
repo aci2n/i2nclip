@@ -1,0 +1,27 @@
+{
+	"manifest_version": 3,
+	"name": "i2nclip upload bridge",
+	"version": "0.1.0",
+	"description": "Send media to the i2nclip web app. The app owns your library and encryption.",
+	"browser_specific_settings": {
+		"gecko": {
+			"id": "i2nclip@i2n",
+			"strict_min_version": "140.0",
+			"data_collection_permissions": {
+				"required": ["websiteContent"],
+				"optional": []
+			}
+		}
+	},
+	"permissions": [
+		"contextMenus",
+		"tabs",
+		"storage",
+		"scripting",
+		"notifications"
+	],
+	"host_permissions": ["http://*/*", "https://*/*"],
+	"background": { "scripts": ["background.js"], "type": "module" },
+	"options_ui": { "page": "options.html", "open_in_tab": true },
+	"icons": { "48": "icon.svg", "96": "icon.svg" }
+}

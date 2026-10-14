@@ -23,7 +23,7 @@ endif
 -include local.mk
 
 .DEFAULT_GOAL := build
-.PHONY: build client web run
+.PHONY: build client web extension run
 .PHONY: dev dev-db dev-down dev-otc test test-client test-packages
 .PHONY: test-db test-profile test-e2e test-all
 .PHONY: lint format-check format-write pre-commit audit
@@ -35,7 +35,7 @@ build: client
 client:
 	$(MAKE) -C client build
 
-web:
+web extension:
 	$(MAKE) -C client $@
 
 run:
