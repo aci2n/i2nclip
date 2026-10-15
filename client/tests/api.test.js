@@ -122,13 +122,12 @@ test("upload progress uses the same response handling as fetch", async (t) => {
 		serverUrl: "https://clip.example.com",
 		privateKey,
 		bytes: new Uint8Array([1, 2, 3]),
-		name: "sample.bin",
 		metadata: {
+			name: "sample.bin",
 			source_url: "https://example.com/page",
 			source_title: "A page",
-			name: "ignored",
+			tags: [" Vacation, dog ", "Cat"],
 		},
-		tags: [" Vacation, dog ", "Cat"],
 		onProgress: (percent) => progress.push(percent),
 	});
 	assert.equal(result.id, "saved");
@@ -192,8 +191,7 @@ test("reencrypting an upload uses fresh sealed content after a lost response", a
 		serverUrl: "https://clip.example",
 		privateKey,
 		bytes: new Uint8Array([1]),
-		name: "file",
-		tags: [],
+		metadata: { name: "file", tags: [] },
 	};
 	await assert.rejects(upload(options), /lost response/);
 	const saved = await upload(options);
@@ -344,8 +342,7 @@ test("Node uploads with progress callbacks fall back to fetch", async (t) => {
 		serverUrl: "https://clip.example",
 		privateKey,
 		bytes: new Uint8Array([1]),
-		name: "file",
-		tags: [],
+		metadata: { name: "file", tags: [] },
 		onProgress: () => {
 			throw new Error("fetch cannot report upload progress");
 		},

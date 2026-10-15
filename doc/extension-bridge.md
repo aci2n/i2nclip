@@ -127,10 +127,10 @@ Only HTTP(S) source URLs are stored; strip URL credentials, preserve query/hash,
 and omit blank titles. Source context must never use media alt text as page title.
 
 The library upload method accepts an optional metadata object for its batch and
-passes it through sendUpload into api.upload. The API helper merges extra JSON
-fields before authoritative name/type/size/tags and generated image metadata, so
-context cannot override upload invariants. Ordinary Upload is unchanged. Source
-fields are inside existing encrypted metadata, including after filename/tag edits;
+passes it through sendUpload into api.upload. sendUpload assembles the file name,
+content_type, and generated image details into metadata; api.upload normalizes
+name/content_type/size/tags before encrypting the complete metadata object.
+Ordinary Upload is unchanged. Source fields are inside existing encrypted metadata, including after filename/tag edits;
 no server endpoint, schema, dependencies, or persistent extension state changes.
 Cancellation/disposal drops context with the pending File through existing paths.
 

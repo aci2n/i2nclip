@@ -36,7 +36,7 @@ or tags. No local-storage writes or new resources are introduced.
 
 ## Acceptance checks
 
-- Updating `{ name }` preserves tags, dimensions/type/size, extra metadata, and
+- Updating `{ name }` preserves tags, dimensions/type/size, other metadata fields, and
   thumbnail, and sends the existing prior metadata hash to `/meta`.
 - Updating `{ tags }` preserves the name and normalizes/deduplicates tags; a
   combined update changes both in a single metadata write.
@@ -54,3 +54,26 @@ PostgreSQL metadata/concurrency cases, and all 16 Firefox/Chromium browser cases
 pass. The real-server browser checks rename a panorama, verify its downloaded
 filename and unchanged bytes, reject a stale edit, and update name/tags together.
 Package checks, formatting, lint, and Clippy with warnings denied also pass.
+
+## One metadata object
+
+Goal: use metadata consistently for all encrypted JSON properties: name,
+content_type, size, tags, image, source_url, and source_title. Keep snake_case for
+the stored JSON and use the same keys throughout capture, upload, rendering, and
+edits. There is no conversion layer or data-format change.
+
+api.upload accepts one metadata object alongside content bytes, binary thumbnail,
+credentials, progress, and cancellation. Remove separate name/contentType/tags/image
+upload arguments and the metadata-as-extra merge convention. sendUpload assembles
+the File name/type and generated image details into that metadata object. The API
+normalizes name/content_type/size/tags once before sealing. Other JSON properties
+remain metadata, rather than a separate category. Thumbnail bytes remain outside
+JSON in the existing encrypted envelope.
+
+No migrations, aliases, compatibility reads, schema changes, new state, or
+dependencies. Preserve API response casing and fixed cryptographic vectors.
+Identity, cancellation, byte caps, metadata conflicts, thumbnail ownership, and
+AAD/hash/signature behavior stay unchanged. Acceptance: one upload metadata
+argument, consistent snake_case JSON keys, updated callers, arbitrary fields
+preserved by upload/edit, and warning-free build/static checks. Do not add or run
+tests unless requested.

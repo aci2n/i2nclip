@@ -226,7 +226,7 @@ test("generic metadata updates rename files, preserve omitted fields and preview
 			tags: ["Keep"],
 			content_type: "text/plain",
 			size: 4,
-			extra: { source: "camera" },
+			camera: { model: "Example" },
 		},
 		thumb: new Uint8Array([1, 2, 3]),
 	};

@@ -10,7 +10,6 @@ export async function sendUpload({
 	file,
 	credentials,
 	metadata = {},
-	tags = "",
 	onProgress,
 	signal,
 }) {
@@ -22,12 +21,13 @@ export async function sendUpload({
 	signal.throwIfAborted();
 	return upload({
 		...credentials,
-		metadata,
 		bytes,
-		name: file.name,
-		contentType: file.type || "application/octet-stream",
-		tags,
-		image: preview?.image,
+		metadata: {
+			...metadata,
+			name: file.name,
+			content_type: file.type || "application/octet-stream",
+			...(preview?.image ? { image: preview.image } : {}),
+		},
 		thumb: preview?.thumb,
 		onProgress,
 		signal,
