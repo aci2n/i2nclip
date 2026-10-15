@@ -10,7 +10,7 @@ Download a recovery file before uploading. Its independently chosen recovery pas
 
 To connect another device, open **Connect another device** in Settings on the unlocked device and create a pairing code. On the new device, create its master password, choose **Pair device**, and enter the code using the same server. Compare both verification codes before choosing **Codes match — send library**. Pairing gives full access to the same library without another invitation. Codes expire after two minutes; HTTPS is required except on loopback development servers. See [device pairing](doc/pairing.md).
 
-Each browser profile saves one password-protected library identity in localStorage. Reloading requires unlocking again. Only one tab per app origin may run; additional tabs show a retry screen. **Lock** cancels active work and releases decrypted state. **Forget library** removes the local identity while keeping the master password; resetting a locked client removes all its saved state. Neither action deletes server files.
+Each browser profile saves one password-protected library identity in localStorage. Reloading requires unlocking again. Only one tab per app origin may run; additional tabs show a retry screen. The header’s **Lock** button cancels active work and releases decrypted state. **Forget library** removes the local identity while keeping the master password; resetting a locked client removes all its saved state. Neither action deletes server files.
 
 The server allows one active upload and two active content downloads per library
 key, alongside global limits of four uploads and sixteen downloads per server
@@ -37,6 +37,8 @@ Tags edit inline: **+** opens an input, Enter saves, Escape cancels, and **×** 
 Click a filename to edit it. Enter saves its metadata; blur exits without saving, and Escape cancels the draft.
 
 The project is greenfield; there are no client data or recovery-format migrations.
+
+The navigation contains Library and Settings. **About**, at the bottom of Settings, opens version and project information.
 
 ## Firefox extension
 

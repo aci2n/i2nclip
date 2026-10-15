@@ -1,5 +1,6 @@
 <script>
 import { onDestroy, untrack } from "svelte";
+import AboutDialog from "../components/AboutDialog.svelte";
 import PairingSend from "../components/PairingSend.svelte";
 import PasswordSettings from "../components/PasswordSettings.svelte";
 import RecoveryExport from "../components/RecoveryExport.svelte";
@@ -9,6 +10,7 @@ import { createQuota } from "../stores/quota.js";
 import Setup from "./Setup.svelte";
 
 let { session, pairing, uploads, preferences } = $props();
+let about = $state(false);
 const quota = untrack(() => createQuota(session));
 onDestroy(quota.dispose);
 const quotaContext = $derived(
@@ -135,8 +137,15 @@ async function action(scope, work, success) {
 				"Master password changed.",
 			)}
 	/>
+	<button type="button" class="secondary about" onclick={() => (about = true)}>
+		About
+	</button>
 </div>
+<AboutDialog open={about} onclose={() => (about = false)} />
 <style>
+.about {
+	width: fit-content;
+}
 .settings {
 	max-width: 42rem;
 	margin: auto;

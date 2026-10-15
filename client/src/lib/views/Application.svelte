@@ -1,6 +1,5 @@
 <script>
 import { onDestroy } from "svelte";
-import AboutDialog from "../components/AboutDialog.svelte";
 import { createExtensionReceiver } from "../stores/extension.js";
 import { createLibrary } from "../stores/library.js";
 import { createPairing } from "../stores/pairing.js";
@@ -25,7 +24,6 @@ function pageAtLocation() {
 		: "library";
 }
 let page = $state(pageAtLocation());
-let about = $state(false);
 const extension = createExtensionReceiver(session, uploads, () => {
 	page = "library";
 	history.replaceState({}, "", "?page=library");
@@ -82,9 +80,10 @@ onDestroy(() => {
 					onclick={(event) => navigate(event, "settings")}
 					>Settings</a
 				>
-				<button type="button" onclick={session.lock}>Lock</button>
-				<button type="button" onclick={() => (about = true)}>About</button>
 			</nav>
+			<button type="button" class="secondary lock" onclick={session.lock}>
+				Lock
+			</button>
 		</header>
 		{#if page === "settings"}
 			<Settings {session} {pairing} {uploads} {preferences} />
@@ -98,11 +97,6 @@ onDestroy(() => {
 		{/if}
 	{/if}
 </main>
-<AboutDialog
-	open={about && $session.unlocked}
-	onclose={() => (about = false)}
-/>
-
 <style>
 main {
 	max-width: 76rem;
@@ -110,11 +104,10 @@ main {
 	margin: auto;
 }
 header {
-	display: flex;
-	justify-content: space-between;
+	display: grid;
+	grid-template-columns: auto 1fr auto;
 	align-items: center;
 	gap: 1rem;
-	flex-wrap: wrap;
 	margin-bottom: 2rem;
 }
 .brand {
@@ -124,21 +117,15 @@ header {
 	color: inherit;
 }
 nav {
+	justify-self: center;
 	display: flex;
 	align-items: center;
 	flex-wrap: wrap;
 	gap: 1rem;
 }
-nav a,
-nav button {
+nav a {
 	color: var(--muted);
 	text-decoration: none;
-}
-nav button {
-	padding: 0;
-	border: 0;
-	border-radius: 0;
-	background: transparent;
 }
 nav a[aria-current] {
 	color: var(--accent);
@@ -146,16 +133,22 @@ nav a[aria-current] {
 }
 @media (max-width: 32rem) {
 	header {
+		grid-template-columns: 1fr auto;
 		gap: 0.5rem;
 		margin-bottom: 1.5rem;
 	}
 	nav {
-		width: 100%;
-		justify-content: space-between;
-		gap: 0.5rem;
+		grid-column: 1 / -1;
+		grid-row: 2;
+		justify-self: start;
+		gap: 1.5rem;
 	}
-	nav a,
-	nav button {
+	.lock {
+		grid-column: 2;
+		grid-row: 1;
+		min-height: 3rem;
+	}
+	nav a {
 		display: inline-flex;
 		align-items: center;
 		min-height: 3rem;
