@@ -16,17 +16,100 @@
 //! A missing key and a bad signature both become 401. Malformed public keys
 //! submitted for registration become 400.
 
-use axum::http::HeaderMap;
+use crate::routes::{fail, read_body_with_deadline, too_large, SHORT_BODY_DEADLINE};
+use axum::body::Body;
+use axum::extract::{FromRequest, Request};
 use axum::http::Method;
 use axum::http::Uri;
+use axum::http::{header, HeaderMap};
+use axum::response::Response;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use ed25519_dalek::VerifyingKey;
+use std::time::Duration;
 
 use crate::crypto;
 use crate::AppState;
 use crate::Error;
 use crate::SKEW_SECS;
+
+/// Header-authenticated request. Endpoint handlers own body/query policy.
+pub(crate) struct SignedRequest {
+    verified: VerifiedRequest,
+    parts: axum::http::request::Parts,
+    body: Body,
+}
+
+impl FromRequest<AppState> for SignedRequest {
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
+        // The signature is checked here, before any body byte. It already
+        // covers the body hash from the Authorization header. Knowing a
+        // public key is not enough to reach `read_body`. The allow-list lives
+        // in PostgreSQL.
+        let (parts, body) = req.into_parts();
+        let verified = verify_request(state, &parts.method, &parts.uri, &parts.headers)
+            .await
+            .map_err(fail)?;
+        Ok(Self {
+            verified,
+            parts,
+            body,
+        })
+    }
+}
+
+impl SignedRequest {
+    pub(crate) fn owner(&self) -> [u8; 32] {
+        self.verified.owner()
+    }
+    pub(crate) fn query(&self) -> Option<&str> {
+        self.parts.uri.query()
+    }
+
+    pub(crate) fn check_size(&self, max: usize) -> Result<(), Box<Response>> {
+        if self
+            .parts
+            .headers
+            .get(header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|text| text.parse::<usize>().ok())
+            .is_some_and(|len| len > max)
+        {
+            return Err(Box::new(too_large()));
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn read(
+        self,
+        max: usize,
+        deadline: Duration,
+    ) -> Result<([u8; 32], Vec<u8>), Box<Response>> {
+        let bytes = read_body_with_deadline(self.body, max, deadline).await?;
+        let owner = match verify_body(&self.verified, &bytes).await {
+            Ok(owner) => owner,
+            Err(error @ Error::Unauthorized) => {
+                tracing::debug!(
+                    method = %self.parts.method,
+                    path = %self.parts.uri.path(),
+                    reason = "body_hash_mismatch",
+                    "request rejected as unauthorized"
+                );
+                return Err(Box::new(fail(error)));
+            }
+            Err(error) => return Err(Box::new(fail(error))),
+        };
+        Ok((owner, bytes))
+    }
+
+    pub(crate) async fn empty(self) -> Result<[u8; 32], Box<Response>> {
+        self.check_size(0)?;
+        let (owner, _) = self.read(0, SHORT_BODY_DEADLINE).await?;
+        Ok(owner)
+    }
+}
 
 /// Registration requires a canonical base64url key encoding and a valid,
 /// non-weak Ed25519 point. Reject it before consuming the invitation.

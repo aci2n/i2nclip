@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use axum::body::{Body, Bytes};
 
-use axum::extract::{FromRequest, Path as UrlPath, Request, State};
+use axum::extract::{Path as UrlPath, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -19,11 +19,9 @@ use serde_json::json;
 
 use crate::db::Item;
 use crate::permits::TransferPermit;
-use crate::routes::{
-    empty, fail, json_response, read_body_with_deadline, too_large, SHORT_BODY_DEADLINE,
-};
+use crate::routes::{empty, fail, json_response};
 use crate::AppState;
-use crate::{auth, frame, Error, MAX_BODY, MAX_META_BODY};
+use crate::{auth::SignedRequest, frame, Error, MAX_BODY, MAX_META_BODY};
 
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
@@ -36,86 +34,10 @@ pub(crate) fn router() -> Router<AppState> {
 const META_BODY_DEADLINE: Duration = Duration::from_secs(30);
 const UPLOAD_BODY_DEADLINE: Duration = Duration::from_secs(120);
 
-/// Header-authenticated request. Endpoint handlers own body/query policy.
-struct MediaRequest {
-    verified: auth::VerifiedRequest,
-    parts: axum::http::request::Parts,
-    body: Body,
-}
-
 // Field order releases buffered bytes before returning upload capacity.
 struct BufferedBody {
     bytes: Vec<u8>,
-    _upload_permit: Option<TransferPermit>,
-}
-
-impl FromRequest<AppState> for MediaRequest {
-    type Rejection = Response;
-
-    async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
-        // The signature is checked here, before any body byte. It already
-        // covers the body hash from the Authorization header. Knowing a
-        // public key is not enough to reach `read_body`. The allow-list lives
-        // in PostgreSQL.
-        let (parts, body) = req.into_parts();
-        let verified = auth::verify_request(state, &parts.method, &parts.uri, &parts.headers)
-            .await
-            .map_err(fail)?;
-        Ok(Self {
-            verified,
-            parts,
-            body,
-        })
-    }
-}
-
-impl MediaRequest {
-    fn check_size(&self, max: usize) -> Result<(), Box<Response>> {
-        if self
-            .parts
-            .headers
-            .get(header::CONTENT_LENGTH)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|text| text.parse::<usize>().ok())
-            .is_some_and(|len| len > max)
-        {
-            return Err(Box::new(too_large()));
-        }
-        Ok(())
-    }
-
-    async fn read(
-        self,
-        max: usize,
-        deadline: Duration,
-        permit: Option<TransferPermit>,
-    ) -> Result<([u8; 32], BufferedBody), Box<Response>> {
-        let bytes = read_body_with_deadline(self.body, max, deadline).await?;
-        let buffered = BufferedBody {
-            bytes,
-            _upload_permit: permit,
-        };
-        let owner = match auth::verify_body(&self.verified, &buffered.bytes).await {
-            Ok(owner) => owner,
-            Err(error @ Error::Unauthorized) => {
-                tracing::debug!(
-                    method = %self.parts.method,
-                    path = %self.parts.uri.path(),
-                    reason = "body_hash_mismatch",
-                    "request rejected as unauthorized"
-                );
-                return Err(Box::new(fail(error)));
-            }
-            Err(error) => return Err(Box::new(fail(error))),
-        };
-        Ok((owner, buffered))
-    }
-
-    async fn empty(self) -> Result<[u8; 32], Box<Response>> {
-        self.check_size(0)?;
-        let (owner, _) = self.read(0, SHORT_BODY_DEADLINE, None).await?;
-        Ok(owner)
-    }
+    _upload_permit: TransferPermit,
 }
 
 /// `?tag=TOKEN&tag=TOKEN&after=<created_at>.<id>`. Tokens are base64url, so
@@ -155,7 +77,7 @@ fn list_query(query: Option<&str>) -> Result<ListQuery, Error> {
     Ok((frame::parse_query_tokens(values)?, after))
 }
 
-async fn quota(State(state): State<AppState>, media: MediaRequest) -> Response {
+async fn quota(State(state): State<AppState>, media: SignedRequest) -> Response {
     let owner = match media.empty().await {
         Ok(owner) => owner,
         Err(response) => return *response,
@@ -166,8 +88,8 @@ async fn quota(State(state): State<AppState>, media: MediaRequest) -> Response {
     }
 }
 
-async fn list(State(state): State<AppState>, media: MediaRequest) -> Response {
-    let (query, after) = match list_query(media.parts.uri.query()) {
+async fn list(State(state): State<AppState>, media: SignedRequest) -> Response {
+    let (query, after) = match list_query(media.query()) {
         Ok(query) => query,
         Err(err) => return fail(err),
     };
@@ -184,20 +106,21 @@ async fn list(State(state): State<AppState>, media: MediaRequest) -> Response {
     }
 }
 
-async fn upload(State(state): State<AppState>, media: MediaRequest) -> Response {
+async fn upload(State(state): State<AppState>, media: SignedRequest) -> Response {
     if let Err(response) = media.check_size(MAX_BODY) {
         return *response;
     }
-    let permit = match state.permits.upload(media.verified.owner()).await {
+    let permit = match state.permits.upload(media.owner()).await {
         Ok(permit) => permit,
         Err(error) => return fail(error),
     };
-    let (owner, body) = match media
-        .read(MAX_BODY, UPLOAD_BODY_DEADLINE, Some(permit))
-        .await
-    {
+    let (owner, body) = match media.read(MAX_BODY, UPLOAD_BODY_DEADLINE).await {
         Ok(body) => body,
         Err(response) => return *response,
+    };
+    let body = BufferedBody {
+        bytes: body,
+        _upload_permit: permit,
     };
     match state.db.add(owner, &body.bytes).await {
         Ok(item) => {
@@ -211,7 +134,7 @@ async fn upload(State(state): State<AppState>, media: MediaRequest) -> Response 
 async fn download(
     State(state): State<AppState>,
     UrlPath(id): UrlPath<String>,
-    media: MediaRequest,
+    media: SignedRequest,
 ) -> Response {
     let owner = match media.empty().await {
         Ok(owner) => owner,
@@ -230,7 +153,7 @@ async fn download(
 async fn metadata(
     State(state): State<AppState>,
     UrlPath(id): UrlPath<String>,
-    media: MediaRequest,
+    media: SignedRequest,
 ) -> Response {
     let owner = match media.empty().await {
         Ok(owner) => owner,
@@ -245,16 +168,16 @@ async fn metadata(
 async fn update_metadata(
     State(state): State<AppState>,
     UrlPath(id): UrlPath<String>,
-    media: MediaRequest,
+    media: SignedRequest,
 ) -> Response {
     if let Err(response) = media.check_size(MAX_META_BODY) {
         return *response;
     }
-    let (owner, body) = match media.read(MAX_META_BODY, META_BODY_DEADLINE, None).await {
+    let (owner, body) = match media.read(MAX_META_BODY, META_BODY_DEADLINE).await {
         Ok(body) => body,
         Err(response) => return *response,
     };
-    match state.db.update_meta(owner, &id, &body.bytes).await {
+    match state.db.update_meta(owner, &id, &body).await {
         Ok(crate::db::MetadataUpdate::Updated(item)) => {
             json_response(StatusCode::OK, item_json(item))
         }
@@ -273,7 +196,7 @@ async fn update_metadata(
 async fn remove(
     State(state): State<AppState>,
     UrlPath(id): UrlPath<String>,
-    media: MediaRequest,
+    media: SignedRequest,
 ) -> Response {
     let owner = match media.empty().await {
         Ok(owner) => owner,

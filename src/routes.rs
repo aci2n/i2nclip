@@ -64,34 +64,10 @@ async fn health() -> Response {
     json_response(StatusCode::OK, json!({ "ok": true }))
 }
 
-async fn ping(State(state): State<AppState>, request: Request) -> Response {
-    let verified = match auth::verify_request(
-        &state,
-        request.method(),
-        request.uri(),
-        request.headers(),
-    )
-    .await
-    {
-        Ok(value) => value,
-        Err(error) => return fail(error),
-    };
-    if request
-        .headers()
-        .get(header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<usize>().ok())
-        .is_some_and(|size| size > 0)
-    {
-        return too_large();
-    }
-    let bytes = match read_body_with_deadline(request.into_body(), 0, SHORT_BODY_DEADLINE).await {
-        Ok(value) => value,
-        Err(response) => return *response,
-    };
-    match auth::verify_body(&verified, &bytes).await {
+async fn ping(request: auth::SignedRequest) -> Response {
+    match request.empty().await {
         Ok(_) => empty(StatusCode::NO_CONTENT),
-        Err(error) => fail(error),
+        Err(response) => *response,
     }
 }
 

@@ -332,26 +332,10 @@ async fn json_body<T: serde::de::DeserializeOwned>(request: Request) -> Result<T
         .map_err(|_| Box::new(fail(Error::BadRequest("invalid pairing payload".into()))))
 }
 
-async fn create(State(state): State<AppState>, request: Request) -> Response {
-    let verified = match auth::verify_request(
-        &state,
-        request.method(),
-        request.uri(),
-        request.headers(),
-    )
-    .await
-    {
+async fn create(State(state): State<AppState>, request: auth::SignedRequest) -> Response {
+    let (owner, bytes) = match request.read(MAX_BODY, SHORT_BODY_DEADLINE).await {
         Ok(value) => value,
-        Err(error) => return fail(error),
-    };
-    let bytes =
-        match read_body_with_deadline(request.into_body(), MAX_BODY, SHORT_BODY_DEADLINE).await {
-            Ok(value) => value,
-            Err(response) => return *response,
-        };
-    let owner = match auth::verify_body(&verified, &bytes).await {
-        Ok(value) => value,
-        Err(error) => return fail(error),
+        Err(response) => return *response,
     };
     if !matches!(
         serde_json::from_slice::<Create>(&bytes),
