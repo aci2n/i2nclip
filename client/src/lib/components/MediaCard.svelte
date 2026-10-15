@@ -50,10 +50,7 @@ const summary = $derived(
 	</div>
 	<FilenameEditor
 		{name}
-		disabled={media.busy ||
-			media.deleted ||
-			media.metadataUnavailable ||
-			!media.metadata}
+		disabled={media.busy || media.deleted || !media.metadata}
 		onsave={(name) => onupdate({ name })}
 	/>
 	<p class="meta">{summary}</p>
@@ -61,7 +58,7 @@ const summary = $derived(
 		<TagEditor
 			tags={media.metadata.tags || []}
 			{name}
-			disabled={media.busy || media.deleted || media.metadataUnavailable}
+			disabled={media.busy || media.deleted}
 			onsave={(tags) => onupdate({ tags })}
 		/>
 	{/if}

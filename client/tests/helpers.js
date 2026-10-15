@@ -1,3 +1,4 @@
+import { get } from "svelte/store";
 import { createSessionContext } from "../src/lib/stores/identity-context.js";
 export function deferred() {
 	let resolve;
@@ -18,7 +19,7 @@ export function workflowSession(store) {
 		operation: context.operation,
 		async withIdentity(operation, action) {
 			operation.signal.throwIfAborted();
-			return action(context.expected(operation));
+			return action(get(store));
 		},
 	};
 }

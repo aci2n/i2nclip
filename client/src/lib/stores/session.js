@@ -22,7 +22,6 @@ export function createSession({
 	let epoch = 0;
 	let disposed = false;
 	const state = writable({
-		ready: true,
 		status: "new",
 		configured: false,
 		unlocked: false,

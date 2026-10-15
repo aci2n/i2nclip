@@ -9,7 +9,6 @@ const stale = () =>
 // these rules. The store is a render snapshot, never the authority for a commit.
 export function createSessionContext(state) {
 	const operations = new Set();
-	const snapshots = new WeakMap();
 	return {
 		invalidate() {
 			for (const operation of [...operations]) {
@@ -24,7 +23,6 @@ export function createSessionContext(state) {
 				: controller.signal;
 			let disposed = false;
 			const operation = {
-				unlocked: Boolean(expected.privateKey),
 				signal: combined,
 				abort(reason) {
 					if (controller.signal.aborted || disposed) {
@@ -49,11 +47,8 @@ export function createSessionContext(state) {
 				}
 			});
 			operations.add(operation);
-			snapshots.set(operation, expected);
 			return Object.freeze(operation);
 		},
 		owns: (operation) => operations.has(operation),
-		expected: (operation) => snapshots.get(operation),
-		matches: (expected, current) => !changed(expected, current),
 	};
 }
