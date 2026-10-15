@@ -121,7 +121,7 @@ References: [Firefox runtime messaging](https://developer.mozilla.org/en-US/docs
 
 Goal: preserve where captured media came from and show a Source link in File
 details. Reuse the page URL/title already read from the clicked frame, with the
-existing tab/frame fallback. Carry optional source_url/source_title in the file
+existing tab/frame fallback. Carry optional sourceUrl/sourceTitle in the file
 request's extra object, retaining it with a hidden pending capture until unlock.
 Only HTTP(S) source URLs are stored; strip URL credentials, preserve query/hash,
 and omit blank titles. Source context must never use media alt text as page title.
@@ -129,13 +129,13 @@ and omit blank titles. Source context must never use media alt text as page titl
 The capture request, library batch, sendUpload, and api.upload consistently call
 arbitrary extensions extra. sendUpload supplies name/contentType/tags/image as
 explicit upload arguments. api.upload merges extra before the authoritative
-name/content_type/size/tags fields and encrypts the resulting complete metadata.
+name/contentType/size/tags fields and encrypts the resulting complete metadata.
 Ordinary Upload is unchanged. Source fields are inside existing encrypted metadata, including after filename/tag edits;
 no server endpoint, schema, dependencies, or persistent extension state changes.
 Cancellation/disposal drops context with the pending File through existing paths.
 
 MediaCard derives a safe HTTP(S) link from ordinary metadata props and displays
-source_title or the URL in File details. Open in a new tab with no referrer/opener.
+sourceTitle or the URL in File details. Open in a new tab with no referrer/opener.
 Malformed/unsupported stored URLs produce no link. No store/storage/workflow enters
 the component. Loading/locked views and notifications never display source context.
 Do not scrape page content, fetch source pages, persist extra context separately,

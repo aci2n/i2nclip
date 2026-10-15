@@ -104,11 +104,11 @@ export function createMediaItem(
 		const value = get(state);
 		const url = makeUrl(
 			new Blob([bytes], {
-				type: value.metadata?.content_type || "application/octet-stream",
+				type: value.metadata?.contentType || "application/octet-stream",
 			}),
 		);
 		let preview = value.preview;
-		if (value.metadata?.content_type?.startsWith("audio/")) {
+		if (value.metadata?.contentType?.startsWith("audio/")) {
 			const art = audioArt(bytes);
 			if (art) {
 				preview = makeUrl(new Blob([art], { type: sniffContentType(art, "") }));
@@ -133,7 +133,7 @@ export function createMediaItem(
 					const v = get(state);
 					await download(
 						v.url,
-						downloadName(v.metadata?.name || v.id, v.metadata?.content_type),
+						downloadName(v.metadata?.name || v.id, v.metadata?.contentType),
 					);
 				}
 			}),

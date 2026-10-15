@@ -46,7 +46,7 @@ export async function upload({
 	const metadata = {
 		...extra,
 		name: cleanName(name),
-		content_type: sniffContentType(bytes, contentType),
+		contentType: sniffContentType(bytes, contentType),
 		size: bytes.length,
 		tags: uniqueTags(tags),
 	};

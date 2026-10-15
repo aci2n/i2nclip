@@ -49,7 +49,7 @@ function fixture(t, options = {}) {
 const item = (id) => ({
 	id,
 	metaHash: "hash",
-	metadata: { name: id, tags: [], content_type: "application/octet-stream" },
+	metadata: { name: id, tags: [], contentType: "application/octet-stream" },
 });
 
 test("stale searches cannot publish; pagination uses the submitted query and permits one request", async (t) => {
@@ -224,7 +224,7 @@ test("generic metadata updates rename files, preserve omitted fields and preview
 		metadata: {
 			name: "Original.txt",
 			tags: ["Keep"],
-			content_type: "text/plain",
+			contentType: "text/plain",
 			size: 4,
 			camera: { model: "Example" },
 		},

@@ -583,7 +583,7 @@ async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
     let filename = "vacation-photo.jpg";
     let tag = "secret-tag-zebra";
     let meta_json =
-        format!(r#"{{"name":"{filename}","content_type":"image/jpeg","size":1,"tags":["{tag}"]}}"#);
+        format!(r#"{{"name":"{filename}","contentType":"image/jpeg","size":1,"tags":["{tag}"]}}"#);
     let content = client_crypto::encrypt(&key.seed, &client_crypto::content_aad(), marker).unwrap();
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();

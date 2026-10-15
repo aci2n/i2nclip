@@ -10,7 +10,7 @@ import {
 test("meta plain roundtrips with and without a thumb", () => {
 	const meta = {
 		name: "dot.png",
-		content_type: "image/png",
+		contentType: "image/png",
 		size: 42,
 		tags: ["a"],
 		image: { width: 1, height: 1 },
@@ -27,7 +27,7 @@ test("meta plain roundtrips with and without a thumb", () => {
 });
 
 test("encode drops nothing when under the metadata cap", () => {
-	const meta = { name: "x", content_type: "image/jpeg", size: 1, tags: [] };
+	const meta = { name: "x", contentType: "image/jpeg", size: 1, tags: [] };
 	const thumb = Uint8Array.from({ length: 8000 }, (_, i) => i % 256);
 	const packed = encodeMetaPlain(meta, thumb);
 	assert.ok(packed.length <= MAX_META_PLAINTEXT);

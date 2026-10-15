@@ -127,8 +127,8 @@ function app(t, patch = {}, result = Promise.resolve(true)) {
 const file = {
 	type: "file",
 	extra: {
-		source_url: "https://example.com/photo",
-		source_title: "A photo",
+		sourceUrl: "https://example.com/photo",
+		sourceTitle: "A photo",
 	},
 	file: new File([new Uint8Array([0, 1, 2, 3, 255])], "Photo.png", {
 		type: "image/png",
@@ -740,8 +740,8 @@ test("capture passes the descriptive filename to the ordinary handoff", async ()
 	);
 	assert.equal(delivered.name, "A mountain portrait.png");
 	assert.deepEqual(extra, {
-		source_url: "https://example.com/gallery?photo=42#view",
-		source_title: "Page title",
+		sourceUrl: "https://example.com/gallery?photo=42#view",
+		sourceTitle: "Page title",
 	});
 	assert.equal(delivered.type, "image/png");
 	assert.equal(Buffer.from(await delivered.arrayBuffer()).toString(), "photo");

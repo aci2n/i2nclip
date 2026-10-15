@@ -46,7 +46,7 @@ uint32be(JSON byte length) || UTF8(JSON)
 uint32be(thumbnail byte length) || raw WebP thumbnail
 ```
 
-Typical JSON fields are `name`, `content_type`, `size` (plaintext bytes), `tags` (readable spellings), and optional `image` details. A zero-length thumbnail means none. The client strips a `thumb` JSON property and rejects trailing bytes when decoding. The maximum complete plaintext is `65,536 - 29 = 65,507` bytes. It drops the thumbnail if necessary; oversized JSON alone can still cause server rejection. The server treats this plaintext structure as opaque. The shared metadata crypto vector predates this structure and encrypts raw JSON; it validates the cipher/AAD rather than the current metadata payload format.
+Typical JSON fields are `name`, `contentType`, `size` (plaintext bytes), `tags` (readable spellings), and optional `image` details. A zero-length thumbnail means none. The client strips a `thumb` JSON property and rejects trailing bytes when decoding. The maximum complete plaintext is `65,536 - 29 = 65,507` bytes. It drops the thumbnail if necessary; oversized JSON alone can still cause server rejection. The server treats this plaintext structure as opaque. The shared metadata crypto vector predates this structure and encrypts raw JSON; it validates the cipher/AAD rather than the current metadata payload format.
 
 ## Searchable tags
 

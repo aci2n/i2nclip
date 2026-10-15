@@ -1,7 +1,7 @@
 // Plaintext inside the encrypted metadata blob (before AES-GCM).
 //
 //   uint32be  json length
-//   bytes     UTF-8 JSON (name, tags, content_type, size, image — no thumb)
+//   bytes     UTF-8 JSON (name, tags, contentType, size, image — no thumb)
 //   uint32be  thumb length (0 = none)
 //   bytes     WebP preview bytes
 

@@ -237,9 +237,9 @@ export async function sendToApp(
 		if (["http:", "https:"].includes(source.protocol)) {
 			source.username = "";
 			source.password = "";
-			extra.source_url = source.href;
+			extra.sourceUrl = source.href;
 			if (context.title?.trim()) {
-				extra.source_title = context.title.trim();
+				extra.sourceTitle = context.title.trim();
 			}
 		}
 	}

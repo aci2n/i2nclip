@@ -4,12 +4,12 @@ import FilenameEditor from "./FilenameEditor.svelte";
 import TagEditor from "./TagEditor.svelte";
 
 let { media, onreveal, ondownload, onremove, onupdate } = $props();
-const type = $derived(media.metadata?.content_type || "");
+const type = $derived(media.metadata?.contentType || "");
 const image = $derived(type.startsWith("image/"));
 const name = $derived(media.metadata?.name || media.id);
 const source = $derived.by(() => {
 	try {
-		const url = new URL(media.metadata?.source_url);
+		const url = new URL(media.metadata?.sourceUrl);
 		return ["http:", "https:"].includes(url.protocol) ? url.href : "";
 	} catch {
 		return "";
@@ -74,7 +74,7 @@ const summary = $derived(
 				<dt>Source</dt>
 				<dd>
 					<a href={source} title={source} target="_blank" rel="noreferrer">
-						{media.metadata.source_title || source}
+						{media.metadata.sourceTitle || source}
 					</a>
 				</dd>
 			{/if}

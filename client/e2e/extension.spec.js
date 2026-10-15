@@ -71,8 +71,8 @@ test("app receives captures through its public event interface and uploads after
 		mime: image.mimeType,
 		bytes: [...image.buffer],
 		extra: {
-			source_url: "https://example.com/gallery?photo=42#portrait",
-			source_title: "A portrait from the mountain trail",
+			sourceUrl: "https://example.com/gallery?photo=42#portrait",
+			sourceTitle: "A portrait from the mountain trail",
 		},
 	};
 	await page.getByRole("button", { name: "Lock", exact: true }).click();
@@ -111,9 +111,9 @@ test("app receives captures through its public event interface and uploads after
 	).toBeVisible();
 	await card.getByText("File details", { exact: true }).click();
 	const source = card.getByRole("link", {
-		name: request.extra.source_title,
+		name: request.extra.sourceTitle,
 	});
-	await expect(source).toHaveAttribute("href", request.extra.source_url);
+	await expect(source).toHaveAttribute("href", request.extra.sourceUrl);
 	await expect(source).toHaveAttribute("rel", "noreferrer");
 	const downloading = page.waitForEvent("download");
 	await card.getByRole("button", { name: "Download", exact: true }).click();

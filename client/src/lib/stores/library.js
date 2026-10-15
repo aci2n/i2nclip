@@ -269,11 +269,11 @@ export function createLibrary(
 			row.value.busy ||
 			row.value.deleted ||
 			previous?.loading ||
-			!canPreview(row.value.metadata?.content_type)
+			!canPreview(row.value.metadata?.contentType)
 		) {
 			return false;
 		}
-		const type = row.value.metadata.content_type;
+		const type = row.value.metadata.contentType;
 		const own = ++previewRevision;
 		state.update((v) => ({
 			...v,
@@ -361,7 +361,7 @@ export function createLibrary(
 					.cards.slice(count)
 					.find(
 						(media) =>
-							!media.deleted && canPreview(media.metadata?.content_type),
+							!media.deleted && canPreview(media.metadata?.contentType),
 					);
 			}
 			state.update((v) => ({
