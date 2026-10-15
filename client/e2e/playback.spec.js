@@ -1,5 +1,15 @@
 import { readFile } from "node:fs/promises";
-import { audioFixture, createLibrary, expect, test } from "./fixtures.js";
+import { upload } from "../src/lib/api.js";
+import { openRecovery } from "../src/lib/protocol/recovery.js";
+import {
+	audioFixture,
+	createLibrary,
+	expect,
+	imageFixture,
+	PASSWORD,
+	recovery,
+	test,
+} from "./fixtures.js";
 
 test("native players stop on preview navigation and close", async ({
 	page,
@@ -69,4 +79,89 @@ test("native players stop on preview navigation and close", async ({
 	} finally {
 		await video.dispose();
 	}
+});
+
+test("preview stops at loaded boundaries and More loads the submitted search", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	const manifest = await recovery(page);
+	const { identity, key } = await openRecovery(manifest.toString(), PASSWORD);
+	const image = await imageFixture(page, "Landscape.png", 960, 540);
+	for (let index = 0; index < 25; index++) {
+		await upload({
+			serverUrl: identity.serverUrl,
+			key,
+			bytes: new Uint8Array(image.buffer),
+			name: `Landscape ${index}.png`,
+			contentType: image.mimeType,
+			tags: ["Gallery"],
+		});
+	}
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	const search = page.getByRole("searchbox");
+	await search.fill("Gallery");
+	const submitted = page.waitForResponse((response) => {
+		const url = new URL(response.url());
+		return url.pathname === "/api/media" && url.searchParams.has("tag");
+	});
+	await page.getByRole("button", { name: "Search", exact: true }).click();
+	const submittedUrl = new URL((await submitted).url());
+	await expect(page.getByRole("article")).toHaveCount(24);
+	await expect(
+		page.getByRole("button", { name: "More", exact: true }),
+	).toBeEnabled();
+	await search.fill("Unsubmitted draft");
+	const requests = [];
+	page.on("request", (request) => {
+		const url = new URL(request.url());
+		if (request.method() === "GET" && url.pathname === "/api/media") {
+			requests.push(url);
+		}
+	});
+	const opener = page
+		.getByRole("article")
+		.last()
+		.getByRole("button", { name: /^Open / });
+	const name = (await opener.getAttribute("aria-label")).slice(5);
+	await opener.click();
+	const dialog = page.getByRole("dialog", { name: "Media preview" });
+	await expect(dialog.getByRole("img", { name, exact: true })).toBeVisible();
+	await expect(dialog.getByRole("status")).toHaveCount(0);
+	const next = dialog.getByRole("button", { name: "Next media", exact: true });
+	await expect(next).toBeDisabled();
+	await page.keyboard.press("ArrowRight");
+	await expect(dialog.getByRole("img", { name, exact: true })).toBeVisible();
+	for (const width of [1100, 360]) {
+		await page.setViewportSize({ width, height: 760 });
+		for (const colorScheme of ["light", "dark"]) {
+			await page.emulateMedia({ colorScheme });
+			await page.screenshot({
+				path: test
+					.info()
+					.outputPath(`preview-boundary-${width}-${colorScheme}.png`),
+			});
+		}
+	}
+	await dialog
+		.getByRole("button", { name: "Close preview", exact: true })
+		.click();
+	await expect(opener).toBeFocused();
+	expect(requests).toHaveLength(0);
+	await page.getByRole("button", { name: "More", exact: true }).click();
+	await expect(page.getByRole("article")).toHaveCount(25);
+	expect(requests).toHaveLength(1);
+	expect(requests[0].searchParams.get("tag")).toBe(
+		submittedUrl.searchParams.get("tag"),
+	);
+	expect(requests[0].searchParams.has("after")).toBe(true);
+	await page.getByRole("button", { name: `Open ${name}`, exact: true }).click();
+	await expect(next).toBeEnabled();
+	await page.keyboard.press("ArrowRight");
+	await expect(dialog.getByRole("status")).toHaveCount(0);
+	await expect(dialog.getByRole("img")).toBeVisible();
+	await expect(dialog.getByRole("img", { name, exact: true })).toHaveCount(0);
+	await expect(next).toBeDisabled();
+	expect(requests).toHaveLength(1);
 });

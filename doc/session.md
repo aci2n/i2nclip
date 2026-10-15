@@ -49,8 +49,9 @@ draft on blur without saving. Tag editing preserves failed drafts and compares
 tags by protocol normalization while keeping their first spelling.
 
 The preview dialog uses native image/audio/video elements. Navigation follows
-result order, skips deleted items and ordinary files, and fetches pages at the
-loaded boundary without wrapping. Loading retains the displayed media/artwork;
+loaded result order, skips deleted items and ordinary files, and stops at loaded
+boundaries without wrapping or fetching pages. Close the preview and choose More
+to load another page. Loading retains the displayed media/artwork;
 failures offer Retry. Closing supersedes pending display updates so late results
 cannot reopen the dialog. Downloads remain owned by media items. Players pause
 on navigation or close; focus returns to the opening control when available.

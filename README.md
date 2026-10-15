@@ -19,9 +19,9 @@ instance. Further transfers wait; devices sharing a key share its permits.
 Uploads run sequentially and continue after individual failures. Failures show status messages; select failed files again through Upload to try again. Upload status survives navigation but is not saved across reloads. After an uncertain upload response, check the library before retrying to avoid duplicate copies.
 
 Open an image or play audio/video to preview it. Use the arrow buttons or
-Left/Right keys to browse images, audio, and video, loading the next results page
-when needed. A centered percentage appears while the next item downloads;
-Escape closes the preview.
+Left/Right keys to browse images, audio, and video in the loaded results.
+To load another results page, close the preview and choose More. A centered
+percentage appears while the next item downloads; Escape closes the preview.
 
 Click a filename to edit it. Enter saves its metadata; blur exits without saving, and Escape cancels the draft.
 

@@ -206,52 +206,6 @@ export function createLibrary(
 		more: () => search(get(state).query, true),
 		refresh: () => search(get(state).query),
 		reveal,
-		async morePreview() {
-			const previous = get(state);
-			if (
-				!previous.selected ||
-				previous.selected.loading ||
-				previous.loading ||
-				!previous.next
-			) {
-				return false;
-			}
-			const own = ++previewRevision;
-			state.update((v) => ({
-				...v,
-				selected: { ...v.selected, loading: true, paging: true, error: "" },
-			}));
-			let nextMedia;
-			while (get(state).next && !nextMedia) {
-				const count = cards.size;
-				const ok = await search(get(state).query, true);
-				if (disposed || own !== previewRevision) {
-					return false;
-				}
-				if (!ok) {
-					state.update((v) => ({
-						...v,
-						selected: {
-							...v.selected,
-							loading: false,
-							error: v.status || "Could not load more media.",
-						},
-					}));
-					return false;
-				}
-				nextMedia = get(state)
-					.cards.slice(count)
-					.find(
-						(media) =>
-							!media.deleted && canPreview(media.metadata?.contentType),
-					);
-			}
-			state.update((v) => ({
-				...v,
-				selected: { ...v.selected, loading: false, paging: false },
-			}));
-			return nextMedia ? reveal(nextMedia.id) : false;
-		},
 		closePreview() {
 			previewRevision++;
 			state.update((v) => ({ ...v, selected: null }));

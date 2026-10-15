@@ -323,7 +323,7 @@ test("failed and canceled deletions preserve active cards", async (t) => {
 	assert.equal(get(f.library).cards[0].message, "Delete unavailable");
 });
 
-test("preview pagination skips files, uses the submitted search, and never reopens after close", async (t) => {
+test("loaded previews skip files, reuse downloads, and never reopen after close", async (t) => {
 	const requests = [];
 	const downloads = [];
 	const created = [];
@@ -369,7 +369,12 @@ test("preview pagination skips files, uses the submitted search, and never reope
 	await tick();
 	const searching = f.library.search("submitted");
 	requests[1].done.resolve({
-		items: [playable("image", "image/png"), item("document")],
+		items: [
+			playable("image", "image/png"),
+			item("document"),
+			playable("audio", "audio/wav"),
+			playable("video", "video/webm"),
+		],
 		next: "files",
 	});
 	await searching;
@@ -378,38 +383,14 @@ test("preview pagination skips files, uses the submitted search, and never reope
 	const opening = f.library.reveal("image");
 	downloads[0].done.resolve(new Uint8Array([1]));
 	await opening;
-	const advancing = f.library.morePreview();
-	assert.equal(get(f.library).selected.paging, true);
-	assert.equal(await f.library.morePreview(), false);
-	assert.equal(requests.length, 3);
-	assert.equal(requests[2].tags, "submitted");
-	assert.equal(requests[2].after, "files");
-	requests[2].done.resolve({
-		items: [item("another document")],
-		next: "audio",
-	});
-	await tick();
-	assert.equal(requests[3].after, "audio");
-	assert.equal(requests[3].tags, "submitted");
-	requests[3].done.resolve({
-		items: [playable("audio", "audio/wav")],
-		next: "video",
-	});
-	await tick();
+	assert.equal(await f.library.reveal("image"), true);
+	assert.equal(downloads.length, 1);
+	assert.equal(requests.length, 2);
+	const openingAudio = f.library.reveal("audio");
 	downloads[1].done.resolve(new Uint8Array([2]));
-	assert.equal(await advancing, true);
+	assert.equal(await openingAudio, true);
 	assert.equal(get(f.library).selected.id, "audio");
 	assert.equal(get(f.library).selected.type, "audio/wav");
-
-	const pendingPage = f.library.morePreview();
-	f.library.closePreview();
-	requests[4].done.resolve({
-		items: [playable("video", "video/webm")],
-		next: null,
-	});
-	assert.equal(await pendingPage, false);
-	assert.equal(get(f.library).selected, null);
-	assert.equal(downloads.length, 2);
 	const pendingDownload = f.library.reveal("video");
 	f.library.closePreview();
 	downloads[2].done.resolve(new Uint8Array([3]));

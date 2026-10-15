@@ -20,8 +20,6 @@ function movePreview(step) {
 	const media = previewable[previewIndex + step];
 	if (media) {
 		library.reveal(media.id);
-	} else if (step > 0) {
-		library.morePreview();
 	}
 }
 </script>
@@ -128,14 +126,10 @@ function movePreview(step) {
 	selected={$library.selected}
 	progress={previewProgress}
 	hasPrevious={previewIndex > 0}
-	hasNext={previewIndex >= 0 &&
-		(previewIndex < previewable.length - 1 || Boolean($library.next))}
+	hasNext={previewIndex >= 0 && previewIndex < previewable.length - 1}
 	onprevious={() => movePreview(-1)}
 	onnext={() => movePreview(1)}
-	onretry={() =>
-		$library.selected.paging
-			? library.morePreview()
-			: library.reveal($library.selected.id)}
+	onretry={() => library.reveal($library.selected.id)}
 	onclose={library.closePreview}
 />
 <style>
