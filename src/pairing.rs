@@ -1,6 +1,7 @@
 //! Ephemeral, bounded relay. Only the clients perform the PAKE or decrypt messages.
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::extract::{ConnectInfo, Path, Request, State};
@@ -24,14 +25,72 @@ const MAX_MESSAGE: usize = 8192;
 const JOIN_WINDOW: Duration = Duration::from_secs(60);
 const SOURCE_JOIN_LIMIT: usize = 10;
 const GLOBAL_JOIN_LIMIT: usize = 120;
-type Failure = (StatusCode, &'static str);
+type Rejection = (StatusCode, &'static str);
 
 #[derive(Default)]
-pub(crate) struct Pairings {
+struct PairingState {
     rooms: HashMap<String, Room>,
     creations: HashMap<[u8; 32], VecDeque<Instant>>,
     joins: HashMap<Option<IpAddr>, VecDeque<Instant>>,
     global_joins: VecDeque<Instant>,
+}
+
+#[derive(Debug)]
+enum Failure {
+    Unavailable,
+    Rejected(Rejection),
+}
+
+/// Clones share the relay. Synchronous operations never retain a lock across I/O.
+#[derive(Clone, Default)]
+pub(crate) struct Pairings {
+    state: Arc<Mutex<PairingState>>,
+}
+
+impl Pairings {
+    fn with_state<T>(
+        &self,
+        work: impl FnOnce(&mut PairingState, Instant) -> Result<T, Rejection>,
+    ) -> Result<T, Failure> {
+        let mut state = self.state.lock().map_err(|_| Failure::Unavailable)?;
+        work(&mut state, Instant::now()).map_err(Failure::Rejected)
+    }
+
+    fn create(&self, owner: [u8; 32]) -> Result<Snapshot, Failure> {
+        self.with_state(|state, now| state.create(owner, now))
+    }
+    fn admit_join(&self, source: Option<IpAddr>) -> Result<(), Failure> {
+        self.with_state(|state, now| state.admit_join(source, now))
+    }
+    fn authorize(&self, id: &str, token: &str, source: Option<IpAddr>) -> Result<(), Failure> {
+        self.with_state(|state, now| state.authorize(id, token, source, now).map(|_| ()))
+    }
+    fn join(&self, id: &str, message: String) -> Result<Snapshot, Failure> {
+        self.with_state(|state, now| state.join(id, message, now))
+    }
+    fn submit(
+        &self,
+        id: &str,
+        token: &str,
+        step: usize,
+        message: String,
+    ) -> Result<Snapshot, Failure> {
+        self.with_state(|state, now| state.submit(id, token, step, message, now))
+    }
+    fn poll(&self, id: &str, token: &str, source: Option<IpAddr>) -> Result<Snapshot, Failure> {
+        self.with_state(|state, now| {
+            state.authorize(id, token, source, now)?;
+            state.room(id, now).map(|room| room.snapshot(id, now, None))
+        })
+    }
+    fn cancel(&self, id: &str, token: &str, source: Option<IpAddr>) -> Result<(), Failure> {
+        self.with_state(|state, now| {
+            state.authorize(id, token, source, now)?;
+            state.rooms.remove(id);
+            tracing::info!(event = "pairing_canceled");
+            Ok(())
+        })
+    }
 }
 
 struct Room {
@@ -70,7 +129,7 @@ impl Room {
         }
     }
 
-    fn sender(&self, token: &str) -> Result<bool, Failure> {
+    fn sender(&self, token: &str) -> Result<bool, Rejection> {
         if token_equal(&self.sender, token) {
             Ok(true)
         } else if self
@@ -93,21 +152,21 @@ fn token_equal(a: &str, b: &str) -> bool {
             == 0
 }
 
-fn random(n: usize) -> Result<Vec<u8>, Failure> {
+fn random(n: usize) -> Result<Vec<u8>, Rejection> {
     let mut bytes = vec![0; n];
     getrandom::getrandom(&mut bytes)
         .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "service unavailable"))?;
     Ok(bytes)
 }
 
-fn capability() -> Result<String, Failure> {
+fn capability() -> Result<String, Rejection> {
     Ok(URL_SAFE_NO_PAD.encode(random(32)?))
 }
 
-impl Pairings {
+impl PairingState {
     // Use the TCP peer, never untrusted Forwarded/X-Forwarded-For headers.
     // Missing connection metadata shares one conservative source bucket.
-    fn admit_join(&mut self, source: Option<IpAddr>, now: Instant) -> Result<(), Failure> {
+    fn admit_join(&mut self, source: Option<IpAddr>, now: Instant) -> Result<(), Rejection> {
         let prune = |times: &mut VecDeque<Instant>| {
             while times
                 .front()
@@ -142,7 +201,7 @@ impl Pairings {
         token: &str,
         source: Option<IpAddr>,
         now: Instant,
-    ) -> Result<bool, Failure> {
+    ) -> Result<bool, Rejection> {
         match self.room(id, now).and_then(|room| room.sender(token)) {
             Ok(sender) => Ok(sender),
             Err(error) => {
@@ -168,7 +227,7 @@ impl Pairings {
         });
     }
 
-    fn create(&mut self, owner: [u8; 32], now: Instant) -> Result<Snapshot, Failure> {
+    fn create(&mut self, owner: [u8; 32], now: Instant) -> Result<Snapshot, Rejection> {
         self.prune(now);
         if self
             .creations
@@ -212,14 +271,14 @@ impl Pairings {
     }
 
     // FIXME: use Instant consistently in other code that calls "now"?
-    fn room(&mut self, id: &str, now: Instant) -> Result<&mut Room, Failure> {
+    fn room(&mut self, id: &str, now: Instant) -> Result<&mut Room, Rejection> {
         self.prune(now);
         self.rooms
             .get_mut(id)
             .ok_or((StatusCode::NOT_FOUND, "pairing ended or expired"))
     }
 
-    fn join(&mut self, id: &str, message: String, now: Instant) -> Result<Snapshot, Failure> {
+    fn join(&mut self, id: &str, message: String, now: Instant) -> Result<Snapshot, Rejection> {
         valid_message(&message)?;
         let room = self.room(id, now)?;
         if room.receiver.is_some() {
@@ -238,7 +297,7 @@ impl Pairings {
         step: usize,
         message: String,
         now: Instant,
-    ) -> Result<Snapshot, Failure> {
+    ) -> Result<Snapshot, Rejection> {
         valid_message(&message)?;
         let room = self.room(id, now)?;
         let sender = room.sender(token)?;
@@ -261,7 +320,7 @@ impl Pairings {
     }
 }
 
-fn valid_message(message: &str) -> Result<(), Failure> {
+fn valid_message(message: &str) -> Result<(), Rejection> {
     if message.is_empty() || message.len() > MAX_MESSAGE {
         Err((StatusCode::BAD_REQUEST, "invalid pairing message"))
     } else {
@@ -280,7 +339,8 @@ pub(crate) fn router() -> Router<AppState> {
 fn result(value: Result<Snapshot, Failure>) -> Response {
     match value {
         Ok(value) => json_response(StatusCode::OK, value),
-        Err((status, message)) => {
+        Err(Failure::Unavailable) => fail(Error::Unavailable),
+        Err(Failure::Rejected((status, message))) => {
             tracing::debug!(event = "pairing_rejected", status = status.as_u16());
             let mut response = json_response(status, json!({"error": message}));
             if status == StatusCode::TOO_MANY_REQUESTS {
@@ -343,22 +403,13 @@ async fn create(State(state): State<AppState>, request: auth::SignedRequest) -> 
     ) {
         return fail(Error::BadRequest("invalid pairing version".into()));
     }
-    match state.pairings.lock() {
-        Ok(mut rooms) => result(rooms.create(owner, Instant::now())),
-        Err(_) => fail(Error::Unavailable),
-    }
+    result(state.pairings.create(owner))
 }
 
 async fn join(State(state): State<AppState>, Path(id): Path<String>, request: Request) -> Response {
-    let source = source(&request);
     // Charge invalid IDs and malformed/stalled bodies before reading them.
-    match state.pairings.lock() {
-        Ok(mut rooms) => {
-            if let Err(error) = rooms.admit_join(source, Instant::now()) {
-                return result(Err(error));
-            }
-        }
-        Err(_) => return fail(Error::Unavailable),
+    if let Err(error) = state.pairings.admit_join(source(&request)) {
+        return result(Err(error));
     }
     let _permit = match state.permits.try_pairing_body() {
         Ok(permit) => permit,
@@ -368,10 +419,7 @@ async fn join(State(state): State<AppState>, Path(id): Path<String>, request: Re
         Ok(value) => value,
         Err(response) => return *response,
     };
-    match state.pairings.lock() {
-        Ok(mut rooms) => result(rooms.join(&id, message.message, Instant::now())),
-        Err(_) => fail(Error::Unavailable),
-    }
+    result(state.pairings.join(&id, message.message))
 }
 
 async fn submit(
@@ -381,13 +429,8 @@ async fn submit(
 ) -> Response {
     let token = token(request.headers()).to_owned();
     // Invalid capabilities must neither buffer a body nor occupy a read slot.
-    match state.pairings.lock() {
-        Ok(mut rooms) => {
-            if let Err(error) = rooms.authorize(&id, &token, source(&request), Instant::now()) {
-                return result(Err(error));
-            }
-        }
-        Err(_) => return fail(Error::Unavailable),
+    if let Err(error) = state.pairings.authorize(&id, &token, source(&request)) {
+        return result(Err(error));
     }
     let _permit = match state.permits.try_pairing_body() {
         Ok(permit) => permit,
@@ -397,31 +440,19 @@ async fn submit(
         Ok(value) => value,
         Err(response) => return *response,
     };
-    match state.pairings.lock() {
-        Ok(mut rooms) => {
-            result(rooms.submit(&id, &token, message.step, message.message, Instant::now()))
-        }
-        Err(_) => fail(Error::Unavailable),
-    }
+    result(
+        state
+            .pairings
+            .submit(&id, &token, message.step, message.message),
+    )
 }
 
 async fn poll(State(state): State<AppState>, Path(id): Path<String>, request: Request) -> Response {
-    let now = Instant::now();
-    match state.pairings.lock() {
-        Ok(mut rooms) => {
-            if let Err(error) =
-                rooms.authorize(&id, token(request.headers()), source(&request), now)
-            {
-                return result(Err(error));
-            }
-            result(
-                rooms
-                    .room(&id, now)
-                    .map(|room| room.snapshot(&id, now, None)),
-            )
-        }
-        Err(_) => fail(Error::Unavailable),
-    }
+    result(
+        state
+            .pairings
+            .poll(&id, token(request.headers()), source(&request)),
+    )
 }
 
 async fn cancel(
@@ -429,19 +460,12 @@ async fn cancel(
     Path(id): Path<String>,
     request: Request,
 ) -> Response {
-    let now = Instant::now();
-    match state.pairings.lock() {
-        Ok(mut rooms) => {
-            if let Err(error) =
-                rooms.authorize(&id, token(request.headers()), source(&request), now)
-            {
-                return result(Err(error));
-            }
-            rooms.rooms.remove(&id);
-            tracing::info!(event = "pairing_canceled");
-            empty(StatusCode::NO_CONTENT)
-        }
-        Err(_) => fail(Error::Unavailable),
+    match state
+        .pairings
+        .cancel(&id, token(request.headers()), source(&request))
+    {
+        Ok(()) => empty(StatusCode::NO_CONTENT),
+        Err(error) => result(Err(error)),
     }
 }
 
@@ -451,6 +475,28 @@ mod tests {
     use axum::body::Body;
     use http_body_util::BodyExt;
     use tower::ServiceExt;
+
+    #[tokio::test(start_paused = true)]
+    async fn service_clones_share_cancellation_and_recheck_expiration() {
+        let pairings = Pairings::default();
+        let clone = pairings.clone();
+        let created = pairings.create([1; 32]).unwrap();
+        let token = created.capability.as_ref().unwrap();
+        assert!(clone.poll(&created.id, token, None).is_ok());
+        clone.cancel(&created.id, token, None).unwrap();
+        assert!(matches!(
+            pairings.poll(&created.id, token, None),
+            Err(Failure::Rejected((StatusCode::NOT_FOUND, _)))
+        ));
+        let created = pairings.create([2; 32]).unwrap();
+        let token = created.capability.as_ref().unwrap();
+        pairings.authorize(&created.id, token, None).unwrap();
+        tokio::time::advance(TTL).await;
+        assert!(matches!(
+            clone.submit(&created.id, token, 2, "late body".into()),
+            Err(Failure::Rejected((StatusCode::NOT_FOUND, _)))
+        ));
+    }
 
     // Probe through admission rather than expose internal semaphore state.
     fn body_capacity(state: &AppState) -> usize {
@@ -477,7 +523,7 @@ mod tests {
     #[test]
     fn anonymous_join_limits_bound_sources_and_recover_after_one_minute() {
         let now = Instant::now();
-        let mut rooms = Pairings::default();
+        let mut rooms = PairingState::default();
         let source = Some(peer(1).0.ip());
         for _ in 0..SOURCE_JOIN_LIMIT {
             rooms.admit_join(source, now).unwrap();
@@ -583,12 +629,7 @@ mod tests {
             crate::db::Database::closed_for_test().await,
             "https://clip.example".into(),
         );
-        let created = state
-            .pairings
-            .lock()
-            .unwrap()
-            .create([1; 32], Instant::now())
-            .unwrap();
+        let created = state.pairings.create([1; 32]).unwrap();
         let app = router().with_state(state);
         for number in 0..SOURCE_JOIN_LIMIT {
             let (method, path) = match number % 3 {
@@ -650,12 +691,7 @@ mod tests {
             crate::db::Database::closed_for_test().await,
             "https://clip.example".into(),
         );
-        let created = state
-            .pairings
-            .lock()
-            .unwrap()
-            .create([1; 32], Instant::now())
-            .unwrap();
+        let created = state.pairings.create([1; 32]).unwrap();
         let app = router().with_state(state.clone());
         let mut tasks = Vec::new();
         let mut senders = Vec::new();
@@ -764,14 +800,14 @@ mod tests {
         drop(senders);
     }
 
-    fn create_room(rooms: &mut Pairings, now: Instant) -> Snapshot {
+    fn create_room(rooms: &mut PairingState, now: Instant) -> Snapshot {
         rooms.create([1; 32], now).unwrap()
     }
 
     #[test]
     fn ordered_exchange_is_idempotent_and_capabilities_are_role_scoped() {
         let now = Instant::now();
-        let mut rooms = Pairings::default();
+        let mut rooms = PairingState::default();
         let sender = create_room(&mut rooms, now);
         assert_eq!(sender.id.len(), 4);
         assert!(sender.id.bytes().all(|byte| ALPHABET.contains(&byte)));
@@ -851,7 +887,7 @@ mod tests {
     #[test]
     fn fixed_expiry_rejects_old_tokens_and_clears_capacity() {
         let now = Instant::now();
-        let mut rooms = Pairings::default();
+        let mut rooms = PairingState::default();
         let first = create_room(&mut rooms, now);
         rooms
             .join(&first.id, "init".into(), now + Duration::from_secs(119))
@@ -874,7 +910,7 @@ mod tests {
     #[test]
     fn active_and_creation_limits_survive_cancel() {
         let now = Instant::now();
-        let mut rooms = Pairings::default();
+        let mut rooms = PairingState::default();
         let first = create_room(&mut rooms, now);
         assert_eq!(
             rooms.create([1; 32], now).err().unwrap().0,
@@ -895,7 +931,7 @@ mod tests {
     #[test]
     fn room_capacity_and_message_limits_are_bounded() {
         let now = Instant::now();
-        let mut rooms = Pairings::default();
+        let mut rooms = PairingState::default();
         for number in 0..MAX_ROOMS {
             let mut owner = [0; 32];
             owner[..8].copy_from_slice(&number.to_be_bytes());
@@ -918,12 +954,7 @@ mod tests {
             crate::db::Database::closed_for_test().await,
             "https://clip.example".into(),
         );
-        let created = state
-            .pairings
-            .lock()
-            .unwrap()
-            .create([1; 32], Instant::now())
-            .unwrap();
+        let created = state.pairings.create([1; 32]).unwrap();
         let app = router().with_state(state);
         let response = app
             .clone()

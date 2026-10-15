@@ -51,7 +51,7 @@ pub(crate) const SKEW_SECS: u64 = 300;
 pub(crate) struct AppState {
     pub(crate) db: Database,
     pub(crate) permits: permits::Permits,
-    pub(crate) pairings: Arc<std::sync::Mutex<pairing::Pairings>>,
+    pub(crate) pairings: pairing::Pairings,
     /// Public origin named in request signatures, such as `https://clip.example.com`.
     origin: Arc<str>,
 }
@@ -62,7 +62,7 @@ impl AppState {
             db,
             origin: origin.into(),
             permits: permits::Permits::new(),
-            pairings: Arc::new(std::sync::Mutex::new(pairing::Pairings::default())),
+            pairings: pairing::Pairings::default(),
         }
     }
 
