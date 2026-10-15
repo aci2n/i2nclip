@@ -129,7 +129,8 @@ and omit blank titles. Source context must never use media alt text as page titl
 The capture request, library batch, sendUpload, and api.upload consistently call
 arbitrary extensions extra. sendUpload supplies name/contentType/tags/image as
 explicit upload arguments. api.upload merges extra before the authoritative
-name/contentType/size/tags fields and encrypts the resulting complete metadata.
+name/contentType/size/tags fields into complete runtime metadata. The codec stores
+known JSON fields as snake_case and restores camelCase when unpacking.
 Ordinary Upload is unchanged. Source fields are inside existing encrypted metadata, including after filename/tag edits;
 no server endpoint, schema, dependencies, or persistent extension state changes.
 Cancellation/disposal drops context with the pending File through existing paths.

@@ -69,16 +69,20 @@ sendUpload supplies the File name/type and generated image details explicitly.
 Library batches and extension file handoffs call their optional extensions extra
 throughout; the receiver retains extra with pending captures until unlock. Only
 the complete encrypted/decrypted JSON is called metadata. Stored JSON uses
-camelCase keys (contentType/sourceUrl/sourceTitle), read directly by the app
-without conversion. Thumbnail bytes stay outside the JSON in the encrypted
-envelope. Rename current metadata fields directly, with no old-key aliases.
+snake_case (content_type/source_url/source_title); the app uses camelCase
+(contentType/sourceUrl/sourceTitle). encodeMetaPlain maps the known fields when
+packing JSON; decodeMetaPlain maps them back when unpacking. All upload, list,
+metadata-read, update, and conflict paths use this boundary. One explicit field
+map owns both directions, without a recursive key-renaming utility. Arbitrary
+unknown fields and nested JSON are preserved as provided. Thumbnail bytes stay
+outside JSON in the existing encrypted envelope.
 
 No migrations, aliases, fallback interfaces, server schema changes, new state,
-or dependencies. Existing snake_case records are not translated. Arbitrary properties cannot override name/type/size/tags supplied
+or dependencies. This is the current storage codec, not a format migration. Arbitrary properties cannot override name/type/size/tags supplied
 by normal upload inputs. Preserve signatures, AAD/hash bindings, cancellation,
 limits, generic metadata editing, and source display. Fixed crypto-vector bytes
 are independent of the metadata schema and remain unchanged. Acceptance: explicit upload
-arguments, camelCase stored JSON, extra consistently passed end to end, source
-survives encryption/edits,
+arguments, snake_case stored JSON/camelCase runtime metadata, extra consistently
+passed end to end, source survives encryption/edits,
 no partial metadata alias, updated callers/fixtures, and warning-free build/static
 checks. Do not add or run tests unless requested.
