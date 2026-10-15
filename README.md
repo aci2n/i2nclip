@@ -4,7 +4,7 @@ An encrypted media library. The browser encrypts files, filenames, tags, and pre
 
 ## Set up a library
 
-Open the web app and create a master password of at least eight characters. In Settings, choose **Create** and enter an invitation code from the administrator. Server configuration is in a disclosure and defaults to the app's origin.
+Open the web app and create a master password of at least eight characters. In Settings, choose **Create** and enter an invitation code from the administrator. The app uses the server at its own origin; no server URL is needed during setup.
 
 Download a recovery file before uploading. Its independently chosen recovery password encrypts your library identity and server URL. Keep the file and its password: the server cannot recover either. **Restore** is available when this client has no library configured.
 

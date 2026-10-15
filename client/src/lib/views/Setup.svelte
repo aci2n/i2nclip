@@ -1,12 +1,10 @@
 <script>
-import { untrack } from "svelte";
 import CreateLibrary from "../components/CreateLibrary.svelte";
 import PairingReceive from "../components/PairingReceive.svelte";
 import RecoveryImport from "../components/RecoveryImport.svelte";
 
 let { session, pairing } = $props();
 let mode = $state("create");
-let server = $state(untrack(() => $session.serverUrl));
 const busy = $derived($session.busy || $pairing.active);
 </script>
 <section class="panel stack">
@@ -41,33 +39,15 @@ const busy = $derived($session.busy || $pairing.active);
 			Pair device
 		</button>
 	</fieldset>
-	{#if mode === "create" || mode === "pair"}
-		<details>
-			<summary>Server configuration</summary>
-			<label class="field server"
-				>Server<input
-					type="url"
-					required
-					bind:value={server}
-					disabled={busy}
-				></label
-			>
-		</details>
-	{/if}
 	{#if mode === "create"}
-		<CreateLibrary
-			{busy}
-			error={$session.error}
-			oncreate={(value) =>
-				session.create({ ...value, serverUrl: server.trim() })}
-		/>
+		<CreateLibrary {busy} error={$session.error} oncreate={session.create} />
 	{:else if mode === "restore"}
 		<RecoveryImport {busy} error={$session.error} onrestore={session.restore} />
 	{:else}
 		<PairingReceive
 			state={$pairing}
 			busy={$session.busy}
-			onreceive={(code) => pairing.receive(code, server.trim())}
+			onreceive={(code) => pairing.receive(code, $session.serverUrl)}
 			onreject={pairing.rejectVerification}
 			oncancel={pairing.cancel}
 		/>
@@ -83,8 +63,5 @@ const busy = $derived($session.busy || $pairing.active);
 }
 button[aria-pressed="true"] {
 	outline: 2px solid var(--accent);
-}
-.server {
-	margin-top: 1rem;
 }
 </style>

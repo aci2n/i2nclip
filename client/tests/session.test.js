@@ -21,7 +21,11 @@ const serverUrl = "https://clip.example";
 async function fixture(t, http = {}) {
 	const local = storage();
 	const persistence = createPersistence(local);
-	const session = createSession({ persistence, http });
+	const session = createSession({
+		persistence,
+		http,
+		defaultServerUrl: serverUrl,
+	});
 	t.after(session.dispose);
 	assert.equal(await session.initialize(password), true);
 	return { local, persistence, session };
@@ -29,7 +33,7 @@ async function fixture(t, http = {}) {
 
 test("one encrypted identity survives reload, password changes, and forgetting without plaintext secrets", async (t) => {
 	const f = await fixture(t, { registerKey: async () => {} });
-	assert.equal(await f.session.create({ serverUrl, otc: "invite" }), true);
+	assert.equal(await f.session.create({ otc: "invite" }), true);
 	const privateKey = get(f.session).privateKey;
 	const saved = [...f.local.values.values()][0];
 	assert.equal(f.local.values.size, 1);
@@ -64,7 +68,7 @@ test("one encrypted identity survives reload, password changes, and forgetting w
 
 test("storage failure retains the previous record and identity", async (t) => {
 	const f = await fixture(t, { registerKey: async () => {} });
-	assert.equal(await f.session.create({ serverUrl, otc: "invite" }), true);
+	assert.equal(await f.session.create({ otc: "invite" }), true);
 	const before = [...f.local.values.values()][0];
 	f.local.setItem = () => {
 		throw new Error("Storage quota exceeded.");
@@ -86,11 +90,10 @@ test("locking cancels registration and rejects overlapping session mutations", a
 		},
 	});
 	const registering = f.session.create({
-		serverUrl,
 		otc: "invite",
 	});
 	const signal = await entered.promise;
-	assert.equal(await f.session.create({ serverUrl, otc: "invite" }), false);
+	assert.equal(await f.session.create({ otc: "invite" }), false);
 	f.session.lock();
 	result.resolve();
 	assert.equal(await registering, false);
