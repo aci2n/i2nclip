@@ -11,7 +11,7 @@ export async function thumbnail(blob, signal) {
 	const type = blob.type || "";
 	try {
 		if (type.startsWith("audio/")) {
-			const art = audioArt(await blob.bytes());
+			const art = audioArt(new Uint8Array(await blob.arrayBuffer()));
 			if (!art) {
 				return null;
 			}
@@ -61,7 +61,7 @@ async function webp(source) {
 		: await new Promise((resolve) =>
 				canvas.toBlob(resolve, "image/webp", 0.75),
 			);
-	return file ? file.bytes() : null;
+	return file ? new Uint8Array(await file.arrayBuffer()) : null;
 }
 
 function fromVideo(blob, signal) {

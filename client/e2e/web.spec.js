@@ -17,6 +17,9 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	app,
 }) => {
 	await createLibrary(page, app);
+	await page
+		.getByRole("checkbox", { name: "Compress images to WebP" })
+		.uncheck();
 	await expect(page.getByLabel("Library name", { exact: true })).toHaveCount(0);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await expect(

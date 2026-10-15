@@ -4,6 +4,7 @@ import AboutDialog from "../components/AboutDialog.svelte";
 import { createExtensionReceiver } from "../stores/extension.js";
 import { createLibrary } from "../stores/library.js";
 import { createPairing } from "../stores/pairing.js";
+import { createPreferences } from "../stores/preferences.js";
 import { createSession } from "../stores/session.js";
 import { createUploads } from "../stores/uploads.js";
 import Library from "./Library.svelte";
@@ -12,7 +13,11 @@ import Unlock from "./Unlock.svelte";
 
 const session = createSession();
 const library = createLibrary(session);
-const uploads = createUploads(session, { onComplete: library.refresh });
+const preferences = createPreferences();
+const uploads = createUploads(session, {
+	onComplete: library.refresh,
+	preferences,
+});
 const pairing = createPairing(session);
 function pageAtLocation() {
 	return new URLSearchParams(location.search).get("page") === "settings"
@@ -82,7 +87,7 @@ onDestroy(() => {
 			</nav>
 		</header>
 		{#if page === "settings"}
-			<Settings {session} {pairing} {uploads} />
+			<Settings {session} {pairing} {uploads} {preferences} />
 		{:else}
 			<Library
 				{session}

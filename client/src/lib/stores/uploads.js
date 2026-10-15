@@ -10,7 +10,10 @@ const empty = () => ({
 });
 
 // Application owns this store so batches survive navigation between views.
-export function createUploads(session, { send = sendUpload, onComplete }) {
+export function createUploads(
+	session,
+	{ send = sendUpload, onComplete, preferences },
+) {
 	const state = writable(empty());
 	const controller = new AbortController();
 	let disposed = false;
@@ -37,6 +40,7 @@ export function createUploads(session, { send = sendUpload, onComplete }) {
 		const own = ++revision;
 		const signal = AbortSignal.any([controller.signal, session.signal]);
 		const credentials = session.credentials();
+		const compressImages = preferences ? get(preferences).compressImages : true;
 		state.update((v) => ({
 			...v,
 			uploading: true,
@@ -62,6 +66,7 @@ export function createUploads(session, { send = sendUpload, onComplete }) {
 			try {
 				const item = await send({
 					file,
+					compressImages,
 					extra,
 					credentials,
 					signal,

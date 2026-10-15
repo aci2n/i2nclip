@@ -1,4 +1,5 @@
 import { MAX_FILE_BYTES, upload } from "../api.js";
+import { compressImage } from "./compress.js";
 import { thumbnail } from "./thumbnail.js";
 
 export function checkFileSize(size) {
@@ -9,6 +10,7 @@ export function checkFileSize(size) {
 export async function sendUpload({
 	file,
 	credentials,
+	compressImages = true,
 	tags = "",
 	extra = {},
 	onProgress,
@@ -16,6 +18,9 @@ export async function sendUpload({
 }) {
 	checkFileSize(file.size);
 	signal.throwIfAborted();
+	if (compressImages) {
+		file = await compressImage(file, signal);
+	}
 	const bytes = new Uint8Array(await file.arrayBuffer());
 	signal.throwIfAborted();
 	const preview = await thumbnail(file, signal);

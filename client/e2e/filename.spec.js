@@ -6,6 +6,9 @@ test("filenames edit inline, save on Enter, retain failed drafts, and do not sav
 	app,
 }) => {
 	await createLibrary(page, app);
+	await page
+		.getByRole("checkbox", { name: "Compress images to WebP" })
+		.uncheck();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const originalName = `${"A landscape with a long filename ".repeat(4)}.png`;
 	const image = await imageFixture(page, originalName, 960, 540);

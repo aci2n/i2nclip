@@ -68,3 +68,13 @@ The pairing store owns one isolated attempt, relay requests, expiry, approval,
 and cancellation. Both devices compare verification codes; the receiver saves
 its encrypted identity before acknowledgment. Session invalidation or root
 disposal ends the attempt. See [pairing](pairing.md) for protocol details.
+
+## Upload compression
+
+A root-owned preferences store saves the device-local compression toggle separately
+from identity. It defaults on and is excluded from recovery and pairing. Upload
+batches snapshot the preference. Shared upload preparation converts JPEG/PNG to
+WebP at quality 0.85 before encryption, without resizing, and changes the filename
+and MIME type only when output is smaller. Failed or unsupported conversions keep
+the original. Existing WebP, GIF, SVG and non-images are unchanged. Original input
+size is checked before decoding; bitmap resources close even on cancellation.

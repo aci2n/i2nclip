@@ -130,3 +130,20 @@ test("identity changes and disposal abort uploads and suppress late completion a
 		assert.equal(f.refreshes(), 0);
 	}
 });
+
+test("a batch snapshots compression preferences and the next batch sees changes", async (t) => {
+	const preferences = writable({ compressImages: true });
+	const seen = [];
+	const f = fixture(t, {
+		preferences,
+		send: async ({ compressImages }) => {
+			seen.push(compressImages);
+			preferences.set({ compressImages: false });
+			return { id: String(seen.length) };
+		},
+	});
+	f.owner.configure();
+	await f.uploads.upload([{ name: "first" }, { name: "second" }]);
+	await f.uploads.upload([{ name: "third" }]);
+	assert.deepEqual(seen, [true, true, false]);
+});

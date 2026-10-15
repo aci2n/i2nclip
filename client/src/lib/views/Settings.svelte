@@ -3,11 +3,12 @@ import { onDestroy, untrack } from "svelte";
 import PairingSend from "../components/PairingSend.svelte";
 import PasswordSettings from "../components/PasswordSettings.svelte";
 import RecoveryExport from "../components/RecoveryExport.svelte";
+import UploadPreferences from "../components/UploadPreferences.svelte";
 import { fileSize } from "../media/format.js";
 import { createQuota } from "../stores/quota.js";
 import Setup from "./Setup.svelte";
 
-let { session, pairing, uploads } = $props();
+let { session, pairing, uploads, preferences } = $props();
 const quota = untrack(() => createQuota(session));
 onDestroy(quota.dispose);
 const quotaContext = $derived(
@@ -114,6 +115,11 @@ async function action(scope, work, success) {
 			</div>
 		</details>
 	{/if}
+	<UploadPreferences
+		compressImages={$preferences.compressImages}
+		error={$preferences.error}
+		onchange={preferences.setCompression}
+	/>
 	<PasswordSettings
 		{busy}
 		error={feedback.scope === "password" && feedback.error ? feedback.text : ""}
