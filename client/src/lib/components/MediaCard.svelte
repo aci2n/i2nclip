@@ -7,6 +7,14 @@ let { media, onreveal, ondownload, onremove, onupdate } = $props();
 const type = $derived(media.metadata?.content_type || "");
 const image = $derived(type.startsWith("image/"));
 const name = $derived(media.metadata?.name || media.id);
+const source = $derived.by(() => {
+	try {
+		const url = new URL(media.metadata?.source_url);
+		return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+	} catch {
+		return "";
+	}
+});
 const summary = $derived(
 	[fileType(type), fileSize(media.metadata?.size)].filter(Boolean).join(" · "),
 );
@@ -62,6 +70,14 @@ const summary = $derived(
 		<dl>
 			<dt>Filename</dt>
 			<dd>{name}</dd>
+			{#if source}
+				<dt>Source</dt>
+				<dd>
+					<a href={source} title={source} target="_blank" rel="noreferrer">
+						{media.metadata.source_title || source}
+					</a>
+				</dd>
+			{/if}
 			<dt>Uploaded</dt>
 			<dd>{uploadedAt(media.createdAt)}</dd>
 			{#if type}

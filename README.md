@@ -42,7 +42,8 @@ that stays open for future uploads. Keep it open and unlocked to avoid entering
 your password for each upload. A locked app holds one file invisibly and uploads it automatically after unlock. Firefox shows
 a notification when the upload succeeds or fails.
 Capture names use media alt/title/aria-label text, then the page title or URL,
-with an appropriate file extension.
+with an appropriate file extension. Captures also keep the source page URL and
+title in encrypted metadata; open **File details → Source** to revisit the page.
 Set up the library before capturing. Only public HTTP(S) media up to 32 MB is
 supported; protected media and blob URLs need manual Upload.
 

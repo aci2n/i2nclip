@@ -16,6 +16,7 @@ function receiveCapture(page, request, timeout = 5000) {
 				if (request.type === "file") {
 					request = {
 						type: "file",
+						metadata: request.metadata,
 						file: new File([new Uint8Array(request.bytes)], request.name, {
 							type: request.mime,
 						}),
@@ -69,6 +70,10 @@ test("app receives captures through its public event interface and uploads after
 		name: image.name,
 		mime: image.mimeType,
 		bytes: [...image.buffer],
+		metadata: {
+			source_url: "https://example.com/gallery?photo=42#portrait",
+			source_title: "A portrait from the mountain trail",
+		},
 	};
 	await page.getByRole("button", { name: "Lock", exact: true }).click();
 	const deliver = () => receiveCapture(page, request);
@@ -104,6 +109,12 @@ test("app receives captures through its public event interface and uploads after
 	await expect(
 		card.getByText(image.name, { exact: true }).first(),
 	).toBeVisible();
+	await card.getByText("File details", { exact: true }).click();
+	const source = card.getByRole("link", {
+		name: request.metadata.source_title,
+	});
+	await expect(source).toHaveAttribute("href", request.metadata.source_url);
+	await expect(source).toHaveAttribute("rel", "noreferrer");
 	const downloading = page.waitForEvent("download");
 	await card.getByRole("button", { name: "Download", exact: true }).click();
 	expect(await readFile(await (await downloading).path())).toEqual(

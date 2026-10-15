@@ -9,6 +9,7 @@ export function checkFileSize(size) {
 export async function sendUpload({
 	file,
 	credentials,
+	metadata = {},
 	tags = "",
 	onProgress,
 	signal,
@@ -21,6 +22,7 @@ export async function sendUpload({
 	signal.throwIfAborted();
 	return upload({
 		...credentials,
+		metadata,
 		bytes,
 		name: file.name,
 		contentType: file.type || "application/octet-stream",

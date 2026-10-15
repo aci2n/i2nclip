@@ -27,6 +27,7 @@ export const MAX_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_ENCRYPTED_FILE_BYTES = MAX_FILE_BYTES + 64;
 
 export async function upload({
+	metadata: extra = {},
 	serverUrl,
 	privateKey,
 	bytes,
@@ -45,6 +46,7 @@ export async function upload({
 	const plainTags = uniqueTags(tags);
 	const storedType = sniffContentType(bytes, contentType);
 	const metadata = {
+		...extra,
 		name: cleanName(name),
 		content_type: storedType,
 		size: bytes.length,

@@ -231,7 +231,23 @@ export async function sendToApp(
 		throw new Error(ready.error);
 	}
 	const file = await fetchFile(srcUrl, fetcher, context);
-	const reply = await request(receiver.id, { type: "file", file }, 5000);
+	const metadata = {};
+	if (context.url) {
+		const source = new URL(context.url);
+		if (["http:", "https:"].includes(source.protocol)) {
+			source.username = "";
+			source.password = "";
+			metadata.source_url = source.href;
+			if (context.title?.trim()) {
+				metadata.source_title = context.title.trim();
+			}
+		}
+	}
+	const reply = await request(
+		receiver.id,
+		{ type: "file", file, metadata },
+		5000,
+	);
 	if (!reply?.ok) {
 		throw new Error(
 			reply?.error ||

@@ -166,7 +166,7 @@ export function createLibrary(
 			void search(get(state).query);
 		}
 	});
-	async function upload(files) {
+	async function upload(files, metadata = {}) {
 		if (
 			disposed ||
 			batchActive ||
@@ -206,6 +206,7 @@ export function createLibrary(
 			try {
 				const item = await send({
 					file,
+					metadata,
 					credentials,
 					signal,
 					onProgress: (percent) => {

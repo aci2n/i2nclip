@@ -116,3 +116,30 @@ The server image contains only the web app; extension outputs stay in client/dis
 References: [Firefox runtime messaging](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/tabs/sendMessage),
 [structured cloning](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Chrome_incompatibilities#data_cloning_algorithm),
 [embedded options](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/options_ui).
+
+## Source page metadata
+
+Goal: preserve where captured media came from and show a Source link in File
+details. Reuse the page URL/title already read from the clicked frame, with the
+existing tab/frame fallback. Carry optional source_url/source_title in the file
+request's metadata object, retaining it with a hidden pending capture until unlock.
+Only HTTP(S) source URLs are stored; strip URL credentials, preserve query/hash,
+and omit blank titles. Source context must never use media alt text as page title.
+
+The library upload method accepts an optional metadata object for its batch and
+passes it through sendUpload into api.upload. The API helper merges extra JSON
+fields before authoritative name/type/size/tags and generated image metadata, so
+context cannot override upload invariants. Ordinary Upload is unchanged. Source
+fields are inside existing encrypted metadata, including after filename/tag edits;
+no server endpoint, schema, dependencies, or persistent extension state changes.
+Cancellation/disposal drops context with the pending File through existing paths.
+
+MediaCard derives a safe HTTP(S) link from ordinary metadata props and displays
+source_title or the URL in File details. Open in a new tab with no referrer/opener.
+Malformed/unsupported stored URLs produce no link. No store/storage/workflow enters
+the component. Loading/locked views and notifications never display source context.
+Do not scrape page content, fetch source pages, persist extra context separately,
+or add compatibility handling. Acceptance: source follows the File through capture,
+locked receipt, upload, encryption, and metadata edits; manual files omit it. Check
+build/static output and actual Firefox details in both themes and narrow widths.
+No tests are added or run unless requested.

@@ -52,7 +52,7 @@ export function createExtensionReceiver(
 		pending = null;
 		const own = epoch;
 		onupload();
-		void library.upload([capture.file]).then((ok) => {
+		void library.upload([capture.file], capture.metadata).then((ok) => {
 			if (!disposed) {
 				complete(capture, ok, own !== session.epoch);
 			}
@@ -101,6 +101,7 @@ export function createExtensionReceiver(
 				}
 				const capture = {
 					file,
+					metadata: message.metadata,
 					token: message.token,
 				};
 				if (get(session).unlocked) {
