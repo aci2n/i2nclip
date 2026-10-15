@@ -30,11 +30,6 @@ async function submit(event) {
 		return;
 	}
 	const submitted = draft.trim();
-	if (!submitted) {
-		input.setCustomValidity("Enter a filename.");
-		input.reportValidity();
-		return;
-	}
 	saving = true;
 	try {
 		if (submitted === name || (await onsave(submitted))) {
@@ -60,10 +55,10 @@ async function submit(event) {
 			bind:value={draft}
 			aria-label={`Filename for ${name}`}
 			required
+			pattern=".*\S.*"
 			maxlength="255"
 			readonly={saving}
 			disabled={disabled && !saving}
-			oninput={() => input.setCustomValidity("")}
 			onblur={() => (editing = false)}
 			onkeydown={(event) => {
 				if (event.key === "Escape") {
@@ -72,6 +67,7 @@ async function submit(event) {
 				}
 			}}
 		>
+		<button type="submit" hidden>Save filename</button>
 	</form>
 {:else}
 	<button

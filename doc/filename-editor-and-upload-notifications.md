@@ -64,3 +64,15 @@ failure message. Lost acknowledgements retain the existing no-retry behavior.
   after acceptance. Cancellation is silent, ordinary windows never close, and
   only successful temporary popups close. Meaningful isolated tests cover the
   completion flow and UI; build/checker and package/static checks pass.
+
+## Native filename form submission
+
+Keep filename editing as a native single-line text form with an explicit hidden
+submit button, so Enter and Shift+Enter use the browser's default submit action.
+Do not intercept Enter or its modifiers. Use native required/pattern validation
+for blank names and the existing metadata callback for saving. Preserve blur,
+Escape, failed drafts, busy guards, and focus behavior. The component owns only
+presentation state; the store continues to own requests and cancellation. No new
+interfaces, persistence, server behavior, or dependencies are introduced.
+Acceptance: both Enter variants submit a valid name through the form; blank
+names do not submit, blur does not save, and failed drafts remain editable.
