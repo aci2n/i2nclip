@@ -5,6 +5,7 @@ import TagEditor from "./TagEditor.svelte";
 
 let { media, onreveal, ondownload, onremove, onupdate } = $props();
 const type = $derived(media.metadata?.contentType || "");
+const playable = $derived(/^(audio|video)\//.test(type));
 const image = $derived(type.startsWith("image/"));
 const name = $derived(media.metadata?.name || media.id);
 const source = $derived.by(() => {
@@ -22,11 +23,11 @@ const summary = $derived(
 
 <article class="panel card" class:deleted={media.deleted}>
 	<div class="media">
-		{#if canPreview(type)}
+		{#if canPreview(type, name)}
 			<button
 				type="button"
 				class="preview-button"
-				aria-label={`${image ? "Open" : "Play"} ${name}`}
+				aria-label={`${playable ? "Play" : "Open"} ${name}`}
 				onclick={(event) => onreveal(event.currentTarget)}
 				disabled={media.busy || media.deleted}
 			>
@@ -35,7 +36,7 @@ const summary = $derived(
 				{:else}
 					<span class="file-type">{fileType(type)}</span>
 				{/if}
-				{#if !image}
+				{#if playable}
 					<span class="play" aria-hidden="true">▶</span>
 				{/if}
 			</button>

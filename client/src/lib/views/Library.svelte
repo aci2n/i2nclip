@@ -9,7 +9,9 @@ let { session, library, uploads, onsettings } = $props();
 let filesInput = $state();
 const previewable = $derived(
 	$library.cards.filter(
-		(media) => !media.deleted && canPreview(media.metadata?.contentType),
+		(media) =>
+			!media.deleted &&
+			canPreview(media.metadata?.contentType, media.metadata?.name),
 	),
 );
 const previewIndex = $derived(

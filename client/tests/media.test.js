@@ -66,3 +66,51 @@ test("media reuses full-content Blob URLs for preview and saving until disposal"
 	assert.deepEqual(revoked, ["blob:full"]);
 	assert.equal(get(media).url, "");
 });
+
+test("text previews reuse verified content, bound decoding, save full content and clear on disposal", async (t) => {
+	const session = {
+		...writable({}),
+		epoch: 0,
+		signal: new AbortController().signal,
+		credentials: () => ({}),
+	};
+	const content = new TextEncoder().encode(`${"a".repeat(256 * 1024)}tail`);
+	let reads = 0;
+	let blob;
+	const media = createMediaItem(
+		{
+			id: "code",
+			metadata: { name: "source.rs", contentType: "application/octet-stream" },
+		},
+		session,
+		{
+			http: {
+				getContent: async () => {
+					reads++;
+					return content;
+				},
+			},
+			urls: {
+				createObjectURL: (value) => {
+					blob = value;
+					return "blob:code";
+				},
+				revokeObjectURL() {},
+			},
+			download: async () => {
+				assert.equal(blob.size, content.length);
+			},
+		},
+	);
+	t.after(media.dispose);
+	await media.download();
+	assert.equal(get(media).text, null);
+	await media.reveal();
+	assert.equal(get(media).text.length, 256 * 1024);
+	assert.equal(get(media).textTruncated, true);
+	await media.reveal();
+	assert.equal(reads, 1);
+	media.dispose();
+	assert.equal(get(media).text, null);
+	assert.equal(get(media).textTruncated, false);
+});

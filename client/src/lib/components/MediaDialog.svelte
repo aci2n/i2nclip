@@ -58,7 +58,18 @@ $effect(() => {
 	}}
 >
 	{#if selected}
-		{#if selected.type.startsWith("image/") &&
+		{#if selected.text !== null && selected.text !== undefined}
+			<section class="text-preview" aria-label={selected.name}>
+				<p class="text-name">{selected.name}</p>
+				<pre>{selected.text}</pre>
+				{#if selected.textTruncated}
+					<p>
+						Preview limited to the first 256 KiB. Download the file to read it
+						all.
+					</p>
+				{/if}
+			</section>
+		{:else if selected.type.startsWith("image/") &&
 			(selected.url || selected.preview)}
 			<img src={selected.url || selected.preview} alt={selected.name}>
 		{:else if selected.type.startsWith("video/") && selected.url}
@@ -135,6 +146,25 @@ dialog {
 	max-height: 95vh;
 	min-width: min(16rem, 95vw);
 	min-height: min(10rem, 95vh);
+}
+.text-preview {
+	width: min(60rem, 95vw);
+	max-height: 95vh;
+	overflow: auto;
+	padding: 3rem;
+	background: var(--paper);
+	border-radius: 0.5rem;
+}
+.text-name {
+	font-weight: 600;
+	overflow-wrap: anywhere;
+	margin-bottom: 1rem;
+}
+pre {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font: 0.9rem / 1.5 monospace;
+	margin: 0 0 1rem;
 }
 dialog::backdrop {
 	background: #000b;

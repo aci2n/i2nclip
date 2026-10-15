@@ -3,6 +3,11 @@ import * as api from "../api.js";
 import { audioArt } from "../media/audio-art.js";
 import { downloadName } from "../media/format.js";
 import { sniffContentType } from "../media/metadata.js";
+import {
+	decodeTextPreview,
+	isText,
+	TEXT_PREVIEW_BYTES,
+} from "../media/text.js";
 import { uniqueTags } from "../protocol/tags.js";
 
 export function createMediaItem(
@@ -16,6 +21,8 @@ export function createMediaItem(
 		deleted: false,
 		url: "",
 		preview: "",
+		text: null,
+		textTruncated: false,
 		message: "",
 		error: false,
 		progress: null,
@@ -25,6 +32,7 @@ export function createMediaItem(
 	const signal = AbortSignal.any([controller.signal, session.signal]);
 	const ownedUrls = new Set();
 	let disposed = false;
+	let content;
 	function current() {
 		return !disposed && !signal.aborted && session.epoch === epoch;
 	}
@@ -43,10 +51,13 @@ export function createMediaItem(
 			urls.revokeObjectURL(url);
 		}
 		ownedUrls.clear();
+		content = null;
 		state.update((v) => ({
 			...v,
 			url: "",
 			preview: "",
+			text: null,
+			textTruncated: false,
 			busy: false,
 			progress: null,
 		}));
@@ -99,11 +110,10 @@ export function createMediaItem(
 			return;
 		}
 		const value = get(state);
-		const url = makeUrl(
-			new Blob([bytes], {
-				type: value.metadata?.contentType || "application/octet-stream",
-			}),
-		);
+		content = new Blob([bytes], {
+			type: value.metadata?.contentType || "application/octet-stream",
+		});
+		const url = makeUrl(content);
 		let preview = value.preview;
 		if (value.metadata?.contentType?.startsWith("audio/")) {
 			const art = audioArt(bytes);
@@ -120,6 +130,25 @@ export function createMediaItem(
 				await receive();
 				if (!current()) {
 					return false;
+				}
+				const value = get(state);
+				if (
+					value.text === null &&
+					isText(value.metadata?.contentType, value.metadata?.name)
+				) {
+					const blob = content;
+					const bytes = new Uint8Array(
+						await blob.slice(0, TEXT_PREVIEW_BYTES).arrayBuffer(),
+					);
+					if (!current()) {
+						return false;
+					}
+					const textTruncated = blob.size > TEXT_PREVIEW_BYTES;
+					state.update((v) => ({
+						...v,
+						text: decodeTextPreview(bytes, textTruncated),
+						textTruncated,
+					}));
 				}
 				return get(state).url;
 			}),

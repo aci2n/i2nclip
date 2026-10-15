@@ -78,3 +78,12 @@ WebP at quality 0.85 before encryption, without resizing, and changes the filena
 and MIME type only when output is smaller. Failed or unsupported conversions keep
 the original. Existing WebP, GIF, SVG and non-images are unchanged. Original input
 size is checked before decoding; bitmap resources close even on cancellation.
+
+## Text previews
+
+Text MIME types, JSON/XML and common text/code filename extensions open in the
+media dialog as escaped read-only text. Existing image/audio/video types retain
+their native viewers. The item owns its downloaded Blob and a UTF-8 preview of
+at most 256 KiB, decoded only after the complete download passes hash verification
+and decryption. Truncated previews are labeled; Download always saves the full
+file. Disposal clears text, releases the Blob and revokes its URL.

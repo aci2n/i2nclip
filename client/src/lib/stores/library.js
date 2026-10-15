@@ -1,6 +1,7 @@
 import { get, writable } from "svelte/store";
 import * as api from "../api.js";
 import { canPreview } from "../media/format.js";
+import { isText } from "../media/text.js";
 import { createMediaItem } from "./media-item.js";
 
 export function createLibrary(
@@ -158,11 +159,11 @@ export function createLibrary(
 			row.value.busy ||
 			row.value.deleted ||
 			previous?.loading ||
-			!canPreview(row.value.metadata?.contentType)
+			!canPreview(row.value.metadata?.contentType, row.value.metadata?.name)
 		) {
 			return false;
 		}
-		const type = row.value.metadata.contentType;
+		const type = row.value.metadata.contentType || "application/octet-stream";
 		const own = ++previewRevision;
 		state.update((v) => ({
 			...v,
@@ -171,6 +172,8 @@ export function createLibrary(
 				url: previous?.url || "",
 				type: previous?.type || type,
 				preview: previous ? previous.preview : row.value.preview,
+				text: previous?.text ?? null,
+				textTruncated: previous?.textTruncated ?? false,
 				name: previous?.name || row.value.metadata.name,
 				opener: previous?.opener || opener,
 				loading: true,
@@ -188,6 +191,10 @@ export function createLibrary(
 								url,
 								type,
 								preview: row.value.preview,
+								text: isText(type, row.value.metadata.name)
+									? row.value.text
+									: null,
+								textTruncated: row.value.textTruncated,
 								name: row.value.metadata.name,
 							}
 						: {}),

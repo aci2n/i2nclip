@@ -1,5 +1,7 @@
-export function canPreview(type) {
-	return /^(image|audio|video)\//.test(type || "");
+import { isText } from "./text.js";
+
+export function canPreview(type, name) {
+	return /^(image|audio|video)\//.test(type || "") || isText(type, name);
 }
 
 export function fileSize(bytes) {
