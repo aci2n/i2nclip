@@ -27,6 +27,8 @@ read-only, with a labeled 256 KiB preview limit; Download saves the full file.
 Use the arrow buttons or Left/Right keys to browse previewable files in the loaded results.
 To load another results page, close the preview and choose More. A centered
 percentage appears while the next item downloads; Escape closes the preview.
+On touch screens, swipe left/right to browse and swipe up to close media previews.
+Text previews retain vertical scrolling; close them with the close button.
 
 Tags edit inline: **+** opens an input, Enter saves, Escape cancels, and **×** removes a tag. Failed edits retain their draft. Tag controls and card actions have larger touch targets on narrow screens; preview arrows sit below the content.
 

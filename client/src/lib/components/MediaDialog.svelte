@@ -1,5 +1,6 @@
 <script>
 import { modal } from "../ui/dom.js";
+import { previewSwipes } from "../ui/preview-swipes.js";
 
 let {
 	selected,
@@ -24,6 +25,14 @@ $effect(() => {
 <dialog
 	aria-label="Media preview"
 	use:modal={selected}
+	use:previewSwipes={{
+		key: selected?.id,
+		enabled: Boolean(selected) && !selected.loading,
+		onleft: hasNext ? onnext : undefined,
+		onright: hasPrevious ? onprevious : undefined,
+		onup: selected?.text == null ? onclose : undefined,
+	}}
+	class:text={selected?.text != null}
 	onclick={(event) => {
 		if (event.target === event.currentTarget) {
 			onclose();
@@ -139,6 +148,8 @@ $effect(() => {
 
 <style>
 dialog {
+	touch-action: pinch-zoom;
+	overscroll-behavior: contain;
 	padding: 0;
 	border: 0;
 	background: transparent;
@@ -146,6 +157,9 @@ dialog {
 	max-height: 95vh;
 	min-width: min(16rem, 95vw);
 	min-height: min(10rem, 95vh);
+}
+dialog.text {
+	touch-action: pan-y pinch-zoom;
 }
 .text-preview {
 	width: min(60rem, 95vw);

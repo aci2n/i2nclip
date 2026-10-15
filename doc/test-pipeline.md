@@ -31,6 +31,12 @@ restoration, and preview controls outside the text panel. Per-test screenshots
 capture the add control and populated/error editor in light and dark themes;
 inspect the Firefox images after layout changes.
 
+The preview gesture scenario sends touch pointer sequences through the real dialog
+in both browsers. It verifies left/right navigation within loaded results, upward
+close and focus restoration, short/diagonal/canceled/multitouch rejection, and
+preservation of buttons, video controls, and vertical text scrolling. Chromium
+also verifies navigation using native touchscreen input.
+
 ## Acceptance
 
 - Removing dependencies, client dist, and local build artifacts must not require undocumented preparation beyond the listed toolchains and system libraries.

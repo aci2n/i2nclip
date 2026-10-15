@@ -1,4 +1,12 @@
-import { createLibrary, expect, shot, test } from "./fixtures.js";
+import { readFile } from "node:fs/promises";
+import {
+	audioFixture,
+	createLibrary,
+	expect,
+	imageFixture,
+	shot,
+	test,
+} from "./fixtures.js";
 
 test("mobile tags wrap with usable touch controls and retain failed drafts", async ({
 	page,
@@ -103,4 +111,191 @@ test("mobile tags wrap with usable touch controls and retain failed drafts", asy
 		);
 	}
 	await shot(page, "mobile-text-controls");
+});
+
+test("touch gestures browse loaded previews and close media without hijacking other interactions", async ({
+	page,
+	app,
+	context,
+	browserName,
+}) => {
+	await page.setViewportSize({ width: 360, height: 800 });
+	await createLibrary(page, app);
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	await page.getByLabel("Upload", { exact: true }).setInputFiles([
+		await imageFixture(page, "Landscape.png", 960, 540),
+		await imageFixture(page, "Portrait.png", 360, 640),
+		audioFixture(),
+		{
+			name: "Video.webm",
+			mimeType: "video/webm",
+			buffer: await readFile(new URL("./fixtures/clip.webm", import.meta.url)),
+		},
+		{
+			name: "Notes.txt",
+			mimeType: "text/plain",
+			buffer: Buffer.from("A scrolling note.\n".repeat(200)),
+		},
+	]);
+	await expect(page.getByRole("article")).toHaveCount(5);
+	const openers = page
+		.getByRole("article")
+		.getByRole("button", { name: /^(Open|Play) / });
+	const firstName = (await openers.first().getAttribute("aria-label")).replace(
+		/^(Open|Play) /,
+		"",
+	);
+	const secondName = (await openers.nth(1).getAttribute("aria-label")).replace(
+		/^(Open|Play) /,
+		"",
+	);
+	await openers.first().click();
+	const dialog = page.getByRole("dialog", { name: "Media preview" });
+	const visibleName = async (name) => {
+		await expect(dialog).toBeVisible();
+		await expect(
+			dialog
+				.locator(
+					`img[alt="${name}"], video[aria-label="${name}"], audio[aria-label="${name}"], section[aria-label="${name}"]`,
+				)
+				.first(),
+		).toBeVisible();
+		await expect(dialog.getByText(/^Loading /)).toHaveCount(0);
+	};
+	const surface = () =>
+		dialog.locator(".text-preview, .audio, video, img").first();
+	const gesture = async (
+		target,
+		dx,
+		dy,
+		{ cancel = false, multitouch = false, pointerType = "touch" } = {},
+	) => {
+		const box = await target.boundingBox();
+		const init = {
+			pointerType,
+			pointerId: 1,
+			isPrimary: true,
+			clientX: box.x + box.width / 2,
+			clientY: box.y + Math.min(box.height / 2, 20),
+			bubbles: true,
+		};
+		await target.dispatchEvent("pointerdown", init);
+		if (multitouch) {
+			await target.dispatchEvent("pointerdown", {
+				...init,
+				pointerId: 2,
+				isPrimary: false,
+			});
+		}
+		if (cancel) {
+			await target.dispatchEvent("pointercancel", init);
+		}
+		await target.dispatchEvent("pointerup", {
+			...init,
+			clientX: init.clientX + dx,
+			clientY: init.clientY + dy,
+		});
+	};
+	await visibleName(firstName);
+	await gesture(surface(), 100, 0);
+	await visibleName(firstName);
+	for (const [dx, dy, options] of [
+		[20, 0, {}],
+		[-100, -100, {}],
+		[-100, 0, { cancel: true }],
+		[-100, 0, { multitouch: true }],
+		[-100, 0, { pointerType: "mouse" }],
+	]) {
+		await gesture(surface(), dx, dy, options);
+		await visibleName(firstName);
+	}
+	await gesture(surface(), -100, 0);
+	await visibleName(secondName);
+	await gesture(surface(), 100, 0);
+	await visibleName(firstName);
+	await gesture(
+		dialog.getByRole("button", { name: "Close preview", exact: true }),
+		0,
+		-100,
+	);
+	await expect(dialog).toBeVisible();
+	await dialog
+		.getByRole("button", { name: "Close preview", exact: true })
+		.click();
+	await page
+		.getByRole("button", { name: "Play Video.webm", exact: true })
+		.click();
+	await visibleName("Video.webm");
+	const video = dialog.locator("video");
+	const box = await video.boundingBox();
+	await video.dispatchEvent("pointerdown", {
+		pointerType: "touch",
+		pointerId: 1,
+		isPrimary: true,
+		clientX: box.x + 20,
+		clientY: box.y + box.height - 10,
+	});
+	await video.dispatchEvent("pointerup", {
+		pointerType: "touch",
+		pointerId: 1,
+		isPrimary: true,
+		clientX: box.x + 20,
+		clientY: box.y + box.height - 110,
+	});
+	await expect(dialog).toBeVisible();
+	await gesture(video, 0, -100);
+	await expect(dialog).not.toBeVisible();
+	await expect(
+		page.getByRole("button", { name: "Play Video.webm", exact: true }),
+	).toBeFocused();
+	await page
+		.getByRole("button", { name: "Open Notes.txt", exact: true })
+		.click();
+	await visibleName("Notes.txt");
+	await gesture(surface(), 0, -100);
+	await expect(dialog).toBeVisible();
+	expect(
+		await dialog.evaluate((node) => getComputedStyle(node).touchAction),
+	).toContain("pan-y");
+	const text = dialog.locator(".text-preview");
+	await text.hover();
+	await page.mouse.wheel(0, 200);
+	await expect
+		.poll(() => text.evaluate((node) => node.scrollTop))
+		.toBeGreaterThan(0);
+	if (browserName === "chromium") {
+		// Chromium exposes native touch injection; Firefox uses the pointer sequences above.
+		await dialog
+			.getByRole("button", { name: "Close preview", exact: true })
+			.click();
+		const imageButton = page.getByRole("button", { name: /^Open Landscape\./ });
+		const imageName = (await imageButton.getAttribute("aria-label")).slice(5);
+		await imageButton.click();
+		await visibleName(imageName);
+		const bounds = await dialog.locator("img").boundingBox();
+		const left = await dialog
+			.getByRole("button", { name: "Next media", exact: true })
+			.isEnabled();
+		const x = bounds.x + bounds.width / 2;
+		const y = bounds.y + bounds.height / 2;
+		const native = await context.newCDPSession(page);
+		try {
+			await native.send("Input.dispatchTouchEvent", {
+				type: "touchStart",
+				touchPoints: [{ x, y }],
+			});
+			await native.send("Input.dispatchTouchEvent", {
+				type: "touchMove",
+				touchPoints: [{ x: x + (left ? -100 : 100), y }],
+			});
+			await native.send("Input.dispatchTouchEvent", {
+				type: "touchEnd",
+				touchPoints: [],
+			});
+			await expect(dialog.locator(`img[alt="${imageName}"]`)).toHaveCount(0);
+			await expect(dialog).toBeVisible();
+		} finally {
+			await native.detach();
+		}
+	}
 });
