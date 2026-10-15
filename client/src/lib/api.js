@@ -334,7 +334,7 @@ async function readBody(response, onProgress, signal) {
 	const reader = response.body.getReader();
 	const chunks = [];
 	let received = 0;
-	const abort = () => reader.cancel();
+	const abort = () => reader.cancel().catch(() => {});
 	signal?.addEventListener("abort", abort, { once: true });
 	try {
 		while (true) {

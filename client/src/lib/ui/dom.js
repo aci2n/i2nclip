@@ -1,3 +1,5 @@
+import { tick } from "svelte";
+
 // Browser actions own modal lifecycle and file input handling.
 export function modal(node, selected) {
 	let opener;
@@ -7,9 +9,12 @@ export function modal(node, selected) {
 			node.showModal();
 		} else if (!selected && node.open) {
 			node.close();
-			if (opener?.isConnected) {
-				opener.focus();
-			}
+			const target = opener;
+			tick().then(() => {
+				if (node.isConnected && !node.open && target?.isConnected) {
+					target.focus();
+				}
+			});
 		}
 	};
 	update(selected);

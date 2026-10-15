@@ -33,6 +33,7 @@ export function createMediaItem(
 	const ownedUrls = new Set();
 	let disposed = false;
 	let content;
+	let activeLoad;
 	function current() {
 		return !disposed && !signal.aborted && session.epoch === epoch;
 	}
@@ -45,6 +46,9 @@ export function createMediaItem(
 		return url;
 	}
 	function dispose() {
+		if (disposed) {
+			return;
+		}
 		disposed = true;
 		controller.abort();
 		for (const url of ownedUrls) {
@@ -70,17 +74,14 @@ export function createMediaItem(
 			preview: makeUrl(new Blob([initial.thumb], { type: "image/webp" })),
 		}));
 	}
-	async function run(work) {
+	// Mutations only need the item's lifetime and its ordinary busy guard.
+	async function mutate(work) {
 		if (!current() || get(state).busy || get(state).deleted) {
 			return false;
 		}
 		state.update((v) => ({ ...v, busy: true, message: "", error: false }));
 		try {
-			const result = await work();
-			if (!current() && !get(state).deleted) {
-				return false;
-			}
-			return result ?? true;
+			return await work();
 		} catch (error) {
 			if (current()) {
 				state.update((v) => ({ ...v, message: error.message, error: true }));
@@ -88,49 +89,79 @@ export function createMediaItem(
 			return false;
 		} finally {
 			if (current()) {
-				state.update((v) => ({ ...v, busy: false, progress: null }));
+				state.update((v) => ({ ...v, busy: false }));
 			}
 		}
 	}
-	async function receive() {
-		if (get(state).url) {
-			return;
+	// Content loading alone supports caller cancellation. Keep its guards here.
+	async function withContent(callerSignal, useContent) {
+		if (
+			!current() ||
+			get(state).busy ||
+			get(state).deleted ||
+			callerSignal?.aborted
+		) {
+			return false;
 		}
-		const bytes = await http.getContent({
-			...session.credentials(),
-			id: initial.id,
-			signal,
-			onProgress: (progress) => {
-				if (current()) {
-					state.update((v) => ({ ...v, progress }));
-				}
-			},
-		});
-		if (!current()) {
-			return;
-		}
-		const value = get(state);
-		content = new Blob([bytes], {
-			type: value.metadata?.contentType || "application/octet-stream",
-		});
-		const url = makeUrl(content);
-		let preview = value.preview;
-		if (value.metadata?.contentType?.startsWith("audio/")) {
-			const art = audioArt(bytes);
-			if (art) {
-				preview = makeUrl(new Blob([art], { type: sniffContentType(art, "") }));
+		const request = AbortSignal.any(
+			callerSignal ? [signal, callerSignal] : [signal],
+		);
+		activeLoad = request;
+		const release = () => {
+			if (activeLoad === request) {
+				activeLoad = null;
+				state.update((v) => ({ ...v, busy: false, progress: null }));
 			}
+		};
+		request.addEventListener("abort", release, { once: true });
+		state.update((v) => ({ ...v, busy: true, message: "", error: false }));
+		try {
+			if (!get(state).url) {
+				const bytes = await http.getContent({
+					...session.credentials(),
+					id: initial.id,
+					signal: request,
+					onProgress: (progress) => {
+						if (activeLoad === request && !request.aborted) {
+							state.update((v) => ({ ...v, progress }));
+						}
+					},
+				});
+				request.throwIfAborted();
+				const value = get(state);
+				content = new Blob([bytes], {
+					type: value.metadata?.contentType || "application/octet-stream",
+				});
+				const url = makeUrl(content);
+				let preview = value.preview;
+				if (value.metadata?.contentType?.startsWith("audio/")) {
+					const art = audioArt(bytes);
+					if (art) {
+						preview = makeUrl(
+							new Blob([art], { type: sniffContentType(art, "") }),
+						);
+					}
+				}
+				state.update((v) => ({ ...v, url, preview }));
+			}
+			request.throwIfAborted();
+			const result = await useContent(request);
+			request.throwIfAborted();
+			return result;
+		} catch (error) {
+			if (!request.aborted && current()) {
+				state.update((v) => ({ ...v, message: error.message, error: true }));
+			}
+			return false;
+		} finally {
+			request.removeEventListener("abort", release);
+			release();
 		}
-		state.update((v) => ({ ...v, url, preview }));
 	}
 	return {
 		subscribe: state.subscribe,
-		reveal: () =>
-			run(async () => {
-				await receive();
-				if (!current()) {
-					return false;
-				}
+		reveal: (callerSignal) =>
+			withContent(callerSignal, async (request) => {
 				const value = get(state);
 				if (
 					value.text === null &&
@@ -140,9 +171,7 @@ export function createMediaItem(
 					const bytes = new Uint8Array(
 						await blob.slice(0, TEXT_PREVIEW_BYTES).arrayBuffer(),
 					);
-					if (!current()) {
-						return false;
-					}
+					request.throwIfAborted();
 					const textTruncated = blob.size > TEXT_PREVIEW_BYTES;
 					state.update((v) => ({
 						...v,
@@ -153,18 +182,20 @@ export function createMediaItem(
 				return get(state).url;
 			}),
 		download: () =>
-			run(async () => {
-				await receive();
-				if (current()) {
-					const v = get(state);
-					await download(
-						v.url,
-						downloadName(v.metadata?.name || v.id, v.metadata?.contentType),
-					);
-				}
+			withContent(undefined, async (request) => {
+				const value = get(state);
+				await download(
+					value.url,
+					downloadName(
+						value.metadata?.name || value.id,
+						value.metadata?.contentType,
+					),
+				);
+				request.throwIfAborted();
+				return true;
 			}),
 		updateMetadata: (patch) =>
-			run(async () => {
+			mutate(async () => {
 				const value = get(state);
 				if (!value.metadata) {
 					throw new Error("File metadata is unavailable.");
@@ -194,8 +225,12 @@ export function createMediaItem(
 				return true;
 			}),
 		remove: () =>
-			run(async () => {
-				await http.remove({ ...session.credentials(), id: initial.id, signal });
+			mutate(async () => {
+				await http.remove({
+					...session.credentials(),
+					id: initial.id,
+					signal,
+				});
 				if (!current()) {
 					return false;
 				}

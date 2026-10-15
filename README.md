@@ -26,7 +26,9 @@ Open an image, text/code file, or play audio/video to preview it. Text is shown
 read-only, with a labeled 256 KiB preview limit; Download saves the full file.
 Use the arrow buttons or Left/Right keys to browse previewable files in the loaded results.
 To load another results page, close the preview and choose More. A centered
-percentage appears while the next item downloads; Escape closes the preview.
+percentage appears on the card and in the preview while content downloads.
+Browsing remains available during loading; switching items or closing cancels the
+pending preview download. Completed content stays cached. Escape closes the preview.
 On touch screens, swipe left/right to browse and swipe up to close media previews.
 Text previews retain vertical scrolling; close them with the close button.
 

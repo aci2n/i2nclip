@@ -404,3 +404,37 @@ test("quota uses a signed empty GET and carries cancellation", async (t) => {
 		usage,
 	);
 });
+
+test("canceling a streaming download stops its reader without unhandled cancellation failures", async (t) => {
+	const { privateKey } = await generatePrivateKey();
+	const controller = new AbortController();
+	let canceled = false;
+	t.mock.method(
+		globalThis,
+		"fetch",
+		async () =>
+			new Response(
+				new ReadableStream({
+					start(stream) {
+						stream.enqueue(new Uint8Array([1]));
+					},
+					cancel() {
+						canceled = true;
+						return Promise.reject(new Error("stream already failed"));
+					},
+				}),
+				{ headers: { "content-length": "100" } },
+			),
+	);
+	await assert.rejects(
+		getContent({
+			serverUrl: "https://clip.example",
+			key: await loadKey(privateKey),
+			id: "a".repeat(64),
+			signal: controller.signal,
+			onProgress: () => controller.abort(),
+		}),
+		{ name: "AbortError" },
+	);
+	assert.equal(canceled, true);
+});

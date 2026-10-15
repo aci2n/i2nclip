@@ -1,10 +1,11 @@
 <script>
+import { isText } from "../media/text.js";
 import { modal } from "../ui/dom.js";
 import { previewSwipes } from "../ui/preview-swipes.js";
 
 let {
 	selected,
-	progress = null,
+	opener,
 	hasPrevious = false,
 	hasNext = false,
 	onprevious,
@@ -12,27 +13,29 @@ let {
 	onretry,
 	onclose,
 } = $props();
+const name = $derived(selected?.metadata?.name || selected?.id || "");
+const type = $derived(
+	selected?.metadata?.contentType || "application/octet-stream",
+);
+const text = $derived(isText(type, name) ? selected?.text : null);
 let player = $state();
 $effect(() => {
 	const current = player;
-	if (selected?.loading) {
-		current?.pause();
-	}
 	return () => current?.pause();
 });
 </script>
 
 <dialog
 	aria-label="Media preview"
-	use:modal={selected}
+	use:modal={selected ? { opener } : null}
 	use:previewSwipes={{
 		key: selected?.id,
-		enabled: Boolean(selected) && !selected.loading,
+		enabled: Boolean(selected),
 		onleft: hasNext ? onnext : undefined,
 		onright: hasPrevious ? onprevious : undefined,
-		onup: selected?.text == null ? onclose : undefined,
+		onup: text == null ? onclose : undefined,
 	}}
-	class:text={selected?.text != null}
+	class:text={text != null}
 	onclick={(event) => {
 		if (event.target === event.currentTarget) {
 			onclose();
@@ -50,12 +53,12 @@ $effect(() => {
 		) {
 			if (event.key === "ArrowLeft") {
 				event.preventDefault();
-				if (hasPrevious && !selected?.loading) {
+				if (hasPrevious) {
 					onprevious();
 				}
 			} else if (event.key === "ArrowRight") {
 				event.preventDefault();
-				if (hasNext && !selected?.loading) {
+				if (hasNext) {
 					onnext();
 				}
 			}
@@ -67,53 +70,61 @@ $effect(() => {
 	}}
 >
 	{#if selected}
-		{#if selected.text !== null && selected.text !== undefined}
-			<section class="text-preview" aria-label={selected.name}>
-				<p class="text-name">{selected.name}</p>
-				<pre>{selected.text}</pre>
-				{#if selected.textTruncated}
-					<p>
-						Preview limited to the first 256 KiB. Download the file to read it
-						all.
-					</p>
-				{/if}
-			</section>
-		{:else if selected.type.startsWith("image/") &&
-			(selected.url || selected.preview)}
-			<img src={selected.url || selected.preview} alt={selected.name}>
-		{:else if selected.type.startsWith("video/") && selected.url}
-			<video
-				bind:this={player}
-				src={selected.url}
-				aria-label={selected.name}
-				controls
-				autoplay
-				playsinline
-			>
-				<track kind="captions">
-			</video>
-		{:else if selected.type.startsWith("audio/") && selected.url}
-			<div class="audio">
-				{#if selected.preview}
-					<img src={selected.preview} alt={selected.name}>
-				{/if}
-				<p>{selected.name}</p>
-				<audio
+		{#key selected.id}
+			{#if text !== null && text !== undefined}
+				<section class="text-preview" aria-label={name}>
+					<p class="text-name">{name}</p>
+					<pre>{text}</pre>
+					{#if selected.textTruncated}
+						<p>
+							Preview limited to the first 256 KiB. Download the file to read it
+							all.
+						</p>
+					{/if}
+				</section>
+			{:else if type.startsWith("image/") && (selected.url || selected.preview)}
+				<img src={selected.url || selected.preview} alt={name}>
+			{:else if type.startsWith("video/") && selected.url}
+				<video
 					bind:this={player}
 					src={selected.url}
-					aria-label={selected.name}
+					aria-label={name}
 					controls
 					autoplay
-				></audio>
+					playsinline
+				>
+					<track kind="captions">
+				</video>
+			{:else if type.startsWith("audio/") && selected.url}
+				<div class="audio">
+					{#if selected.preview}
+						<img src={selected.preview} alt={name}>
+					{/if}
+					<p>{name}</p>
+					<audio
+						bind:this={player}
+						src={selected.url}
+						aria-label={name}
+						controls
+						autoplay
+					></audio>
+				</div>
+			{:else if selected.preview}
+				<img src={selected.preview} alt={name}>
+			{/if}
+		{/key}
+		{#if selected.busy}
+			<div class="status stack" role="status">
+				<p>{name}</p>
+				<p>
+					{selected.progress === null
+						? "Loading…"
+						: `Loading ${selected.progress}%`}
+				</p>
 			</div>
-		{:else if selected.preview}
-			<img src={selected.preview} alt={selected.name}>
-		{/if}
-		{#if selected.loading}
-			<p class="status" role="status">Loading {progress ?? 0}%</p>
 		{:else if selected.error}
 			<div class="status stack">
-				<p role="alert">{selected.error}</p>
+				<p role="alert">{selected.message}</p>
 				<button type="button" onclick={onretry}>Retry</button>
 			</div>
 		{/if}
@@ -121,8 +132,12 @@ $effect(() => {
 			type="button"
 			class="previous arrow"
 			aria-label="Previous media"
-			disabled={!hasPrevious || selected.loading}
-			onclick={onprevious}
+			aria-disabled={!hasPrevious}
+			onclick={() => {
+				if (hasPrevious) {
+					onprevious();
+				}
+			}}
 		>
 			←
 		</button>
@@ -130,8 +145,12 @@ $effect(() => {
 			type="button"
 			class="next arrow"
 			aria-label="Next media"
-			disabled={!hasNext || selected.loading}
-			onclick={onnext}
+			aria-disabled={!hasNext}
+			onclick={() => {
+				if (hasNext) {
+					onnext();
+				}
+			}}
 		>
 			→
 		</button>
@@ -227,6 +246,7 @@ audio {
 	color: inherit;
 }
 .status p {
+	overflow-wrap: anywhere;
 	margin: 0;
 }
 .arrow,
@@ -239,6 +259,10 @@ audio {
 .arrow {
 	top: 50%;
 	transform: translateY(-50%);
+}
+.arrow[aria-disabled="true"] {
+	opacity: 0.5;
+	cursor: default;
 }
 .previous {
 	left: 1rem;

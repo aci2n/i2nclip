@@ -1,4 +1,5 @@
 <script>
+import { onDestroy } from "svelte";
 import MediaCard from "../components/MediaCard.svelte";
 import MediaDialog from "../components/MediaDialog.svelte";
 import Uploads from "../components/Uploads.svelte";
@@ -7,6 +8,7 @@ import { pickFiles, selectFiles } from "../ui/dom.js";
 
 let { session, library, uploads, onsettings } = $props();
 let filesInput = $state();
+onDestroy(() => library.closePreview());
 const previewable = $derived(
 	$library.cards.filter(
 		(media) =>
@@ -17,7 +19,7 @@ const previewable = $derived(
 const previewIndex = $derived(
 	previewable.findIndex((media) => media.id === $library.selected?.id),
 );
-const previewProgress = $derived(previewable[previewIndex]?.progress);
+const previewMedia = $derived(previewable[previewIndex]);
 function movePreview(step) {
 	const media = previewable[previewIndex + step];
 	if (media) {
@@ -125,8 +127,8 @@ function movePreview(step) {
 	{/if}
 {/if}
 <MediaDialog
-	selected={$library.selected}
-	progress={previewProgress}
+	selected={previewMedia || null}
+	opener={$library.selected?.opener}
 	hasPrevious={previewIndex > 0}
 	hasNext={previewIndex >= 0 && previewIndex < previewable.length - 1}
 	onprevious={() => movePreview(-1)}

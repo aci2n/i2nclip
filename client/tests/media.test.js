@@ -4,6 +4,7 @@ import { get, writable } from "svelte/store";
 import { MAX_FILE_BYTES } from "../src/lib/api.js";
 import { sendUpload } from "../src/lib/media/upload.js";
 import { createMediaItem } from "../src/lib/stores/media-item.js";
+import { deferred } from "./helpers.js";
 
 test("oversized local files are rejected before reading bytes", async () => {
 	const file = {
@@ -113,4 +114,59 @@ test("text previews reuse verified content, bound decoding, save full content an
 	media.dispose();
 	assert.equal(get(media).text, null);
 	assert.equal(get(media).textTruncated, false);
+});
+
+test("canceled text preparation cannot publish text or clear a subsequent mutation", async (t) => {
+	const reading = deferred();
+	const entered = deferred();
+	const updating = deferred();
+	const slice = Blob.prototype.slice;
+	t.mock.method(Blob.prototype, "slice", function (...args) {
+		const blob = slice.apply(this, args);
+		t.mock.method(blob, "arrayBuffer", () => {
+			entered.resolve();
+			return reading.promise;
+		});
+		return blob;
+	});
+	const owner = {
+		...writable({}),
+		epoch: 0,
+		signal: new AbortController().signal,
+		credentials: () => ({}),
+	};
+	const media = createMediaItem(
+		{ id: "text", metadata: { name: "note.txt", contentType: "text/plain" } },
+		owner,
+		{
+			http: {
+				getContent: async () => new TextEncoder().encode("note"),
+				updateMetadata: () => updating.promise,
+			},
+			urls: { createObjectURL: () => "blob:text", revokeObjectURL() {} },
+		},
+	);
+	t.after(() => {
+		reading.resolve(new ArrayBuffer(0));
+		updating.resolve({});
+		media.dispose();
+	});
+	const controller = new AbortController();
+	const opening = media.reveal(controller.signal);
+	await entered.promise;
+	controller.abort();
+	assert.equal(get(media).busy, false);
+	assert.equal(
+		get(media).url,
+		"blob:text",
+		"fully received content stays cached",
+	);
+	const mutation = media.updateMetadata({ name: "renamed.txt" });
+	reading.resolve(new TextEncoder().encode("late text").buffer);
+	assert.equal(await opening, false);
+	assert.equal(get(media).text, null);
+	assert.equal(get(media).busy, true);
+	updating.resolve({});
+	assert.equal(await mutation, true);
+	assert.equal(get(media).metadata.name, "renamed.txt");
 });

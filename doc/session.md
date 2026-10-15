@@ -28,7 +28,9 @@ server in the recovery identity. Stores own validation, registration and saving.
 
 ## Browsing and uploads
 
-The library owns searches, media items, and preview selection. Cancellation and
+The library owns searches, media items, and preview selection (item ID and opener).
+The Library view passes the selected card directly to the dialog; its content,
+loading, error, and progress state have one source of truth. Cancellation and
 revision checks suppress stale results. Pagination uses the submitted query and
 permits one request at a time. The separate uploads store owns sequential batches
 and refreshes the submitted search after completion. Individual failures do not
@@ -40,7 +42,11 @@ Media items own requests, cached full-content Blob URLs, previews, and mutation
 busy state. Decrypted arrays are local to URL/artwork creation. Playback,
 full-resolution images, and saving reuse the content URL. Disposal aborts requests
 and revokes URLs; stale results cannot create previews or save dialogs. Deleted
-cards remain inactive until a new search replaces them.
+cards remain inactive until a new search replaces them. Only content loading
+accepts preview cancellation; mutations use their ordinary item busy guard. Abort
+checks prevent stale content/text publication, and active-load identity guards
+progress and cleanup. Cancellation releases busy/progress immediately without
+reporting an error or clearing a newer operation. Completed content stays cached.
 
 Metadata updates merge name/tag patches while retaining unrelated metadata and
 thumbnails. Conflicts load current metadata and leave failed editor drafts for
@@ -51,9 +57,13 @@ tags by protocol normalization while keeping their first spelling.
 The preview dialog uses native image/audio/video elements. Navigation follows
 loaded result order, skips deleted items and ordinary files, and stops at loaded
 boundaries without wrapping or fetching pages. Close the preview and choose More
-to load another page. Loading retains the displayed media/artwork;
-failures offer Retry. Closing supersedes pending display updates so late results
-cannot reopen the dialog. Downloads remain owned by media items. Players pause
+to load another page. Selection immediately displays the new item's cached content,
+thumbnail, or filename placeholder; failures offer Retry. Navigation and close
+cancel pending preview downloads, and late results cannot reopen the dialog.
+The library owns one preview cancellation controller, aborted on switching, close,
+search replacement, leaving Library, and session disposal. Explicit downloads
+remain independently owned by media items. Navigation works during loading, and
+card/dialog always share progress. Unknown progress displays “Loading…”. Players pause
 on navigation or close; focus returns to the opening control when available.
 
 ## Settings and pairing

@@ -1,7 +1,6 @@
 import { get, writable } from "svelte/store";
 import * as api from "../api.js";
 import { canPreview } from "../media/format.js";
-import { isText } from "../media/text.js";
 import { createMediaItem } from "./media-item.js";
 
 export function createLibrary(
@@ -25,8 +24,8 @@ export function createLibrary(
 	const cards = new Map();
 	let disposed = false;
 	let searchController;
+	let previewController;
 	let revision = 0;
-	let previewRevision = 0;
 	let lastEpoch = session.epoch;
 	function publishCards() {
 		state.update((v) => ({
@@ -56,9 +55,14 @@ export function createLibrary(
 			}
 		});
 	}
+	function closePreview() {
+		previewController?.abort();
+		previewController = null;
+		state.update((v) => ({ ...v, selected: null }));
+	}
 	function reset() {
 		revision++;
-		previewRevision++;
+		closePreview();
 		searchController?.abort();
 		clearCards();
 		state.update((v) => ({
@@ -89,7 +93,7 @@ export function createLibrary(
 		const own = ++revision;
 		const submitted = more ? previous.query : query;
 		if (!more) {
-			previewRevision++;
+			closePreview();
 			clearCards();
 		}
 		state.update((v) => ({
@@ -151,59 +155,23 @@ export function createLibrary(
 			void search(get(state).query);
 		}
 	});
-	async function reveal(id, opener) {
+	function reveal(id, opener) {
 		const row = cards.get(id);
-		const previous = get(state).selected;
 		if (
 			!row ||
 			row.value.busy ||
 			row.value.deleted ||
-			previous?.loading ||
 			!canPreview(row.value.metadata?.contentType, row.value.metadata?.name)
 		) {
 			return false;
 		}
-		const type = row.value.metadata.contentType || "application/octet-stream";
-		const own = ++previewRevision;
+		previewController?.abort();
+		previewController = new AbortController();
 		state.update((v) => ({
 			...v,
-			selected: {
-				id,
-				url: previous?.url || "",
-				type: previous?.type || type,
-				preview: previous ? previous.preview : row.value.preview,
-				text: previous?.text ?? null,
-				textTruncated: previous?.textTruncated ?? false,
-				name: previous?.name || row.value.metadata.name,
-				opener: previous?.opener || opener,
-				loading: true,
-				error: "",
-			},
+			selected: { id, opener: v.selected?.opener || opener },
 		}));
-		const url = await row.media.reveal();
-		if (!disposed && own === previewRevision && cards.get(id) === row) {
-			state.update((v) => ({
-				...v,
-				selected: {
-					...v.selected,
-					...(url
-						? {
-								url,
-								type,
-								preview: row.value.preview,
-								text: isText(type, row.value.metadata.name)
-									? row.value.text
-									: null,
-								textTruncated: row.value.textTruncated,
-								name: row.value.metadata.name,
-							}
-						: {}),
-					loading: false,
-					error: url ? "" : row.value.message || "Could not load this media.",
-				},
-			}));
-		}
-		return Boolean(url);
+		return row.media.reveal(previewController.signal).then(Boolean);
 	}
 
 	return {
@@ -213,10 +181,7 @@ export function createLibrary(
 		more: () => search(get(state).query, true),
 		refresh: () => search(get(state).query),
 		reveal,
-		closePreview() {
-			previewRevision++;
-			state.update((v) => ({ ...v, selected: null }));
-		},
+		closePreview,
 		download: (id) => cards.get(id)?.media.download(),
 		updateMetadata: (id, patch) => cards.get(id)?.media.updateMetadata(patch),
 		async remove(id) {
@@ -232,8 +197,7 @@ export function createLibrary(
 				return false;
 			}
 			if (await row.media.remove()) {
-				previewRevision++;
-				state.update((v) => ({ ...v, selected: null }));
+				closePreview();
 				return true;
 			}
 			return false;
