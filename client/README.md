@@ -15,8 +15,8 @@ dependencies. Installation and configuration are in the [root README](../README.
 The application also owns the extension receiver store. It accepts files only
 after tab admission, delegates uploads to the library, and holds at most one file
 hidden in memory while locked, automatically submitting it after unlock. Session invalidation and root disposal discard that file.
-The extension owns capture, focus only when unlocking is needed, temporary popup
-closure after successful uploads, and its saved app URL.
+The extension owns capture, persistent app tab creation, focus only when unlocking
+is needed, completion notifications, and its saved app URL.
 
 Stores call `lib/api.js` directly. API and protocol helpers handle encryption, signing, framing, and verification. Session generations and abort signals invalidate stale work. Search revision checks keep pagination tied to the submitted query. Per-item busy state rejects overlapping mutations.
 

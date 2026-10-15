@@ -367,8 +367,6 @@ function extensionBrowser(tabs) {
 			},
 			get: async (id) => values.get(id),
 			update: async (id) => calls.push(["focus", id]),
-		},
-		windows: {
 			create: async (options) => {
 				calls.push(["create", options]);
 				const tab = {
@@ -378,8 +376,10 @@ function extensionBrowser(tabs) {
 					url: options.url,
 				};
 				values.set(tab.id, tab);
-				return { id: 4, tabs: [tab] };
+				return tab;
 			},
+		},
+		windows: {
 			update: async (id) => calls.push(["window", id]),
 		},
 		scripting: {
@@ -428,10 +428,7 @@ test("extension reuses the web app tab or creates one and sends exactly once", a
 				browser.calls.find(([action]) => action === "create")[1],
 				{
 					url: "https://clip.example/",
-					type: "popup",
-					width: 440,
-					height: 640,
-					focused: false,
+					active: false,
 				},
 			);
 		}
@@ -520,33 +517,20 @@ test("focus follows the final locked receipt, including lock changes during fetc
 	}
 });
 
-test("upload results notify success or failure and only close successful temporary popups", async () => {
-	const removed = [];
+test("upload results notify success or failure without managing windows", async () => {
 	const notifications = [];
-	let type = "popup";
-	let url = "https://clip.example/";
-	const browser = {
-		runtime: { id: "i2nclip@i2n" },
-		storage: {
-			local: { get: async () => ({ appUrl: "https://clip.example/" }) },
-		},
-		windows: {
-			get: async () => ({ id: 4, type, tabs: [{ id: 9, url }] }),
-			remove: async (id) => removed.push(id),
-		},
-	};
+	const browser = { runtime: { id: "i2nclip@i2n" } };
 	const notify = async (message) => notifications.push(message);
 	const message = {
 		type: "upload-complete",
 		appUrl: "https://clip.example/",
-		temporaryWindowId: 4,
 		name: "Photo.png",
 		ok: true,
 	};
 	const sender = {
 		id: browser.runtime.id,
 		frameId: 0,
-		url,
+		url: message.appUrl,
 		tab: { id: 9, windowId: 4 },
 	};
 	for (const patch of [
@@ -559,25 +543,9 @@ test("upload results notify success or failure and only close successful tempora
 	assert.deepEqual(notifications, []);
 	await handleUploadResult(browser, { ...message, ok: false }, sender, notify);
 	assert.match(notifications.at(-1), /Upload failed.*Photo.png/);
-	assert.deepEqual(removed, []);
-	type = "normal";
 	await handleUploadResult(browser, message, sender, notify);
 	assert.match(notifications.at(-1), /Uploaded Photo.png/);
-	assert.deepEqual(removed, []);
-	type = "popup";
-	url = "https://other.example/";
-	await handleUploadResult(browser, message, sender, notify);
-	assert.deepEqual(removed, []);
-	url = sender.url;
-	await handleUploadResult(
-		browser,
-		{ ...message, temporaryWindowId: undefined },
-		sender,
-		notify,
-	);
-	assert.deepEqual(removed, []);
-	await handleUploadResult(browser, message, sender, notify);
-	assert.deepEqual(removed, [4]);
+	assert.equal(notifications.length, 2);
 });
 
 function injectedBridge(request = { type: "file", name: "Photo.png" }) {
@@ -602,7 +570,6 @@ function injectedBridge(request = { type: "file", name: "Photo.png" }) {
 	const reply = inject({
 		appUrl: "https://clip.example/",
 		request,
-		temporaryWindowId: 4,
 	});
 	const emit = (type, result, token = "unique-request") =>
 		listeners.get("message")?.({

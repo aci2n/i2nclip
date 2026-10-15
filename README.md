@@ -32,8 +32,8 @@ access for the app and media sources.
 
 Right-click an image, audio, or video and choose **Upload to i2nclip**. The bridge
 uses your existing app tab without changing focus while unlocked. It focuses the
-app only when unlocking is needed. If no app tab exists, it opens a small temporary
-popup that closes after a successful upload; failures leave it open. A locked app
+app only when unlocking is needed. If no app tab exists, it opens a regular tab
+that stays open for future uploads. A locked app
 holds one file invisibly and uploads it automatically after unlock. Firefox shows
 a notification when the upload succeeds or fails.
 Capture names use media alt/title/aria-label text, then the page title or URL,

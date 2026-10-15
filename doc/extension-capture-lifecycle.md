@@ -1,83 +1,40 @@
-# Background capture and temporary popup lifecycle
+# Background capture and persistent app tab lifecycle
 
 ## Goal and scope
 
-Capture into an unlocked web app without changing browser focus. If no admitted
-app tab exists, create a 440×640 temporary popup, initially unfocused. Focus only
-when the accepted file is waiting for unlock. Keep a single pending file hidden
-in the app's memory while locked; submit it automatically through the ordinary
-library upload as soon as unlock finishes. Remove the pending-file component,
-its filename/status state, and manual Upload/Cancel actions.
+Reuse an existing app tab or create a regular persistent tab when none exists.
+Create it inactive; activate its tab and focus its window only when the accepted
+capture needs unlocking. Keep the tab open after success, failure, or rejection.
+Remove temporary-window IDs, popup creation, and completion-driven window closure.
+No credential caching, new storage, transport changes, dependencies, or UI changes.
 
-Use the existing app-root receiver, window event protocol, and upload store.
-No identities, encryption, queues, persistent files, additional locks, or
-dependencies move into the extension. Regular app tabs are never closed.
+## Interfaces and ownership
 
-## Communication investigation and interfaces
+The extension uses `tabs.query`, exact origin/path matching, and the existing
+admission probe. If no matching tab exists, `tabs.create({ url, active: false })`
+provides the candidate. Existing loading/blocked tabs do not create duplicates.
+The transient injected bridge reports upload completion only for notifications;
+it carries no window ownership. The app root and library store continue to own
+pending files, unlocking, upload workflows, and cancellation. No app interfaces
+or manifest permissions change.
 
-Firefox does not expose webpage `runtime.connect` or `runtime.sendMessage` through
-`externally_connectable`. A persistent startup connection would require a content
-script and a connection registry/reconnection lifecycle. Keep the current root
-listener registered after Web Lock admission and the transient injected bridge;
-query only the configured app URL rather than every tab. Filter exact origin/path
-and probe admission as before. An existing blocked/loading app tab must not cause
-another popup to be created.
+## Persistence, failure, and cancellation
 
-The accepted-file reply includes `needsUnlock`. Use the final receipt state, so
-locking or unlocking during media fetching does not focus an already unlocked
-app or miss a newly locked one. Only success acknowledgements trigger focus.
-
-For every accepted capture, the injected bridge listens for a correlated completion
-event after acceptance. The receiver emits it when the ordinary upload finishes.
-The bridge notifies its own extension using `runtime.sendMessage`; the background
-validates extension ID, top-frame sender, configured URL, popup type, and the
-specific created window ID before closing that window. Event-driven completion
-can wake Firefox's background page after it idles, avoiding persistent job state
-or polling. Remove listeners after rejection, completion, timeout, or pagehide.
-
-## Ownership, persistence, and cancellation
-
-The root receiver owns one hidden pending file plus its reply correlation. Unlock
-may publish an unlocked state while still busy; wait until the session is idle
-and configured and the library is idle before starting. Clear pending ownership
-before starting the upload to prevent duplicate submission from store updates.
-Failed unlock retains the pending file. Epoch changes, root disposal, reload, or
-manual popup closure discard it; never submit into a replacement identity.
-
-The popup closes only after a successful upload, not after acknowledgement.
-Upload failures leave it open with regular library failure messages. Initial
-setup, fetch/bridge failures, and manual closure also leave no automatic retry.
-Lost acknowledgements still require checking the app before retrying. Closing
-the popup cancels root-owned work through existing disposal behavior.
-
-Only `appUrl` persists in extension storage. No completion registry is saved;
-each injected bridge owns its completion listener. Completion produces a Firefox
-notification for success or failure; cancellation is silent. Only newly created
-popups have close-on-success behavior.
+A new tab stays open until the user closes it. Its unlocked credentials remain
+in app memory and follow the ordinary Lock/reload/session lifecycle. Only appUrl
+persists in extension storage; files and completion listeners remain transient.
+A locked app holds one hidden file, uploading automatically after successful
+unlock. Session invalidation and disposal discard pending captures. Closing the
+tab disposes root-owned work. Fetch/probe/receipt/upload failures leave the tab
+open, report existing errors, and never retry automatically. Completion sends
+success/failure notifications; cancellation is silent. Neither result closes tabs.
 
 ## Acceptance checks
 
-- Existing unlocked apps receive uploads without tab/window activation.
-- Newly created popups use 440×640 and `focused: false`; focus only on a final
-  `needsUnlock` receipt. Requests rejected before acceptance never steal focus.
-- Locked screenshots in both themes at 320/360 show only the ordinary unlock UI,
-  without captured filename, pending status, or extra actions.
-- Unlock automatically uploads exactly once, including its busy-state transition;
-  failed unlock does not upload, and epoch invalidation/disposal discards pending
-  captures. Ordinary progress, failures, and byte-identical downloads still work.
-- Completion closes only the extension-created popup after success, leaves
-  failures and ordinary tabs open, and cleans up transient listeners.
-- Build/checker are warning-free, meaningful isolated unit/browser tests pass,
-  package/static checks pass, and generated artifacts are rebuilt.
-
-Reference: [Firefox externally_connectable](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/externally_connectable).
-
-## Verification
-
-All 81 client unit cases, the Svelte checker, package checks, lint, formatting, and
-all 14 Firefox/Chromium real-server browser cases pass. Locked screenshots at
-320/360 px were inspected in both themes: only the ordinary unlock UI appears.
-A disposable native Firefox profile exercised the actual extension context menu,
-created the popup against the real Rust API and isolated database, verified the
-capture remained hidden, unlocked through the UI, observed automatic popup
-closure, and reopened the app to confirm the captured photo was stored.
+- Existing matching tabs are reused and absent apps create one inactive regular tab.
+- Only accepted captures requiring unlock activate a tab and focus its window.
+- No popup creation, temporary-window protocol fields, or automatic closure remain.
+- Hidden pending captures and automatic upload after unlock remain unchanged.
+- Completion still notifies success/failure and releases transient listeners.
+- Existing test expectations reflect persistent tabs; build/checker are warning-free
+  and the extension package is rebuilt. No additional tests are introduced.

@@ -29,14 +29,13 @@ uploads. The existing app progress/error UI stays authoritative.
   metadata cards cannot enter editing.
 - The app reports completion for every accepted extension capture. It does not
   know whether the receiving window is temporary. Remove `closeWhenDone` from
-  app messages and pending capture state; popup ownership stays in the extension.
+  app messages and pending capture state; tab creation stays in the extension.
 - The transient bridge listens for each file's completion, then sends the
   extension a correlated result and the original filename. The background checks
   the extension/top-frame sender and configured app URL, shows a success/failure
-  notification, and closes only a successful extension-created popup. Existing
-  app windows remain open. Notifications use the existing permission/API.
+  notification. App tabs remain open after completion. Notifications use the existing permission/API.
   Completion carries the original app URL, so changing extension preferences
-  during an upload does not suppress that upload's result or popup closure.
+  during an upload does not suppress that upload's result.
 
 ## Persistence, cancellation, and failures
 
@@ -50,7 +49,7 @@ No new persistent state or resources are added. Pending captures invalidated by
 Lock/Reset/Forget/disposal report cancellation so the bridge releases listeners
 without a success/failure notification containing the hidden filename. Aborted
 uploads likewise do not leak a filename through a locked-screen notification.
-Real HTTP/upload failures notify and leave temporary popups open with the normal
+Real HTTP/upload failures notify and leave app tabs open with the normal
 failure message. Lost acknowledgements retain the existing no-retry behavior.
 
 ## Acceptance checks
@@ -62,7 +61,7 @@ failure message. Lost acknowledgements retain the existing no-retry behavior.
   specified. Inspect actual Firefox screenshots.
 - Extension success/failure notifications occur after completion, never merely
   after acceptance. Cancellation is silent, ordinary windows never close, and
-  only successful temporary popups close. Meaningful isolated tests cover the
+  all app tabs stay open. Meaningful isolated tests cover the
   completion flow and UI; build/checker and package/static checks pass.
 
 ## Native filename form submission

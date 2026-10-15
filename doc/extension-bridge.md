@@ -11,7 +11,7 @@ simplification plan explicitly anticipated a future extension as a web-app bridg
 
 One Firefox Manifest V3 extension offers **Upload to i2nclip** for HTTP(S) images,
 audio, and video. Its options contain only the web-app URL. It downloads one
-resource, targets an existing app tab or opens a temporary popup, and hands the
+resource, targets an existing app tab or opens a persistent tab, and hands the
 bytes to the admitted web app. It focuses the app only when unlocking is needed. The web app uses its existing upload workflow.
 
 Exclude extension identities, crypto, API calls, library/tag UI, workers, queues,
@@ -82,7 +82,7 @@ References: [Firefox options_ui](https://developer.mozilla.org/en-US/docs/Mozill
 - If unlocked and configured, switch to Library and start the existing upload.
   A locked app retains one hidden file in memory and automatically submits it
   after unlock finishes. Upload requires a configured, idle session and library.
-  A new temporary popup closes only after successful upload; errors leave it open.
+  A new app tab stays open after success or failure for future uploads.
   A client requiring initial setup rejects capture with instructions to set up
   the library and retry. Acknowledgement means accepted, not uploaded; the app
   owns progress, completion, and errors after acceptance.
@@ -105,7 +105,7 @@ may mean the file was already accepted; instruct users to check the app.
 ## Acceptance checks
 
 - Reuse an existing admitted app tab without stealing focus; open a temporary
-  popup when absent and focus only when unlocking is needed.
+  tab when absent and focus only when unlocking is needed.
 - Ignore unrelated origins/paths and refuse handoff after navigation.
 - Receive a real file through the bridge and upload/download identical bytes
   through the real web/API workflow; encryption remains in the web app.

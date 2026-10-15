@@ -193,23 +193,14 @@ export async function sendToApp(
 	const candidates = (await browser.tabs.query({ url: pattern })).filter(
 		(tab) => matchesApp(tab.url, appUrl),
 	);
-	let temporaryWindowId;
 	if (!candidates.length) {
-		const popup = await browser.windows.create({
-			url: appUrl,
-			type: "popup",
-			width: 440,
-			height: 640,
-			focused: false,
-		});
-		temporaryWindowId = popup.id;
-		candidates.push(popup.tabs[0]);
+		candidates.push(await browser.tabs.create({ url: appUrl, active: false }));
 	}
 	const request = async (tabId, message, timeout) => {
 		const [injection] = await browser.scripting.executeScript({
 			target: { tabId },
 			func: handoff,
-			args: [{ appUrl, request: message, timeout, temporaryWindowId }],
+			args: [{ appUrl, request: message, timeout }],
 		});
 		if (injection?.error) {
 			throw new Error(
@@ -281,18 +272,4 @@ export async function handleUploadResult(browser, message, sender, notify) {
 			? `Uploaded ${message.name}.`
 			: `Upload failed for ${message.name}. Check i2nclip for details.`,
 	);
-	if (!message.ok || message.temporaryWindowId !== sender.tab.windowId) {
-		return;
-	}
-	const popup = await browser.windows.get(message.temporaryWindowId, {
-		populate: true,
-	});
-	if (
-		popup.type === "popup" &&
-		popup.tabs.some(
-			(tab) => tab.id === sender.tab.id && matchesApp(tab.url, appUrl),
-		)
-	) {
-		await browser.windows.remove(popup.id);
-	}
 }

@@ -1,10 +1,5 @@
 // Serialized by scripting.executeScript: keep this function self-contained.
-export function handoff({
-	appUrl,
-	request,
-	timeout = 5000,
-	temporaryWindowId,
-}) {
+export function handoff({ appUrl, request, timeout = 5000 }) {
 	const app = new URL(appUrl);
 	if (location.origin !== app.origin || location.pathname !== app.pathname) {
 		return { ok: false, error: "The i2nclip tab navigated away." };
@@ -59,7 +54,6 @@ export function handoff({
 								ok: event.data.result?.ok === true,
 								name: request.name,
 								appUrl,
-								temporaryWindowId,
 							})
 							.catch(() => {});
 					}
