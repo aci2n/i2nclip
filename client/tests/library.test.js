@@ -376,3 +376,101 @@ test("failed and canceled deletions preserve active cards", async (t) => {
 	assert.equal(get(f.library).cards[0].deleted, false);
 	assert.equal(get(f.library).cards[0].message, "Delete unavailable");
 });
+
+test("preview pagination skips files, uses the submitted search, and never reopens after close", async (t) => {
+	const requests = [];
+	const downloads = [];
+	const created = [];
+	const revoked = [];
+	const playable = (id, contentType) => ({
+		...item(id),
+		metadata: { ...item(id).metadata, contentType },
+	});
+	const f = fixture(t, {
+		http: {
+			list: (args) => {
+				const done = deferred();
+				requests.push({ ...args, done });
+				return done.promise;
+			},
+			getContent: (args) => {
+				const done = deferred();
+				downloads.push({ ...args, done });
+				return done.promise;
+			},
+		},
+		mediaOptions: {
+			urls: {
+				createObjectURL: () => {
+					const url = `blob:${created.length}`;
+					created.push(url);
+					return url;
+				},
+				revokeObjectURL: (url) => revoked.push(url),
+			},
+		},
+	});
+	t.after(() => {
+		for (const request of requests) {
+			request.done.resolve({ items: [], next: null });
+		}
+		for (const request of downloads) {
+			request.done.resolve(new Uint8Array([1]));
+		}
+	});
+	f.owner.configure();
+	requests[0].done.resolve({ items: [], next: null });
+	await tick();
+	const searching = f.library.search("submitted");
+	requests[1].done.resolve({
+		items: [playable("image", "image/png"), item("document")],
+		next: "files",
+	});
+	await searching;
+	f.library.editDraft("not submitted");
+	assert.equal(await f.library.reveal("document"), false);
+	const opening = f.library.reveal("image");
+	downloads[0].done.resolve(new Uint8Array([1]));
+	await opening;
+	const advancing = f.library.morePreview();
+	assert.equal(get(f.library).selected.paging, true);
+	assert.equal(await f.library.morePreview(), false);
+	assert.equal(requests.length, 3);
+	assert.equal(requests[2].tags, "submitted");
+	assert.equal(requests[2].after, "files");
+	requests[2].done.resolve({
+		items: [item("another document")],
+		next: "audio",
+	});
+	await tick();
+	assert.equal(requests[3].after, "audio");
+	assert.equal(requests[3].tags, "submitted");
+	requests[3].done.resolve({
+		items: [playable("audio", "audio/wav")],
+		next: "video",
+	});
+	await tick();
+	downloads[1].done.resolve(new Uint8Array([2]));
+	assert.equal(await advancing, true);
+	assert.equal(get(f.library).selected.id, "audio");
+	assert.equal(get(f.library).selected.type, "audio/wav");
+
+	const pendingPage = f.library.morePreview();
+	f.library.closePreview();
+	requests[4].done.resolve({
+		items: [playable("video", "video/webm")],
+		next: null,
+	});
+	assert.equal(await pendingPage, false);
+	assert.equal(get(f.library).selected, null);
+	assert.equal(downloads.length, 2);
+	const pendingDownload = f.library.reveal("video");
+	f.library.closePreview();
+	downloads[2].done.resolve(new Uint8Array([3]));
+	await pendingDownload;
+	assert.equal(get(f.library).selected, null);
+	assert.equal(await f.library.reveal("video"), true);
+	assert.equal(get(f.library).selected.type, "video/webm");
+	f.library.dispose();
+	assert.deepEqual(revoked, created);
+});

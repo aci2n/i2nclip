@@ -7,16 +7,30 @@ import {
 	MAX_META_PLAINTEXT,
 } from "../src/lib/protocol/meta-plain.js";
 
-test("meta plain roundtrips with and without a thumb", () => {
+test("metadata stores camelCase JSON verbatim and keeps thumbnails outside JSON", () => {
 	const meta = {
 		name: "dot.png",
 		contentType: "image/png",
 		size: 42,
 		tags: ["a"],
 		image: { width: 1, height: 1 },
+		sourceUrl: "https://example.com/photo",
+		sourceTitle: "Example photo",
+		extra_data: { cameraModel: "Example", camera_model: "Custom" },
 	};
 	const thumb = new Uint8Array([0x52, 0x49, 0x46, 0x46]); // not a real webp; length check only
+	const original = structuredClone(meta);
 	const packed = encodeMetaPlain(meta, thumb);
+	const jsonLength = new DataView(
+		packed.buffer,
+		packed.byteOffset,
+		4,
+	).getUint32(0);
+	const stored = JSON.parse(
+		new TextDecoder().decode(packed.subarray(4, 4 + jsonLength)),
+	);
+	assert.deepEqual(stored, original);
+	assert.deepEqual(meta, original);
 	const back = decodeMetaPlain(packed);
 	assert.deepEqual(back.metadata, meta);
 	assert.deepEqual(back.thumb, thumb);
