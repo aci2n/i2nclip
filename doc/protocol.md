@@ -18,12 +18,11 @@ The client generates its identity locally. The server registers only the public 
 | `POST /api/register-key` | No signature; JSON `{"otc":"…","public_key":"…"}` | `204` |
 | `GET /api/media` | Signed; client sends no body | `200`, `{"media":[…],"next":null}` or a cursor |
 | `POST /api/media` | Signed POST frame | `201`, one media object |
-| `GET /api/media/{id}/meta` | Signed; client sends no body | `200`, one encrypted metadata object |
 | `GET /api/media/{id}` | Signed; client sends no body | `200`, encrypted content bytes |
 | `PUT /api/media/{id}/meta` | Signed metadata frame | `200`, one media object |
 | `DELETE /api/media/{id}` | Signed; client sends no body | `204` |
 
-Metadata reads return the same media object as list entries, without content bytes, and use `Cache-Control: no-store`. Missing items and items owned by another identity return `404`. Metadata reads do not consume download slots. Metadata updates are available only at `/api/media/{id}/meta`; the old PUT route returns `405`.
+Metadata updates are available only at `/api/media/{id}/meta`. GET on that path and PUT on `/api/media/{id}` return `405`.
 
 Metadata updates are generic: filenames, tags, and other metadata travel in the
 same encrypted frame. The server cannot read or patch plaintext fields. The

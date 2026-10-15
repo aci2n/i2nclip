@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { getMetadata, list, updateMetadata } from "../src/lib/api.js";
+import { list, updateMetadata } from "../src/lib/api.js";
 import { openRecovery } from "../src/lib/protocol/recovery.js";
 import {
 	createLibrary,
@@ -32,7 +32,9 @@ test("generic encrypted metadata updates rename downloads and preserve file cont
 		prevMetaHash: original.metaHash,
 	});
 	expect(saved.conflict).toBe(false);
-	const current = await getMetadata({ ...credentials, id: original.id });
+	const current = (await list(credentials)).items.find(
+		(item) => item.id === original.id,
+	);
 	expect(current.metadata).toEqual(metadata);
 	expect(current.thumb).toEqual(original.thumb);
 	expect(current.id).toBe(original.id);

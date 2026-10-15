@@ -401,30 +401,6 @@ impl Database {
         .ok_or(Error::NotFound)
     }
 
-    /// Fetch one metadata snapshot without loading content bytes.
-    pub(crate) async fn metadata(&self, owner: [u8; 32], id: &str) -> Result<Item, Error> {
-        let id = frame::parse_id(id)?;
-        let row = sqlx::query(
-            r#"
-            SELECT id, meta, content_bytes AS bytes, created_at,
-                   ARRAY(SELECT token FROM tags WHERE file_id = files.id ORDER BY token) AS tokens
-            FROM files WHERE owner = $1 AND id = $2
-            "#,
-        )
-        .bind(owner.as_slice())
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or(Error::NotFound)?;
-        Ok(Item {
-            id: row.try_get("id")?,
-            meta: row.try_get("meta")?,
-            bytes: row.try_get("bytes")?,
-            created_at: row.try_get("created_at")?,
-            tokens: row.try_get("tokens")?,
-        })
-    }
-
     /// Update the authorized row and replace its tags in the same transaction.
     pub(crate) async fn update_meta(
         &self,
@@ -1405,7 +1381,7 @@ mod tests {
         db.set_limits(&owner, limits).await.unwrap();
         let saved = db.add(owner, &second).await.unwrap();
         assert_eq!(db.list(owner, &[], None).await.unwrap().0.len(), 1);
-        assert_eq!(db.metadata(owner, &saved.id).await.unwrap().bytes, 29);
+        assert_eq!(saved.bytes, 29);
         // Another owner has its own capacity.
         sqlx::query("INSERT INTO registered_keys (public_key) VALUES ($1)")
             .bind([2_u8; 32].as_slice())

@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
 	getContent,
-	getMetadata,
 	getQuota,
 	isKeyRegistered,
 	list,
@@ -81,7 +80,6 @@ for (const [body, contentType, message] of [
 			() => registerKey({ ...settings, publicKey, otc: "test" }),
 			() => list(settings),
 			() => getContent(settings),
-			() => getMetadata(settings),
 			() => remove(settings),
 		]) {
 			await assert.rejects(request, (error) => error.message === message);
@@ -220,7 +218,7 @@ test("content hashes are checked before decryption", async (t) => {
 	);
 });
 
-test("metadata GET and PUT sign the meta route and preserve decrypted fields", async (t) => {
+test("metadata list and update sign their routes and preserve decrypted fields", async (t) => {
 	const { privateKey } = await generatePrivateKey();
 	const key = await loadKey(privateKey);
 	const id = "a".repeat(64);
@@ -242,7 +240,9 @@ test("metadata GET and PUT sign the meta route and preserve decrypted fields", a
 	const controller = new AbortController();
 	const methods = [];
 	t.mock.method(globalThis, "fetch", async (url, options) => {
-		assert.equal(String(url), `https://clip.example/api/media/${id}/meta`);
+		const path =
+			options.method === "GET" ? "/api/media" : `/api/media/${id}/meta`;
+		assert.equal(String(url), `https://clip.example${path}`);
 		assert.equal(options.signal, controller.signal);
 		const [, ts, nonce] = options.headers.authorization.slice(7).split(".");
 		assert.equal(
@@ -253,7 +253,7 @@ test("metadata GET and PUT sign the meta route and preserve decrypted fields", a
 				ts: Number(ts),
 				nonce,
 				method: options.method,
-				path: `/api/media/${id}/meta`,
+				path,
 				body: options.body ?? new Uint8Array(),
 			}),
 		);
@@ -273,13 +273,16 @@ test("metadata GET and PUT sign the meta route and preserve decrypted fields", a
 			);
 			assert(!new TextDecoder().decode(body).includes(renamed.name));
 		}
-		return Response.json({
+		const item = {
 			id,
 			created_at: 123,
 			bytes: 32,
 			tokens: ["token"],
 			meta: bytesToB64(meta),
-		});
+		};
+		return Response.json(
+			options.method === "GET" ? { media: [item], next: null } : item,
+		);
 	});
 	const credentials = {
 		serverUrl: "https://clip.example",
@@ -287,7 +290,9 @@ test("metadata GET and PUT sign the meta route and preserve decrypted fields", a
 		id,
 		signal: controller.signal,
 	};
-	const item = await getMetadata(credentials);
+	const {
+		items: [item],
+	} = await list(credentials);
 	assert.deepEqual(item, {
 		id,
 		createdAt: 123,
@@ -306,7 +311,7 @@ test("metadata GET and PUT sign the meta route and preserve decrypted fields", a
 	assert.equal(saved.conflict, false);
 	assert.deepEqual(methods, ["GET", "PUT"]);
 	controller.abort();
-	await assert.rejects(getMetadata(credentials), { name: "AbortError" });
+	await assert.rejects(list(credentials), { name: "AbortError" });
 	assert.deepEqual(methods, ["GET", "PUT"]);
 });
 
@@ -316,14 +321,21 @@ test("undecryptable metadata is returned without an editable payload", async (t)
 	meta[0] = 1;
 	t.mock.method(globalThis, "fetch", async () =>
 		Response.json({
-			id: "a".repeat(64),
-			created_at: 1,
-			bytes: 1,
-			tokens: [],
-			meta: bytesToB64(meta),
+			media: [
+				{
+					id: "a".repeat(64),
+					created_at: 1,
+					bytes: 1,
+					tokens: [],
+					meta: bytesToB64(meta),
+				},
+			],
+			next: null,
 		}),
 	);
-	const item = await getMetadata({
+	const {
+		items: [item],
+	} = await list({
 		serverUrl: "https://clip.example",
 		key: await loadKey(privateKey),
 		id: "a".repeat(64),
@@ -360,7 +372,7 @@ test("HTTP failures expose status without changing their error message", async (
 		Response.json({ error: "not found" }, { status: 404 }),
 	);
 	await assert.rejects(
-		getMetadata({
+		list({
 			serverUrl: "https://clip.example",
 			key: await loadKey(privateKey),
 			id: "a".repeat(64),

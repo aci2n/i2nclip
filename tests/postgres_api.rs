@@ -309,7 +309,6 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
         ("POST", "/api/media".to_string(), 120),
         ("PUT", format!("/api/media/{id}/meta"), 30),
         ("GET", "/api/media".to_string(), 10),
-        ("GET", format!("/api/media/{id}/meta"), 10),
         ("DELETE", format!("/api/media/{id}"), 10),
         ("POST", "/api/register-key".to_string(), 10),
     ] {
@@ -478,7 +477,6 @@ async fn media_body_caps_reject_declared_sizes_before_polling() {
         ("POST", "/api/media".to_string(), 33_624_140),
         ("PUT", format!("/api/media/{id}/meta"), 69_672),
         ("GET", "/api/media".to_string(), 0),
-        ("GET", format!("/api/media/{id}/meta"), 0),
         ("DELETE", format!("/api/media/{id}"), 0),
     ] {
         let authorization = client_crypto::authorization(
@@ -537,7 +535,6 @@ async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
         ("POST", "/api/media".to_string(), 33_624_140),
         ("PUT", format!("/api/media/{id}/meta"), 69_672),
         ("GET", "/api/media".to_string(), 0),
-        ("GET", format!("/api/media/{id}/meta"), 0),
         ("DELETE", format!("/api/media/{id}"), 0),
         ("POST", "/api/register-key".to_string(), 4096),
     ] {
@@ -1773,101 +1770,19 @@ async fn authentication_rechecks_timestamp_after_nonce_insert_wait() {
 }
 
 #[tokio::test]
-async fn metadata_read_is_an_owner_filtered_snapshot_and_old_put_is_removed() {
+async fn metadata_route_supports_only_updates() {
     let owner = new_identity();
-    let other = new_identity();
-    let (_dir, app) = app(&[&owner, &other]).await;
-    let content =
-        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"content").unwrap();
-    let id = crypto::body_hash(&content);
-    let meta =
-        client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"metadata").unwrap();
-    let token = client_crypto::tag_token(&owner.seed, "tag").unwrap();
-    assert_eq!(
-        call(
-            &app,
-            &owner,
-            "POST",
-            "/api/media",
-            client_crypto::encode_post(&meta, &content, &token)
-        )
-        .await
-        .0,
-        StatusCode::CREATED
-    );
-    let path = format!("/api/media/{id}/meta");
-    let (status, body) = call(&app, &owner, "GET", &path, vec![]).await;
-    assert_eq!(status, StatusCode::OK);
-    let item: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let (_, page) = call(&app, &owner, "GET", "/api/media", vec![]).await;
-    let page: serde_json::Value = serde_json::from_slice(&page).unwrap();
-    assert_eq!(item, page["media"][0]);
-    assert_eq!(item["meta"], STANDARD.encode(&meta));
-    assert_eq!(item["bytes"], content.len());
-    assert!(item.get("content").is_none());
-    assert_eq!(
-        call(&app, &other, "GET", &path, vec![]).await.0,
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(
-        call(&app, &owner, "GET", "/api/media/invalid/meta", vec![])
-            .await
-            .0,
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        call(
-            &app,
-            &owner,
-            "GET",
-            &format!("/api/media/{}/meta", "a".repeat(64)),
-            vec![]
-        )
-        .await
-        .0,
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(
-        call(&app, &owner, "GET", &path, vec![1]).await.0,
-        StatusCode::PAYLOAD_TOO_LARGE
-    );
-    assert_eq!(
-        call(&app, &owner, "PUT", &format!("/api/media/{id}"), vec![])
-            .await
-            .0,
-        StatusCode::METHOD_NOT_ALLOWED
-    );
-    let authorization = client_crypto::authorization(
-        &owner,
-        "http://i2nclip.test",
-        crypto::now_secs(),
-        &client_crypto::fresh_nonce(),
-        "GET",
-        &path,
-        b"",
-    );
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(&path)
-                .header("authorization", authorization)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.headers()["cache-control"], "no-store");
-    assert_eq!(
-        call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
-            .await
-            .0,
-        StatusCode::NO_CONTENT
-    );
-    assert_eq!(
-        call(&app, &owner, "GET", &path, vec![]).await.0,
-        StatusCode::NOT_FOUND
-    );
+    let (_dir, app) = app(&[&owner]).await;
+    let id = "a".repeat(64);
+    for (method, path) in [
+        ("GET", format!("/api/media/{id}/meta")),
+        ("PUT", format!("/api/media/{id}")),
+    ] {
+        assert_eq!(
+            call(&app, &owner, method, &path, vec![]).await.0,
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+    }
 }
 
 #[tokio::test]

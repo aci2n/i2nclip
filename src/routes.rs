@@ -258,7 +258,6 @@ mod request_tests {
             ("GET", "/api/media"),
             ("POST", "/api/media"),
             ("GET", item.as_str()),
-            ("GET", meta.as_str()),
             ("PUT", meta.as_str()),
             ("DELETE", item.as_str()),
         ] {

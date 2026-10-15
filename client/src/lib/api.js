@@ -123,19 +123,6 @@ export async function list({ serverUrl, key, tags, after, signal }) {
 	return { items, next: page.next || null };
 }
 
-export async function getMetadata({ serverUrl, key, id, signal }) {
-	const item = await send(
-		serverUrl,
-		key,
-		"GET",
-		`/api/media/${id}/meta`,
-		new Uint8Array(),
-		undefined,
-		signal,
-	);
-	return { ...(await openMeta(key, item)), tokens: item.tokens };
-}
-
 export async function getContent({ serverUrl, key, id, onProgress, signal }) {
 	const blob = await sendBytes(
 		serverUrl,
