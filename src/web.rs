@@ -22,7 +22,7 @@ pub(crate) fn serve(api: Router, directory: PathBuf) -> Router {
             "/favicon.ico",
             ServeFile::new(directory.join("favicon.ico")),
         )
-        .layer(map_response(html_cache));
+        .layer(map_response(html_response));
     let assets = Router::new()
         .nest_service(
             "/assets",
@@ -32,8 +32,13 @@ pub(crate) fn serve(api: Router, directory: PathBuf) -> Router {
     api.merge(html).merge(assets)
 }
 
-async fn html_cache(response: Response) -> Response {
-    cache(response, "no-cache")
+async fn html_response(response: Response) -> Response {
+    let mut response = cache(response, "no-cache");
+    response.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("frame-ancestors 'none'"),
+    );
+    response
 }
 
 async fn asset_cache(response: Response) -> Response {
@@ -102,6 +107,55 @@ mod tests {
         )
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn entry_routes_forbid_framing_including_head_revalidation_and_errors() {
+        let files = Files::new();
+        let app = files.app().await;
+        for path in ["/", "/index.html", "/?page=options", "/index.html?test=1"] {
+            for method in [Method::GET, Method::HEAD] {
+                let response = request(app.clone(), method, path).await;
+                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(
+                    response.headers()[header::CONTENT_SECURITY_POLICY],
+                    "frame-ancestors 'none'"
+                );
+            }
+            let response = request(app.clone(), Method::GET, path).await;
+            let modified = response.headers()[header::LAST_MODIFIED].clone();
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::IF_MODIFIED_SINCE, modified)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+            assert_eq!(
+                response.headers()[header::CONTENT_SECURITY_POLICY],
+                "frame-ancestors 'none'"
+            );
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+        }
+        for path in ["/assets/app-ab123456.js", "/api/health"] {
+            let response = request(app.clone(), Method::GET, path).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(!response
+                .headers()
+                .contains_key(header::CONTENT_SECURITY_POLICY));
+        }
+        std::fs::remove_file(files.0.join("index.html")).unwrap();
+        let response = request(app, Method::GET, "/").await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response.headers()[header::CONTENT_SECURITY_POLICY],
+            "frame-ancestors 'none'"
+        );
     }
 
     #[tokio::test]
