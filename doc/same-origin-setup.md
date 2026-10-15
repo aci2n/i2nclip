@@ -1,33 +1,30 @@
-# Use the app server during setup
+# Configurable setup server
 
 ## Goal and scope
 
-Remove editable server configuration from Create and Pair device setup. New
-libraries register against the origin serving the web app; pairing receivers use
-the session's server origin without a user-entered URL. Remove the setup draft,
-disclosure, and unused styles. Make session.create accept only the invitation
-code and use its existing default server origin. The session's injected default
-remains available for isolated environments.
+Restore the server URL disclosure removed by 5c5f516 for Create and Pair device.
+Default the local setup draft to the session server URL. Create passes the trimmed
+URL to session.create; pairing passes it to pairing.receive. Restore continues to
+use the server in the recovery identity.
 
 ## Interfaces and ownership
 
-Setup passes the ordinary create callback directly and passes the session origin
-to the existing pairing workflow. The session store owns registration and identity
-persistence as before. API signing continues to include the normalized server
-origin; server verification and I2N_ORIGIN configuration remain unchanged.
+Setup owns only the draft and presentation. The session owns server validation,
+registration, cancellation, and encrypted identity persistence. Pairing owns its
+existing workflow. Keep the selected server origin in request signatures.
 
-## Persistence, lifecycle, failure, and exclusions
+## Persistence and lifecycle
 
-Keep serverUrl in encrypted identities, recovery files, pairing payloads, and
-credentials. Existing recovery and unlock behavior remains unchanged; removing a
-setup control does not rewrite restored identities. No format changes, migrations,
-new state, dependencies, or extension app-URL changes. Cancellation, registration
-failures, pairing failures, and busy guards retain their current ownership and UI.
+The draft lasts for the setup view lifetime. Successful creation persists the
+selected server with the identity through the existing encrypted storage. Busy
+state disables editing; existing session and pairing failures remain beside their
+actions. Existing cancellation and overlapping-operation guards remain in place.
 
-## Acceptance checks
+## Exclusions and acceptance checks
 
-Create and Pair device expose no server field or disclosure. Creation chooses the
-session default origin, pairing uses the session origin, and restore remains
-available. Signed requests still contain their target origin. Existing creation
-fixtures use an injected origin and no create-time server argument. The Svelte
-checker/build pass without warnings. No additional tests are added or run.
+No new settings, storage, protocol changes, migrations, dependencies, or server
+routing changes. Create and Pair expose the disclosure with the current origin
+as default, use the trimmed selection, and preserve signed-origin validation.
+Restore has no independent server field. Update existing session fixtures to pass
+the selected URL. Check Svelte and the production build without warnings, and
+inspect the restored disclosure in Firefox. No additional tests are added or run.

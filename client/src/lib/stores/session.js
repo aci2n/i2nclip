@@ -156,14 +156,13 @@ export function createSession({
 				error: "",
 			});
 		},
-		create: ({ otc }) =>
+		create: ({ serverUrl, otc }) =>
 			action(async (signal) => {
 				if (!get(state).unlocked || identity) {
 					throw new Error(
 						"Forget the current library before creating another.",
 					);
 				}
-				const serverUrl = defaultServerUrl;
 				checkServer(serverUrl);
 				const { privateKey } = await generatePrivateKey();
 				const next = await validateIdentity({ serverUrl, privateKey });
