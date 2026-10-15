@@ -73,12 +73,11 @@ toward these limits. Rate-limit rejection returns `429` with `Retry-After: 60`
 before reading the body. Rate records are bounded by the global admission limit
 and expire without extending the window on rejection.
 
-Source limits use the TCP peer unless it is in `I2N_TRUSTED_PROXIES`.
-For trusted peers, the shared resolver checks X-Forwarded-For, Forwarded, then
-X-Real-IP and walks trusted chains right-to-left. IPv6 /64s share a budget.
-Missing or malformed proxy metadata falls back conservatively; see
-[public rate limits](public-rate-limits.md). Hosts embedding the public router
-should serve it with Axum's `into_make_service_with_connect_info::<SocketAddr>()`; absent
+Source limits use connection metadata, ignoring `Forwarded` and
+`X-Forwarded-For`; these headers must not let callers evade the limit. Behind a
+reverse proxy, users share that proxy's peer-IP budget. Apply additional
+per-client limits at the proxy. Hosts embedding the public router should serve
+it with Axum's `into_make_service_with_connect_info::<SocketAddr>()`; absent
 connection metadata shares one source bucket.
 
 Join and message submission bodies share sixteen read slots. Saturation returns

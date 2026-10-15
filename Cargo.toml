@@ -16,8 +16,6 @@ clap = { version = "4", features = ["derive"] }
 ed25519-dalek = "2"
 # Operating-system random bytes for nonces and new keys.
 getrandom = "0.2"
-# Trusted reverse-proxy CIDRs for client-IP resolution.
-ipnet = "2"
 # Helpers for reading an HTTP body with a size cap.
 http-body-util = "0.1"
 # Stream bounded file chunks into HTTP response bodies.

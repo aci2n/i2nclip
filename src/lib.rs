@@ -7,14 +7,12 @@
 #![forbid(unsafe_code)]
 
 mod auth;
-mod client_ip;
 mod db;
 mod error;
 mod frame;
 mod maintenance;
 mod media;
 mod pairing;
-mod rate_limit;
 #[cfg(test)]
 mod reference_crypto;
 mod routes;
@@ -55,8 +53,6 @@ const DOWNLOAD_SLOTS: usize = 16;
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) db: Database,
-    pub(crate) client_ips: client_ip::ClientIps,
-    pub(crate) rate_limits: Arc<std::sync::Mutex<rate_limit::RateLimits>>,
     pub(crate) upload_slots: Arc<tokio::sync::Semaphore>,
     pub(crate) download_slots: Arc<tokio::sync::Semaphore>,
     pub(crate) user_upload_slots: transfer::UserSlots,
@@ -71,8 +67,6 @@ impl AppState {
     pub(crate) fn new(db: Database, origin: String) -> Self {
         Self {
             db,
-            client_ips: client_ip::ClientIps::default(),
-            rate_limits: Arc::new(std::sync::Mutex::new(rate_limit::RateLimits::default())),
             origin: origin.into(),
             upload_slots: Arc::new(tokio::sync::Semaphore::new(UPLOAD_SLOTS)),
             download_slots: Arc::new(tokio::sync::Semaphore::new(DOWNLOAD_SLOTS)),
@@ -149,12 +143,9 @@ pub async fn router(database_url: &str, origin: &str) -> Result<axum::Router, Er
 }
 
 async fn open_state(database_url: &str, origin: String) -> Result<AppState, Error> {
-    let client_ips = client_ip::ClientIps::from_env()?;
     let db = db::Database::connect(database_url).await?;
     db.initialize().await?;
-    let mut state = AppState::new(db, origin);
-    state.client_ips = client_ips;
-    Ok(state)
+    Ok(AppState::new(db, origin))
 }
 
 /// Read the required connection setting without including credentials in errors.
