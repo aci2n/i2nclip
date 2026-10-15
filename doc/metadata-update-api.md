@@ -55,25 +55,27 @@ pass. The real-server browser checks rename a panorama, verify its downloaded
 filename and unchanged bytes, reject a stale edit, and update name/tags together.
 Package checks, formatting, lint, and Clippy with warnings denied also pass.
 
-## One metadata object
+## Explicit upload fields and arbitrary extensions
 
-Goal: use metadata consistently for all encrypted JSON properties: name,
-content_type, size, tags, image, source_url, and source_title. Keep snake_case for
-the stored JSON and use the same keys throughout capture, upload, rendering, and
-edits. There is no conversion layer or data-format change.
+Goal: distinguish required upload inputs from arbitrary JSON extensions without
+calling both complete and partial objects metadata. api.upload accepts explicit
+name/contentType/tags/image arguments alongside bytes, thumbnail, credentials,
+progress, and cancellation, plus optional extra = {} for arbitrary properties.
+Size is derived from bytes rather than accepted independently. It constructs the
+complete metadata JSON from extra followed by normalized authoritative fields.
+Generated image information overrides an image supplied through extra.
 
-api.upload accepts one metadata object alongside content bytes, binary thumbnail,
-credentials, progress, and cancellation. Remove separate name/contentType/tags/image
-upload arguments and the metadata-as-extra merge convention. sendUpload assembles
-the File name/type and generated image details into that metadata object. The API
-normalizes name/content_type/size/tags once before sealing. Other JSON properties
-remain metadata, rather than a separate category. Thumbnail bytes remain outside
-JSON in the existing encrypted envelope.
+sendUpload supplies the File name/type and generated image details explicitly.
+Library batches and extension file handoffs call their optional extensions extra
+throughout; the receiver retains extra with pending captures until unlock. Only
+the complete encrypted/decrypted JSON is called metadata. Its existing snake_case
+keys (content_type/source_url/source_title) remain unchanged. Thumbnail bytes stay
+outside the JSON in the existing encrypted envelope.
 
-No migrations, aliases, compatibility reads, schema changes, new state, or
-dependencies. Preserve API response casing and fixed cryptographic vectors.
-Identity, cancellation, byte caps, metadata conflicts, thumbnail ownership, and
-AAD/hash/signature behavior stay unchanged. Acceptance: one upload metadata
-argument, consistent snake_case JSON keys, updated callers, arbitrary fields
-preserved by upload/edit, and warning-free build/static checks. Do not add or run
-tests unless requested.
+No migration, aliases, fallback interfaces, schema changes, new state, or
+dependencies. Arbitrary properties cannot override name/type/size/tags supplied
+by normal upload inputs. Preserve signatures, AAD/hash bindings, cancellation,
+limits, generic metadata editing, and source display. Acceptance: explicit upload
+arguments, extra consistently passed end to end, source survives encryption/edits,
+no partial metadata alias, updated callers/fixtures, and warning-free build/static
+checks. Do not add or run tests unless requested.

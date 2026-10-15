@@ -73,11 +73,11 @@ function app(t, patch = {}, result = Promise.resolve(true)) {
 		},
 	};
 	const uploads = [];
-	const metadata = [];
+	const extra = [];
 	const library = writable({ uploading: false });
 	library.upload = (files, context) => {
 		uploads.push(files);
-		metadata.push(context);
+		extra.push(context);
 		library.set({ uploading: true });
 		return result;
 	};
@@ -115,7 +115,7 @@ function app(t, patch = {}, result = Promise.resolve(true)) {
 		receiver,
 		receive,
 		uploads,
-		metadata,
+		extra,
 		replies,
 		listeners,
 		get navigations() {
@@ -126,7 +126,7 @@ function app(t, patch = {}, result = Promise.resolve(true)) {
 
 const file = {
 	type: "file",
-	metadata: {
+	extra: {
 		source_url: "https://example.com/photo",
 		source_title: "A photo",
 	},
@@ -143,7 +143,7 @@ test("bridge uploads through the existing library and rejects overlapping work",
 	});
 	assert.deepEqual(fixture.receive(file), { ok: true, needsUnlock: false });
 	assert.equal(fixture.navigations, 1);
-	assert.deepEqual(fixture.metadata[0], file.metadata);
+	assert.deepEqual(fixture.extra[0], file.extra);
 	const uploaded = fixture.uploads[0][0];
 	assert.equal(uploaded.name, file.file.name);
 	assert.equal(uploaded.type, file.file.type);
@@ -174,7 +174,7 @@ test("locked receipt uploads exactly once when unlock finishes its busy transiti
 	assert.equal(fixture.uploads.length, 0);
 	fixture.sessionState.update((value) => ({ ...value, busy: false }));
 	assert.equal(fixture.uploads.length, 1);
-	assert.deepEqual(fixture.metadata[0], file.metadata);
+	assert.deepEqual(fixture.extra[0], file.extra);
 	fixture.library.set({ uploading: false });
 	fixture.sessionState.update((value) => ({ ...value }));
 	assert.equal(fixture.uploads.length, 1);
@@ -718,11 +718,11 @@ test("capture passes the descriptive filename to the ordinary handoff", async ()
 		{ id: 3, windowId: 2, url: "https://clip.example/", status: "complete" },
 	]);
 	let delivered;
-	let metadata;
+	let extra;
 	browser.tabs.sendMessage = async (_, { request }) => {
 		if (request.type === "file") {
 			delivered = request.file;
-			metadata = request.metadata;
+			extra = request.extra;
 		}
 		return { ok: true, needsUnlock: false };
 	};
@@ -739,7 +739,7 @@ test("capture passes the descriptive filename to the ordinary handoff", async ()
 		},
 	);
 	assert.equal(delivered.name, "A mountain portrait.png");
-	assert.deepEqual(metadata, {
+	assert.deepEqual(extra, {
 		source_url: "https://example.com/gallery?photo=42#view",
 		source_title: "Page title",
 	});

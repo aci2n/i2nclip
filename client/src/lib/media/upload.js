@@ -9,7 +9,8 @@ export function checkFileSize(size) {
 export async function sendUpload({
 	file,
 	credentials,
-	metadata = {},
+	tags = "",
+	extra = {},
 	onProgress,
 	signal,
 }) {
@@ -22,12 +23,11 @@ export async function sendUpload({
 	return upload({
 		...credentials,
 		bytes,
-		metadata: {
-			...metadata,
-			name: file.name,
-			content_type: file.type || "application/octet-stream",
-			...(preview?.image ? { image: preview.image } : {}),
-		},
+		name: file.name,
+		contentType: file.type || "application/octet-stream",
+		tags,
+		image: preview?.image,
+		extra,
 		thumb: preview?.thumb,
 		onProgress,
 		signal,

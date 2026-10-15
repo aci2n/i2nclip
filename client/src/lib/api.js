@@ -30,7 +30,11 @@ export async function upload({
 	serverUrl,
 	privateKey,
 	bytes,
-	metadata = {},
+	name,
+	contentType,
+	tags,
+	image,
+	extra = {},
 	thumb,
 	onProgress,
 	signal,
@@ -39,13 +43,16 @@ export async function upload({
 		throw new Error("File is larger than 32 MB.");
 	}
 	const key = await loadKey(privateKey);
-	metadata = {
-		...metadata,
-		name: cleanName(metadata.name),
-		content_type: sniffContentType(bytes, metadata.content_type),
+	const metadata = {
+		...extra,
+		name: cleanName(name),
+		content_type: sniffContentType(bytes, contentType),
 		size: bytes.length,
-		tags: uniqueTags(metadata.tags),
+		tags: uniqueTags(tags),
 	};
+	if (image) {
+		metadata.image = image;
+	}
 	const content = await encrypt(key, contentAad(), bytes);
 	const mediaId = await bodyHash(content);
 	const { meta, storedThumb } = await sealedMetadata(
