@@ -5,12 +5,14 @@ import { createExtensionReceiver } from "../stores/extension.js";
 import { createLibrary } from "../stores/library.js";
 import { createPairing } from "../stores/pairing.js";
 import { createSession } from "../stores/session.js";
+import { createUploads } from "../stores/uploads.js";
 import Library from "./Library.svelte";
 import Settings from "./Settings.svelte";
 import Unlock from "./Unlock.svelte";
 
 const session = createSession();
 const library = createLibrary(session);
+const uploads = createUploads(session, { onComplete: library.refresh });
 const pairing = createPairing(session);
 function pageAtLocation() {
 	return new URLSearchParams(location.search).get("page") === "settings"
@@ -19,7 +21,7 @@ function pageAtLocation() {
 }
 let page = $state(pageAtLocation());
 let about = $state(false);
-const extension = createExtensionReceiver(session, library, () => {
+const extension = createExtensionReceiver(session, uploads, () => {
 	page = "library";
 	history.replaceState({}, "", "?page=library");
 });
@@ -45,6 +47,7 @@ onDestroy(() => {
 	window.removeEventListener("popstate", popstate);
 	extension.dispose();
 	pairing.dispose();
+	uploads.dispose();
 	library.dispose();
 	session.dispose();
 });
@@ -79,11 +82,12 @@ onDestroy(() => {
 			</nav>
 		</header>
 		{#if page === "settings"}
-			<Settings {session} {pairing} {library} />
+			<Settings {session} {pairing} {uploads} />
 		{:else}
 			<Library
 				{session}
 				{library}
+				{uploads}
 				onsettings={(event) => navigate(event, "settings")}
 			/>
 		{/if}

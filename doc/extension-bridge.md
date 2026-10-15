@@ -78,7 +78,7 @@ No base64 conversion or compatibility protocol is used.
 
 The application-root receiver exists only after tab admission. It checks message
 source/origin, correlation shape, File type, and file.size before acceptance,
-and delegates to the root-owned library store. Components receive ordinary props
+and delegates to the root-owned uploads store. Components receive ordinary props
 and callbacks. Accepted receipt is distinct from upload completion.
 
 The installed runtime handler belongs to the document. Each request owns its
@@ -125,7 +125,7 @@ request's extra object, retaining it with a hidden pending capture until unlock.
 Only HTTP(S) source URLs are stored; strip URL credentials, preserve query/hash,
 and omit blank titles. Source context must never use media alt text as page title.
 
-The capture request, library batch, sendUpload, and api.upload consistently call
+The capture request, upload batch, sendUpload, and api.upload consistently call
 arbitrary extensions extra. sendUpload supplies name/contentType/tags/image as
 explicit upload arguments. api.upload merges extra before the authoritative
 name/contentType/size/tags fields and encrypts the resulting complete metadata.

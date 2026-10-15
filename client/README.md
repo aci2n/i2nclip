@@ -9,10 +9,10 @@ Svelte 5 and Vite, using Node from `.nvmrc`. Makefile targets install locked dep
 
 `src/main.js` mounts the app through a `data-app` element reference. The root acquires an origin-scoped Web Lock for tab admission before reading saved state or creating application stores. Restored pages reacquire admission and start a fresh locked session.
 
-`views/Application.svelte` owns one session, library, and pairing store. The library survives navigation between Library and Settings. Views subscribe to stores, control workflows, and pass ordinary state and callback props to isolated components. Components may hold temporary input/focus state; they never receive or import stores. HTML IDs are prohibited. Controls use nested labels and browser tests use accessible names.
+`views/Application.svelte` owns one session, library, uploads, and pairing store. The library survives navigation between Library and Settings. Views subscribe to stores, control workflows, and pass ordinary state and callback props to isolated components. Components may hold temporary input/focus state; they never receive or import stores. HTML IDs are prohibited. Controls use nested labels and browser tests use accessible names.
 
 The application also owns the extension receiver store. It accepts files only
-after tab admission, delegates uploads to the library, and holds at most one file
+after tab admission, delegates uploads to the root-owned uploads store, and holds at most one file
 hidden in memory while locked, automatically submitting it after unlock. Session invalidation and root disposal discard that file.
 The extension sends a native File through a document-owned injected runtime
 listener and window.postMessage, with no base64 conversion.
@@ -23,7 +23,7 @@ Stores call `lib/api.js` directly. API and protocol helpers handle encryption, s
 
 `lib/persistence.js` atomically saves one JSON record under `i2nclip.identity` in localStorage. A master-password-derived, non-extractable AES-GCM key encrypts the identity and server. Decrypted keys remain in memory. Locking releases references and invalidates work; password changes verify the current password and replace the encrypted record. Storage failures preserve the previous record and are shown beside the action.
 
-Uploads are sequential; only failure messages remain, and users select failed files again through Upload. Progress and completed-file summaries are transient. Uploads, search results, media bytes, and URLs are never persisted. Media items own their requests, decrypted bytes, and URLs and dispose them when deleted, superseded, or locked. Deleted cards remain gray and inactive until a new search.
+The uploads store owns sequential batches and refreshes the submitted library search after completion; only failure messages remain, and users select failed files again through Upload. Progress and completed-file summaries are transient. Uploads, search results, media bytes, and URLs are never persisted. Media items own their requests, decrypted bytes, and URLs and dispose them when deleted, superseded, or locked. Deleted cards remain gray and inactive until a new search.
 
 Pairing uses isolated OPAQUE attempts, explicit verification, and the relay API. Sender, receiver, and progress display have separate components; the store owns the workflow. Recovery exports one identity using an independent password. No migrations or legacy formats are supported.
 

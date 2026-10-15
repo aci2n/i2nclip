@@ -7,14 +7,14 @@ import { fileSize } from "../media/format.js";
 import { createQuota } from "../stores/quota.js";
 import Setup from "./Setup.svelte";
 
-let { session, pairing, library } = $props();
+let { session, pairing, uploads } = $props();
 const quota = untrack(() => createQuota(session));
 onDestroy(quota.dispose);
 const quotaContext = $derived(
 	$session.configured &&
 		$session.unlocked &&
 		!$session.busy &&
-		!$library.uploading
+		!$uploads.uploading
 		? $session.epoch
 		: null,
 );

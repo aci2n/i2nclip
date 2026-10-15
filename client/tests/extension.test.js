@@ -74,11 +74,11 @@ function app(t, patch = {}, result = Promise.resolve(true)) {
 	};
 	const uploads = [];
 	const extra = [];
-	const library = writable({ uploading: false });
-	library.upload = (files, context) => {
+	const batches = writable({ uploading: false });
+	batches.upload = (files, context) => {
 		uploads.push(files);
 		extra.push(context);
-		library.set({ uploading: true });
+		batches.set({ uploading: true });
 		return result;
 	};
 	const listeners = new Map();
@@ -92,7 +92,7 @@ function app(t, patch = {}, result = Promise.resolve(true)) {
 	let navigations = 0;
 	const receiver = createExtensionReceiver(
 		session,
-		library,
+		batches,
 		() => navigations++,
 		browser,
 	);
@@ -111,7 +111,7 @@ function app(t, patch = {}, result = Promise.resolve(true)) {
 	};
 	return {
 		sessionState,
-		library,
+		batches,
 		receiver,
 		receive,
 		uploads,
@@ -135,7 +135,7 @@ const file = {
 	}),
 };
 
-test("bridge uploads through the existing library and rejects overlapping work", async (t) => {
+test("bridge uploads through the root upload store and rejects overlapping work", async (t) => {
 	const fixture = app(t);
 	assert.deepEqual(fixture.receive({ type: "probe" }), {
 		ok: true,
@@ -175,7 +175,7 @@ test("locked receipt uploads exactly once when unlock finishes its busy transiti
 	fixture.sessionState.update((value) => ({ ...value, busy: false }));
 	assert.equal(fixture.uploads.length, 1);
 	assert.deepEqual(fixture.extra[0], file.extra);
-	fixture.library.set({ uploading: false });
+	fixture.batches.set({ uploading: false });
 	fixture.sessionState.update((value) => ({ ...value }));
 	assert.equal(fixture.uploads.length, 1);
 });

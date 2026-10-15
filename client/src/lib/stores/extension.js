@@ -4,7 +4,7 @@ import { MAX_FILE_BYTES } from "../api.js";
 // This root-owned receiver exists only in the tab admitted by the Web Lock.
 export function createExtensionReceiver(
 	session,
-	library,
+	uploads,
 	onupload,
 	browser = window,
 ) {
@@ -14,9 +14,9 @@ export function createExtensionReceiver(
 	function rejection() {
 		const value = get(session);
 		if (value.status === "new" || (value.unlocked && !value.configured)) {
-			return "Set up your library in i2nclip, then retry.";
+			return "Set up your uploads in i2nclip, then retry.";
 		}
-		if (value.busy || get(library).uploading) {
+		if (value.busy || get(uploads).uploading) {
 			return "i2nclip is busy. Wait for the current operation, then retry.";
 		}
 		return "";
@@ -52,7 +52,7 @@ export function createExtensionReceiver(
 		pending = null;
 		const own = epoch;
 		onupload();
-		void library.upload([capture.file], capture.extra).then((ok) => {
+		void uploads.upload([capture.file], capture.extra).then((ok) => {
 			if (!disposed) {
 				complete(capture, ok, own !== session.epoch);
 			}

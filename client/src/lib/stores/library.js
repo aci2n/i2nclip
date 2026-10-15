@@ -1,14 +1,12 @@
 import { get, writable } from "svelte/store";
 import * as api from "../api.js";
 import { canPreview } from "../media/format.js";
-import { sendUpload } from "../media/upload.js";
 import { createMediaItem } from "./media-item.js";
 
 export function createLibrary(
 	session,
 	{
 		http = api,
-		send = sendUpload,
 		mediaOptions = {},
 		confirm = (message) => globalThis.confirm(message),
 	} = {},
@@ -21,21 +19,14 @@ export function createLibrary(
 		loading: false,
 		empty: null,
 		status: "",
-		uploading: false,
-		uploadProgress: null,
-		uploadFailures: [],
-		uploadCompleted: [],
-		uploadStatus: "",
 		selected: null,
 	});
 	const cards = new Map();
 	let disposed = false;
 	let searchController;
 	let revision = 0;
-	let uploadRevision = 0;
 	let previewRevision = 0;
 	let lastEpoch = session.epoch;
-	let batchActive = false;
 	function publishCards() {
 		state.update((v) => ({
 			...v,
@@ -66,11 +57,9 @@ export function createLibrary(
 	}
 	function reset() {
 		revision++;
-		uploadRevision++;
 		previewRevision++;
 		searchController?.abort();
 		clearCards();
-		batchActive = false;
 		state.update((v) => ({
 			...v,
 			next: null,
@@ -78,11 +67,6 @@ export function createLibrary(
 			empty: null,
 			status: "",
 			selected: null,
-			uploading: false,
-			uploadProgress: null,
-			uploadFailures: [],
-			uploadCompleted: [],
-			uploadStatus: "",
 		}));
 	}
 	async function search(query = get(state).searchDraft, more = false) {
@@ -166,101 +150,6 @@ export function createLibrary(
 			void search(get(state).query);
 		}
 	});
-	async function upload(files, extra = {}) {
-		if (
-			disposed ||
-			batchActive ||
-			!files.length ||
-			!get(session).unlocked ||
-			!get(session).configured ||
-			get(session).busy
-		) {
-			return false;
-		}
-		batchActive = true;
-		const own = ++uploadRevision;
-		const signal = session.signal;
-		const credentials = session.credentials();
-		state.update((v) => ({
-			...v,
-			uploading: true,
-			uploadStatus: "",
-			uploadFailures: [],
-			uploadCompleted: [],
-		}));
-		const failed = [];
-		for (const [index, file] of files.entries()) {
-			if (disposed || signal.aborted || own !== uploadRevision) {
-				break;
-			}
-			state.update((v) => ({
-				...v,
-				uploadProgress: {
-					name: file.name,
-					index: index + 1,
-					total: files.length,
-					percent: 0,
-				},
-			}));
-			let finished = false;
-			try {
-				const item = await send({
-					file,
-					extra,
-					credentials,
-					signal,
-					onProgress: (percent) => {
-						if (
-							!finished &&
-							!disposed &&
-							!signal.aborted &&
-							own === uploadRevision
-						) {
-							state.update((v) => ({
-								...v,
-								uploadProgress: {
-									name: file.name,
-									index: index + 1,
-									total: files.length,
-									percent,
-								},
-							}));
-						}
-					},
-				});
-				if (!disposed && !signal.aborted && own === uploadRevision) {
-					state.update((v) => ({
-						...v,
-						uploadCompleted: [
-							...v.uploadCompleted,
-							{ id: item.id, name: file.name },
-						],
-					}));
-				}
-			} catch (error) {
-				if (!disposed && !signal.aborted && own === uploadRevision) {
-					failed.push({ name: file.name, error: error.message });
-				}
-			} finally {
-				finished = true;
-			}
-		}
-		if (disposed || signal.aborted || own !== uploadRevision) {
-			return false;
-		}
-		batchActive = false;
-		state.update((v) => ({
-			...v,
-			uploading: false,
-			uploadProgress: null,
-			uploadFailures: failed,
-			uploadStatus: failed.length
-				? `${failed.length} file(s) failed. Select the failed files again through Upload.`
-				: "Upload complete.",
-		}));
-		await search(get(state).query);
-		return !failed.length;
-	}
 	async function reveal(id, opener) {
 		const row = cards.get(id);
 		const previous = get(state).selected;
@@ -315,14 +204,7 @@ export function createLibrary(
 		editDraft: (searchDraft) => state.update((v) => ({ ...v, searchDraft })),
 		search,
 		more: () => search(get(state).query, true),
-		upload,
-		dismissCompleted: () =>
-			state.update((v) => ({
-				...v,
-				uploadCompleted: [],
-				uploadStatus:
-					v.uploadFailures.length || v.uploading ? v.uploadStatus : "",
-			})),
+		refresh: () => search(get(state).query),
 		reveal,
 		async morePreview() {
 			const previous = get(state);

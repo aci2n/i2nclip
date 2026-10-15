@@ -87,68 +87,14 @@ test("stale searches cannot publish; pagination uses the submitted query and per
 	);
 });
 
-test("uploads run sequentially, continue after failures, and report failures for manual resubmission", async (t) => {
-	const active = deferred();
-	const entered = deferred();
-	const seen = [];
-	let fail = true;
-	let oldProgress;
-	const f = fixture(t, {
-		http: { list: async () => ({ items: [], next: null }) },
-		send: async ({ file, onProgress }) => {
-			seen.push(file.name);
-			if (file.name === "first") {
-				oldProgress = onProgress;
-				entered.resolve();
-				await active.promise;
-			}
-			if (file.name === "bad" && fail) {
-				throw new Error("network failed");
-			}
-			return { id: file.name };
-		},
-	});
-	f.owner.configure();
-	await tick();
-	const files = ["first", "bad", "last"].map((name) => ({ name }));
-	const uploading = f.library.upload(files);
-	await entered.promise;
-	assert.deepEqual(seen, ["first"]);
-	assert.equal(await f.library.upload([{ name: "overlap" }]), false);
-	active.resolve();
-	assert.equal(await uploading, false);
-	assert.deepEqual(seen, ["first", "bad", "last"]);
-	assert.deepEqual(get(f.library).uploadFailures, [
-		{ name: "bad", error: "network failed" },
-	]);
-	oldProgress(99);
-	assert.equal(get(f.library).uploadProgress, null);
-	fail = false;
-	const resubmitting = f.library.upload([{ name: "bad" }]);
-	assert.deepEqual(get(f.library).uploadFailures, []);
-	assert.equal(await resubmitting, true);
-	assert.deepEqual(seen, ["first", "bad", "last", "bad"]);
-	assert.deepEqual(get(f.library).uploadFailures, []);
-});
-
-test("identity invalidation clears failure messages and suppresses stale uploads and searches", async (t) => {
+test("identity invalidation suppresses stale searches", async (t) => {
 	const result = deferred();
-	const upload = deferred();
-	const f = fixture(t, {
-		http: { list: () => result.promise },
-		send: () => upload.promise,
-	});
+	const f = fixture(t, { http: { list: () => result.promise } });
 	f.owner.configure();
-	const sending = f.library.upload([{ name: "pending" }]);
 	f.owner.lock();
-	upload.resolve({ id: "late" });
 	result.resolve({ items: [item("late")], next: null });
-	await sending;
 	await tick();
 	assert.deepEqual(get(f.library).cards, []);
-	assert.deepEqual(get(f.library).uploadFailures, []);
-	assert.deepEqual(get(f.library).uploadCompleted, []);
-	assert.equal(get(f.library).uploading, false);
 });
 
 test("stale media downloads create no URLs or save dialogs; disposal revokes previews", async (t) => {

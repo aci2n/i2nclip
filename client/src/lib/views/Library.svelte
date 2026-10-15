@@ -5,7 +5,7 @@ import Uploads from "../components/Uploads.svelte";
 import { canPreview } from "../media/format.js";
 import { pickFiles, selectFiles } from "../ui/dom.js";
 
-let { session, library, onsettings } = $props();
+let { session, library, uploads, onsettings } = $props();
 let filesInput = $state();
 const previewable = $derived(
 	$library.cards.filter(
@@ -55,8 +55,8 @@ function movePreview(step) {
 				bind:this={filesInput}
 				type="file"
 				multiple
-				disabled={$library.uploading || $session.busy}
-				onchange={(event) => selectFiles(event, library.upload)}
+				disabled={$uploads.uploading || $session.busy}
+				onchange={(event) => selectFiles(event, uploads.upload)}
 			></label
 		>
 	</form>
@@ -67,12 +67,12 @@ function movePreview(step) {
 		<p role="status">Loading…</p>
 	{/if}
 	<Uploads
-		uploading={$library.uploading}
-		progress={$library.uploadProgress}
-		failures={$library.uploadFailures}
-		completed={$library.uploadCompleted}
-		status={$library.uploadStatus}
-		ondismiss={library.dismissCompleted}
+		uploading={$uploads.uploading}
+		progress={$uploads.progress}
+		failures={$uploads.failures}
+		completed={$uploads.completed}
+		status={$uploads.status}
+		ondismiss={uploads.dismissCompleted}
 	/>
 	{#if $library.empty}
 		<section class="panel empty stack">
@@ -81,7 +81,7 @@ function movePreview(step) {
 				<p>Upload a photo, video, audio file, or document to get started.</p>
 				<button
 					type="button"
-					disabled={$library.uploading}
+					disabled={$uploads.uploading}
 					onclick={() => pickFiles(filesInput)}
 				>
 					Upload files
