@@ -1,10 +1,10 @@
 <script>
 import { onDestroy, untrack } from "svelte";
-import { fileSize } from "../media/format.js";
-import { createQuota } from "../stores/quota.js";
 import PairingSend from "../components/PairingSend.svelte";
 import PasswordSettings from "../components/PasswordSettings.svelte";
 import RecoveryExport from "../components/RecoveryExport.svelte";
+import { fileSize } from "../media/format.js";
+import { createQuota } from "../stores/quota.js";
 import Setup from "./Setup.svelte";
 
 let { session, pairing, library } = $props();

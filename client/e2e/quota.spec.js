@@ -10,13 +10,11 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 	await expect(usage).toContainText("Storage: 0 B of 512.0 MB");
 	await expect(usage).toContainText("Files: 0 of 10,000");
 	await page.getByRole("link", { name: "Library", exact: true }).click();
-	await page
-		.getByLabel("Upload", { exact: true })
-		.setInputFiles({
-			name: "Notes.bin",
-			mimeType: "application/octet-stream",
-			buffer: Buffer.alloc(1024 * 1024, 7),
-		});
+	await page.getByLabel("Upload", { exact: true }).setInputFiles({
+		name: "Notes.bin",
+		mimeType: "application/octet-stream",
+		buffer: Buffer.alloc(1024 * 1024, 7),
+	});
 	await expect(page.getByRole("article")).toHaveCount(1);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(usage).toContainText("Storage: 1.0 MB of 512.0 MB");
