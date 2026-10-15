@@ -14,7 +14,7 @@ RUN npm run build
 
 FROM docker.io/library/rust:1-bookworm AS build
 WORKDIR /src
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
 COPY sql ./sql
 RUN cargo build --release --locked --bin i2nclip

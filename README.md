@@ -84,10 +84,12 @@ Quota failures return HTTP 409 with `Library storage limit reached.` beside the
 upload. Sizes include encryption overhead, but exclude metadata and PostgreSQL
 storage overhead. Leave disk headroom for metadata, indexes, WAL, and dead tuples.
 
-Databases use the current initial schema directly. Startup preserves limits and
-counters without scanning media or running data migrations. Development databases
-with an older schema must be recreated. No schema-version table is needed;
-`IF NOT EXISTS` does not validate conflicting existing definitions.
+Startup runs embedded SQLx migrations from `sql/`, beginning with `001_init.sql`,
+before accepting requests. Applied versions and checksums are recorded in
+`_sqlx_migrations`; restarts skip applied SQL and preserve limits and counters
+without scanning media. Add future changes as new numbered files; keep applied
+migrations unchanged. Databases predating this infrastructure must already match
+the initial schema. See [Database migrations](doc/database-migrations.md).
 
 ## Build and run
 

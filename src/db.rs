@@ -85,18 +85,9 @@ impl Database {
         Ok(Self { pool })
     }
 
-    /// Apply the idempotent initial schema atomically before serving requests.
+    /// Apply pending embedded migrations before serving requests.
     pub(crate) async fn initialize(&self) -> Result<(), Error> {
-        let mut tx = self.pool.begin().await?;
-        // IF NOT EXISTS does not serialize concurrent catalog creation. Share a
-        // database-local, transaction-scoped startup lock across server instances.
-        sqlx::query("SELECT pg_advisory_xact_lock(1764904547, 1)")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::raw_sql(include_str!("../sql/001_init.sql"))
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
+        sqlx::migrate!("./sql").run(&self.pool).await?;
         Ok(())
     }
 
@@ -763,15 +754,14 @@ mod tests {
     #[tokio::test]
     async fn concurrent_initialization_preserves_data() {
         let (db, admin, name) = empty_fixture().await;
-        // Queue both initializers before any catalogs exist.
-        let mut blocker = db.pool.begin().await.unwrap();
-        sqlx::query("SELECT pg_advisory_xact_lock(1764904547, 1)")
-            .execute(&mut *blocker)
-            .await
-            .unwrap();
+        // Hold SQLx's migration lock so both starters contend on a fresh database.
+        use sqlx::migrate::Migrate;
+
+        let mut blocker = db.pool.acquire().await.unwrap();
+        blocker.lock().await.unwrap();
         let release = async {
-            wait_for_locks(&db, "%pg_advisory_xact_lock%", 2).await;
-            blocker.commit().await.unwrap();
+            wait_for_locks(&db, "%SELECT pg_advisory_lock%", 2).await;
+            blocker.unlock().await.unwrap();
         };
         let (a, b, ()) = tokio::time::timeout(Duration::from_secs(10), async {
             tokio::join!(db.initialize(), db.initialize(), release)
@@ -780,6 +770,18 @@ mod tests {
         .unwrap();
         a.unwrap();
         b.unwrap();
+        let applied: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM _sqlx_migrations WHERE version = 1 AND success",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(applied, 1);
+        // Reinitialization must skip 001, rather than recreate a schema object.
+        sqlx::query("DROP TRIGGER files_immutable_content ON files")
+            .execute(&db.pool)
+            .await
+            .unwrap();
         db.remember_nonce("preserved", 100).await.unwrap();
         let (a, b) = tokio::join!(db.initialize(), db.initialize());
         a.unwrap();
@@ -787,6 +789,30 @@ mod tests {
         assert!(matches!(
             db.remember_nonce("preserved", 100).await,
             Err(Error::Unauthorized)
+        ));
+        let recreated: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname = 'files_immutable_content')",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert!(!recreated);
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn initialization_rejects_changed_migration_checksum() {
+        let (db, admin, name) = empty_fixture().await;
+        db.initialize().await.unwrap();
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = decode('00', 'hex') WHERE version = 1")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            db.initialize().await,
+            Err(Error::Migration(
+                sqlx::migrate::MigrateError::VersionMismatch(1)
+            ))
         ));
         dispose(db, admin, name).await;
     }

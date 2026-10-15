@@ -25,7 +25,7 @@ http-body-util = "0.1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # Optional tooling for the explicit database test target only.
 testcontainers = { version = "0.28", optional = true }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "migrate", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

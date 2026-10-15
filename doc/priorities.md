@@ -1,6 +1,6 @@
 # Backend improvement priorities
 
-This list distinguishes existing behavior from unimplemented follow-ups. The current schema is initialized directly; there is no migration or import path.
+This list distinguishes existing behavior from unimplemented follow-ups. Startup applies numbered SQLx migrations; there is no legacy-schema import path.
 
 ## Completed
 

@@ -6,7 +6,7 @@
 - Strictly preserve the simplification principles: do the minimal thing that achieves the specified goal, organize code for human readers, and keep responsibilities isolated. Do not add speculative abstractions, capabilities, state persistence, compatibility layers, or dependencies.
 - The client is one web app with one unnamed library. Views are the containers for components. Every component must have one presentation responsibility, use only ordinary props/callbacks, and have no store access, storage access, or async application workflow. Local presentation state is allowed. HTML IDs are forbidden everywhere.
 - Stores own asynchronous workflows, cancellation, and resources. Keep protocol functions independent of rendering. Preserve root-owned work across navigation and dispose it when the owning session ends.
-- Treat data formats and schema as greenfield. Implement the current specification directly; do not invent migrations or legacy fallback behavior.
+- Treat data formats and schema as greenfield. Implement the current specification directly; do not invent legacy fallback behavior. Database changes use the SQLx migration workflow below.
 - Make small frequent commits after cohesive changes build without warnings. Focus on refactoring before running the final test suites. Tests must cover meaningful behavior and invariants rather than mirror implementation details. Test quality is mandatory.
 - Every test must isolate its mutable state and resources. Bind test listeners atomically to loopback port 0, use isolated databases and browser contexts, and clean up owned resources on success and failure. Verification commands must work from a fresh clone with documented toolchain/system prerequisites; never rely on developer-specific paths or existing build artifacts.
 
@@ -24,7 +24,7 @@
 
 ## Database policy
 
-- Treat the project as greenfield. Update the initial schema directly. When removing a table or index, remove its creation statement rather than adding a `DROP` statement or legacy cleanup migration. Recreate development databases when schema changes require it.
+- Database startup runs embedded SQLx migrations from `sql/`. Keep applied migrations unchanged; add numbered SQL files for schema changes. Do not add legacy-schema detection or compatibility migrations without an explicit requirement.
 - SQL `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` are fine; reopening a current database must preserve its data.
 
 ## State and resource ownership

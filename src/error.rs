@@ -35,5 +35,7 @@ pub enum Error {
     #[error(transparent)]
     Db(sqlx::Error),
     #[error(transparent)]
+    Migration(#[from] sqlx::migrate::MigrateError),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
 }
