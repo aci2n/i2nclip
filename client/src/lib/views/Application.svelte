@@ -145,6 +145,21 @@ nav a[aria-current] {
 	font-weight: 600;
 }
 @media (max-width: 32rem) {
+	header {
+		gap: 0.5rem;
+		margin-bottom: 1.5rem;
+	}
+	nav {
+		width: 100%;
+		justify-content: space-between;
+		gap: 0.5rem;
+	}
+	nav a,
+	nav button {
+		display: inline-flex;
+		align-items: center;
+		min-height: 3rem;
+	}
 	main {
 		padding: 1rem;
 	}

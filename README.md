@@ -18,10 +18,17 @@ instance. Further transfers wait; devices sharing a key share its permits.
 
 Uploads run sequentially and continue after individual failures. Failures show status messages; select failed files again through Upload to try again. Upload status survives navigation but is not saved across reloads. After an uncertain upload response, check the library before retrying to avoid duplicate copies.
 
-Open an image or play audio/video to preview it. Use the arrow buttons or
-Left/Right keys to browse images, audio, and video in the loaded results.
+JPEG and PNG uploads are converted to WebP by default when the result is smaller,
+without resizing. Turn off **Compress images to WebP** in Settings to preserve
+originals. This preference stays on this device and also applies to extension captures.
+
+Open an image, text/code file, or play audio/video to preview it. Text is shown
+read-only, with a labeled 256 KiB preview limit; Download saves the full file.
+Use the arrow buttons or Left/Right keys to browse previewable files in the loaded results.
 To load another results page, close the preview and choose More. A centered
 percentage appears while the next item downloads; Escape closes the preview.
+
+Tags edit inline: **+** opens an input, Enter saves, Escape cancels, and **×** removes a tag. Failed edits retain their draft. Tag controls and card actions have larger touch targets on narrow screens; preview arrows sit below the content.
 
 Click a filename to edit it. Enter saves its metadata; blur exits without saving, and Escape cancels the draft.
 

@@ -142,6 +142,7 @@ async function persist(next, clear = false) {
 	font-size: 0.85rem;
 }
 .tag-text {
+	min-width: 0;
 	overflow-wrap: anywhere;
 }
 .tag button {
@@ -169,5 +170,32 @@ async function persist(next, clear = false) {
 }
 .entry button {
 	flex: none;
+}
+@media (max-width: 32rem), (pointer: coarse) {
+	.tag-list {
+		gap: 0.5rem;
+	}
+	.chip {
+		min-height: 3rem;
+		font-size: 1rem;
+	}
+	.tag {
+		padding-block: 0;
+	}
+	.tag button {
+		min-width: 3rem;
+		min-height: 3rem;
+		font-size: 1rem;
+	}
+	.tag-list > button,
+	.entry button {
+		min-width: 3rem;
+	}
+	.entry {
+		gap: 0.5rem;
+	}
+	.entry input {
+		font-size: 1.1rem;
+	}
 }
 </style>

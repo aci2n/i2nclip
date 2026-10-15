@@ -309,6 +309,18 @@ test("mixed media and feedback render in both themes at desktop and narrow width
 				() => document.documentElement.scrollWidth <= innerWidth,
 			),
 		).toBe(true);
+		for (const image of await page.locator(".preview-button img").all()) {
+			const bounds = await image.evaluate((node) => {
+				const image = node.getBoundingClientRect();
+				const button = node.parentElement.getBoundingClientRect();
+				return {
+					image: { width: image.width, height: image.height },
+					button: { width: button.width, height: button.height },
+				};
+			});
+			expect(bounds.image.width).toBeLessThanOrEqual(bounds.button.width + 1);
+			expect(bounds.image.height).toBeLessThanOrEqual(bounds.button.height + 1);
+		}
 		await shot(page, `${test.info().project.name}-library-${width}`);
 	}
 	await page.getByRole("link", { name: "Settings", exact: true }).click();

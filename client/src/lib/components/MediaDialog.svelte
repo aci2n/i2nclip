@@ -236,4 +236,35 @@ audio {
 	top: 1rem;
 	right: 1rem;
 }
+@media (max-width: 32rem) {
+	dialog img,
+	dialog video {
+		max-height: calc(100dvh - 9rem);
+	}
+	.text-preview {
+		width: calc(100vw - 2rem);
+		max-height: calc(100dvh - 9rem);
+		padding: 1.5rem 1rem;
+	}
+	.arrow,
+	.close {
+		min-width: 3rem;
+		min-height: 3rem;
+		padding: 0.25rem 0.5rem;
+	}
+	.arrow {
+		top: auto;
+		bottom: 1rem;
+		transform: none;
+	}
+	audio {
+		bottom: 5rem;
+	}
+	.audio img {
+		max-height: calc(100dvh - 12rem);
+	}
+	.audio p {
+		top: 5rem;
+	}
+}
 </style>

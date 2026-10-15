@@ -142,6 +142,9 @@ const summary = $derived(
 	display: block;
 }
 .preview-button {
+	grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+	min-width: 0;
+	min-height: 0;
 	border: 0;
 	padding: 0;
 	background: transparent;
@@ -206,11 +209,19 @@ dd {
 	padding: 0.25rem 0.5rem;
 }
 .actions {
+	flex-wrap: wrap;
 	padding-top: 0.5rem;
 	margin-top: auto;
 }
 output {
 	display: block;
 	margin: 0;
+}
+@media (max-width: 32rem), (pointer: coarse) {
+	.actions button {
+		min-height: 3rem;
+		padding: 0.5rem 0.75rem;
+		font-size: 1rem;
+	}
 }
 </style>
