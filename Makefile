@@ -23,8 +23,8 @@ endif
 -include local.mk
 
 .DEFAULT_GOAL := build
-.PHONY: build client web extension run
-.PHONY: dev dev-db dev-down dev-otc test test-client test-packages
+.PHONY: build client extension run
+.PHONY: dev dev-db dev-down dev-otc test test-client test-build
 .PHONY: test-db test-profile test-e2e test-all
 .PHONY: lint format-check format-write pre-commit audit
 .PHONY: container push
@@ -35,7 +35,7 @@ build: client
 client:
 	$(MAKE) -C client build
 
-web extension:
+extension:
 	$(MAKE) -C client $@
 
 run:
@@ -68,10 +68,9 @@ test: test-client
 test-client:
 	$(MAKE) -C client test
 
-# Build the web archive and verify its contents.
-# Requires zip and unzip.
-test-packages:
-	$(MAKE) -C client test-packages
+# Build and verify the web and unpacked extension directories.
+test-build:
+	$(MAKE) -C client test-build
 
 # Rust PostgreSQL API/protocol tests using isolated databases; TEST_ARGS adds filters.
 # Provisions PostgreSQL through Docker/Podman unless I2N_TEST_DATABASE_URL is set.
@@ -100,7 +99,7 @@ test-all:
 	$(MAKE) test-client
 	$(MAKE) lint
 	$(MAKE) format-check
-	$(MAKE) test-packages
+	$(MAKE) test-build
 	$(MAKE) test-db
 	$(MAKE) test-e2e
 

@@ -17,8 +17,8 @@
 - `client/` is a Svelte 5 + Vite web project. Reusable crypto, API, media, stores, and components live in `client/src/lib/`.
 - Keep one npm project: package.json, lockfile, .nvmrc, and Playwright configuration belong in `client/`.
 - The root Makefile delegates frontend commands with `$(MAKE) -C client`; do not include the client Makefile. `make build` builds server and frontend; `make client` builds frontend.
-- `make web` packages the web client as `client/dist/i2nclip-web.zip`. All outputs stay in `client/dist/`.
-- Do not minify JavaScript or CSS unless explicitly needed. The Vite build disables minification. ZIP compression is fine.
+- All web and unpacked extension build outputs stay in `client/dist/`. No ZIP packaging.
+- Do not minify JavaScript or CSS unless explicitly needed. The Vite build disables minification.
 
 ## Database policy
 
@@ -52,7 +52,7 @@
 ## Verification
 
 - Use Node from `client/.nvmrc` on PATH. Client Makefile targets prepare locked dependencies automatically; `npm ci --prefix client` is also available for direct npm commands.
-- The root Makefile groups all test/verification targets by required access. `make test-packages` builds the web archive and runs package checks without a browser or database.
+- The root Makefile groups all test/verification targets by required access. `make test-build` builds the web and unpacked extension and checks their contents without a browser or database.
 - `make test` runs client tests, the Svelte checker, and Rust tests. `make -C client test` checks only the client.
 - `npm run e2e --prefix client` rebuilds the web app and runs Firefox/Chromium tests. `make test-e2e` also installs dependencies, Firefox/Chromium, and builds the helper executables.
 - E2E tests use the real local Rust web/API listener without runtime shims. Screenshots use per-test directories under ignored `client/e2e/shots/`; inspect them with the image-viewing tool.

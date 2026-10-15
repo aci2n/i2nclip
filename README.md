@@ -29,9 +29,8 @@ The project is greenfield; there are no client data or recovery-format migration
 
 ## Firefox extension
 
-Run `make extension` (Node from `client/.nvmrc` and zip are required). The unpacked
-extension is in `client/dist/extension/`; its archive is
-`client/dist/i2nclip-extension.zip`. In Firefox, open `about:debugging`, choose
+Run `make extension` (Node from `client/.nvmrc` is required). The unpacked
+extension is in `client/dist/extension/`. In Firefox, open `about:debugging`, choose
 **This Firefox → Load Temporary Add-on**, and select the generated `manifest.json`.
 Temporary add-ons are removed on browser restart; permanent installation requires
 Mozilla signing. In `about:addons`, select **Upload to i2nclip**, open **Preferences**,
@@ -112,7 +111,6 @@ Use Node from `client/.nvmrc` and an installed Rust toolchain:
 
 ```sh
 make build              # prepares locked client dependencies
-make web                 # client/dist/i2nclip-web.zip
 ```
 
 The server listens on port 8080 and serves the built web client alongside `/api/`. Set `I2N_ORIGIN` to the public origin with no path, and provide `I2N_DATABASE_URL` or `I2N_DATABASE_URL_FILE`. `I2N_WEB_DIR` defaults to `client/dist/web`; the server image uses `/usr/local/share/i2nclip/web`. JavaScript and CSS builds are not minified.
@@ -144,7 +142,7 @@ PostgreSQL holds ciphertext, metadata, keys, invitations, nonces, and tags. Uplo
 | --- | --- |
 | `make test` | Client unit tests, Svelte checker, Rust unit/configuration tests |
 | `make lint` / `make format-check` | Rust and client static checks |
-| `make test-packages` | Web ZIP contents; requires zip and unzip |
+| `make test-build` | Web and unpacked extension build contents |
 | `make test-db` | PostgreSQL API tests; provisions a disposable container unless `I2N_TEST_DATABASE_URL` is set |
 | `make test-e2e` | Firefox/Chromium web tests against real Rust and isolated databases; installs dependencies and browsers |
 | `make test-profile` | Linux transfer/resource measurements in a disposable PostgreSQL container |

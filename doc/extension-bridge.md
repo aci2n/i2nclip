@@ -13,9 +13,8 @@ the file and using Upload in the app. Firefox is the supported extension target.
 
 ## Installation and preferences
 
-Run `make extension` with Node from `client/.nvmrc` and zip installed. Load
-`client/dist/extension/manifest.json` through Firefox's `about:debugging`, or use
-`client/dist/i2nclip-extension.zip` for signing/distribution. Temporary add-ons
+Run `make extension` with Node from `client/.nvmrc`. Load
+`client/dist/extension/manifest.json` through Firefox's `about:debugging`. Temporary add-ons
 must be loaded again after restarting Firefox. After rebuilding, reload the
 add-on in `about:debugging`.
 

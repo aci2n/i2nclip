@@ -1,24 +1,27 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
-const execute = promisify(execFile);
 const dist = fileURLToPath(new URL("../dist/", import.meta.url));
 
-async function entries(file, command, args) {
-	const { stdout } = await execute(command, [...args, join(dist, file)]);
-	return stdout
-		.trim()
-		.split("\n")
-		.filter((name) => !name.endsWith("/"));
+async function entries(directory) {
+	const names = await readdir(join(dist, directory), {
+		recursive: true,
+		withFileTypes: true,
+	});
+	return names
+		.filter((entry) => entry.isFile())
+		.map((entry) =>
+			join(entry.parentPath, entry.name).slice(
+				join(dist, directory).length + 1,
+			),
+		);
 }
 
-test("web ZIP contains only its entry page and bundled assets", async () => {
-	const names = await entries("i2nclip-web.zip", "unzip", ["-Z1"]);
+test("web build contains only its entry page and bundled assets", async () => {
+	const names = await entries("web");
 	assert(names.includes("index.html"));
 	assert(names.includes("favicon.ico"));
 	assert(!names.some((name) => /worker|background|manifest/.test(name)));
@@ -39,8 +42,8 @@ test("web ZIP contains only its entry page and bundled assets", async () => {
 	}
 });
 
-test("extension ZIP contains only the bridge and its configuration page", async () => {
-	const names = await entries("i2nclip-extension.zip", "unzip", ["-Z1"]);
+test("extension build contains only the bridge and its configuration page", async () => {
+	const names = await entries("extension");
 	assert.deepEqual(names.sort(), [
 		"background.js",
 		"bridge.js",
