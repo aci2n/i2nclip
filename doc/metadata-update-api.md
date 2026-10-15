@@ -54,3 +54,16 @@ PostgreSQL metadata/concurrency cases, and all 16 Firefox/Chromium browser cases
 pass. The real-server browser checks rename a panorama, verify its downloaded
 filename and unchanged bytes, reject a stale edit, and update name/tags together.
 Package checks, formatting, lint, and Clippy with warnings denied also pass.
+
+## Stable media presentation during metadata saves
+
+Goal: prevent image/preview fading while saving filenames or tags. Cards are
+already keyed by media.id, and metadata patches preserve decrypted bytes/object
+URLs. The shared disabled-button opacity currently fades the preview because
+its containing button becomes disabled during any card mutation. Override that
+opacity within the card's media area; keep controls disabled and preserve store
+busy guards. Keep readonly filename text at full opacity as well. Do not add
+memoization, rendering keys, stores, persistence, or request lifecycle changes.
+Failures/cancellation retain existing behavior and feedback. Verify a held metadata
+save preserves the same connected image node, source URL, and opacity, with
+Firefox screenshots in both themes; existing filename/tag workflows still work.

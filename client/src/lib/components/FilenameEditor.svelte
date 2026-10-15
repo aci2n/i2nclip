@@ -108,6 +108,9 @@ form,
 	background: transparent;
 	color: inherit;
 }
+.filename:disabled {
+	opacity: 1;
+}
 .filename:hover:not(:disabled) {
 	border-color: var(--line);
 }

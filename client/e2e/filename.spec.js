@@ -103,6 +103,9 @@ test("filenames edit inline, save on Enter, retain failed drafts, and do not sav
 		await held;
 		await route.continue();
 	});
+	const preview = card.locator("img");
+	const imageNode = await preview.elementHandle();
+	const source = await preview.getAttribute("src");
 	try {
 		await renamed.click();
 		const pending = card.getByRole("textbox", {
@@ -111,6 +114,15 @@ test("filenames edit inline, save on Enter, retain failed drafts, and do not sav
 		await pending.fill("Final landscape.png");
 		await pending.press("Enter");
 		await expect(pending).toHaveAttribute("readonly", "");
+		await expect(
+			card.getByRole("button", { name: "Open Renamed landscape.png" }),
+		).toBeDisabled();
+		await expect(preview.locator("..")).toHaveCSS("opacity", "1");
+		expect(await imageNode.evaluate((element) => element.isConnected)).toBe(
+			true,
+		);
+		await expect(preview).toHaveAttribute("src", source);
+		await shot(page, "filename-saving-preview");
 		await page.getByRole("searchbox").click();
 		await expect(pending).toHaveCount(0);
 		release();
@@ -118,6 +130,10 @@ test("filenames edit inline, save on Enter, retain failed drafts, and do not sav
 			card.getByRole("button", { name: "Edit filename Final landscape.png" }),
 		).toBeVisible();
 		await expect(page.getByRole("searchbox")).toBeFocused();
+		expect(await imageNode.evaluate((element) => element.isConnected)).toBe(
+			true,
+		);
+		await expect(preview).toHaveAttribute("src", source);
 	} finally {
 		release();
 		await page.unroute(pattern);

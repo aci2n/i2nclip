@@ -157,6 +157,9 @@ const summary = $derived(
 	border-radius: 0.3rem;
 	background: var(--line);
 }
+.media button:disabled {
+	opacity: 1;
+}
 .media img,
 .media video {
 	width: 100%;
