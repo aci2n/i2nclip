@@ -21,7 +21,6 @@ const TTL: Duration = Duration::from_secs(120);
 const MAX_ROOMS: usize = 256;
 const MAX_BODY: usize = 16_384;
 const MAX_MESSAGE: usize = 8192;
-pub(crate) const BODY_SLOTS: usize = 16;
 const JOIN_WINDOW: Duration = Duration::from_secs(60);
 const SOURCE_JOIN_LIMIT: usize = 10;
 const GLOBAL_JOIN_LIMIT: usize = 120;
@@ -377,7 +376,7 @@ async fn join(State(state): State<AppState>, Path(id): Path<String>, request: Re
         }
         Err(_) => return fail(Error::Unavailable),
     }
-    let _permit = match state.pairing_body_slots.clone().try_acquire_owned() {
+    let _permit = match state.permits.try_pairing_body() {
         Ok(permit) => permit,
         Err(_) => return fail(Error::Unavailable),
     };
@@ -406,7 +405,7 @@ async fn submit(
         }
         Err(_) => return fail(Error::Unavailable),
     }
-    let _permit = match state.pairing_body_slots.clone().try_acquire_owned() {
+    let _permit = match state.permits.try_pairing_body() {
         Ok(permit) => permit,
         Err(_) => return fail(Error::Unavailable),
     };
@@ -468,6 +467,15 @@ mod tests {
     use axum::body::Body;
     use http_body_util::BodyExt;
     use tower::ServiceExt;
+
+    // Probe through admission rather than expose internal semaphore state.
+    fn body_capacity(state: &AppState) -> usize {
+        let mut held = Vec::new();
+        while let Ok(permit) = state.permits.try_pairing_body() {
+            held.push(permit);
+        }
+        held.len()
+    }
 
     fn peer(number: u16) -> ConnectInfo<SocketAddr> {
         ConnectInfo(SocketAddr::new(
@@ -667,7 +675,7 @@ mod tests {
         let app = router().with_state(state.clone());
         let mut tasks = Vec::new();
         let mut senders = Vec::new();
-        for number in 0..BODY_SLOTS {
+        for number in 0..16 {
             let (sender, body) = http_body_util::channel::Channel::<
                 axum::body::Bytes,
                 std::convert::Infallible,
@@ -685,12 +693,12 @@ mod tests {
             ));
         }
         for _ in 0..100 {
-            if state.pairing_body_slots.available_permits() == 0 {
+            if body_capacity(&state) == 0 {
                 break;
             }
             tokio::task::yield_now().await;
         }
-        assert_eq!(state.pairing_body_slots.available_permits(), 0);
+        assert_eq!(body_capacity(&state), 0);
         for (path, authorization, expected) in [
             (
                 format!("/api/pairings/{}/join", created.id),
@@ -741,7 +749,7 @@ mod tests {
         let canceled = tasks.pop().unwrap();
         canceled.abort();
         assert!(canceled.await.unwrap_err().is_cancelled());
-        assert_eq!(state.pairing_body_slots.available_permits(), 1);
+        assert_eq!(body_capacity(&state), 1);
         for (body, expected) in [
             ("not json", StatusCode::BAD_REQUEST),
             (r#"{"message":"init"}"#, StatusCode::OK),
@@ -759,7 +767,7 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), expected);
-            assert_eq!(state.pairing_body_slots.available_permits(), 1);
+            assert_eq!(body_capacity(&state), 1);
         }
         tokio::time::advance(SHORT_BODY_DEADLINE).await;
         for task in tasks {
@@ -768,7 +776,7 @@ mod tests {
                 StatusCode::REQUEST_TIMEOUT
             );
         }
-        assert_eq!(state.pairing_body_slots.available_permits(), BODY_SLOTS);
+        assert_eq!(body_capacity(&state), 16);
         drop(senders);
     }
 

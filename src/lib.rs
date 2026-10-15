@@ -13,10 +13,10 @@ mod frame;
 mod maintenance;
 mod media;
 mod pairing;
+mod permits;
 #[cfg(test)]
 mod reference_crypto;
 mod routes;
-mod transfer;
 mod web;
 
 pub mod crypto;
@@ -46,19 +46,12 @@ pub(crate) const MAX_META_BODY: usize = 32 + 4 + MAX_META + 4 + MAX_TOKEN_TEXT;
 pub(crate) const MAX_REGISTER_BODY: usize = 4096;
 pub(crate) const SKEW_SECS: u64 = 300;
 
-pub(crate) const UPLOAD_SLOTS: usize = 4;
-const DOWNLOAD_SLOTS: usize = 16;
-
 /// Clones share the database pool, transfer permits, and public origin.
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) db: Database,
-    pub(crate) upload_slots: Arc<tokio::sync::Semaphore>,
-    pub(crate) download_slots: Arc<tokio::sync::Semaphore>,
-    pub(crate) user_upload_slots: transfer::UserSlots,
-    pub(crate) user_download_slots: transfer::UserSlots,
+    pub(crate) permits: permits::Permits,
     pub(crate) pairings: Arc<std::sync::Mutex<pairing::Pairings>>,
-    pub(crate) pairing_body_slots: Arc<tokio::sync::Semaphore>,
     /// Public origin named in request signatures, such as `https://clip.example.com`.
     origin: Arc<str>,
 }
@@ -68,12 +61,8 @@ impl AppState {
         Self {
             db,
             origin: origin.into(),
-            upload_slots: Arc::new(tokio::sync::Semaphore::new(UPLOAD_SLOTS)),
-            download_slots: Arc::new(tokio::sync::Semaphore::new(DOWNLOAD_SLOTS)),
-            user_upload_slots: transfer::UserSlots::new(1),
-            user_download_slots: transfer::UserSlots::new(2),
+            permits: permits::Permits::new(),
             pairings: Arc::new(std::sync::Mutex::new(pairing::Pairings::default())),
-            pairing_body_slots: Arc::new(tokio::sync::Semaphore::new(pairing::BODY_SLOTS)),
         }
     }
 

@@ -1948,8 +1948,8 @@ mod tests {
             .unwrap();
         let state = crate::AppState::new(db.clone(), "http://i2nclip.test".into());
         let mut permits = Vec::new();
-        for _ in 0..crate::UPLOAD_SLOTS {
-            permits.push(state.upload_slots.clone().acquire_owned().await.unwrap());
+        for key in 0..4 {
+            permits.push(state.permits.upload([key; 32]).await.unwrap());
         }
         let mut blocked = db.pool.begin().await.unwrap();
         sqlx::query("LOCK TABLE nonces IN ACCESS EXCLUSIVE MODE")

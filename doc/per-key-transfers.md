@@ -9,8 +9,10 @@ No HTTP shape, persistence, client, encryption, or database changes.
 
 ## Ownership and lifecycle
 
-Keep the keyed semaphore registry in a separate transfer module and share it
-through AppState. Acquire the per-key permit before the global permit so requests
+Keep all semaphore pools and the keyed registry private in the permits module,
+shared through one AppState field. Handlers acquire owned guards through upload,
+download, or try_pairing_body; the last rejects immediately when all sixteen
+pairing body readers are occupied. Acquire the per-key permit before the global permit so requests
 queued for one key do not consume global capacity. Authenticate headers before
 upload admission; verify empty download bodies before download admission.
 
