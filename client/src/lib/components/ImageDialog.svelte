@@ -54,7 +54,13 @@ let {
 			<img src={selected.url} alt={selected.name}>
 		{/if}
 		{#if selected.loading}
-			<p class="status" role="status">Loading {progress ?? 0}%</p>
+			<p class="status" role="status">
+				{#if selected.paging}
+					Loading more images…
+				{:else}
+					Loading {progress ?? 0}%
+				{/if}
+			</p>
 		{:else if selected.error}
 			<div class="status stack">
 				<p role="alert">{selected.error}</p>

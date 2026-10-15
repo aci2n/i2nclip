@@ -259,6 +259,47 @@ export function createLibrary(
 		await search(get(state).query);
 		return !failed.length;
 	}
+	async function reveal(id, opener) {
+		const row = cards.get(id);
+		const previous = get(state).selected;
+		if (!row || row.value.busy || row.value.deleted || previous?.loading) {
+			return false;
+		}
+		const image = row.value.metadata?.content_type?.startsWith("image/");
+		const own = ++previewRevision;
+		if (image) {
+			state.update((v) => ({
+				...v,
+				selected: {
+					id,
+					url: previous?.url || row.value.preview,
+					name: previous?.name || row.value.metadata.name,
+					opener: previous?.opener || opener,
+					loading: true,
+					error: "",
+				},
+			}));
+		}
+		const url = await row.media.reveal();
+		if (
+			image &&
+			!disposed &&
+			own === previewRevision &&
+			cards.get(id) === row
+		) {
+			state.update((v) => ({
+				...v,
+				selected: {
+					...v.selected,
+					...(url ? { url, name: row.value.metadata.name } : {}),
+					loading: false,
+					error: url ? "" : row.value.message || "Could not load this image.",
+				},
+			}));
+		}
+		return Boolean(url);
+	}
+
 	return {
 		subscribe: state.subscribe,
 		editDraft: (searchDraft) => state.update((v) => ({ ...v, searchDraft })),
@@ -272,45 +313,59 @@ export function createLibrary(
 				uploadStatus:
 					v.uploadFailures.length || v.uploading ? v.uploadStatus : "",
 			})),
-		async reveal(id, opener) {
-			const row = cards.get(id);
-			const previous = get(state).selected;
-			if (!row || row.value.busy || row.value.deleted || previous?.loading) {
+		reveal,
+		async morePreview() {
+			const previous = get(state);
+			if (
+				!previous.selected ||
+				previous.selected.loading ||
+				previous.loading ||
+				!previous.next
+			) {
 				return false;
 			}
-			const image = row.value.metadata?.content_type?.startsWith("image/");
 			const own = ++previewRevision;
-			if (image) {
-				state.update((v) => ({
-					...v,
-					selected: {
-						id,
-						url: previous?.url || row.value.preview,
-						name: previous?.name || row.value.metadata.name,
-						opener: previous?.opener || opener,
-						loading: true,
-						error: "",
-					},
-				}));
+			state.update((v) => ({
+				...v,
+				selected: { ...v.selected, loading: true, paging: true, error: "" },
+			}));
+			while (get(state).next) {
+				const count = cards.size;
+				const ok = await search(get(state).query, true);
+				if (disposed || own !== previewRevision) {
+					return false;
+				}
+				if (!ok) {
+					state.update((v) => ({
+						...v,
+						selected: {
+							...v.selected,
+							loading: false,
+							error: v.status || "Could not load more images.",
+						},
+					}));
+					return false;
+				}
+				const image = get(state)
+					.cards.slice(count)
+					.find(
+						(media) =>
+							!media.deleted &&
+							media.metadata?.content_type?.startsWith("image/"),
+					);
+				if (image) {
+					state.update((v) => ({
+						...v,
+						selected: { ...v.selected, loading: false, paging: false },
+					}));
+					return reveal(image.id);
+				}
 			}
-			const url = await row.media.reveal();
-			if (
-				image &&
-				!disposed &&
-				own === previewRevision &&
-				cards.get(id) === row
-			) {
-				state.update((v) => ({
-					...v,
-					selected: {
-						...v.selected,
-						...(url ? { url, name: row.value.metadata.name } : {}),
-						loading: false,
-						error: url ? "" : row.value.message || "Could not load this image.",
-					},
-				}));
-			}
-			return Boolean(url);
+			state.update((v) => ({
+				...v,
+				selected: { ...v.selected, loading: false, paging: false },
+			}));
+			return false;
 		},
 		closePreview() {
 			previewRevision++;
