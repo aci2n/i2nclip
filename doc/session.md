@@ -97,3 +97,14 @@ their native viewers. The item owns its downloaded Blob and a UTF-8 preview of
 at most 256 KiB, decoded only after the complete download passes hash verification
 and decryption. Truncated previews are labeled; Download always saves the full
 file. Disposal clears text, releases the Blob and revokes its URL.
+
+## Search and upload controls
+
+The Library view subscribes to the root stores and passes ordinary props/callbacks
+to the search form and upload summary. Search remains an explicit submission via
+Enter or Search, with all comma-separated tags required. The applied query is
+shown below the field; Clear resets the draft and submitted filter and restores
+focus to the input. Upload is a separate action outside the search form. Its
+compact summary keeps progress and failures visible; successful filenames live
+in a disclosure and completion can be dismissed. No search/upload persistence,
+protocol, batching, or cancellation behavior changes.

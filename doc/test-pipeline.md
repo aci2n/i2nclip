@@ -43,6 +43,12 @@ rapid return to a canceled item, Retry, and cached-content reuse. It captures
 loading states at desktop and 320 px in both themes. Store tests additionally
 verify shared item progress and suppression of late results, errors, and cleanup.
 
+Toolbar scenarios verify explicit tag submission, file-picker uploads without
+submitting a search draft, clearing an applied filter, focus restoration, and
+44-pixel controls at 320/360 px. Screenshots cover both themes with active/cleared
+filters, a long upload filename, progress, and a partial-failure summary. Completed
+filenames stay collapsed until requested; dismissing successes preserves failures.
+
 ## Acceptance
 
 - Removing dependencies, client dist, and local build artifacts must not require undocumented preparation beyond the listed toolchains and system libraries.

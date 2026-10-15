@@ -2,6 +2,7 @@
 import { onDestroy } from "svelte";
 import MediaCard from "../components/MediaCard.svelte";
 import MediaDialog from "../components/MediaDialog.svelte";
+import SearchForm from "../components/SearchForm.svelte";
 import Uploads from "../components/Uploads.svelte";
 import { canPreview } from "../media/format.js";
 import { pickFiles, selectFiles } from "../ui/dom.js";
@@ -20,6 +21,10 @@ const previewIndex = $derived(
 	previewable.findIndex((media) => media.id === $library.selected?.id),
 );
 const previewMedia = $derived(previewable[previewIndex]);
+function clearSearch() {
+	library.editDraft("");
+	library.search("");
+}
 function movePreview(step) {
 	const media = previewable[previewIndex + step];
 	if (media) {
@@ -38,30 +43,32 @@ function movePreview(step) {
 		</p>
 	</section>
 {:else}
-	<form
-		class="bar toolbar"
-		onsubmit={(event) => {
-			event.preventDefault();
-			library.search($library.searchDraft);
-		}}
-	>
+	<div class="toolbar">
+		<SearchForm
+			draft={$library.searchDraft}
+			query={$library.query}
+			onchange={library.editDraft}
+			onsubmit={() => library.search($library.searchDraft)}
+			onclear={clearSearch}
+		/>
+		<button
+			type="button"
+			class="upload"
+			disabled={$uploads.uploading || $session.busy}
+			onclick={() => pickFiles(filesInput)}
+		>
+			Upload
+		</button>
 		<input
-			type="search"
-			placeholder="Search tags"
-			aria-label="Tags, separated by commas"
-			bind:value={() => $library.searchDraft, library.editDraft}
+			bind:this={filesInput}
+			type="file"
+			aria-label="Upload"
+			multiple
+			hidden
+			disabled={$uploads.uploading || $session.busy}
+			onchange={(event) => selectFiles(event, uploads.upload)}
 		>
-		<button type="submit">Search</button>
-		<label class="file"
-			>Upload<input
-				bind:this={filesInput}
-				type="file"
-				multiple
-				disabled={$uploads.uploading || $session.busy}
-				onchange={(event) => selectFiles(event, uploads.upload)}
-			></label
-		>
-	</form>
+	</div>
 	{#if $library.status}
 		<p class="feedback error" role="alert">{$library.status}</p>
 	{/if}
@@ -91,15 +98,8 @@ function movePreview(step) {
 			{:else}
 				<h2>No files match your search</h2>
 				<p>Try different tags or clear your search to see all files.</p>
-				<button
-					type="button"
-					class="secondary"
-					onclick={() => {
-						library.editDraft("");
-						library.search("");
-					}}
-				>
-					Clear search
+				<button type="button" class="secondary" onclick={clearSearch}>
+					Show all files
 				</button>
 			{/if}
 		</section>
@@ -137,30 +137,15 @@ function movePreview(step) {
 	onclose={library.closePreview}
 />
 <style>
-.file {
-	font: inherit;
-	border: 1px solid transparent;
-	border-radius: 0.4rem;
-	padding: 0.5rem 0.75rem;
-	background: var(--accent);
-	color: var(--paper);
-	cursor: pointer;
-	display: inline-block;
-	flex: none;
-}
-.file input {
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	opacity: 0;
-	padding: 0;
-}
-.file:focus-within {
-	outline: 2px solid var(--accent);
-	outline-offset: 3px;
-}
 .toolbar {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: start;
+	gap: 0.5rem;
 	margin-bottom: 1rem;
+}
+.upload {
+	min-height: 3rem;
 }
 .empty > button {
 	align-self: center;
@@ -179,13 +164,5 @@ function movePreview(step) {
 .more {
 	display: block;
 	margin: 1.5rem auto;
-}
-@media (max-width: 32rem) {
-	.toolbar {
-		flex-wrap: wrap;
-	}
-	.toolbar input {
-		flex-basis: 100%;
-	}
 }
 </style>
