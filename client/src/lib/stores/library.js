@@ -274,20 +274,43 @@ export function createLibrary(
 			})),
 		async reveal(id, opener) {
 			const row = cards.get(id);
+			const previous = get(state).selected;
+			if (!row || row.value.busy || row.value.deleted || previous?.loading) {
+				return false;
+			}
+			const image = row.value.metadata?.content_type?.startsWith("image/");
 			const own = ++previewRevision;
-			const url = await row?.media.reveal();
+			if (image) {
+				state.update((v) => ({
+					...v,
+					selected: {
+						id,
+						url: previous?.url || row.value.preview,
+						name: previous?.name || row.value.metadata.name,
+						opener: previous?.opener || opener,
+						loading: true,
+						error: "",
+					},
+				}));
+			}
+			const url = await row.media.reveal();
 			if (
-				url &&
+				image &&
 				!disposed &&
 				own === previewRevision &&
-				cards.get(id) === row &&
-				row.value.metadata?.content_type?.startsWith("image/")
+				cards.get(id) === row
 			) {
 				state.update((v) => ({
 					...v,
-					selected: { url, name: row.value.metadata.name, opener },
+					selected: {
+						...v.selected,
+						...(url ? { url, name: row.value.metadata.name } : {}),
+						loading: false,
+						error: url ? "" : row.value.message || "Could not load this image.",
+					},
 				}));
 			}
+			return Boolean(url);
 		},
 		closePreview() {
 			previewRevision++;

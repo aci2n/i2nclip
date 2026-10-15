@@ -6,6 +6,22 @@ import { pickFiles, selectFiles } from "../ui/dom.js";
 
 let { session, library, onsettings } = $props();
 let filesInput = $state();
+const images = $derived(
+	$library.cards.filter(
+		(media) =>
+			!media.deleted && media.metadata?.content_type?.startsWith("image/"),
+	),
+);
+const previewIndex = $derived(
+	images.findIndex((media) => media.id === $library.selected?.id),
+);
+const previewProgress = $derived(images[previewIndex]?.progress);
+function movePreview(step) {
+	const image = images[previewIndex + step];
+	if (image) {
+		library.reveal(image.id);
+	}
+}
 </script>
 {#if !$session.configured}
 	<section class="panel empty stack">
@@ -106,7 +122,16 @@ let filesInput = $state();
 		</button>
 	{/if}
 {/if}
-<ImageDialog selected={$library.selected} onclose={library.closePreview} />
+<ImageDialog
+	selected={$library.selected}
+	progress={previewProgress}
+	hasPrevious={previewIndex > 0}
+	hasNext={previewIndex >= 0 && previewIndex < images.length - 1}
+	onprevious={() => movePreview(-1)}
+	onnext={() => movePreview(1)}
+	onretry={() => library.reveal($library.selected.id)}
+	onclose={library.closePreview}
+/>
 <style>
 .file {
 	font: inherit;

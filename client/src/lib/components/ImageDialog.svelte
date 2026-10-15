@@ -1,7 +1,16 @@
 <script>
 import { modal } from "../ui/dom.js";
 
-let { selected, onclose } = $props();
+let {
+	selected,
+	progress = null,
+	hasPrevious = false,
+	hasNext = false,
+	onprevious,
+	onnext,
+	onretry,
+	onclose,
+} = $props();
 </script>
 
 <dialog
@@ -16,6 +25,23 @@ let { selected, onclose } = $props();
 		if (event.key === "Escape") {
 			event.preventDefault();
 			onclose();
+		} else if (
+			!event.altKey &&
+			!event.ctrlKey &&
+			!event.metaKey &&
+			!event.shiftKey
+		) {
+			if (event.key === "ArrowLeft") {
+				event.preventDefault();
+				if (hasPrevious && !selected?.loading) {
+					onprevious();
+				}
+			} else if (event.key === "ArrowRight") {
+				event.preventDefault();
+				if (hasNext && !selected?.loading) {
+					onnext();
+				}
+			}
 		}
 	}}
 	oncancel={(event) => {
@@ -24,7 +50,35 @@ let { selected, onclose } = $props();
 	}}
 >
 	{#if selected}
-		<img src={selected.url} alt={selected.name}>
+		{#if selected.url}
+			<img src={selected.url} alt={selected.name}>
+		{/if}
+		{#if selected.loading}
+			<p class="status" role="status">Loading {progress ?? 0}%</p>
+		{:else if selected.error}
+			<div class="status stack">
+				<p role="alert">{selected.error}</p>
+				<button type="button" onclick={onretry}>Retry</button>
+			</div>
+		{/if}
+		<button
+			type="button"
+			class="previous arrow"
+			aria-label="Previous image"
+			disabled={!hasPrevious || selected.loading}
+			onclick={onprevious}
+		>
+			←
+		</button>
+		<button
+			type="button"
+			class="next arrow"
+			aria-label="Next image"
+			disabled={!hasNext || selected.loading}
+			onclick={onnext}
+		>
+			→
+		</button>
 		<button
 			type="button"
 			class="close"
@@ -43,6 +97,8 @@ dialog {
 	background: transparent;
 	max-width: 95vw;
 	max-height: 95vh;
+	min-width: min(16rem, 95vw);
+	min-height: min(10rem, 95vh);
 }
 dialog::backdrop {
 	background: #000b;
@@ -53,12 +109,40 @@ dialog img {
 	max-height: 95vh;
 	object-fit: contain;
 }
+.status {
+	position: fixed;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	max-width: min(22rem, calc(100vw - 2rem));
+	margin: 0;
+	padding: 0.75rem 1rem;
+	border-radius: 0.25rem;
+	background: var(--paper);
+	color: inherit;
+}
+.status p {
+	margin: 0;
+}
+.arrow,
 .close {
 	position: fixed;
-	top: 1rem;
-	right: 1rem;
 	font-size: 1.5rem;
 	background: var(--paper);
 	color: inherit;
+}
+.arrow {
+	top: 50%;
+	transform: translateY(-50%);
+}
+.previous {
+	left: 1rem;
+}
+.next {
+	right: 1rem;
+}
+.close {
+	top: 1rem;
+	right: 1rem;
 }
 </style>
