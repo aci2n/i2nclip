@@ -86,9 +86,9 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	);
 	await card.getByRole("button", { name: "Open Landscape.png" }).click();
 	await expect(
-		page.getByRole("dialog", { name: "Image preview" }),
+		page.getByRole("dialog", { name: "Media preview" }),
 	).toBeVisible();
-	await page.getByRole("button", { name: "Close image" }).click();
+	await page.getByRole("button", { name: "Close preview" }).click();
 	page.once("dialog", (dialog) => dialog.accept());
 	await card.getByRole("button", { name: "Delete", exact: true }).click();
 	await expect(card).toHaveCount(1);
@@ -295,8 +295,10 @@ test("mixed media and feedback render in both themes at desktop and narrow width
 	await page.getByRole("button", { name: "Dismiss completed uploads" }).click();
 	await page.getByRole("button", { name: "Play Voice memo.wav" }).click();
 	await expect(page.locator("audio")).toBeVisible();
+	await page.getByRole("button", { name: "Close preview" }).click();
 	await page.getByRole("button", { name: "Play Video.webm" }).click();
 	await expect(page.locator("video")).toBeVisible();
+	await page.getByRole("button", { name: "Close preview" }).click();
 	for (const width of [1100, 360, 320]) {
 		await page.setViewportSize({ width, height: 800 });
 		expect(

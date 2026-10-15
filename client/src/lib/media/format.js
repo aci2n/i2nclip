@@ -1,3 +1,7 @@
+export function canPreview(type) {
+	return /^(image|audio|video)\//.test(type || "");
+}
+
 export function fileSize(bytes) {
 	if (!Number.isFinite(bytes) || bytes < 0) {
 		return "";

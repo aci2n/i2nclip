@@ -14,7 +14,6 @@ export function createMediaItem(
 		...initial,
 		busy: false,
 		deleted: false,
-		shown: false,
 		url: "",
 		preview: "",
 		message: "",
@@ -50,7 +49,6 @@ export function createMediaItem(
 			...v,
 			url: "",
 			preview: "",
-			shown: false,
 			busy: false,
 			progress: null,
 		}));
@@ -126,7 +124,6 @@ export function createMediaItem(
 				if (!current()) {
 					return false;
 				}
-				state.update((v) => ({ ...v, shown: true }));
 				return get(state).url;
 			}),
 		download: () =>

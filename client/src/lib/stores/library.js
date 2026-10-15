@@ -1,5 +1,6 @@
 import { get, writable } from "svelte/store";
 import * as api from "../api.js";
+import { canPreview } from "../media/format.js";
 import { sendUpload } from "../media/upload.js";
 import { createMediaItem } from "./media-item.js";
 
@@ -262,38 +263,46 @@ export function createLibrary(
 	async function reveal(id, opener) {
 		const row = cards.get(id);
 		const previous = get(state).selected;
-		if (!row || row.value.busy || row.value.deleted || previous?.loading) {
+		if (
+			!row ||
+			row.value.busy ||
+			row.value.deleted ||
+			previous?.loading ||
+			!canPreview(row.value.metadata?.content_type)
+		) {
 			return false;
 		}
-		const image = row.value.metadata?.content_type?.startsWith("image/");
+		const type = row.value.metadata.content_type;
 		const own = ++previewRevision;
-		if (image) {
-			state.update((v) => ({
-				...v,
-				selected: {
-					id,
-					url: previous?.url || row.value.preview,
-					name: previous?.name || row.value.metadata.name,
-					opener: previous?.opener || opener,
-					loading: true,
-					error: "",
-				},
-			}));
-		}
+		state.update((v) => ({
+			...v,
+			selected: {
+				id,
+				url: previous?.url || "",
+				type: previous?.type || type,
+				preview: previous ? previous.preview : row.value.preview,
+				name: previous?.name || row.value.metadata.name,
+				opener: previous?.opener || opener,
+				loading: true,
+				error: "",
+			},
+		}));
 		const url = await row.media.reveal();
-		if (
-			image &&
-			!disposed &&
-			own === previewRevision &&
-			cards.get(id) === row
-		) {
+		if (!disposed && own === previewRevision && cards.get(id) === row) {
 			state.update((v) => ({
 				...v,
 				selected: {
 					...v.selected,
-					...(url ? { url, name: row.value.metadata.name } : {}),
+					...(url
+						? {
+								url,
+								type,
+								preview: row.value.preview,
+								name: row.value.metadata.name,
+							}
+						: {}),
 					loading: false,
-					error: url ? "" : row.value.message || "Could not load this image.",
+					error: url ? "" : row.value.message || "Could not load this media.",
 				},
 			}));
 		}
@@ -329,7 +338,8 @@ export function createLibrary(
 				...v,
 				selected: { ...v.selected, loading: true, paging: true, error: "" },
 			}));
-			while (get(state).next) {
+			let nextMedia;
+			while (get(state).next && !nextMedia) {
 				const count = cards.size;
 				const ok = await search(get(state).query, true);
 				if (disposed || own !== previewRevision) {
@@ -341,31 +351,23 @@ export function createLibrary(
 						selected: {
 							...v.selected,
 							loading: false,
-							error: v.status || "Could not load more images.",
+							error: v.status || "Could not load more media.",
 						},
 					}));
 					return false;
 				}
-				const image = get(state)
+				nextMedia = get(state)
 					.cards.slice(count)
 					.find(
 						(media) =>
-							!media.deleted &&
-							media.metadata?.content_type?.startsWith("image/"),
+							!media.deleted && canPreview(media.metadata?.content_type),
 					);
-				if (image) {
-					state.update((v) => ({
-						...v,
-						selected: { ...v.selected, loading: false, paging: false },
-					}));
-					return reveal(image.id);
-				}
 			}
 			state.update((v) => ({
 				...v,
 				selected: { ...v.selected, loading: false, paging: false },
 			}));
-			return false;
+			return nextMedia ? reveal(nextMedia.id) : false;
 		},
 		closePreview() {
 			previewRevision++;

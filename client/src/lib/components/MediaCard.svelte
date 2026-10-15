@@ -1,10 +1,11 @@
 <script>
-import { fileSize, fileType, uploadedAt } from "../media/format.js";
+import { canPreview, fileSize, fileType, uploadedAt } from "../media/format.js";
 import FilenameEditor from "./FilenameEditor.svelte";
 import TagEditor from "./TagEditor.svelte";
 
 let { media, onreveal, ondownload, onremove, onupdate } = $props();
 const type = $derived(media.metadata?.content_type || "");
+const image = $derived(type.startsWith("image/"));
 const name = $derived(media.metadata?.name || media.id);
 const summary = $derived(
 	[fileType(type), fileSize(media.metadata?.size)].filter(Boolean).join(" · "),
@@ -13,59 +14,22 @@ const summary = $derived(
 
 <article class="panel card" class:deleted={media.deleted}>
 	<div class="media">
-		{#if type.startsWith("image/") && (media.preview || media.url)}
+		{#if canPreview(type)}
 			<button
 				type="button"
-				class="image-button"
-				aria-label={`Open ${name}`}
+				class="preview-button"
+				aria-label={`${image ? "Open" : "Play"} ${name}`}
 				onclick={(event) => onreveal(event.currentTarget)}
 				disabled={media.busy || media.deleted}
 			>
-				<img
-					src={media.shown || !media.preview ? media.url : media.preview}
-					alt={name}
-				>
-			</button>
-		{:else if type.startsWith("audio/") || type.startsWith("video/")}
-			{#if media.shown}
-				{#if type.startsWith("audio/")}
-					{#if media.preview}
-						<img src={media.preview} alt={name}>
-					{:else}
-						<span class="file-type">{fileType(type)}</span>
-					{/if}
-					<audio controls autoplay src={media.url}></audio>
-				{:else}
-					<video controls autoplay src={media.url}>
-						<track kind="captions">
-					</video>
-				{/if}
-			{:else}
-				{#if media.preview}
-					<img src={media.preview} alt={name}>
+				{#if media.preview || (image && media.url)}
+					<img src={media.preview || media.url} alt={name}>
 				{:else}
 					<span class="file-type">{fileType(type)}</span>
 				{/if}
-				<button
-					type="button"
-					class="play"
-					data-act="play"
-					aria-label={`Play ${name}`}
-					onclick={(event) => onreveal(event.currentTarget)}
-					disabled={media.busy || media.deleted}
-				>
-					▶
-				</button>
-			{/if}
-		{:else if type.startsWith("image/") && !media.deleted}
-			<button
-				type="button"
-				class="image-button file-type"
-				aria-label={`Open ${name}`}
-				onclick={(event) => onreveal(event.currentTarget)}
-				disabled={media.busy}
-			>
-				Open image
+				{#if !image}
+					<span class="play" aria-hidden="true">▶</span>
+				{/if}
 			</button>
 		{:else if media.preview}
 			<img src={media.preview} alt={name}>
@@ -157,25 +121,21 @@ const summary = $derived(
 	border-radius: 0.3rem;
 	background: var(--line);
 }
-.media img,
-.media video {
+.media img {
 	width: 100%;
 	height: 100%;
 	object-fit: contain;
 	display: block;
 }
-.media audio {
-	position: absolute;
-	bottom: 0.5rem;
-	width: calc(100% - 1rem);
-}
-.image-button {
+.preview-button {
 	border: 0;
 	padding: 0;
 	background: transparent;
 	width: 100%;
 	height: 100%;
-	display: block;
+	display: grid;
+	place-items: center;
+	color: inherit;
 }
 .file-type {
 	color: var(--accent);
@@ -185,7 +145,8 @@ const summary = $derived(
 .play {
 	position: absolute;
 	inset: 0;
-	width: 100%;
+	display: grid;
+	place-items: center;
 	background: transparent;
 	color: var(--accent);
 	font-size: 2rem;

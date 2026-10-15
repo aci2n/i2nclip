@@ -11,10 +11,18 @@ let {
 	onretry,
 	onclose,
 } = $props();
+let player = $state();
+$effect(() => {
+	const current = player;
+	if (selected?.loading) {
+		current?.pause();
+	}
+	return () => current?.pause();
+});
 </script>
 
 <dialog
-	aria-label="Image preview"
+	aria-label="Media preview"
 	use:modal={selected}
 	onclick={(event) => {
 		if (event.target === event.currentTarget) {
@@ -50,13 +58,41 @@ let {
 	}}
 >
 	{#if selected}
-		{#if selected.url}
-			<img src={selected.url} alt={selected.name}>
+		{#if selected.type.startsWith("image/") &&
+			(selected.url || selected.preview)}
+			<img src={selected.url || selected.preview} alt={selected.name}>
+		{:else if selected.type.startsWith("video/") && selected.url}
+			<video
+				bind:this={player}
+				src={selected.url}
+				aria-label={selected.name}
+				controls
+				autoplay
+				playsinline
+			>
+				<track kind="captions">
+			</video>
+		{:else if selected.type.startsWith("audio/") && selected.url}
+			<div class="audio">
+				{#if selected.preview}
+					<img src={selected.preview} alt={selected.name}>
+				{/if}
+				<p>{selected.name}</p>
+				<audio
+					bind:this={player}
+					src={selected.url}
+					aria-label={selected.name}
+					controls
+					autoplay
+				></audio>
+			</div>
+		{:else if selected.preview}
+			<img src={selected.preview} alt={selected.name}>
 		{/if}
 		{#if selected.loading}
 			<p class="status" role="status">
 				{#if selected.paging}
-					Loading more images…
+					Loading more media…
 				{:else}
 					Loading {progress ?? 0}%
 				{/if}
@@ -70,7 +106,7 @@ let {
 		<button
 			type="button"
 			class="previous arrow"
-			aria-label="Previous image"
+			aria-label="Previous media"
 			disabled={!hasPrevious || selected.loading}
 			onclick={onprevious}
 		>
@@ -79,7 +115,7 @@ let {
 		<button
 			type="button"
 			class="next arrow"
-			aria-label="Next image"
+			aria-label="Next media"
 			disabled={!hasNext || selected.loading}
 			onclick={onnext}
 		>
@@ -88,7 +124,7 @@ let {
 		<button
 			type="button"
 			class="close"
-			aria-label="Close image"
+			aria-label="Close preview"
 			onclick={onclose}
 		>
 			×
@@ -109,11 +145,36 @@ dialog {
 dialog::backdrop {
 	background: #000b;
 }
-dialog img {
+dialog img,
+dialog video {
 	display: block;
 	max-width: 95vw;
 	max-height: 95vh;
 	object-fit: contain;
+}
+.audio {
+	max-width: 95vw;
+}
+.audio p {
+	position: fixed;
+	top: 1rem;
+	left: 1rem;
+	max-width: calc(100vw - 6rem);
+	padding: 0.5rem 0.75rem;
+	background: var(--paper);
+	border-radius: 0.25rem;
+	overflow-wrap: anywhere;
+}
+.audio img {
+	max-height: 75vh;
+	max-width: 100%;
+}
+audio {
+	position: fixed;
+	bottom: 1rem;
+	left: 50%;
+	transform: translateX(-50%);
+	width: min(28rem, calc(100vw - 2rem));
 }
 .status {
 	position: fixed;

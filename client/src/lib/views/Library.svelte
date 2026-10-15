@@ -1,25 +1,25 @@
 <script>
-import ImageDialog from "../components/ImageDialog.svelte";
 import MediaCard from "../components/MediaCard.svelte";
+import MediaDialog from "../components/MediaDialog.svelte";
 import Uploads from "../components/Uploads.svelte";
+import { canPreview } from "../media/format.js";
 import { pickFiles, selectFiles } from "../ui/dom.js";
 
 let { session, library, onsettings } = $props();
 let filesInput = $state();
-const images = $derived(
+const previewable = $derived(
 	$library.cards.filter(
-		(media) =>
-			!media.deleted && media.metadata?.content_type?.startsWith("image/"),
+		(media) => !media.deleted && canPreview(media.metadata?.content_type),
 	),
 );
 const previewIndex = $derived(
-	images.findIndex((media) => media.id === $library.selected?.id),
+	previewable.findIndex((media) => media.id === $library.selected?.id),
 );
-const previewProgress = $derived(images[previewIndex]?.progress);
+const previewProgress = $derived(previewable[previewIndex]?.progress);
 function movePreview(step) {
-	const image = images[previewIndex + step];
-	if (image) {
-		library.reveal(image.id);
+	const media = previewable[previewIndex + step];
+	if (media) {
+		library.reveal(media.id);
 	} else if (step > 0) {
 		library.morePreview();
 	}
@@ -124,12 +124,12 @@ function movePreview(step) {
 		</button>
 	{/if}
 {/if}
-<ImageDialog
+<MediaDialog
 	selected={$library.selected}
 	progress={previewProgress}
 	hasPrevious={previewIndex > 0}
 	hasNext={previewIndex >= 0 &&
-		(previewIndex < images.length - 1 || Boolean($library.next))}
+		(previewIndex < previewable.length - 1 || Boolean($library.next))}
 	onprevious={() => movePreview(-1)}
 	onnext={() => movePreview(1)}
 	onretry={() =>

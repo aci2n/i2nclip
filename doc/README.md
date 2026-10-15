@@ -5,7 +5,7 @@
 - [Test pipeline](test-pipeline.md): fresh-clone preparation, fixture ownership, and acceptance checks.
 - [Protocol](protocol.md): HTTP API, signed requests, frames, limits, and storage semantics.
 - [Cryptography](crypto.md): algorithms, key derivation, encrypted formats, and security boundaries.
-- [Image previews](image-preview-navigation.md): navigation, loading progress, and ownership.
+- [Media previews](media-preview-navigation.md): navigation, loading progress, and ownership.
 - [Firefox extension](extension-bridge.md): setup, captures, File handoff, and lifecycle.
 - [Device pairing](pairing.md): verification and identity transfer through the relay API.
 - [Database concurrency audit](database-concurrency-audit.md): query isolation and transactional behavior.
