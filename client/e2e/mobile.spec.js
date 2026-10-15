@@ -21,7 +21,22 @@ test("mobile tags wrap with usable touch controls and retain failed drafts", asy
 		expect(box.width).toBeGreaterThanOrEqual(44);
 		expect(box.height).toBeGreaterThanOrEqual(44);
 	};
-	await touch(add);
+	const tagTouch = async (locator) => {
+		await touch(locator);
+		const box = await locator.boundingBox();
+		const icon = await locator.locator("svg").boundingBox();
+		expect(
+			Math.abs(icon.x + icon.width / 2 - (box.x + box.width / 2)),
+		).toBeLessThanOrEqual(1);
+		expect(
+			Math.abs(icon.y + icon.height / 2 - (box.y + box.height / 2)),
+		).toBeLessThanOrEqual(1);
+	};
+	for (const width of [320, 360]) {
+		await page.setViewportSize({ width, height: 800 });
+		await tagTouch(add);
+		await shot(page, `tag-add-${width}`);
+	}
 	await add.click();
 	const input = card.getByRole("textbox", { name: /^New tag for / });
 	const tag = "AnUnbrokenTagThatNeedsToWrapAcrossNarrowCards";
@@ -29,7 +44,7 @@ test("mobile tags wrap with usable touch controls and retain failed drafts", asy
 	await card.getByRole("button", { name: "Save tag", exact: true }).click();
 	await expect(input).toBeFocused();
 	await expect(input).toHaveValue("");
-	await touch(
+	await tagTouch(
 		card.getByRole("button", { name: `Remove tag ${tag}`, exact: true }),
 	);
 	await input.fill("Remember");
@@ -53,9 +68,12 @@ test("mobile tags wrap with usable touch controls and retain failed drafts", asy
 	await expect(input).toBeFocused();
 	for (const width of [320, 360]) {
 		await page.setViewportSize({ width, height: 800 });
-		await touch(card.getByRole("button", { name: "Save tag", exact: true }));
-		await touch(
+		await tagTouch(card.getByRole("button", { name: "Save tag", exact: true }));
+		await tagTouch(
 			card.getByRole("button", { name: "Cancel adding tag", exact: true }),
+		);
+		await tagTouch(
+			card.getByRole("button", { name: `Remove tag ${tag}`, exact: true }),
 		);
 		expect((await input.boundingBox()).width).toBeGreaterThan(100);
 		expect(

@@ -20,6 +20,17 @@ Shared test process helpers discover Cargo's target directory from metadata, exe
 
 Browser startup is prepared before scenario execution. Screenshots use Playwright's per-test output directory, preventing concurrent scenarios and separate projects from overwriting each other's artifacts.
 
+## Mobile layout checks
+
+`make test-e2e` (also included in `make test-all`) runs the mobile tag-editor
+scenario in Firefox and Chromium at 320 and 360 px. It checks that add, save,
+cancel, and remove icons are centered within one CSS pixel of their buttons,
+that touch targets are at least 44 × 44 CSS pixels, and that long tags and inputs
+do not overflow. It also verifies failed drafts, duplicate normalization, focus
+restoration, and preview controls outside the text panel. Per-test screenshots
+capture the add control and populated/error editor in light and dark themes;
+inspect the Firefox images after layout changes.
+
 ## Acceptance
 
 - Removing dependencies, client dist, and local build artifacts must not require undocumented preparation beyond the listed toolchains and system libraries.

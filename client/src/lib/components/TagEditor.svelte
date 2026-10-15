@@ -51,7 +51,17 @@ async function persist(next, clear = false) {
 				disabled={locked}
 				onclick={() => persist(tags.filter((existing) => existing !== tag))}
 			>
-				×
+				<svg
+					viewBox="0 0 24 24"
+					aria-hidden="true"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<path d="M6 6l12 12M18 6L6 18" />
+				</svg>
 			</button></span
 		>
 	{/each}
@@ -89,7 +99,17 @@ async function persist(next, clear = false) {
 					aria-label="Save tag"
 					disabled={locked || !splitTags(draft).length}
 				>
-					✓
+					<svg
+						viewBox="0 0 24 24"
+						aria-hidden="true"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M5 13l4 4L19 7" />
+					</svg>
 				</button>
 				<button
 					class="chip"
@@ -98,7 +118,17 @@ async function persist(next, clear = false) {
 					disabled={locked}
 					onclick={cancel}
 				>
-					×
+					<svg
+						viewBox="0 0 24 24"
+						aria-hidden="true"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M6 6l12 12M18 6L6 18" />
+					</svg>
 				</button>
 			</div>
 		</form>
@@ -111,7 +141,17 @@ async function persist(next, clear = false) {
 			disabled={locked}
 			onclick={open}
 		>
-			+
+			<svg
+				viewBox="0 0 24 24"
+				aria-hidden="true"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+			>
+				<path d="M12 5v14M5 12h14" />
+			</svg>
 		</button>
 	{/if}
 </fieldset>
@@ -140,6 +180,17 @@ async function persist(next, clear = false) {
 	background: var(--soft);
 	color: var(--accent);
 	font-size: 0.85rem;
+}
+.tag-list button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	line-height: 1;
+}
+.tag-list button svg {
+	width: 1rem;
+	height: 1rem;
+	flex: none;
 }
 .tag-text {
 	min-width: 0;
