@@ -24,7 +24,6 @@ export function createMediaItem(
 	const epoch = session.epoch;
 	const signal = AbortSignal.any([controller.signal, session.signal]);
 	const ownedUrls = new Set();
-	let bytes;
 	let disposed = false;
 	function current() {
 		return !disposed && !signal.aborted && session.epoch === epoch;
@@ -40,7 +39,6 @@ export function createMediaItem(
 	function dispose() {
 		disposed = true;
 		controller.abort();
-		bytes = null;
 		for (const url of ownedUrls) {
 			urls.revokeObjectURL(url);
 		}
@@ -84,10 +82,10 @@ export function createMediaItem(
 		}
 	}
 	async function receive() {
-		if (bytes) {
+		if (get(state).url) {
 			return;
 		}
-		const result = await http.getContent({
+		const bytes = await http.getContent({
 			...session.credentials(),
 			id: initial.id,
 			signal,
@@ -100,7 +98,6 @@ export function createMediaItem(
 		if (!current()) {
 			return;
 		}
-		bytes = result;
 		const value = get(state);
 		const url = makeUrl(
 			new Blob([bytes], {
