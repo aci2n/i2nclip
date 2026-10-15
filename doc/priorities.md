@@ -1,13 +1,13 @@
 # Backend improvement priorities
 
-PostgreSQL storage supersedes all SQLite connection/mutex, filesystem locking, staged-file journal, signal-driven GC, and secure-delete work. There is no migration or import path.
+This list distinguishes existing behavior from unimplemented follow-ups. The current schema is initialized directly; there is no migration or import path.
 
 ## Completed
 
 - Concrete async SQLx database layer, bounded eight-connection pool, atomic content/metadata/tag writes, and transactional invitation consumption.
 - Content-hash identifiers, strict Ed25519 verification, canonical browser origins, shared crypto vectors, owner isolation, AND tag search, and cursor pagination.
 - Authentication checks timestamp freshness before database work and after nonce insertion, preventing delayed replays after nonce cleanup.
-- Endpoint body caps/deadlines and separate four-upload and sixteen-download admission. Downloads own bytes and release database connections before responses drain.
+- Endpoint body caps/deadlines and separate four-upload and sixteen-download admission, plus one upload and two downloads per public key. Downloads own bytes and release database connections before responses drain.
 - Metadata updates compare the prior ciphertext hash under a row lock. Stale edits return the current item without writing; the client loads current tags and preserves the draft for retry.
 - Incremental hashing yields between at most 64 KiB chunks. Maintenance runs at startup/hourly without upload permits, retaining inclusive nonce boundaries and atomically deleting expired invitations.
 
@@ -18,7 +18,7 @@ PostgreSQL storage supersedes all SQLite connection/mutex, filesystem locking, s
 3. **P3 — Tighten small Rust allocation details.** Reject the 33rd distinct tag immediately. State clones already share the origin through `Arc<str>`. Keep flat modules and explicit transaction/resource ownership.
 4. **P3 — Measure selective tag searches.** Use representative libraries and query plans before adding token-first indexes.
 
-Storage quotas remain necessary before expanding invitations to less-trusted users. Rollback detection, collection completeness, key rotation, and per-file keys remain separate threat-model decisions.
+Per-key storage quotas and transactional usage counters are implemented, defaulting to 512 MiB and 10,000 files. Rollback detection, collection completeness, key rotation, and per-file keys remain separate threat-model decisions.
 
 Re-encrypting a failed client upload creates fresh ciphertext and normally a new hash. An exact sealed-byte retry returns `409`; refresh the library after a lost response before retrying.
 

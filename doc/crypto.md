@@ -4,7 +4,7 @@ The browser implements client cryptography in `client/src/lib/protocol/crypto.js
 
 ## Identity and keys
 
-A library identity is JSON `{ "v": 1, "seed": "…", "publicKey": "…" }`. The seed and public key are each 32 bytes encoded as canonical unpadded base64url. The seed is a randomly generated Ed25519 secret seed, not a password. The public key is derived from it. The browser checks their correspondence by signing and verifying a fixed probe message when loading the identity.
+A library identity is JSON `{ "v": 1, "seed": "…", "publicKey": "…" }`. The seed and public key are each 32 bytes encoded as canonical unpadded base64url. The seed is a randomly generated Ed25519 secret seed, not a password. The public key is derived from it. The browser checks their correspondence by signing and verifying a fixed probe message when loading the identity. The unlocked session retains non-extractable signing, encryption and tag keys for API calls; lock/disposal releases their references.
 
 The same seed is the input key material for HKDF-SHA256:
 
@@ -37,7 +37,7 @@ The complete sealed content (version, nonce, ciphertext, tag) is hashed using SH
 
 Every encryption under this library key shares one nonce collision domain, including metadata edits, content uploads, and all browsers restoring the same identity. AAD does **not** make nonce reuse safe. Random 96-bit nonces have approximate collision probability `q(q-1)/2^97` after `q` encryptions. NIST SP 800-38D §8.3 caps invocations at `2^32` per key for this random-IV construction across devices; this is an outer limit, not a recommended application target. The project has no tracked key-use budget or rotation procedure. See [NIST SP 800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf).
 
-Production paths generate fresh nonces. Rust's exported `encrypt_with_nonce` and JavaScript's optional nonce parameter exist for deterministic tests and permit unsafe reuse by callers. The shared fixture reuses a test key/nonce across content and metadata; those public fixture values must never be used for actual data.
+Production paths generate fresh nonces. Rust's test-only `encrypt_with_nonce` and JavaScript's optional nonce parameter exist for deterministic tests and permit unsafe reuse by callers. The shared fixture reuses a test key/nonce across content and metadata; those public fixture values must never be used for actual data.
 
 Current metadata plaintext is:
 
@@ -78,5 +78,3 @@ Passwords and library seeds never reach the server. Encryption at rest does not 
 The server cannot decrypt content, filenames, readable tags, or thumbnails using its stored public keys. It observes owners, ciphertext hashes, ciphertext lengths, upload times, tag equality and access patterns. There is no size padding. Server-side `looks_sealed` only checks framing; it cannot prove that a submitted blob is encrypted.
 
 GCM detects modified ciphertext and wrong keys/purposes; the content hash check additionally ties bytes to the requested URL. An old valid metadata blob for the same content hash still authenticates, so metadata rollback remains possible. The protocol has no authenticated revision counter, rollback detection, list completeness proof, or binding of server `created_at`/`bytes` fields and search tokens to the current encrypted metadata. TLS authenticates the transport endpoint and protects registration codes, metadata traffic patterns on the wire, and responses from network attackers. Encryption and request signatures do not replace TLS or make a malicious server honest.
-
-This review did not identify a practical seed-recovery or ciphertext-forgery attack against normally generated keys and fresh nonces. It is a source review with focused tests, not a formal cryptographic audit or dependency vulnerability scan.

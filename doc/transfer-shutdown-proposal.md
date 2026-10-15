@@ -1,6 +1,6 @@
 # Proposed fix: bounded transfer waiting and shutdown
 
-Status: proposal only. The runtime changes below are not implemented. Current behavior is documented in [request-limits.md](request-limits.md).
+Status: proposal only. The runtime changes below are not implemented. Current behavior is documented in [protocol.md](protocol.md).
 
 ## Problem and intended behavior
 
@@ -32,7 +32,7 @@ Keep database connections released before response construction. Expiration must
 
 ## Admission and shutdown
 
-Wrap both `acquire_owned()` calls in a 30-second timeout. Reuse the existing `Error::Unavailable` response for elapsed waits or closed semaphores. Cancelling a pending acquire must leave no permit behind. Do not extend the admission timer on wakeups.
+Wrap each complete upload/download admission operation in `src/permits.rs` in a single 30-second timeout, covering the per-key and then global acquisition together. Reuse the existing `Error::Unavailable` response for elapsed waits or closed semaphores. Cancelling a pending acquire must leave no permit behind. Do not extend the admission timer on wakeups.
 
 Refactor `run()` so it observes the shutdown signal once and shares that event with HTTP graceful shutdown, maintenance stopping, and an independent process watchdog. Start the watchdog on the first signal, before awaiting any drain. Normal shutdown stops accepting connections, prevents another maintenance sweep, lets active work finish, and closes PostgreSQL. Cancel the watchdog only after HTTP, maintenance, and pool cleanup have all completed.
 
@@ -51,4 +51,4 @@ Reverse-proxy header and idle timeouts remain useful defense in depth. Verify th
 - Subprocess shutdown tests: normal shutdown exits promptly; held responses and deliberately stalled cleanup cannot prevent exit by the deadline. Cover the first signal, serving failure, and completion near the deadline; assert the watchdog is disarmed on success.
 - Run `make test`, `make test-db`, `make lint`, and the Firefox suite. Profile saturation at the current four-upload/sixteen-download limits before claiming an RSS bound; previous two-transfer measurements do not establish that bound.
 
-This proposal leaves storage quotas and total HTTP request concurrency as separate work. Finite waits and response lifetimes do not establish a global memory or abuse bound.
+Existing storage quotas remain unchanged; total HTTP request concurrency is outside this proposal. Finite waits and response lifetimes do not establish a global memory or abuse bound.

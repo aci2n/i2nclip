@@ -105,9 +105,11 @@ PostgreSQL holds registered keys, per-key limits and usage counters in `key_quot
 
 The client encrypts content with `UTF8("i2nclip/v1 content")` as AAD. This purpose label is fixed and contains no owner key; each owner's encryption key is already derived from that owner's secret seed. The server cannot verify the GCM tag and cannot enforce such a client-side binding. The client hashes the complete sealed blob (`0x01 || nonce[12] || ciphertext || tag[16]`) with SHA-256 and encodes the result as 64 lowercase hexadecimal characters. It then encrypts metadata using `UTF8("i2nclip/v1 meta " + hash)` as AAD. The POST frame contains only metadata, content, and token text. The server computes the content hash; it does not accept a client identifier. Content GETs check that the received sealed bytes hash to the requested identifier before decryption.
 
+Startup applies the initial schema in a transaction under a database-local advisory lock, serializing concurrent initializers. Reinitialization preserves data. Database workflows use PostgreSQL's default READ COMMITTED isolation. Uploads and deletions lock the owner's quota row before changing file rows; metadata updates lock the file row before comparing or replacing metadata/tags. These locks and transaction boundaries preserve counters and complete item snapshots across competing application writers.
+
 Uploads insert sealed content, metadata, and tags in one transaction. A file primary-key conflict returns `409`, including across owners and independent application instances. Other constraint failures remain database errors. An interrupted or failed transaction leaves no partial item or tags; no receipt replays success.
 
-DELETE removes the authorized row and cascading tags in one statement. Downloads select owned complete content in one statement, release the database connection, and retain those bytes independently of concurrent deletion. Internal maintenance runs once on startup and hourly, deleting nonces with `expires < now` and invitation codes with `expires_at <= now` in one transaction. Sweeps do not overlap or acquire upload admission; failures retry next interval.
+DELETE removes the authorized row and cascading tags, then decrements quota counters in the same transaction. Downloads select owned complete content in one statement, release the database connection, and retain those bytes independently of concurrent deletion. Internal maintenance runs once on startup and hourly, deleting nonces with `expires < now` and invitation codes with `expires_at <= now` in one transaction. Sweeps do not overlap or acquire upload admission; failures retry next interval.
 
 An exact sealed-payload retry gets `409` after success. The application prepares fresh ciphertext when a failed upload is retried, so re-encryption normally creates a new hash and another item. After a lost successful response, refresh the library before retrying to avoid creating another copy. No nonce reuse or cached replay body is introduced.
 
@@ -125,3 +127,12 @@ Nonce cleanup runs as part of the hourly maintenance task described above. Its s
 uncached JSON contains `max_content_bytes`, `max_files`, `used_content_bytes`,
 and `file_count` for the authenticated public key only. It reads the quota row
 without aggregating media, and spends the request nonce even when rejected.
+
+## Web response policy
+
+The `/`, `/index.html`, and `/favicon.ico` routes send
+`Content-Security-Policy: frame-ancestors 'none'`, including HEAD, conditional,
+and error responses. HTML entry files use `Cache-Control: no-cache`; successful
+hashed assets use `public, max-age=31536000, immutable`. Static routes do not
+provide an HTML fallback for unknown paths. API caching follows the endpoint
+policies above.

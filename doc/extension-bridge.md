@@ -104,7 +104,7 @@ must preserve runtime behavior, permissions, interfaces, and persistence.
 - Size limits apply during streaming and before app receipt without reading bytes.
 - Locked captures remain hidden; unlock uploads once; disposal cancels ownership.
 - Completion notifications distinguish success/failure and remain silent on cancel.
-- Build/checker and formatting pass; packages contain only their intended files.
+- Build/checker and formatting pass; build directories contain only their intended files.
 - App browser tests cover real API uploads and downloads. Installed Firefox
   verification additionally exercises permissions, runtime messaging, and menus;
   the app's window-message browser test alone does not cover those APIs.
@@ -141,4 +141,3 @@ Do not scrape page content, fetch source pages, persist extra context separately
 or add compatibility handling. Acceptance: source follows the File through capture,
 locked receipt, upload, encryption, and metadata edits; manual files omit it. Check
 build/static output and actual Firefox details in both themes and narrow widths.
-No tests are added or run unless requested.
