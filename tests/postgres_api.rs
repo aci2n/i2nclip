@@ -1025,10 +1025,18 @@ async fn reopening_database_preserves_media() {
         serde_json::from_slice::<serde_json::Value>(&listed).unwrap()["media"][0]["meta"],
         STANDARD.encode(meta)
     );
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&listed).unwrap()["media"][0]["tokens"],
-        serde_json::json!([token])
-    );
+    let page: serde_json::Value = serde_json::from_slice(&listed).unwrap();
+    assert!(page["media"][0].get("tokens").is_none());
+    let (_, filtered) = call(
+        &app,
+        &owner,
+        "GET",
+        &format!("/api/media?tag={token}"),
+        vec![],
+    )
+    .await;
+    let filtered: serde_json::Value = serde_json::from_slice(&filtered).unwrap();
+    assert_eq!(filtered["media"][0]["id"], id);
     drop(app);
     let _reopened = i2nclip::router(&dir.0, "http://i2nclip.test")
         .await
@@ -1646,34 +1654,32 @@ async fn stale_metadata_update_returns_current_item_without_writing() {
     let original =
         client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"original").unwrap();
     let initial_token = client_crypto::tag_token(&owner.seed, "initial").unwrap();
-    assert_eq!(
-        call(
-            &app,
-            &owner,
-            "POST",
-            "/api/media",
-            client_crypto::encode_post(&original, &content, &initial_token),
-        )
-        .await
-        .0,
-        StatusCode::CREATED
-    );
+    let (status, response) = call(
+        &app,
+        &owner,
+        "POST",
+        "/api/media",
+        client_crypto::encode_post(&original, &content, &initial_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let payload: serde_json::Value = serde_json::from_slice(&response).unwrap();
+    assert!(payload.get("tokens").is_none());
 
     let current =
         client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"current").unwrap();
     let current_token = client_crypto::tag_token(&owner.seed, "current").unwrap();
-    assert_eq!(
-        call(
-            &app,
-            &owner,
-            "PUT",
-            &format!("/api/media/{id}/meta"),
-            client_crypto::encode_meta(&raw_hash(&original), &current, &current_token,),
-        )
-        .await
-        .0,
-        StatusCode::OK
-    );
+    let (status, response) = call(
+        &app,
+        &owner,
+        "PUT",
+        &format!("/api/media/{id}/meta"),
+        client_crypto::encode_meta(&raw_hash(&original), &current, &current_token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let payload: serde_json::Value = serde_json::from_slice(&response).unwrap();
+    assert!(payload.get("tokens").is_none());
 
     let stale =
         client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"stale").unwrap();
@@ -1690,10 +1696,19 @@ async fn stale_metadata_update_returns_current_item_without_writing() {
     let payload: serde_json::Value = serde_json::from_slice(&response).unwrap();
     assert_eq!(payload["code"], "metadata_conflict");
     assert_eq!(payload["media"]["meta"], STANDARD.encode(&current));
-    assert_eq!(
-        payload["media"]["tokens"],
-        serde_json::json!([current_token])
-    );
+    assert!(payload["media"].get("tokens").is_none());
+    for (token, count) in [(&current_token, 1), (&stale_token, 0)] {
+        let (_, page) = call(
+            &app,
+            &owner,
+            "GET",
+            &format!("/api/media?tag={token}"),
+            vec![],
+        )
+        .await;
+        let page: serde_json::Value = serde_json::from_slice(&page).unwrap();
+        assert_eq!(page["media"].as_array().unwrap().len(), count);
+    }
 
     let stored: Vec<u8> = sqlx::query_scalar("SELECT meta FROM files WHERE id=$1")
         .bind(&id)

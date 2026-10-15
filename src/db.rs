@@ -35,14 +35,13 @@ pub(crate) struct Database {
     pool: PgPool,
 }
 
-/// Encrypted metadata and searchable tokens, without the stored content.
+/// Encrypted metadata and content summary, without the stored content.
 #[derive(Debug)]
 pub(crate) struct Item {
     pub id: String,
     pub meta: Vec<u8>,
     pub bytes: i64,
     pub created_at: i64,
-    pub tokens: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -318,11 +317,10 @@ impl Database {
             meta: parts.meta.to_vec(),
             bytes: parts.content.len() as i64,
             created_at,
-            tokens: parts.tokens,
         })
     }
 
-    /// Return one owner-filtered page and its tags without fetching content bytes.
+    /// Return one owner-filtered metadata page without fetching content bytes.
     pub(crate) async fn list(
         &self,
         owner: [u8; 32],
@@ -336,12 +334,7 @@ impl Database {
         // Tags are an AND search; equal timestamps break ties by id ascending.
         let rows = sqlx::query(
             r#"
-            SELECT id, meta, content_bytes AS bytes, created_at,
-                   ARRAY(
-                       SELECT token FROM tags
-                       WHERE file_id = files.id
-                       ORDER BY token
-                   ) AS tokens
+            SELECT id, meta, content_bytes AS bytes, created_at
             FROM files
             WHERE owner = $1
               AND (
@@ -372,7 +365,6 @@ impl Database {
                     meta: row.try_get("meta")?,
                     bytes: row.try_get("bytes")?,
                     created_at: row.try_get("created_at")?,
-                    tokens: row.try_get("tokens")?,
                 })
             })
             .collect::<Result<Vec<_>, sqlx::Error>>()?;
@@ -431,19 +423,12 @@ impl Database {
         let bytes: i64 = current.try_get("bytes")?;
         let created_at: i64 = current.try_get("created_at")?;
         if crypto::body_hash_bytes(&current_meta) != parts.prev_meta_hash {
-            let tokens = sqlx::query_scalar::<_, String>(
-                "SELECT token FROM tags WHERE file_id = $1 ORDER BY token",
-            )
-            .bind(&id)
-            .fetch_all(&mut *tx)
-            .await?;
             tx.commit().await?;
             return Ok(MetadataUpdate::Conflict(Item {
                 id,
                 meta: current_meta,
                 bytes,
                 created_at,
-                tokens,
             }));
         }
         sqlx::query("UPDATE files SET meta = $1 WHERE id = $2 AND owner = $3")
@@ -459,7 +444,6 @@ impl Database {
             meta: parts.meta.to_vec(),
             bytes,
             created_at,
-            tokens: parts.tokens,
         }))
     }
 
@@ -710,7 +694,7 @@ mod tests {
     #[tokio::test]
     async fn bulk_tags_support_maximum_set_replacement_and_clearing() {
         let (db, admin, name) = fixture().await;
-        let mut tokens: Vec<_> = (0..crate::MAX_TAGS)
+        let tokens: Vec<_> = (0..crate::MAX_TAGS)
             .map(|value| URL_SAFE_NO_PAD.encode([value as u8; 32]))
             .collect();
         let item = db
@@ -724,11 +708,9 @@ mod tests {
             )
             .await
             .unwrap();
-        tokens.sort();
-        let (mut listed, _) = db.list([1; 32], &tokens, None).await.unwrap();
+        let (listed, _) = db.list([1; 32], &tokens, None).await.unwrap();
         assert_eq!(listed.len(), 1);
-        listed[0].tokens.sort();
-        assert_eq!(listed[0].tokens, tokens);
+        assert_eq!(listed[0].id, item.id);
 
         // Replace a full set with a different full set, not just append rows.
         let replacement: Vec<_> = (32..32 + crate::MAX_TAGS)
@@ -750,11 +732,9 @@ mod tests {
             panic!("current metadata must update");
         };
         assert!(db.list([1; 32], &tokens, None).await.unwrap().0.is_empty());
-        let (mut listed, _) = db.list([1; 32], &replacement, None).await.unwrap();
-        let mut sorted = replacement;
-        sorted.sort();
-        listed[0].tokens.sort();
-        assert_eq!(listed[0].tokens, sorted);
+        let (listed, _) = db.list([1; 32], &replacement, None).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, item.id);
 
         let result = db
             .update_meta(
@@ -770,7 +750,13 @@ mod tests {
             .unwrap();
         assert!(matches!(result, MetadataUpdate::Updated(_)));
         let (listed, _) = db.list([1; 32], &[], None).await.unwrap();
-        assert!(listed[0].tokens.is_empty());
+        assert_eq!(listed[0].id, item.id);
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM tags WHERE file_id = $1")
+            .bind(&item.id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
         dispose(db, admin, name).await;
     }
 
@@ -828,10 +814,15 @@ mod tests {
         replace_tokens(&mut writer, &item.id, std::slice::from_ref(&token))
             .await
             .unwrap();
-        // One listing snapshot must not mix uncommitted tags with old metadata.
+        // A filtered list must not expose uncommitted tag/metadata changes.
         let (listed, _) = db.list([1; 32], &[], None).await.unwrap();
         assert_eq!(listed[0].meta, original);
-        assert!(listed[0].tokens.is_empty());
+        assert!(db
+            .list([1; 32], std::slice::from_ref(&token), None)
+            .await
+            .unwrap()
+            .0
+            .is_empty());
         let updater = {
             let db = db.clone();
             let id = item.id.clone();
@@ -859,10 +850,12 @@ mod tests {
             panic!("stale metadata must not overwrite the preceding writer");
         };
         assert_eq!(current.meta, committed);
-        assert_eq!(current.tokens, vec![token]);
-        let (listed, _) = db.list([1; 32], &[], None).await.unwrap();
+        let (listed, _) = db
+            .list([1; 32], std::slice::from_ref(&token), None)
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].meta, current.meta);
-        assert_eq!(listed[0].tokens, current.tokens);
         dispose(db, admin, name).await;
     }
 
@@ -919,10 +912,16 @@ mod tests {
         let winner = winner.expect("one update succeeds");
         let loser = loser.expect("one update conflicts");
         assert_eq!(winner.meta, loser.meta);
-        assert_eq!(winner.tokens, loser.tokens);
-        let (listed, _) = db.list([1; 32], &[], None).await.unwrap();
-        assert_eq!(listed[0].meta, winner.meta);
-        assert_eq!(listed[0].tokens, winner.tokens);
+        for value in [2, 3] {
+            let token = URL_SAFE_NO_PAD.encode([value; 32]);
+            let (listed, _) = db.list([1; 32], &[token], None).await.unwrap();
+            if winner.meta == sealed_blob(value) {
+                assert_eq!(listed.len(), 1);
+                assert_eq!(listed[0].meta, winner.meta);
+            } else {
+                assert!(listed.is_empty());
+            }
+        }
         dispose(db, admin, name).await;
     }
 
@@ -1133,9 +1132,7 @@ mod tests {
             first.iter().map(|item| &item.id).collect::<Vec<_>>(),
             ids[..PAGE].iter().collect::<Vec<_>>()
         );
-        assert!(first
-            .iter()
-            .all(|item| item.tokens == tags && item.bytes == 29));
+        assert!(first.iter().all(|item| item.bytes == 29));
         assert_eq!(cursor, Some(format!("100.{}", ids[PAGE - 1])));
         let after = Some((
             first.last().unwrap().created_at,
@@ -1146,7 +1143,6 @@ mod tests {
             last.iter().map(|item| &item.id).collect::<Vec<_>>(),
             ids[PAGE..].iter().collect::<Vec<_>>()
         );
-        assert!(last.iter().all(|item| item.tokens == tags));
         assert!(next.is_none());
         let (first, _) = db.list(owner, &[], None).await.unwrap();
         let after = Some((

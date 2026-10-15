@@ -277,7 +277,6 @@ test("metadata list and update sign their routes and preserve decrypted fields",
 			id,
 			created_at: 123,
 			bytes: 32,
-			tokens: ["token"],
 			meta: bytesToB64(meta),
 		};
 		return Response.json(
@@ -300,7 +299,6 @@ test("metadata list and update sign their routes and preserve decrypted fields",
 		metadata,
 		thumb,
 		metaHash: await bodyHash(meta),
-		tokens: ["token"],
 	});
 	const saved = await updateMetadata({
 		...credentials,
@@ -326,7 +324,6 @@ test("undecryptable metadata is returned without an editable payload", async (t)
 					id: "a".repeat(64),
 					created_at: 1,
 					bytes: 1,
-					tokens: [],
 					meta: bytesToB64(meta),
 				},
 			],

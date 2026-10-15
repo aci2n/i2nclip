@@ -203,7 +203,6 @@ fn item_json(item: Item) -> MediaJson {
         id: item.id,
         created_at: item.created_at,
         bytes: item.bytes,
-        tokens: item.tokens,
         // Base64 because JSON is text. The bytes are already ciphertext.
         meta: STANDARD.encode(item.meta),
     }
@@ -214,7 +213,6 @@ struct MediaJson {
     id: String,
     created_at: i64,
     bytes: i64,
-    tokens: Vec<String>,
     meta: String,
 }
 

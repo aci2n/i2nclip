@@ -79,7 +79,6 @@ export async function upload({
 		createdAt: saved.created_at,
 		metadata,
 		thumb: storedThumb,
-		tokens,
 		metaHash: await bodyHash(meta),
 	};
 }
@@ -118,7 +117,7 @@ export async function list({ serverUrl, key, tags, after, signal }) {
 	);
 	const items = [];
 	for (const item of page.media) {
-		items.push({ ...(await openMeta(key, item)), tokens: item.tokens });
+		items.push(await openMeta(key, item));
 	}
 	return { items, next: page.next || null };
 }
@@ -170,21 +169,16 @@ export async function updateMetadata({
 			const item = await openMeta(key, payload.media);
 			return {
 				conflict: true,
-				item: {
-					...item,
-					metaHash: item.metaHash,
-					tokens: payload.media.tokens,
-				},
+				item,
 			};
 		}
 	}
 	if (!response.ok) {
 		throw await responseError(response);
 	}
-	const saved = await response.json();
+	await response.json();
 	return {
 		conflict: false,
-		tokens: saved.tokens,
 		metaHash: await bodyHash(meta),
 	};
 }
