@@ -53,7 +53,7 @@ Handlers reject oversized Content-Length before reading. Upload then acquires it
 
 ## Implemented download streaming
 
-Content GETs acquire one of sixteen download slots after authenticated empty-body verification, waiting when all are occupied. These slots are separate from upload slots. The nonce has already been spent. Capacity is acquired before ownership lookup, so missing/unowned hashes also wait and then return `404`. Saturation does not return `503`. Admission waits and response draining currently have no duration limit.
+Content GETs first acquire one of two per-key download slots, then one of sixteen global download slots after authenticated empty-body verification, waiting when all are occupied. These slots are separate from upload slots. The nonce has already been spent. Capacity is acquired before ownership lookup, so missing/unowned hashes also wait and then return `404`. Saturation does not return `503`. Admission waits and response draining currently have no duration limit.
 
 The [transfer and shutdown proposal](transfer-shutdown-proposal.md) describes finite admission waits, download resource lifetimes, and a process shutdown deadline. Those changes are proposed, not implemented.
 
@@ -84,3 +84,8 @@ Measured with the maximum content and metadata sizes:
 | POST, 32 tags, maximum content | 2,816 | 2,144 |
 
 Assertions require zero allocations without tags, identical allocations for small and large tagged content, and a bounded tag-allocation budget. The positive control proves the counter observes the removed copies. These measurements cover decoder allocations only: they exclude the original request buffer, response metadata, SQLx encoding/decoding allocations, PostgreSQL memory, and other threads. They are not process RSS or an end-to-end memory profile.
+
+Per-key admission is isolated in `src/transfer.rs`: one upload and two content
+downloads per public key, acquired before the existing global slots. Weak registry
+entries are pruned when inactive; owned and waiting permits retain the semaphore.
+Both permit levels are released together on failure, cancellation, and completion.

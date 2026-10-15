@@ -16,6 +16,7 @@ mod pairing;
 #[cfg(test)]
 mod reference_crypto;
 mod routes;
+mod transfer;
 mod web;
 
 pub mod crypto;
@@ -54,6 +55,8 @@ pub(crate) struct AppState {
     pub(crate) db: Database,
     pub(crate) upload_slots: Arc<tokio::sync::Semaphore>,
     pub(crate) download_slots: Arc<tokio::sync::Semaphore>,
+    pub(crate) user_upload_slots: transfer::UserSlots,
+    pub(crate) user_download_slots: transfer::UserSlots,
     pub(crate) pairings: Arc<std::sync::Mutex<pairing::Pairings>>,
     pub(crate) pairing_body_slots: Arc<tokio::sync::Semaphore>,
     /// Public origin named in request signatures, such as `https://clip.example.com`.
@@ -67,6 +70,8 @@ impl AppState {
             origin: origin.into(),
             upload_slots: Arc::new(tokio::sync::Semaphore::new(UPLOAD_SLOTS)),
             download_slots: Arc::new(tokio::sync::Semaphore::new(DOWNLOAD_SLOTS)),
+            user_upload_slots: transfer::UserSlots::new(1),
+            user_download_slots: transfer::UserSlots::new(2),
             pairings: Arc::new(std::sync::Mutex::new(pairing::Pairings::default())),
             pairing_body_slots: Arc::new(tokio::sync::Semaphore::new(pairing::BODY_SLOTS)),
         }

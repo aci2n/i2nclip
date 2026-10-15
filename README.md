@@ -12,6 +12,10 @@ To connect another device, open **Connect another device** in Settings on the un
 
 Each browser profile saves one password-protected library identity in localStorage. Reloading requires unlocking again. Only one tab per app origin may run; additional tabs show a retry screen. **Lock** cancels active work and releases decrypted state. **Forget library** removes the local identity while keeping the master password; resetting a locked client removes all its saved state. Neither action deletes server files.
 
+The server allows one active upload and two active content downloads per library
+key, alongside global limits of four uploads and sixteen downloads per server
+instance. Further transfers wait; devices sharing a key share its permits.
+
 Uploads run sequentially and continue after individual failures. Failures show status messages; select failed files again through Upload to try again. Upload status survives navigation but is not saved across reloads. After an uncertain upload response, check the library before retrying to avoid duplicate copies.
 
 Open an image or play audio/video to preview it. Use the arrow buttons or

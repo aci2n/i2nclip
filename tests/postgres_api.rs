@@ -1089,11 +1089,13 @@ async fn upload_admission_is_shared_and_releases_capacity() {
 
     let owner = new_identity();
     let other = new_identity();
-    let (dir, app) = app(&[&owner, &other]).await;
+    let third_owner = new_identity();
+    let fourth_owner = new_identity();
+    let (dir, app) = app(&[&owner, &other, &third_owner, &fourth_owner]).await;
     let first = stall(&app, &owner).await;
     let second = stall(&app, &other).await;
-    let third = stall(&app, &owner).await;
-    let fourth = stall(&app, &other).await;
+    let third = stall(&app, &third_owner).await;
+    let fourth = stall(&app, &fourth_owner).await;
     let authorization = client_crypto::authorization(
         &owner,
         "http://i2nclip.test",
@@ -1380,12 +1382,6 @@ async fn downloads_retain_owned_content_after_deletion() {
         );
         let first = download_response(&app, &owner, id).await;
         let second = download_response(&app, &owner, id).await;
-        let mut held = Vec::new();
-        for _ in 0..14 {
-            let response = download_response(&app, &owner, id).await;
-            assert_eq!(response.status(), StatusCode::OK);
-            held.push(response);
-        }
         assert_eq!(first.status(), StatusCode::OK);
         assert_eq!(first.headers()["content-length"], content.len().to_string());
         assert_eq!(first.headers()["content-type"], "application/octet-stream");
@@ -1395,7 +1391,7 @@ async fn downloads_retain_owned_content_after_deletion() {
             tokio::time::timeout(Duration::from_millis(100), &mut queued)
                 .await
                 .is_err(),
-            "a seventeenth download waits while all sixteen slots are held"
+            "a third download waits while the two per-key slots are held"
         );
         assert_eq!(
             call(&app, &owner, "GET", "/api/media", vec![]).await.0,
@@ -2102,4 +2098,181 @@ async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
     let quota: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(quota["used_content_bytes"], 0);
     assert_eq!(quota["file_count"], 0);
+}
+
+#[tokio::test]
+async fn per_key_upload_waiters_do_not_read_bodies_or_consume_other_keys_global_capacity() {
+    use axum::body::Bytes;
+    use http_body_util::Channel;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use std::time::Duration;
+    let owner = new_identity();
+    let other = new_identity();
+    let (_db, app) = app(&[&owner, &other]).await;
+    let (mut sender, body) = Channel::<Bytes>::new(1);
+    sender.send_data(Bytes::new()).await.unwrap();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let observed = entered.clone();
+    let body = Body::new(body.map_frame(move |frame| {
+        observed.notify_one();
+        frame
+    }));
+    let header = client_crypto::authorization(
+        &owner,
+        "http://i2nclip.test",
+        crypto::now_secs(),
+        &client_crypto::fresh_nonce(),
+        "POST",
+        "/api/media",
+        b"",
+    );
+    let router = app.clone();
+    let first = tokio::spawn(async move {
+        router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/media")
+                    .header("authorization", header)
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    });
+    tokio::time::timeout(Duration::from_secs(5), entered.notified())
+        .await
+        .unwrap();
+    let polled = Arc::new(AtomicUsize::new(0));
+    let mut queued = Vec::new();
+    for _ in 0..4 {
+        let observed = polled.clone();
+        let body = Body::new(Body::from("queued").map_frame(move |frame| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            frame
+        }));
+        let header = client_crypto::authorization(
+            &owner,
+            "http://i2nclip.test",
+            crypto::now_secs(),
+            &client_crypto::fresh_nonce(),
+            "POST",
+            "/api/media",
+            b"queued",
+        );
+        let mut request = Box::pin(
+            app.clone().oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/media")
+                    .header("authorization", header)
+                    .body(body)
+                    .unwrap(),
+            ),
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut request)
+                .await
+                .is_err()
+        );
+        queued.push(request);
+    }
+    assert_eq!(polled.load(Ordering::SeqCst), 0);
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        call(
+            &app,
+            &other,
+            "POST",
+            "/api/media",
+            b"invalid frame".to_vec(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.0, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        call(&app, &owner, "GET", "/api/quota", vec![]).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        download_response(&app, &owner, &"0".repeat(64))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    drop(queued);
+    first.abort();
+    assert!(first.await.unwrap_err().is_cancelled());
+    drop(sender);
+    assert_eq!(
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            call(
+                &app,
+                &owner,
+                "POST",
+                "/api/media",
+                b"invalid frame".to_vec()
+            )
+        )
+        .await
+        .unwrap()
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn global_download_limit_still_applies_across_independent_keys() {
+    use std::time::Duration;
+    let owners: Vec<_> = (0..9).map(|_| new_identity()).collect();
+    let (_db, app) = app(&owners.iter().collect::<Vec<_>>()).await;
+    let mut held = Vec::new();
+    let mut ids = Vec::new();
+    for (n, owner) in owners.iter().enumerate() {
+        let mut content = vec![1; 29];
+        content[1] = n as u8;
+        let id = crypto::body_hash(&content);
+        assert_eq!(
+            call(
+                &app,
+                owner,
+                "POST",
+                "/api/media",
+                client_crypto::encode_post(&[1; 29], &content, "")
+            )
+            .await
+            .0,
+            StatusCode::CREATED
+        );
+        if n < 8 {
+            for _ in 0..2 {
+                let response = download_response(&app, owner, &id).await;
+                assert_eq!(response.status(), StatusCode::OK);
+                held.push(response);
+            }
+        }
+        ids.push(id);
+    }
+    let mut queued = Box::pin(download_response(&app, &owners[8], &ids[8]));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut queued)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        call(&app, &owners[8], "GET", "/api/quota", vec![]).await.0,
+        StatusCode::OK
+    );
+    drop(held.pop());
+    let admitted = tokio::time::timeout(Duration::from_secs(5), queued)
+        .await
+        .unwrap();
+    assert_eq!(admitted.status(), StatusCode::OK);
+    drop(admitted);
+    drop(held);
 }

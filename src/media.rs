@@ -42,10 +42,15 @@ struct MediaRequest {
     body: Body,
 }
 
+struct TransferPermits {
+    _user: tokio::sync::OwnedSemaphorePermit,
+    _global: tokio::sync::OwnedSemaphorePermit,
+}
+
 // Field order releases buffered bytes before returning upload capacity.
 struct BufferedBody {
     bytes: Vec<u8>,
-    _upload_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    _upload_permit: Option<TransferPermits>,
 }
 
 impl FromRequest<AppState> for MediaRequest {
@@ -87,7 +92,7 @@ impl MediaRequest {
         self,
         max: usize,
         deadline: Duration,
-        permit: Option<tokio::sync::OwnedSemaphorePermit>,
+        permit: Option<TransferPermits>,
     ) -> Result<([u8; 32], BufferedBody), Box<Response>> {
         let bytes = read_body_with_deadline(self.body, max, deadline).await?;
         let buffered = BufferedBody {
@@ -187,9 +192,21 @@ async fn upload(State(state): State<AppState>, media: MediaRequest) -> Response 
     if let Err(response) = media.check_size(MAX_BODY) {
         return *response;
     }
-    let permit = match state.upload_slots.clone().acquire_owned().await {
+    let user = match state
+        .user_upload_slots
+        .acquire(media.verified.owner())
+        .await
+    {
+        Ok(permit) => permit,
+        Err(error) => return fail(error),
+    };
+    let global = match state.upload_slots.clone().acquire_owned().await {
         Ok(permit) => permit,
         Err(_) => return fail(Error::Unavailable),
+    };
+    let permit = TransferPermits {
+        _user: user,
+        _global: global,
     };
     let (owner, body) = match media
         .read(MAX_BODY, UPLOAD_BODY_DEADLINE, Some(permit))
@@ -216,9 +233,17 @@ async fn download(
         Ok(owner) => owner,
         Err(response) => return *response,
     };
-    let permit = match state.download_slots.clone().acquire_owned().await {
+    let user = match state.user_download_slots.acquire(owner).await {
+        Ok(permit) => permit,
+        Err(error) => return fail(error),
+    };
+    let global = match state.download_slots.clone().acquire_owned().await {
         Ok(permit) => permit,
         Err(_) => return fail(Error::Unavailable),
+    };
+    let permit = TransferPermits {
+        _user: user,
+        _global: global,
     };
     match state.db.content(owner, &id).await {
         Ok(content) => content_response(content, permit),
@@ -310,7 +335,7 @@ struct MediaJson {
 
 const DOWNLOAD_CHUNK: usize = 64 * 1024;
 
-fn content_response(content: Vec<u8>, permit: tokio::sync::OwnedSemaphorePermit) -> Response {
+fn content_response(content: Vec<u8>, permit: TransferPermits) -> Response {
     let bytes = content.len() as u64;
     let stream = futures_util::stream::unfold(
         (Bytes::from(content), permit),
@@ -370,8 +395,15 @@ mod tests {
     #[tokio::test]
     async fn download_body_owns_bytes_and_releases_permit_without_database() {
         let slots = Arc::new(Semaphore::new(1));
+        let users = Arc::new(Semaphore::new(2));
+        async fn acquire(slots: &Arc<Semaphore>, users: &Arc<Semaphore>) -> TransferPermits {
+            TransferPermits {
+                _user: users.clone().acquire_owned().await.unwrap(),
+                _global: slots.clone().acquire_owned().await.unwrap(),
+            }
+        }
         let content = vec![7_u8; DOWNLOAD_CHUNK * 2 + 1];
-        let permit = slots.clone().acquire_owned().await.unwrap();
+        let permit = acquire(&slots, &users).await;
         let response = content_response(content.clone(), permit);
         assert_eq!(
             response.headers()[header::CONTENT_LENGTH],
@@ -380,15 +412,17 @@ mod tests {
         assert_eq!(slots.available_permits(), 0);
         drop(response);
         assert_eq!(slots.available_permits(), 1);
+        assert_eq!(users.available_permits(), 2);
 
-        let permit = slots.clone().acquire_owned().await.unwrap();
+        let permit = acquire(&slots, &users).await;
         let mut body = content_response(content.clone(), permit).into_body();
         let first = body.frame().await.unwrap().unwrap().into_data().unwrap();
         assert_eq!(first.len(), DOWNLOAD_CHUNK);
         drop(body);
         assert_eq!(slots.available_permits(), 1);
+        assert_eq!(users.available_permits(), 2);
 
-        let permit = slots.clone().acquire_owned().await.unwrap();
+        let permit = acquire(&slots, &users).await;
         let mut body = content_response(content.clone(), permit).into_body();
         let mut received = Vec::new();
         while let Some(frame) = body.frame().await {
@@ -398,5 +432,6 @@ mod tests {
         }
         assert_eq!(received, content);
         assert_eq!(slots.available_permits(), 1);
+        assert_eq!(users.available_permits(), 2);
     }
 }

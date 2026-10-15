@@ -55,6 +55,13 @@ pub(crate) struct VerifiedRequest {
     body_hash: String,
 }
 
+impl VerifiedRequest {
+    /// Header-authenticated owner, available before reading the signed body.
+    pub(crate) fn owner(&self) -> [u8; 32] {
+        self.public
+    }
+}
+
 struct Bearer {
     public: [u8; 32],
     ts: u64,
