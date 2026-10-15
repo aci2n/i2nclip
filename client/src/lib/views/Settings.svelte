@@ -63,6 +63,13 @@ async function action(scope, work, success) {
 				protects this client.
 			</p>
 		</section>
+	{/if}
+	<UploadPreferences
+		compressImages={$preferences.compressImages}
+		error={$preferences.error}
+		onchange={preferences.setCompression}
+	/>
+	{#if $session.configured}
 		<RecoveryExport
 			{busy}
 			error={feedback.scope === "recovery" && feedback.error
@@ -115,11 +122,6 @@ async function action(scope, work, success) {
 			</div>
 		</details>
 	{/if}
-	<UploadPreferences
-		compressImages={$preferences.compressImages}
-		error={$preferences.error}
-		onchange={preferences.setCompression}
-	/>
 	<PasswordSettings
 		{busy}
 		error={feedback.scope === "password" && feedback.error ? feedback.text : ""}
