@@ -5,7 +5,7 @@ use std::time::Duration;
 use axum::{
     body::Body,
     extract::{Request, State},
-    http::{header, HeaderValue, StatusCode},
+    http::{header, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -13,7 +13,10 @@ use axum::{
 use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tower_http::trace::TraceLayer;
+use tower_http::{
+    cors::{Any, CorsLayer},
+    trace::TraceLayer,
+};
 
 use crate::{auth, media, pairing, AppState, Error, MAX_REGISTER_BODY};
 
@@ -26,6 +29,18 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/api/register-key", post(register_key))
         .merge(media::router())
         .merge(pairing::router())
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods([
+                    Method::GET,
+                    Method::HEAD,
+                    Method::POST,
+                    Method::PUT,
+                    Method::DELETE,
+                ])
+                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]),
+        )
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -225,6 +240,65 @@ mod request_tests {
     async fn app() -> Router {
         let db = crate::db::Database::closed_for_test().await;
         router(AppState::new(db, "http://i2nclip.test".into()))
+    }
+
+    #[tokio::test]
+    async fn external_clients_can_preflight_and_read_success_and_auth_errors() {
+        let app = app().await;
+        for origin in ["https://client.example", "http://localhost:5173"] {
+            for method in ["GET", "HEAD", "POST", "PUT", "DELETE"] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method("OPTIONS")
+                            .uri("/api/media")
+                            .header(header::ORIGIN, origin)
+                            .header(header::ACCESS_CONTROL_REQUEST_METHOD, method)
+                            .header(
+                                header::ACCESS_CONTROL_REQUEST_HEADERS,
+                                "authorization,content-type",
+                            )
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert!(response.status().is_success());
+                let headers = response.headers();
+                assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+                assert!(headers[header::ACCESS_CONTROL_ALLOW_METHODS]
+                    .to_str()
+                    .unwrap()
+                    .split(',')
+                    .any(|allowed| allowed.trim() == method));
+                let allowed = headers[header::ACCESS_CONTROL_ALLOW_HEADERS]
+                    .to_str()
+                    .unwrap();
+                assert!(allowed.contains("authorization"));
+                assert!(allowed.contains("content-type"));
+                assert!(!headers.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS));
+            }
+            for (path, status) in [
+                ("/api/health", StatusCode::OK),
+                ("/api/media", StatusCode::UNAUTHORIZED),
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri(path)
+                            .header(header::ORIGIN, origin)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), status);
+                assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+                assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            }
+        }
     }
 
     #[tokio::test]

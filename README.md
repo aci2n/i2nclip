@@ -118,6 +118,8 @@ Use Node from `client/.nvmrc` and an installed Rust toolchain:
 make build              # prepares locked client dependencies
 ```
 
+Clients can also be hosted on another domain: the API allows cross-origin requests using signed Authorization headers. Set the client’s server URL to the API origin.
+
 The server listens on port 8080 and serves the built web client alongside `/api/`. Set `I2N_ORIGIN` to the public origin with no path, and provide `I2N_DATABASE_URL` or `I2N_DATABASE_URL_FILE`. `I2N_WEB_DIR` defaults to `client/dist/web`; the server image uses `/usr/local/share/i2nclip/web`. JavaScript and CSS builds are not minified.
 
 ```sh

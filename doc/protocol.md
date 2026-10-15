@@ -2,6 +2,20 @@
 
 The API uses HTTP, JSON responses, two small binary request frames, and an application-defined Ed25519 authentication envelope. There is no custom transport, handshake, session token, or cryptographic primitive. TLS terminates at the deployment's reverse proxy. API paths start at the origin root; deployment under a path prefix is unsupported.
 
+## Cross-origin browser access
+
+Clients may be hosted at any origin. The API router owns CORS: responses allow
+any origin, and unsigned OPTIONS preflights allow GET, HEAD, POST, PUT and DELETE
+with Authorization and Content-Type headers. Browser cookies/credential mode are
+not enabled; clients authenticate with the existing signed Authorization header.
+Authentication failures also carry CORS headers so external clients can read them.
+The configured server origin remains part of the signed envelope.
+
+This policy adds no state, persistence or background work and changes no request
+cancellation behavior. It does not change static-file serving, HTML framing,
+authentication, quotas or permits. Acceptance checks cover preflights without a
+key/database and readable success/error responses from unrelated client origins.
+
 ## Encodings and identity
 
 `b64url` means URL-safe base64 without padding. Public keys are raw 32-byte Ed25519 keys (43 encoded characters); signatures are 64 bytes (86 characters). Body digests are 64 lowercase hexadecimal characters. Item identifiers (`id`) are the SHA-256 of the complete sealed content blob, encoded as 64 lowercase hexadecimal characters. The server computes them independently. Hashes are globally unique across owners while rows exist; an existing hash returns `409`. There are no UUIDs or caller-chosen content identifiers.
