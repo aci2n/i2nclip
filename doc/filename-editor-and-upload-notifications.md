@@ -28,9 +28,8 @@ uploads. The existing app progress/error UI stays authoritative.
   library/media-item stores continue to own patching, busy state, cancellation,
   concurrency conflicts, and failure feedback. Read-only/deleted/unavailable
   metadata cards cannot enter editing.
-- The app reports completion for every accepted extension capture. It does not
-  know whether the receiving window is temporary. Remove `closeWhenDone` from
-  app messages and pending capture state; tab creation stays in the extension.
+- The app reports completion for every accepted extension capture; tab creation
+  and notifications belong to the extension. See [extension behavior](extension-bridge.md).
 - The transient bridge listens for each file's completion, then sends the
   extension a correlated result and the original filename. The background checks
   the extension/top-frame sender and configured app URL, shows a success/failure

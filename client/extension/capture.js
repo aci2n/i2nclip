@@ -11,7 +11,9 @@ export function checkAppUrl(value) {
 		url.username ||
 		url.password
 	) {
-		throw new Error("Use an HTTPS app URL (HTTP is allowed on loopback).");
+		throw new Error(
+			"Use your i2nclip HTTPS URL. HTTP is allowed for localhost, 127.0.0.1, or [::1].",
+		);
 	}
 	url.search = "";
 	url.hash = "";
@@ -116,7 +118,7 @@ export async function fetchFile(srcUrl, fetcher = fetch, context = {}) {
 		url.password
 	) {
 		throw new Error(
-			"Only public HTTP(S) media can be captured. Use Upload for this file.",
+			"Only public HTTP(S) media is supported. Save the file, then use Upload in i2nclip.",
 		);
 	}
 	const signal = AbortSignal.timeout(30_000);
@@ -124,14 +126,16 @@ export async function fetchFile(srcUrl, fetcher = fetch, context = {}) {
 	let reader;
 	try {
 		if (!response.ok) {
-			throw new Error(`Could not fetch the file (${response.status}).`);
+			throw new Error(`Could not download the file (HTTP ${response.status}).`);
 		}
 		if (Number(response.headers.get("content-length")) > MAX_FILE_BYTES) {
 			throw new Error("File is larger than 32 MB.");
 		}
 		reader = response.body?.getReader();
 		if (!reader) {
-			throw new Error("The media response has no content.");
+			throw new Error(
+				"The file could not be read. Save it, then use Upload in i2nclip.",
+			);
 		}
 		const chunks = [];
 		let size = 0;
@@ -221,7 +225,7 @@ export async function sendToApp(
 		}
 	}
 	if (!receiver) {
-		throw new Error("No active i2nclip tab replied. Open the app and retry.");
+		throw new Error("Could not reach i2nclip. Open the app and try again.");
 	}
 	if (!ready.ok) {
 		throw new Error(ready.error);
@@ -230,7 +234,8 @@ export async function sendToApp(
 	const reply = await request(receiver.id, { type: "file", file }, 5000);
 	if (!reply?.ok) {
 		throw new Error(
-			reply?.error || "No reply from i2nclip. Check the app before retrying.",
+			reply?.error ||
+				"No response from i2nclip. Check the app before trying again.",
 		);
 	}
 	if (reply.needsUnlock) {
@@ -257,6 +262,6 @@ export async function handleUploadResult(browser, message, sender, notify) {
 	await notify(
 		message.ok
 			? `Uploaded ${message.name}.`
-			: `Upload failed for ${message.name}. Check i2nclip for details.`,
+			: `Upload failed for ${message.name}. Open i2nclip for details.`,
 	);
 }

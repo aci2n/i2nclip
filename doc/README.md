@@ -5,6 +5,7 @@
 - [Test pipeline](test-pipeline.md): fresh-clone preparation, fixture ownership, and acceptance checks.
 - [Protocol](protocol.md): HTTP API, signed requests, frames, limits, and storage semantics.
 - [Cryptography](crypto.md): algorithms, key derivation, encrypted formats, and security boundaries.
+- [Firefox extension](extension-bridge.md): setup, captures, File handoff, and lifecycle.
 - [Device pairing](pairing.md): verification and identity transfer through the relay API.
 - [Database concurrency audit](database-concurrency-audit.md): query isolation and transactional behavior.
 - [Request limits](request-limits.md): body deadlines, byte caps, and separate upload/download admission.

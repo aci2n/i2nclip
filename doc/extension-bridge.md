@@ -1,140 +1,118 @@
-# Minimal Firefox upload bridge
+# Firefox extension
 
-## Goal and history
+## Goal and scope
 
-Restore right-click capture without restoring a second application. Commit
-`bfdd658` removed an extension that instantiated a service engine and repository,
-owned identities and library menus, and opened its own upload windows. The
-simplification plan explicitly anticipated a future extension as a web-app bridge.
+**Upload to i2nclip** sends a right-clicked image, audio clip, or video to the web
+app's ordinary encrypted upload workflow. The extension owns downloading and
+handoff; the app owns credentials, encryption, library state, and uploads.
 
-## Scope and exclusions
+The extension contains no identity storage, encryption, server API client,
+library UI, upload queue, automatic retries, or saved files. It supports public
+HTTP(S) media up to 32 MiB. Authenticated media and blob/data URLs require saving
+the file and using Upload in the app. Firefox is the supported extension target.
 
-One Firefox Manifest V3 extension offers **Upload to i2nclip** for HTTP(S) images,
-audio, and video. Its options contain only the web-app URL. It downloads one
-resource, targets an existing app tab or opens a persistent tab, and hands the
-bytes to the admitted web app. It focuses the app only when unlocking is needed. The web app uses its existing upload workflow.
+## Installation and preferences
 
-Exclude extension identities, crypto, API calls, library/tag UI, workers, queues,
-persisted files, upload retries, source-page fetching, blob/data URLs, linked-file
-capture, authenticated media fallbacks, Chrome packaging, and publishing/signing.
-The extension fetches HTTP(S) resources without credentials; protected media may
-require downloading manually and using the app's Upload action.
+Run `make extension` with Node from `client/.nvmrc` and zip installed. Load
+`client/dist/extension/manifest.json` through Firefox's `about:debugging`, or use
+`client/dist/i2nclip-extension.zip` for signing/distribution. Temporary add-ons
+must be loaded again after restarting Firefox. After rebuilding, reload the
+add-on in `about:debugging`.
 
-Filename selection reads only the clicked element's descriptive attributes and
-page context through a transient source-frame script; see
-[descriptive capture filenames](extension-filenames.md).
+In `about:addons`, select **Upload to i2nclip**, open **Preferences**, and save
+**i2nclip URL**: the address used to open the app. HTTPS is required except for
+HTTP on localhost, 127.0.0.1, or [::1]. URL credentials are rejected; query and
+fragment are removed. The form uses native HTML controls, no CSS, and Firefox's
+embedded settings container. Validation/storage failures appear beside Save;
+invalid input does not overwrite the saved URL. Closing discards unsaved input.
 
-## Interfaces and ownership
+The existing menus, tabs, storage, scripting, notifications, and HTTP(S) website
+permissions support capture and handoff. No additional permissions are needed.
 
-### Firefox settings simplification
+## Capture and filenames
 
-Goal: configure the single app URL inside Firefox's standard `about:addons`
-settings container. Set `options_ui.open_in_tab` to false, remove all extension
-CSS and page decoration, and retain only a semantic HTML form with a URL label,
-input, Save button, and status output. A `color-scheme` meta tag enables native
-light/dark controls. Firefox requires extension-owned HTML; Manifest V3 no longer
-supports `browser_style`, so do not add browser-internal stylesheets, copied
-Firefox styles, UI frameworks, or a settings schema/generator.
+Right-click media and select **Upload to i2nclip**. The context menu is registered
+on background startup, including temporary add-on reloads. One capture can be
+sent at a time. The extension checks the app before downloading, omits fetch
+credentials, limits the download to 30 seconds, and enforces the size bound
+while streaming, regardless of Content-Length.
 
-The options script continues to own loading, validating, and saving only `appUrl`
-through extension storage. Validation/storage failures remain beside Save and
-must preserve the last saved value. The form has no long-running work or pending
-files; closing settings discards unsaved input. No capture, handoff, upload,
-identity, protocol, or storage-format changes are included.
+A source-frame script reads only the exact clicked element through
+`menus.getTargetElement`. Filename priority is nonblank alt, title, aria-label,
+page title, then page URL without credentials. If inspection fails, use the tab
+title and frame/page URL. The downloaded URL basename is the final fallback.
+Normalize whitespace and filename separators/control characters, cap the final
+name at 255 characters, and choose a MIME-appropriate extension when known.
 
-Acceptance: the rebuilt archive contains no CSS; preferences open within
-`about:addons`; Save normalizes and persists a valid URL; invalid input shows an
-error without overwriting storage; reopening loads the saved URL. Inspect actual
-Firefox light/dark settings screenshots and run packaging/static checks.
+## Tab and upload lifecycle
 
-Verified in a disposable native Firefox profile: Preferences embeds the form in
-`about:addons`, both light/dark screenshots were inspected, and
-`http://localhost:8080/?page=settings#test` saves as `http://localhost:8080/`.
-Saving a non-loopback HTTP URL reports an error; reopening retains the localhost
-URL. Package checks, lint, and formatting pass. HTTP loopback admission remains
-the existing policy (`localhost`, `127.0.0.1`, and `[::1]`).
+Reuse a matching app tab, or open an inactive regular tab when absent. Match the
+configured origin and path exactly, then probe for the receiver admitted by the
+app's Web Lock. Existing loading/blocked tabs do not cause duplicate creation.
+Discovery has a 15-second deadline; individual probe replies have a 500 ms
+timeout and file receipt has a 5-second timeout.
 
-References: [Firefox options_ui](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/options_ui),
-[uBlock Origin manifest](https://github.com/gorhill/uBlock/blob/master/platform/firefox/manifest.json),
-[Privacy Badger manifest](https://github.com/EFForg/privacybadger/blob/master/src/manifest.json).
+Keep tabs open after success, rejection, and failure. Activate the app tab and
+focus its window only when the final accepted-file reply requires unlocking.
+Keep the tab open and unlocked to avoid repeated password prompts.
 
-### Upload bridge
+A locked app holds one capture invisibly in memory. Successful unlock starts
+one ordinary upload once the session is configured and idle. Failed unlock
+retains it. Setup or busy apps reject capture with instructions; a second pending
+capture is rejected. Reload, tab closure, session invalidation, and root disposal
+discard pending captures. The library active at delivery is the destination;
+there is no probe-time identity binding.
 
-- Extension source lives in `client/extension/`, with no additional npm project
-  or dependencies. `make extension` copies these plain files and packages them in
-  `client/dist/i2nclip-extension.zip`; the server image still contains only web.
-- Extension storage owns only `appUrl`. Require HTTPS, permitting HTTP loopback
-  for development. Remove query/hash when saving; prohibit URL credentials.
-- Recreate the single context-menu item on background startup, including temporary
-  add-on reloads; menu availability must not depend on an install event.
-- Background owns a single capture at a time, tab selection, a 30-second capped
-  streaming download, and errors via a browser notification. Check the app before
-  fetching. Reuse the admitted tab when multiple matching tabs exist; never close
-  tabs automatically. Tab discovery/waiting and bridge replies have deadlines.
-- An injected document-owned runtime listener sends a versioned, correlated same-origin
-  `window.postMessage` request and waits for an acknowledgement. Injection checks
-  the configured origin/path again to prevent handoff after tab navigation.
-  Files use structured cloning through tabs.sendMessage and window.postMessage;
-  scripting only installs the listener, without passing file bytes.
-  There are no manifest content scripts or externally callable extension APIs.
-- An application-root store registers the receiver only after Web Lock admission.
-  It validates source, origin, message shape, File type, and the existing
-  32 MiB limit before accepting a file. Components receive plain state/callbacks.
-- If unlocked and configured, switch to Library and start the existing upload.
-  A locked app retains one hidden file in memory and automatically submits it
-  after unlock finishes. Upload requires a configured, idle session and library.
-  A new app tab stays open after success or failure for future uploads.
-  A client requiring initial setup rejects capture with instructions to set up
-  the library and retry. Acknowledgement means accepted, not uploaded; the app
-  owns progress, completion, and errors after acceptance.
+The extension shows success/failure notifications only after upload completion.
+Cancellation is silent. The app displays ordinary progress and error messages.
+Lost acknowledgements require checking the app before retrying: no automatic
+retry may create duplicate uploads.
 
-## Persistence, lifecycle, and failure cases
+## File handoff and ownership
 
-Only the app URL survives an extension restart. No identity or file is stored by
-the extension. A pending file survives view navigation and unlocking, but is
-discarded on reload, tab close, root disposal, or session epoch change
-(including Lock, Forget, Reset, identity/server replacement). Existing upload
-cancellation and failure behavior stays authoritative.
+`scripting.executeScript` installs one runtime message handler per app document
+in the extension's isolated content-script global. `tabs.sendMessage`, targeted
+at the top frame, carries the File, app URL, and receipt timeout through structured
+cloning. The handler checks the extension sender and current origin/path, then
+forwards the File through a correlated same-origin `window.postMessage` request.
+No base64 conversion or compatibility protocol is used.
 
-Reject overlapping captures, a second pending file, session mutations, and active
-upload batches. Reject malformed/oversized messages without allocating decoded
-bytes. Cancel the response stream on HTTP failure, overflow, timeout, or read
-failure. An unavailable, blocked, outdated, closed, or navigated app tab produces
-a clear notification. Never retry a handoff automatically: a lost acknowledgement
-may mean the file was already accepted; instruct users to check the app.
+The application-root receiver exists only after tab admission. It checks message
+source/origin, correlation shape, File type, and file.size before acceptance,
+and delegates to the root-owned library store. Components receive ordinary props
+and callbacks. Accepted receipt is distinct from upload completion.
+
+The installed runtime handler belongs to the document. Each request owns its
+reply timer and message/pagehide listeners, releasing them after rejection,
+timeout, navigation, cancellation, or completion. Completion reaches the
+background through runtime messaging and can wake its event page. Only appUrl
+persists in extension storage. No credentials or unlock keys enter the extension.
+
+## Text and documentation ownership
+
+User-facing copy describes uploads and gives a next action on failure. Keep
+current extension behavior in this specification; avoid separate overlapping
+lifecycle, filename, or transport plans and historical test counts. Copy edits
+must preserve runtime behavior, permissions, interfaces, and persistence.
 
 ## Acceptance checks
 
-- Reuse an existing admitted app tab without stealing focus; open a temporary
-  tab when absent and focus only when unlocking is needed.
-- Ignore unrelated origins/paths and refuse handoff after navigation.
-- Receive a real file through the bridge and upload/download identical bytes
-  through the real web/API workflow; encryption remains in the web app.
-- Hidden locked receipt, automatic submission after unlock, busy rejection,
-  stale session cleanup, and disposal do not leak or duplicate uploads.
-- Enforce the limit during streaming even with missing/incorrect Content-Length;
-  cancel owned streams on failures. Reject unsupported source URL schemes.
-- Package contains only the small extension; web archive remains independent.
-- Build and Svelte checker have no warnings; meaningful isolated unit tests cover
-  bridge/ownership/download behavior. Firefox screenshots verify the locked UI
-  shows no capture information at 320/360 px in both themes. Browser verification uses the
-  existing real server/database fixtures. Manual Firefox installation verifies
-  browser permissions and the native context menu when automation cannot load
-  Firefox extensions.
+- Preferences save/load normalized URLs, reject invalid input, and use native
+  controls in light/dark themes without an extension stylesheet.
+- The native context menu captures the exact clicked media description.
+- Existing tabs are reused; new tabs remain open; only unlock requires focus.
+- Files preserve name, MIME, and byte contents across runtime/window messaging.
+- Size limits apply during streaming and before app receipt without reading bytes.
+- Locked captures remain hidden; unlock uploads once; disposal cancels ownership.
+- Completion notifications distinguish success/failure and remain silent on cancel.
+- Build/checker and formatting pass; packages contain only their intended files.
+- App browser tests cover real API uploads and downloads. Installed Firefox
+  verification additionally exercises permissions, runtime messaging, and menus;
+  the app's window-message browser test alone does not cover those APIs.
 
-API reference: [Mozilla scripting.executeScript](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/scripting/executeScript).
+Source is in `client/extension/`, with no separate npm project or dependencies.
+The server image contains only the web app; extension outputs stay in client/dist.
 
-## Implemented verification
-
-- `make -C client test`: 76 meaningful unit cases pass; Svelte checker reports
-  zero errors and warnings. This includes menu creation without an install event,
-  file validation, pending-file disposal, streaming overflow, and single handoff.
-- `make test-packages`, client lint, and client formatting checks pass.
-- `make test-e2e`: all 14 Firefox/Chromium cases pass against the real server and
-  isolated databases, including bridge receipt and byte-identical downloads.
-- The original pending-file panel is removed; the current lifecycle and checks
-  are specified in [extension-capture-lifecycle.md](extension-capture-lifecycle.md).
-- A fresh native Firefox profile loaded the generated temporary extension and
-  displayed **Upload to i2nclip** as a visible image context-menu item, with no
-  extension errors in the browser console. Reload a temporary add-on through
-  `about:debugging` after rebuilding it.
+References: [Firefox runtime messaging](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/tabs/sendMessage),
+[structured cloning](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Chrome_incompatibilities#data_cloning_algorithm),
+[embedded options](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/options_ui).

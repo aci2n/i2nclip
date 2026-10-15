@@ -14,7 +14,7 @@ form.addEventListener("submit", async (event) => {
 		const appUrl = checkAppUrl(input.value);
 		await browser.storage.local.set({ appUrl });
 		input.value = appUrl;
-		output.textContent = "Saved.";
+		output.textContent = "URL saved.";
 	} catch (error) {
 		output.textContent = error.message;
 	}

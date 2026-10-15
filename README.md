@@ -18,23 +18,23 @@ Click a filename to edit it. Enter saves its metadata; blur exits without saving
 
 The project is greenfield; there are no client data or recovery-format migrations.
 
-## Firefox upload bridge
+## Firefox extension
 
 Run `make extension` (Node from `client/.nvmrc` and zip are required). The unpacked
 extension is in `client/dist/extension/`; its archive is
 `client/dist/i2nclip-extension.zip`. In Firefox, open `about:debugging`, choose
 **This Firefox → Load Temporary Add-on**, and select the generated `manifest.json`.
 Temporary add-ons are removed on browser restart; permanent installation requires
-Mozilla signing. In `about:addons`, select the extension, open its **Preferences**
-tab, and save your web-app URL. Settings use native HTML controls with no custom CSS.
+Mozilla signing. In `about:addons`, select **Upload to i2nclip**, open **Preferences**,
+and save the URL you use to open i2nclip.
 Use HTTPS, or HTTP loopback during development, and allow the requested website
 access for the app and media sources.
 
-Right-click an image, audio, or video and choose **Upload to i2nclip**. The bridge
+Right-click an image, audio, or video and choose **Upload to i2nclip**. The extension
 uses your existing app tab without changing focus while unlocked. It focuses the
 app only when unlocking is needed. If no app tab exists, it opens a regular tab
-that stays open for future uploads. A locked app
-holds one file invisibly and uploads it automatically after unlock. Firefox shows
+that stays open for future uploads. Keep it open and unlocked to avoid entering
+your password for each upload. A locked app holds one file invisibly and uploads it automatically after unlock. Firefox shows
 a notification when the upload succeeds or fails.
 Capture names use media alt/title/aria-label text, then the page title or URL,
 with an appropriate file extension.

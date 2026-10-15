@@ -16,7 +16,8 @@ export function installBridge() {
 		if (location.origin !== app.origin || location.pathname !== app.pathname) {
 			return Promise.resolve({
 				ok: false,
-				error: "The i2nclip tab navigated away.",
+				error:
+					"The i2nclip tab is now on another page. Open i2nclip and try again.",
 			});
 		}
 		return new Promise((resolve) => {
@@ -45,7 +46,8 @@ export function installBridge() {
 					finish({
 						ok: false,
 						unavailable: true,
-						error: "The i2nclip page closed or navigated away.",
+						error:
+							"The i2nclip tab was closed or changed pages. Open i2nclip and try again.",
 					});
 				} else {
 					cleanup();
@@ -80,7 +82,8 @@ export function installBridge() {
 					finish({
 						ok: false,
 						unavailable: true,
-						error: "No reply from i2nclip. Check the app before retrying.",
+						error:
+							"No response from i2nclip. Check the app before trying again.",
 					}),
 				timeout,
 			);

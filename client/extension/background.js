@@ -32,7 +32,9 @@ browser.menus.onClicked.addListener(async (info, tab) => {
 		return;
 	}
 	if (capturing) {
-		await notify("A file is already being sent to i2nclip.");
+		await notify(
+			"A file is already being sent. Wait for it to finish, then try again.",
+		);
 		return;
 	}
 	capturing = true;
@@ -41,7 +43,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
 		if (!appUrl) {
 			await browser.runtime.openOptionsPage();
 			throw new Error(
-				"Save your web-app URL, then right-click the media again.",
+				"Save your i2nclip URL in Preferences, then try the upload again.",
 			);
 		}
 		const context = await readCaptureContext(browser, info, tab);

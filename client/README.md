@@ -4,7 +4,7 @@ Svelte 5 and Vite, using Node from `.nvmrc`. Makefile targets install locked dep
 
 `make extension` copies the plain Firefox bridge from `extension/` to
 `dist/extension/` and packages `dist/i2nclip-extension.zip`, without npm
-dependencies. Installation and configuration are in the [root README](../README.md#firefox-upload-bridge).
+dependencies. Installation and configuration are in the [root README](../README.md#firefox-extension).
 
 ## Ownership
 

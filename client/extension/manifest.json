@@ -1,8 +1,8 @@
 {
 	"manifest_version": 3,
-	"name": "i2nclip upload bridge",
+	"name": "Upload to i2nclip",
 	"version": "0.1.0",
-	"description": "Send media to the i2nclip web app. The app owns your library and encryption.",
+	"description": "Right-click images, audio, or video to upload them to your encrypted i2nclip library.",
 	"browser_specific_settings": {
 		"gecko": {
 			"id": "i2nclip@i2n",
