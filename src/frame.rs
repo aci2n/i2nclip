@@ -20,11 +20,7 @@
 //! Lengths are big-endian. The JavaScript client in `client/src/lib/protocol/frame.js` writes
 //! the same layout. `client/tests/test-vectors.json` includes one full POST frame.
 
-use crate::Error;
-use crate::MAX_CONTENT;
-use crate::MAX_META;
-use crate::MAX_TAGS;
-use crate::MAX_TOKEN_TEXT;
+use crate::{Error, MAX_CONTENT, MAX_META, MAX_TAGS, MAX_TOKEN_TEXT};
 
 /// Canonical SHA-256 of the complete sealed content.
 pub(crate) fn parse_id(id: &str) -> Result<String, Error> {

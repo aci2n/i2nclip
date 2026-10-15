@@ -2,11 +2,9 @@
 
 use std::time::Duration;
 
-use tokio::sync::watch;
-use tokio::time::MissedTickBehavior;
+use tokio::{sync::watch, time::MissedTickBehavior};
 
-use crate::crypto;
-use crate::db::Database;
+use crate::{crypto, db::Database};
 
 /// Sweep immediately and hourly. A stop signal prevents another sweep while
 /// allowing an active transaction to finish before the task exits.

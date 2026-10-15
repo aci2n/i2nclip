@@ -21,13 +21,14 @@ mod web;
 
 pub mod crypto;
 
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
-use db::Database;
+use axum::Router;
 use tokio::net::TcpListener;
 
-pub use db::DEFAULT_REGISTRATION_TTL_SECS;
-pub use error::Error;
+use crate::{db::Database, pairing::Pairings, permits::Permits};
+
+pub use crate::{db::DEFAULT_REGISTRATION_TTL_SECS, error::Error};
 
 /// Fixed listen address. Publish a host port onto 8080 instead of configuring this.
 pub const LISTEN: &str = "0.0.0.0:8080";
@@ -50,8 +51,8 @@ pub(crate) const SKEW_SECS: u64 = 300;
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) db: Database,
-    pub(crate) permits: permits::Permits,
-    pub(crate) pairings: pairing::Pairings,
+    pub(crate) permits: Permits,
+    pub(crate) pairings: Pairings,
     /// Public origin named in request signatures, such as `https://clip.example.com`.
     origin: Arc<str>,
 }
@@ -61,8 +62,8 @@ impl AppState {
         Self {
             db,
             origin: origin.into(),
-            permits: permits::Permits::new(),
-            pairings: pairing::Pairings::default(),
+            permits: Permits::new(),
+            pairings: Pairings::default(),
         }
     }
 
@@ -126,7 +127,7 @@ pub async fn set_key_limits(
 }
 
 /// Build the API and web router after connecting and initializing the database.
-pub async fn router(database_url: &str, origin: &str) -> Result<axum::Router, Error> {
+pub async fn router(database_url: &str, origin: &str) -> Result<Router, Error> {
     let state = open_state(database_url, normalize_origin(origin)?).await?;
     Ok(web::serve(routes::router(state), web::directory()))
 }
@@ -212,7 +213,7 @@ pub async fn run() -> Result<(), Error> {
     let maintenance = tokio::spawn(maintenance::run(state.db.clone(), receiver));
     let served = axum::serve(
         listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
         shutdown_signal().await;

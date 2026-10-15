@@ -2,10 +2,12 @@
 
 use std::path::PathBuf;
 
-use axum::http::{header, HeaderValue};
-use axum::middleware::map_response;
-use axum::response::Response;
-use axum::Router;
+use axum::{
+    http::{header, HeaderValue, StatusCode},
+    middleware::map_response,
+    response::Response,
+    Router,
+};
 use tower_http::services::{ServeDir, ServeFile};
 
 pub(crate) fn directory() -> PathBuf {
@@ -46,7 +48,7 @@ async fn asset_cache(response: Response) -> Response {
 }
 
 fn cache(mut response: Response, value: &'static str) -> Response {
-    if response.status().is_success() || response.status() == axum::http::StatusCode::NOT_MODIFIED {
+    if response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED {
         response
             .headers_mut()
             .insert(header::CACHE_CONTROL, HeaderValue::from_static(value));
@@ -56,11 +58,15 @@ fn cache(mut response: Response, value: &'static str) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use axum::body::{to_bytes, Body};
-    use axum::http::{Method, Request, StatusCode};
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Method, Request, StatusCode},
+    };
     use tower::ServiceExt;
+
+    use super::*;
 
     struct Files(PathBuf);
 

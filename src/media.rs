@@ -5,23 +5,26 @@
 
 use std::time::Duration;
 
-use axum::body::{Body, Bytes};
-
-use axum::extract::{Path as UrlPath, State};
-use axum::http::{header, HeaderValue, StatusCode};
-use axum::response::{IntoResponse, Response};
-use axum::routing::get;
-use axum::Router;
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
+use axum::{
+    body::{Body, Bytes},
+    extract::{Path as UrlPath, State},
+    http::{header, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
+    routing::get,
+    Router,
+};
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Serialize;
 use serde_json::json;
 
-use crate::db::Item;
-use crate::permits::TransferPermit;
-use crate::routes::{empty, fail, json_response};
-use crate::AppState;
-use crate::{auth::SignedRequest, frame, Error, MAX_BODY, MAX_META_BODY};
+use crate::{
+    auth::SignedRequest,
+    db::{Item, MetadataUpdate},
+    frame,
+    permits::TransferPermit,
+    routes::{empty, fail, json_response},
+    AppState, Error, MAX_BODY, MAX_META_BODY,
+};
 
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
@@ -178,12 +181,10 @@ async fn update_metadata(
         Err(response) => return *response,
     };
     match state.db.update_meta(owner, &id, &body).await {
-        Ok(crate::db::MetadataUpdate::Updated(item)) => {
-            json_response(StatusCode::OK, item_json(item))
-        }
-        Ok(crate::db::MetadataUpdate::Conflict(item)) => json_response(
+        Ok(MetadataUpdate::Updated(item)) => json_response(StatusCode::OK, item_json(item)),
+        Ok(MetadataUpdate::Conflict(item)) => json_response(
             StatusCode::CONFLICT,
-            serde_json::json!({
+            json!({
                 "error": "metadata changed in another page",
                 "code": "metadata_conflict",
                 "media": item_json(item),
@@ -263,11 +264,15 @@ fn content_response(content: Vec<u8>, permit: TransferPermit) -> Response {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        future::{poll_fn, Future},
+        task::Poll,
+    };
+
+    use http_body_util::BodyExt;
+
     use super::*;
     use crate::permits::Permits;
-    use http_body_util::BodyExt;
-    use std::future::{poll_fn, Future};
-    use std::task::Poll;
 
     #[test]
     fn list_query_validates_cursor_and_deduplicates_tags_without_database() {

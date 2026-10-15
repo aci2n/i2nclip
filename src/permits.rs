@@ -1,6 +1,8 @@
 //! Shared admission policy. Handlers retain owned guards for resource lifetimes.
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, Weak};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, Weak},
+};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -105,9 +107,12 @@ impl UserSlots {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        future::{poll_fn, Future},
+        task::Poll,
+    };
+
     use super::*;
-    use std::future::{poll_fn, Future};
-    use std::task::Poll;
 
     #[tokio::test]
     async fn keyed_waiters_leave_global_capacity_for_other_keys() {

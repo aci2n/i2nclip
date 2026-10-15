@@ -1,17 +1,17 @@
 //! In-process API tests; no listening port is needed.
 
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use axum::body::Body;
-use axum::http::Request;
-use axum::http::StatusCode;
-use base64::engine::general_purpose::STANDARD;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine,
+};
 use http_body_util::BodyExt;
-use i2nclip::crypto;
-use i2nclip::Error;
+use i2nclip::{crypto, Error};
 use reference_crypto::{self as client_crypto, Identity};
 use tower::ServiceExt;
 
@@ -293,10 +293,10 @@ async fn configured_origins_authenticate_browser_canonical_signatures() {
 #[tokio::test(start_paused = true)]
 async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
     let _clock = manual_clock();
+    use std::{sync::Arc, time::Duration};
+
     use axum::body::Bytes;
     use http_body_util::Channel;
-    use std::sync::Arc;
-    use std::time::Duration;
 
     let owner = new_identity();
     let (dir, app) = app(&[&owner]).await;
@@ -1041,10 +1041,10 @@ async fn reopening_database_preserves_media() {
 #[tokio::test(start_paused = true)]
 async fn upload_admission_is_shared_and_releases_capacity() {
     let _clock = manual_clock();
+    use std::{sync::Arc, time::Duration};
+
     use axum::body::Bytes;
     use http_body_util::Channel;
-    use std::sync::Arc;
-    use std::time::Duration;
 
     async fn stall(
         app: &axum::Router,
@@ -2102,13 +2102,16 @@ async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
 
 #[tokio::test]
 async fn per_key_upload_waiters_do_not_read_bodies_or_consume_other_keys_global_capacity() {
+    use std::{
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+        time::Duration,
+    };
+
     use axum::body::Bytes;
     use http_body_util::Channel;
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
-    use std::time::Duration;
     let owner = new_identity();
     let other = new_identity();
     let (_db, app) = app(&[&owner, &other]).await;

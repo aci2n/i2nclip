@@ -2,18 +2,20 @@
 
 use std::time::Duration;
 
-use axum::body::Body;
-use axum::extract::{Request, State};
-use axum::http::{header, HeaderValue, StatusCode};
-use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{
+    body::Body,
+    extract::{Request, State},
+    http::{header, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
 use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tower_http::trace::TraceLayer;
 
-use crate::AppState;
-use crate::{auth, media, Error, MAX_REGISTER_BODY};
+use crate::{auth, media, pairing, AppState, Error, MAX_REGISTER_BODY};
 
 pub(crate) const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -23,8 +25,8 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/api/ping", get(ping))
         .route("/api/register-key", post(register_key))
         .merge(media::router())
-        .merge(crate::pairing::router())
-        .layer(tower_http::trace::TraceLayer::new_for_http())
+        .merge(pairing::router())
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
@@ -154,9 +156,10 @@ pub(crate) fn fail(err: Error) -> Response {
 
 #[cfg(test)]
 mod deadline_tests {
-    use super::*;
     use axum::body::Bytes;
     use http_body_util::Channel;
+
+    use super::*;
 
     #[tokio::test(start_paused = true)]
     async fn trickling_body_does_not_extend_deadline_and_is_dropped() {
@@ -214,9 +217,10 @@ mod deadline_tests {
 
 #[cfg(test)]
 mod request_tests {
-    use super::*;
     use axum::http::Request;
     use tower::ServiceExt;
+
+    use super::*;
 
     async fn app() -> Router {
         let db = crate::db::Database::closed_for_test().await;

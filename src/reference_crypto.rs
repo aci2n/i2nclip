@@ -1,18 +1,21 @@
 //! Reference-client cryptography for Rust tests and shared JavaScript vectors.
 //! This module is not compiled into the production library or server.
 
-use aes_gcm::aead::{Aead, Payload};
-use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
+use aes_gcm::{
+    aead::{Aead, Payload},
+    Aes256Gcm, KeyInit, Nonce,
+};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signer, SigningKey};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use unicode_normalization::UnicodeNormalization;
 
-use crate::crypto::{body_hash, looks_sealed, request_message};
-use crate::Error;
+use crate::{
+    crypto::{body_hash, looks_sealed, request_message},
+    Error,
+};
 
 const VERSION: u8 = 1;
 const NONCE_LEN: usize = 12;

@@ -83,3 +83,19 @@ artifact checks, Clippy/format checks and Firefox/Chromium integration tests.
 Inspect actual Firefox screenshots for any visual regression. Test listeners and
 databases remain isolated; stop owned services/containers on completion. Commit
 each item independently; leave a clean worktree.
+
+## 9. Final namespace and import consistency pass
+Review every Rust and client source/tool/test file. Group Rust imports from the
+same root within each lexical scope and visibility, separate standard, external,
+and local groups, and preserve aliases, glob semantics, conditional compilation,
+and public exports. Import sibling modules consistently in router assembly. Use
+already imported types/macros/modules instead of requalifying them; import common
+HTTP types/routes rather than mixing direct and fully qualified adjacent calls.
+Keep qualification where it disambiguates names (for example sqlx::Error versus
+application Error) and keep macro attributes/platform-gated paths explicit.
+Client imports follow Biome ordering; keep module namespaces where the complete
+module is intentionally injected as a service. Move test-only dynamic imports
+of ordinary local helpers to static imports; retain lazy PAKE loading.
+This is a mechanical style change, without behavior/interface/schema changes or
+new dependencies. Check all targets/features with Clippy, Rust tests, client
+checks/builds and existing protocol vectors. Commit independently at the end.

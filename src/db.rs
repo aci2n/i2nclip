@@ -9,21 +9,11 @@
 
 use std::time::Duration;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
-use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
-use sqlx::Postgres;
-use sqlx::Row;
-use sqlx::Transaction;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use serde::Serialize;
+use sqlx::{postgres::PgPoolOptions, PgPool, Postgres, Row, Transaction};
 
-use crate::crypto;
-use crate::frame;
-use crate::Error;
-use crate::StorageLimits;
-use crate::MAX_CONTENT;
-use crate::MAX_META;
-use crate::PAGE;
+use crate::{crypto, frame, Error, StorageLimits, MAX_CONTENT, MAX_META, PAGE, SKEW_SECS};
 
 // A busy pool is retryable. Other database errors retain their cause for logs;
 // handlers choose the HTTP response without exposing database details.
@@ -55,7 +45,7 @@ pub(crate) struct Item {
     pub tokens: Vec<String>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Serialize)]
 pub(crate) struct Quota {
     pub max_content_bytes: i64,
     pub max_files: i64,
@@ -133,7 +123,7 @@ impl Database {
 
     /// Reserve a nonce once; an existing nonce rejects a replay.
     pub(crate) async fn remember_nonce(&self, nonce: &str, ts: u64) -> Result<(), Error> {
-        let expires = i64::try_from(ts.saturating_add(crate::SKEW_SECS)).unwrap_or(i64::MAX);
+        let expires = i64::try_from(ts.saturating_add(SKEW_SECS)).unwrap_or(i64::MAX);
         let result = sqlx::query(
             r#"
             INSERT INTO nonces (nonce, expires)
@@ -1929,14 +1919,8 @@ mod tests {
             db.remember_nonce("same-nonce", 100).await,
             Err(Error::Unauthorized)
         ));
-        assert_eq!(
-            db.maintain(100 + crate::SKEW_SECS as i64).await.unwrap(),
-            (0, 0)
-        );
-        assert_eq!(
-            db.maintain(101 + crate::SKEW_SECS as i64).await.unwrap(),
-            (1, 0)
-        );
+        assert_eq!(db.maintain(100 + SKEW_SECS as i64).await.unwrap(), (0, 0));
+        assert_eq!(db.maintain(101 + SKEW_SECS as i64).await.unwrap(), (1, 0));
         dispose(db, admin, name).await;
     }
     #[tokio::test]

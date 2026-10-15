@@ -16,27 +16,27 @@
 //! A missing key and a bad signature both become 401. Malformed public keys
 //! submitted for registration become 400.
 
-use crate::routes::{fail, read_body_with_deadline, too_large, SHORT_BODY_DEADLINE};
-use axum::body::Body;
-use axum::extract::{FromRequest, Request};
-use axum::http::Method;
-use axum::http::Uri;
-use axum::http::{header, HeaderMap};
-use axum::response::Response;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
-use ed25519_dalek::VerifyingKey;
 use std::time::Duration;
 
-use crate::crypto;
-use crate::AppState;
-use crate::Error;
-use crate::SKEW_SECS;
+use axum::{
+    body::Body,
+    extract::{FromRequest, Request},
+    http::{header, request::Parts, HeaderMap, Method, Uri},
+    response::Response,
+};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use ed25519_dalek::VerifyingKey;
+
+use crate::{
+    crypto,
+    routes::{fail, read_body_with_deadline, too_large, SHORT_BODY_DEADLINE},
+    AppState, Error, SKEW_SECS,
+};
 
 /// Header-authenticated request. Endpoint handlers own body/query policy.
 pub(crate) struct SignedRequest {
     verified: VerifiedRequest,
-    parts: axum::http::request::Parts,
+    parts: Parts,
     body: Body,
 }
 
@@ -299,10 +299,7 @@ fn path_and_query(uri: &Uri) -> String {
 /// Split the bearer token. `None` means the header is missing or malformed,
 /// which the caller turns into 401.
 fn parse_bearer(headers: &HeaderMap) -> Option<Bearer> {
-    let value = headers
-        .get(axum::http::header::AUTHORIZATION)?
-        .to_str()
-        .ok()?;
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
     let mut parts = value.trim().splitn(2, char::is_whitespace);
     let scheme = parts.next().unwrap_or("");
     let token = parts.next().unwrap_or("").trim();
@@ -396,7 +393,7 @@ mod tests {
                     Ok(_) => panic!("early data must be rejected"),
                 };
                 assert!(matches!(error, Error::TooEarly));
-                let response = crate::routes::fail(error);
+                let response = fail(error);
                 assert_eq!(response.status(), axum::http::StatusCode::TOO_EARLY);
             }
         }

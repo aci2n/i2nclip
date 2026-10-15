@@ -10,6 +10,8 @@
 - Make small frequent commits after cohesive changes build without warnings. Focus on refactoring before running the final test suites. Tests must cover meaningful behavior and invariants rather than mirror implementation details. Test quality is mandatory.
 - Every test must isolate its mutable state and resources. Bind test listeners atomically to loopback port 0, use isolated databases and browser contexts, and clean up owned resources on success and failure. Verification commands must work from a fresh clone with documented toolchain/system prerequisites; never rely on developer-specific paths or existing build artifacts.
 
+- Group Rust imports by crate within each scope and visibility, separating standard-library, external, and project imports. Use imported names consistently; keep explicit qualification for ambiguous names. Client imports follow Biome ordering.
+
 ## Layout and commands
 
 - The server image includes only the web client build, served by Rust on port 8080 alongside the API. `I2N_WEB_DIR` defaults to `client/dist/web` locally and is set to `/usr/local/share/i2nclip/web` in the image.

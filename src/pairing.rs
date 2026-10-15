@@ -1,21 +1,28 @@
 //! Ephemeral, bounded relay. Only the clients perform the PAKE or decrypt messages.
-use std::collections::{HashMap, VecDeque};
-use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    collections::{HashMap, VecDeque},
+    net::{IpAddr, SocketAddr},
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
-use axum::extract::{ConnectInfo, Path, Request, State};
-use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::Response;
-use axum::routing::{get, post};
-use axum::Router;
+use axum::{
+    extract::{ConnectInfo, Path, Request, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::Response,
+    routing::{delete, get, post},
+    Router,
+};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
 use tokio::time::Instant;
 
-use crate::routes::{empty, fail, json_response, read_body_with_deadline, SHORT_BODY_DEADLINE};
-use crate::{auth, AppState, Error};
+use crate::{
+    auth,
+    routes::{empty, fail, json_response, read_body_with_deadline, SHORT_BODY_DEADLINE},
+    AppState, Error,
+};
 
 const ALPHABET: &[u8; 32] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const TTL: Duration = Duration::from_secs(120);
@@ -331,7 +338,7 @@ fn valid_message(message: &str) -> Result<(), Rejection> {
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route("/api/pairings", post(create))
-        .route("/api/pairings/{id}", axum::routing::delete(cancel))
+        .route("/api/pairings/{id}", delete(cancel))
         .route("/api/pairings/{id}/join", post(join))
         .route("/api/pairings/{id}/messages", get(poll).post(submit))
 }
@@ -344,10 +351,9 @@ fn result(value: Result<Snapshot, Failure>) -> Response {
             tracing::debug!(event = "pairing_rejected", status = status.as_u16());
             let mut response = json_response(status, json!({"error": message}));
             if status == StatusCode::TOO_MANY_REQUESTS {
-                response.headers_mut().insert(
-                    header::RETRY_AFTER,
-                    axum::http::HeaderValue::from_static("60"),
-                );
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, HeaderValue::from_static("60"));
             }
             response
         }
@@ -386,7 +392,7 @@ struct Submission {
     message: String,
 }
 
-async fn json_body<T: serde::de::DeserializeOwned>(request: Request) -> Result<T, Box<Response>> {
+async fn json_body<T: DeserializeOwned>(request: Request) -> Result<T, Box<Response>> {
     let bytes = read_body_with_deadline(request.into_body(), MAX_BODY, SHORT_BODY_DEADLINE).await?;
     serde_json::from_slice(&bytes)
         .map_err(|_| Box::new(fail(Error::BadRequest("invalid pairing payload".into()))))
@@ -471,10 +477,11 @@ async fn cancel(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use axum::body::Body;
     use http_body_util::BodyExt;
     use tower::ServiceExt;
+
+    use super::*;
 
     #[tokio::test(start_paused = true)]
     async fn service_clones_share_cancellation_and_recheck_expiration() {

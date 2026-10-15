@@ -9,8 +9,7 @@
 //! 16-byte GCM tag. Shape checks reject accidental plaintext; they do not
 //! authenticate ciphertext or prove it can be decrypted.
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
@@ -89,8 +88,7 @@ pub fn verify(public: &[u8; 32], message: &[u8], signature: &[u8]) -> Result<(),
 }
 
 pub fn now_secs() -> u64 {
-    use std::time::SystemTime;
-    use std::time::UNIX_EPOCH;
+    use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -126,9 +124,10 @@ pub(crate) fn body_hash_bytes(body: &[u8]) -> [u8; 32] {
 
 #[cfg(test)]
 mod tests {
+    use serde::Serialize;
+
     use super::*;
     use crate::reference_crypto::*;
-    use serde::Serialize;
 
     #[test]
     fn signature_verification_rejects_weak_key_forgery() {
@@ -276,7 +275,7 @@ mod tests {
             "/api/media",
             sign_body.as_bytes(),
         );
-        let frame = crate::reference_crypto::encode_post(&meta_ct, &ciphertext, &token);
+        let frame = encode_post(&meta_ct, &ciphertext, &token);
         let private_key = serde_json::json!({ "v": 1, "seed": URL_SAFE_NO_PAD.encode(seed), "publicKey": id.registration_key() }).to_string();
         let vectors = Vectors {
             private_key,

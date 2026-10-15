@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { get, writable } from "svelte/store";
 import { MAX_FILE_BYTES } from "../src/lib/api.js";
 import { sendUpload } from "../src/lib/media/upload.js";
+import { createMediaItem } from "../src/lib/stores/media-item.js";
 
 test("oversized local files are rejected before reading bytes", async () => {
 	const file = {
@@ -17,8 +19,6 @@ test("oversized local files are rejected before reading bytes", async () => {
 });
 
 test("media reuses full-content Blob URLs for preview and saving until disposal", async (t) => {
-	const { get, writable } = await import("svelte/store");
-	const { createMediaItem } = await import("../src/lib/stores/media-item.js");
 	const controller = new AbortController();
 	const session = {
 		...writable({}),
