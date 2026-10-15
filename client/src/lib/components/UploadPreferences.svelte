@@ -12,7 +12,7 @@ let { compressImages, error, onchange } = $props();
 		Compress images to WebP
 	</label>
 	<p>
-		Replaces JPEG and PNG originals when WebP is smaller. Keeps their
+		Replaces JPEG, PNG, and BMP originals when WebP is smaller. Keeps their
 		dimensions. This setting applies only to this device.
 	</p>
 	{#if error}

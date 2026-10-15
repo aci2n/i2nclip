@@ -18,7 +18,7 @@ instance. Further transfers wait; devices sharing a key share its permits.
 
 Uploads run sequentially and continue after individual failures. Failures show status messages; select failed files again through Upload to try again. Upload status survives navigation but is not saved across reloads. After an uncertain upload response, check the library before retrying to avoid duplicate copies.
 
-JPEG and PNG uploads are converted to WebP by default when the result is smaller,
+JPEG, PNG, and BMP uploads are converted to WebP by default when the result is smaller,
 without resizing. Turn off **Compress images to WebP** in Settings to preserve
 originals. This preference stays on this device and also applies to extension captures.
 

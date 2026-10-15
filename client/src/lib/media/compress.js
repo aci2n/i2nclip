@@ -1,7 +1,7 @@
 // Convert before encryption. A failed or unhelpful conversion keeps the original.
 export async function compressImage(file, signal) {
 	signal.throwIfAborted();
-	if (!/^image\/(jpeg|png)$/.test(file.type)) {
+	if (!/^image\/(jpeg|png|bmp|x-ms-bmp)$/.test(file.type)) {
 		return file;
 	}
 	let bitmap;

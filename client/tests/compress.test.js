@@ -47,19 +47,25 @@ function browser(t) {
 	}
 }
 
-test("conversion uses smaller WebP with matching filename and closes its bitmap", async (t) => {
-	browser(t);
-	const closed = encoder(
-		t,
-		async () => new Blob(["small"], { type: "image/webp" }),
-	);
-	const file = new File(["original image"], "photo.PNG", { type: "image/png" });
-	const result = await compressImage(file, new AbortController().signal);
-	assert.equal(result.name, "photo.webp");
-	assert.equal(result.type, "image/webp");
-	assert.equal(await result.text(), "small");
-	assert.equal(closed(), 1);
-});
+for (const type of ["image/png", "image/bmp", "image/x-ms-bmp"]) {
+	test(`conversion uses smaller WebP for ${type} and closes its bitmap`, async (t) => {
+		browser(t);
+		const closed = encoder(
+			t,
+			async () => new Blob(["small"], { type: "image/webp" }),
+		);
+		const file = new File(
+			["original image"],
+			type === "image/png" ? "photo.PNG" : "photo.bmp",
+			{ type },
+		);
+		const result = await compressImage(file, new AbortController().signal);
+		assert.equal(result.name, "photo.webp");
+		assert.equal(result.type, "image/webp");
+		assert.equal(await result.text(), "small");
+		assert.equal(closed(), 1);
+	});
+}
 
 for (const [name, encode] of [
 	[
