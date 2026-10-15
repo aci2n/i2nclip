@@ -15,6 +15,8 @@ dependencies. Installation and configuration are in the [root README](../README.
 The application also owns the extension receiver store. It accepts files only
 after tab admission, delegates uploads to the library, and holds at most one file
 hidden in memory while locked, automatically submitting it after unlock. Session invalidation and root disposal discard that file.
+The extension sends a native File through a document-owned injected runtime
+listener and window.postMessage, with no base64 conversion.
 The extension owns capture, persistent app tab creation, focus only when unlocking
 is needed, completion notifications, and its saved app URL.
 

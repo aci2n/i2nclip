@@ -13,6 +13,14 @@ function receiveCapture(page, request, timeout = 5000) {
 	return page.evaluate(
 		({ request, timeout }) =>
 			new Promise((resolve) => {
+				if (request.type === "file") {
+					request = {
+						type: "file",
+						file: new File([new Uint8Array(request.bytes)], request.name, {
+							type: request.mime,
+						}),
+					};
+				}
 				const token = crypto.randomUUID();
 				const finish = (result) => {
 					clearTimeout(timer);
@@ -60,7 +68,7 @@ test("app receives captures through its public event interface and uploads after
 		type: "file",
 		name: image.name,
 		mime: image.mimeType,
-		base64: image.buffer.toString("base64"),
+		bytes: [...image.buffer],
 	};
 	await page.getByRole("button", { name: "Lock", exact: true }).click();
 	const deliver = () => receiveCapture(page, request);

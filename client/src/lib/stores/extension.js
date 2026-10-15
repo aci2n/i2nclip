@@ -92,39 +92,13 @@ export function createExtensionReceiver(
 				throw new Error(error);
 			}
 			if (message.type === "file") {
-				if (
-					typeof message.name !== "string" ||
-					!message.name ||
-					message.name.length > 255 ||
-					/[\\/\p{Cc}]/u.test(message.name) ||
-					typeof message.mime !== "string" ||
-					message.mime.length > 255 ||
-					!/^[-\w.+]+\/[-\w.+]+$/.test(message.mime) ||
-					typeof message.base64 !== "string"
-				) {
+				const file = message.file;
+				if (!(file instanceof File)) {
 					throw new Error("Invalid file handoff.");
 				}
-				const encoded = message.base64;
-				if (encoded.length > 4 * Math.ceil(MAX_FILE_BYTES / 3)) {
+				if (file.size > MAX_FILE_BYTES) {
 					throw new Error("File is larger than 32 MB.");
 				}
-				if (encoded.length % 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
-					throw new Error("Invalid file handoff.");
-				}
-				const padding = encoded.endsWith("==")
-					? 2
-					: encoded.endsWith("=")
-						? 1
-						: 0;
-				if ((encoded.length / 4) * 3 - padding > MAX_FILE_BYTES) {
-					throw new Error("File is larger than 32 MB.");
-				}
-				const decoded = atob(encoded);
-				const bytes = new Uint8Array(decoded.length);
-				for (let index = 0; index < decoded.length; index++) {
-					bytes[index] = decoded.charCodeAt(index);
-				}
-				const file = new File([bytes], message.name, { type: message.mime });
 				const capture = {
 					file,
 					token: message.token,

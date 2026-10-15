@@ -1,4 +1,4 @@
-import { handoff } from "./bridge.js";
+import { installBridge } from "./bridge.js";
 
 // Same plaintext bound as the web upload protocol; checked together in tests.
 export const MAX_FILE_BYTES = 32 * 1024 * 1024;
@@ -108,7 +108,7 @@ export function captureName(context, originalName, type) {
 	);
 }
 
-export async function fetchFile(srcUrl, fetcher = fetch) {
+export async function fetchFile(srcUrl, fetcher = fetch, context = {}) {
 	const url = new URL(srcUrl);
 	if (
 		!["http:", "https:"].includes(url.protocol) ||
@@ -157,17 +157,7 @@ export async function fetchFile(srcUrl, fetcher = fetch) {
 		} catch {
 			// Preserve filenames with literal malformed percent escapes.
 		}
-		name = name.replace(/[\\/\p{Cc}]/gu, "_").slice(0, 255);
-		const bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
-		const encoded = [];
-		for (let offset = 0; offset < bytes.length; offset += 24 * 1024) {
-			encoded.push(
-				btoa(
-					String.fromCharCode(...bytes.subarray(offset, offset + 24 * 1024)),
-				),
-			);
-		}
-		return { type: "file", name, mime: type, base64: encoded.join("") };
+		return new File(chunks, captureName(context, name, type), { type });
 	} finally {
 		if (reader) {
 			await reader.cancel().catch(() => {});
@@ -197,17 +187,15 @@ export async function sendToApp(
 		candidates.push(await browser.tabs.create({ url: appUrl, active: false }));
 	}
 	const request = async (tabId, message, timeout) => {
-		const [injection] = await browser.scripting.executeScript({
+		await browser.scripting.executeScript({
 			target: { tabId },
-			func: handoff,
-			args: [{ appUrl, request: message, timeout }],
+			func: installBridge,
 		});
-		if (injection?.error) {
-			throw new Error(
-				injection.error.message || "Could not reach the i2nclip tab.",
-			);
-		}
-		return injection?.result;
+		return browser.tabs.sendMessage(
+			tabId,
+			{ channel: "i2nclip-extension-v1", appUrl, request: message, timeout },
+			{ frameId: 0 },
+		);
 	};
 	let receiver;
 	let ready;
@@ -238,9 +226,8 @@ export async function sendToApp(
 	if (!ready.ok) {
 		throw new Error(ready.error);
 	}
-	const file = await fetchFile(srcUrl, fetcher);
-	file.name = captureName(context, file.name, file.mime);
-	const reply = await request(receiver.id, file, 5000);
+	const file = await fetchFile(srcUrl, fetcher, context);
+	const reply = await request(receiver.id, { type: "file", file }, 5000);
 	if (!reply?.ok) {
 		throw new Error(
 			reply?.error || "No reply from i2nclip. Check the app before retrying.",

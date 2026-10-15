@@ -71,13 +71,14 @@ References: [Firefox options_ui](https://developer.mozilla.org/en-US/docs/Mozill
   streaming download, and errors via a browser notification. Check the app before
   fetching. Reuse the admitted tab when multiple matching tabs exist; never close
   tabs automatically. Tab discovery/waiting and bridge replies have deadlines.
-- An ephemeral injected content script sends a versioned, correlated same-origin
+- An injected document-owned runtime listener sends a versioned, correlated same-origin
   `window.postMessage` request and waits for an acknowledgement. Injection checks
   the configured origin/path again to prevent handoff after tab navigation.
-  File bytes use base64 because scripting arguments must be JSON serializable.
-  There are no permanent content scripts or externally callable extension APIs.
+  Files use structured cloning through tabs.sendMessage and window.postMessage;
+  scripting only installs the listener, without passing file bytes.
+  There are no manifest content scripts or externally callable extension APIs.
 - An application-root store registers the receiver only after Web Lock admission.
-  It validates source, origin, message shape, filename, MIME type, and the existing
+  It validates source, origin, message shape, File type, and the existing
   32 MiB limit before accepting a file. Components receive plain state/callbacks.
 - If unlocked and configured, switch to Library and start the existing upload.
   A locked app retains one hidden file in memory and automatically submits it

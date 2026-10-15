@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { get, writable } from "svelte/store";
-import { handoff } from "../extension/bridge.js";
+import { installBridge } from "../extension/bridge.js";
 import {
 	captureDetails,
 	captureName,
@@ -123,9 +123,9 @@ function app(t, patch = {}, result = Promise.resolve(true)) {
 
 const file = {
 	type: "file",
-	name: "Photo.png",
-	mime: "image/png",
-	base64: "AAECA/8=",
+	file: new File([new Uint8Array([0, 1, 2, 3, 255])], "Photo.png", {
+		type: "image/png",
+	}),
 };
 
 test("bridge uploads through the existing library and rejects overlapping work", async (t) => {
@@ -137,8 +137,8 @@ test("bridge uploads through the existing library and rejects overlapping work",
 	assert.deepEqual(fixture.receive(file), { ok: true, needsUnlock: false });
 	assert.equal(fixture.navigations, 1);
 	const uploaded = fixture.uploads[0][0];
-	assert.equal(uploaded.name, file.name);
-	assert.equal(uploaded.type, file.mime);
+	assert.equal(uploaded.name, file.file.name);
+	assert.equal(uploaded.type, file.file.type);
 	assert.deepEqual(
 		new Uint8Array(await uploaded.arrayBuffer()),
 		new Uint8Array([0, 1, 2, 3, 255]),
@@ -236,14 +236,8 @@ test("receiver rejects setup, mutation, foreign messages, and malformed files", 
 	fixture.receive({ ...file, channel: "other" });
 	fixture.receive({ ...file, token: {} });
 	assert.equal(fixture.replies.length, 0);
-	for (const patch of [
-		{ name: "../file" },
-		{ mime: "text/html\n" },
-		{ base64: "!bad" },
-		{ name: "" },
-		{ base64: "====" },
-	]) {
-		assert.equal(fixture.receive({ ...file, ...patch }).ok, false);
+	for (const value of [undefined, "not a file", {}, new Blob(["bytes"])]) {
+		assert.equal(fixture.receive({ ...file, file: value }).ok, false);
 	}
 	fixture.sessionState.update((value) => ({ ...value, busy: true }));
 	assert.match(fixture.receive(file).error, /busy/);
@@ -256,12 +250,11 @@ test("receiver rejects setup, mutation, foreign messages, and malformed files", 
 	assert.equal(fixture.uploads.length, 0);
 });
 
-test("receiver checks the decoded size before allocating a file", (t) => {
+test("receiver checks file size without reading its bytes", (t) => {
 	const fixture = app(t);
 	assert.equal(MAX_FILE_BYTES, WEB_MAX_FILE_BYTES);
-	// This encoding fits the maximum encoded length but decodes to limit + 1.
-	const tooLarge = "A".repeat(4 * Math.ceil(MAX_FILE_BYTES / 3));
-	assert.match(fixture.receive({ ...file, base64: tooLarge }).error, /32 MB/);
+	const tooLarge = new File([new Uint8Array(MAX_FILE_BYTES + 1)], "large.bin");
+	assert.match(fixture.receive({ ...file, file: tooLarge }).error, /32 MB/);
 	assert.equal(fixture.uploads.length, 0);
 });
 
@@ -287,7 +280,7 @@ test("configuration and tab matching require the configured origin and path", ()
 	assert(!matchesApp(undefined, "https://clip.example/"));
 });
 
-test("capture preserves bytes across base64 chunks and sanitizes filenames", async () => {
+test("capture preserves bytes in a File and sanitizes its final filename", async () => {
 	const bytes = Uint8Array.from({ length: 50_001 }, (_, index) => index % 256);
 	const result = await fetchFile(
 		"https://media.example/a%2Fb.png",
@@ -302,9 +295,9 @@ test("capture preserves bytes across base64 chunks and sanitizes filenames", asy
 			});
 		},
 	);
-	assert.equal(result.name, "a_b.png");
-	assert.equal(result.mime, "image/png");
-	assert.deepEqual(Buffer.from(result.base64, "base64"), Buffer.from(bytes));
+	assert.equal(result.name, "a b.png");
+	assert.equal(result.type, "image/png");
+	assert.deepEqual(Buffer.from(await result.arrayBuffer()), Buffer.from(bytes));
 });
 
 test("capture rejects overflow, HTTP errors, and read failures and cancels streams", async () => {
@@ -361,6 +354,10 @@ function extensionBrowser(tabs) {
 		calls,
 		runtime: { id: "i2nclip@i2n" },
 		tabs: {
+			sendMessage: async (tabId, message) => {
+				calls.push([message.request.type, tabId]);
+				return { ok: true };
+			},
 			query: async (query) => {
 				calls.push(["query", query.url]);
 				return tabs;
@@ -383,10 +380,7 @@ function extensionBrowser(tabs) {
 			update: async (id) => calls.push(["window", id]),
 		},
 		scripting: {
-			executeScript: async ({ target, args }) => {
-				calls.push([args[0].request.type, target.tabId]);
-				return [{ result: { ok: true } }];
-			},
+			executeScript: async () => [],
 		},
 	};
 }
@@ -441,9 +435,7 @@ test("extension does not fetch on rejection or retry an uncertain handoff", asyn
 	]);
 	let fetched = 0;
 	let sent = 0;
-	browser.scripting.executeScript = async () => [
-		{ result: { ok: false, error: "Busy" } },
-	];
+	browser.tabs.sendMessage = async () => ({ ok: false, error: "Busy" });
 	const fetcher = async () => {
 		fetched++;
 		return new Response("photo");
@@ -458,20 +450,16 @@ test("extension does not fetch on rejection or retry an uncertain handoff", asyn
 		/Busy/,
 	);
 	assert.equal(fetched, 0);
-	browser.scripting.executeScript = async ({ args }) => {
-		if (args[0].request.type === "probe") {
-			return [{ result: { ok: true } }];
+	browser.tabs.sendMessage = async (_, { request }) => {
+		if (request.type === "probe") {
+			return { ok: true };
 		}
 		sent++;
-		return [
-			{
-				result: {
-					ok: false,
-					unavailable: true,
-					error: "Check the app before retrying.",
-				},
-			},
-		];
+		return {
+			ok: false,
+			unavailable: true,
+			error: "Check the app before retrying.",
+		};
 	};
 	await assert.rejects(
 		sendToApp(
@@ -491,15 +479,10 @@ test("focus follows the final locked receipt, including lock changes during fetc
 		const browser = extensionBrowser([
 			{ id: 3, windowId: 2, url: "https://clip.example/", status: "complete" },
 		]);
-		browser.scripting.executeScript = async ({ args }) => [
-			{
-				result: {
-					ok: true,
-					needsUnlock:
-						args[0].request.type === "probe" ? !needsUnlock : needsUnlock,
-				},
-			},
-		];
+		browser.tabs.sendMessage = async (_, { request }) => ({
+			ok: true,
+			needsUnlock: request.type === "probe" ? !needsUnlock : needsUnlock,
+		});
 		await sendToApp(
 			browser,
 			"https://clip.example/",
@@ -548,7 +531,7 @@ test("upload results notify success or failure without managing windows", async 
 	assert.equal(notifications.length, 2);
 });
 
-function injectedBridge(request = { type: "file", name: "Photo.png" }) {
+function injectedBridge(request = file) {
 	const listeners = new Map();
 	const window = {
 		addEventListener: (type, callback) => listeners.set(type, callback),
@@ -556,7 +539,8 @@ function injectedBridge(request = { type: "file", name: "Photo.png" }) {
 		postMessage() {},
 	};
 	const reported = [];
-	const inject = runInNewContext(`(${handoff.toString()})`, {
+	let receive;
+	const install = runInNewContext(`(${installBridge.toString()})`, {
 		window,
 		location: { origin: "https://clip.example", pathname: "/" },
 		URL,
@@ -564,13 +548,26 @@ function injectedBridge(request = { type: "file", name: "Photo.png" }) {
 		setTimeout,
 		clearTimeout,
 		browser: {
-			runtime: { sendMessage: async (message) => reported.push(message) },
+			runtime: {
+				id: "i2nclip@i2n",
+				onMessage: {
+					addListener: (listener) => {
+						receive = listener;
+					},
+				},
+				sendMessage: async (message) => reported.push(message),
+			},
 		},
 	});
-	const reply = inject({
-		appUrl: "https://clip.example/",
-		request,
-	});
+	install();
+	const reply = receive(
+		{
+			channel: "i2nclip-extension-v1",
+			appUrl: "https://clip.example/",
+			request,
+		},
+		{ id: "i2nclip@i2n" },
+	);
 	const emit = (type, result, token = "unique-request") =>
 		listeners.get("message")?.({
 			source: window,
@@ -712,11 +709,11 @@ test("capture passes the descriptive filename to the ordinary handoff", async ()
 		{ id: 3, windowId: 2, url: "https://clip.example/", status: "complete" },
 	]);
 	let delivered;
-	browser.scripting.executeScript = async ({ args }) => {
-		if (args[0].request.type === "file") {
-			delivered = args[0].request;
+	browser.tabs.sendMessage = async (_, { request }) => {
+		if (request.type === "file") {
+			delivered = request.file;
 		}
-		return [{ result: { ok: true, needsUnlock: false } }];
+		return { ok: true, needsUnlock: false };
 	};
 	await sendToApp(
 		browser,
@@ -727,8 +724,8 @@ test("capture passes the descriptive filename to the ordinary handoff", async ()
 		{ label: "A mountain portrait", title: "Page title" },
 	);
 	assert.equal(delivered.name, "A mountain portrait.png");
-	assert.equal(delivered.mime, "image/png");
-	assert.equal(Buffer.from(delivered.base64, "base64").toString(), "photo");
+	assert.equal(delivered.type, "image/png");
+	assert.equal(Buffer.from(await delivered.arrayBuffer()).toString(), "photo");
 });
 
 test("cancelled captures release bridge listeners without notifications", async () => {
