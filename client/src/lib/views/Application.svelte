@@ -79,7 +79,7 @@ onDestroy(() => {
 			</nav>
 		</header>
 		{#if page === "settings"}
-			<Settings {session} {pairing} />
+			<Settings {session} {pairing} {library} />
 		{:else}
 			<Library
 				{session}

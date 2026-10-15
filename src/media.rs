@@ -26,6 +26,7 @@ use crate::{auth, frame, Error, MAX_BODY, MAX_META_BODY};
 
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/quota", get(quota))
         .route("/api/media", get(list).post(upload))
         .route("/api/media/{id}", get(download).delete(remove))
         .route("/api/media/{id}/meta", get(metadata).put(update_metadata))
@@ -151,6 +152,17 @@ fn list_query(query: Option<&str>) -> Result<ListQuery, Error> {
         }
     }
     Ok((frame::parse_query_tokens(values)?, after))
+}
+
+async fn quota(State(state): State<AppState>, media: MediaRequest) -> Response {
+    let owner = match media.empty().await {
+        Ok(owner) => owner,
+        Err(response) => return *response,
+    };
+    match state.db.quota(owner).await {
+        Ok(quota) => json_response(StatusCode::OK, quota),
+        Err(error) => fail(error),
+    }
 }
 
 async fn list(State(state): State<AppState>, media: MediaRequest) -> Response {

@@ -13,6 +13,7 @@ The client generates its identity locally. The server registers only the public 
 | Method and path | Authentication/body | Success |
 | --- | --- | --- |
 | `GET /api/health` | None | `200`, `{"ok":true}` |
+| `GET /api/quota` | Signed empty GET | `200`, owner limits and usage |
 | `GET /api/ping` | Signed; empty body, registered key, fresh nonce | `204`, empty response; `401` if unauthorized |
 | `POST /api/register-key` | No signature; JSON `{"otc":"…","public_key":"…"}` | `204` |
 | `GET /api/media` | Signed; client sends no body | `200`, `{"media":[…],"next":null}` or a cursor |
@@ -117,3 +118,10 @@ Upload POSTs share four slots across owners in one server router. After authenti
 Content GETs use sixteen separate download slots per router, acquired after authentication and empty-body verification and before fetching content. Requests wait when all slots are occupied; saturation does not return `503`. Missing/unowned content returns `404` after capacity becomes available. There is currently no admission-wait or response-duration deadline. Responses send the fetched owned bytes in at most 64 KiB slices with Content-Length, retaining the permit through completion or disposal. Fetching releases its database connection before response draining. Full-buffer downloads are intentional. Cache behavior is unchanged.
 
 Nonce cleanup runs as part of the hourly maintenance task described above. Its strict `expires < now` boundary matches the request timestamp check; the post-insertion timestamp check protects delayed requests if cleanup has already removed an expired nonce.
+
+## Quota reads
+
+`GET /api/quota` requires the same signed empty-body policy as media reads. Its
+uncached JSON contains `max_content_bytes`, `max_files`, `used_content_bytes`,
+and `file_count` for the authenticated public key only. It reads the quota row
+without aggregating media, and spends the request nonce even when rejected.

@@ -274,6 +274,7 @@ mod request_tests {
         let meta = format!("{item}/meta");
         for (method, path) in [
             ("GET", "/api/ping"),
+            ("GET", "/api/quota"),
             ("GET", "/api/media"),
             ("POST", "/api/media"),
             ("GET", item.as_str()),

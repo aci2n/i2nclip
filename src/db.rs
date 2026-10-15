@@ -55,6 +55,14 @@ pub(crate) struct Item {
     pub tokens: Vec<String>,
 }
 
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct Quota {
+    pub max_content_bytes: i64,
+    pub max_files: i64,
+    pub used_content_bytes: i64,
+    pub file_count: i64,
+}
+
 pub(crate) enum MetadataUpdate {
     Updated(Item),
     Conflict(Item),
@@ -240,6 +248,19 @@ impl Database {
             return Err(Error::NotFound);
         }
         Ok(())
+    }
+
+    /// Read only the signed owner's quota; never scan media for usage.
+    pub(crate) async fn quota(&self, owner: [u8; 32]) -> Result<Quota, Error> {
+        let row = sqlx::query(
+            "SELECT max_content_bytes, max_files, used_content_bytes, file_count FROM key_quotas WHERE public_key = $1",
+        ).bind(owner.as_slice()).fetch_optional(&self.pool).await?.ok_or(Error::NotFound)?;
+        Ok(Quota {
+            max_content_bytes: row.try_get("max_content_bytes")?,
+            max_files: row.try_get("max_files")?,
+            used_content_bytes: row.try_get("used_content_bytes")?,
+            file_count: row.try_get("file_count")?,
+        })
     }
 
     /// Commit sealed content, metadata, and tags together. An existing hash conflicts.

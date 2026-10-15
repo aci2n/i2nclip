@@ -62,6 +62,9 @@ i2nclip key set-limits PUBLIC_KEY --max-bytes 536870912 --max-files 10000
 podman exec i2nclip i2nclip otc issue
 ```
 
+Settings → **Your library** shows storage and file usage. It refreshes when opened
+and after an upload batch finishes while Settings is open; failed reads offer Retry.
+
 Each key defaults to 512 MiB (536,870,912 bytes of encrypted content) and 10,000
 files. Invitations carry their chosen limits to newly registered keys. Registering
 an existing key again preserves its limits. Both limit flags are required for

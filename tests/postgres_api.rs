@@ -2009,3 +2009,97 @@ async fn quota_cli_invitation_and_http_upload_failures_work_together() {
             .unwrap();
     assert_eq!(defaults, (536_870_912, 10_000));
 }
+
+#[tokio::test]
+async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
+    let owner = new_identity();
+    let other = new_identity();
+    let stranger = new_identity();
+    let (dir, app) = app(&[&owner, &other]).await;
+    i2nclip::set_key_limits(
+        &dir.0,
+        &other.registration_key(),
+        i2nclip::StorageLimits {
+            max_content_bytes: 123,
+            max_files: 2,
+        },
+    )
+    .await
+    .unwrap();
+    let (status, bytes) = call(&app, &owner, "GET", "/api/quota", vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+        serde_json::json!({
+            "max_content_bytes": 536870912, "max_files": 10000, "used_content_bytes": 0, "file_count": 0,
+        })
+    );
+    let content = [1; 29];
+    let body = client_crypto::encode_post(&[1; 29], &content, "");
+    assert_eq!(
+        call(&app, &owner, "POST", "/api/media", body).await.0,
+        StatusCode::CREATED
+    );
+    let (status, bytes) = call(&app, &other, "GET", "/api/quota?owner=ignored", vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+        serde_json::json!({
+            "max_content_bytes": 123, "max_files": 2, "used_content_bytes": 0, "file_count": 0,
+        })
+    );
+    assert_eq!(
+        call(&app, &stranger, "GET", "/api/quota", vec![]).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&app, &owner, "GET", "/api/quota", vec![1]).await.0,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    let authorization = client_crypto::authorization(
+        &owner,
+        "http://i2nclip.test",
+        crypto::now_secs(),
+        &client_crypto::fresh_nonce(),
+        "GET",
+        "/api/quota",
+        b"",
+    );
+    for status in [StatusCode::OK, StatusCode::UNAUTHORIZED] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/quota")
+                    .header("authorization", &authorization)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        if status == StatusCode::OK {
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let quota: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(quota["used_content_bytes"], 29);
+            assert_eq!(quota["file_count"], 1);
+        }
+    }
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "DELETE",
+            &format!("/api/media/{}", crypto::body_hash(&content)),
+            vec![]
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let (_, bytes) = call(&app, &owner, "GET", "/api/quota", vec![]).await;
+    let quota: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(quota["used_content_bytes"], 0);
+    assert_eq!(quota["file_count"], 0);
+}

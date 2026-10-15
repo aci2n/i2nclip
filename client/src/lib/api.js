@@ -86,6 +86,18 @@ export async function upload({
 	};
 }
 
+export async function getQuota({ serverUrl, privateKey, signal }) {
+	return send(
+		serverUrl,
+		await loadKey(privateKey),
+		"GET",
+		"/api/quota",
+		new Uint8Array(),
+		undefined,
+		signal,
+	);
+}
+
 export async function list({ serverUrl, privateKey, tags, after, signal }) {
 	const key = await loadKey(privateKey);
 	const tokens = tags ? await tagTokens(key, tags) : [];

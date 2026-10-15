@@ -1,10 +1,28 @@
 <script>
+import { onDestroy, untrack } from "svelte";
+import { fileSize } from "../media/format.js";
+import { createQuota } from "../stores/quota.js";
 import PairingSend from "../components/PairingSend.svelte";
 import PasswordSettings from "../components/PasswordSettings.svelte";
 import RecoveryExport from "../components/RecoveryExport.svelte";
 import Setup from "./Setup.svelte";
 
-let { session, pairing } = $props();
+let { session, pairing, library } = $props();
+const quota = untrack(() => createQuota(session));
+onDestroy(quota.dispose);
+const quotaContext = $derived(
+	$session.configured &&
+		$session.unlocked &&
+		!$session.busy &&
+		!$library.uploading
+		? $session.epoch
+		: null,
+);
+$effect(() => {
+	if (quotaContext !== null) {
+		quota.refresh();
+	}
+});
 let feedback = $state({ scope: "", text: "", error: false });
 const busy = $derived($session.busy || $pairing.active);
 async function action(scope, work, success) {
@@ -20,6 +38,25 @@ async function action(scope, work, success) {
 		<section class="panel stack">
 			<h2>Your library</h2>
 			<p class="address">{$session.serverUrl}</p>
+			<section class="usage" aria-label="Library usage">
+				{#if $quota.loading}
+					<p role="status">Loading usage…</p>
+				{:else if $quota.error}
+					<p role="alert" class="error">Unable to load usage: {$quota.error}</p>
+					<button type="button" class="secondary" onclick={quota.refresh}>
+						Retry
+					</button>
+				{:else if $quota.value}
+					<p>
+						Storage: {fileSize($quota.value.used_content_bytes)} of
+						{fileSize($quota.value.max_content_bytes)}
+					</p>
+					<p>
+						Files: {$quota.value.file_count.toLocaleString()} of
+						{$quota.value.max_files.toLocaleString()}
+					</p>
+				{/if}
+			</section>
 			<p>
 				Keep your recovery file and its password safe. Your master password
 				protects this client.
@@ -95,6 +132,12 @@ async function action(scope, work, success) {
 .settings {
 	max-width: 42rem;
 	margin: auto;
+}
+.usage {
+	display: grid;
+	gap: 0.5rem;
+	justify-items: start;
+	overflow-wrap: anywhere;
 }
 .address {
 	overflow-wrap: anywhere;

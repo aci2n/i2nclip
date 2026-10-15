@@ -4,6 +4,7 @@ import test from "node:test";
 import {
 	getContent,
 	getMetadata,
+	getQuota,
 	isKeyRegistered,
 	list,
 	MAX_FILE_BYTES,
@@ -365,5 +366,32 @@ test("HTTP failures expose status without changing their error message", async (
 			id: "a".repeat(64),
 		}),
 		(error) => error.status === 404 && error.message === "not found",
+	);
+});
+
+test("quota uses a signed empty GET and carries cancellation", async (t) => {
+	const { privateKey } = await generatePrivateKey();
+	const controller = new AbortController();
+	const usage = {
+		max_content_bytes: 536870912,
+		max_files: 10000,
+		used_content_bytes: 0,
+		file_count: 0,
+	};
+	t.mock.method(globalThis, "fetch", async (url, options) => {
+		assert.equal(String(url), "https://clip.example/api/quota");
+		assert.equal(options.method, "GET");
+		assert.equal(options.body, undefined);
+		assert(options.headers.authorization.startsWith("Bearer "));
+		assert.equal(options.signal, controller.signal);
+		return Response.json(usage);
+	});
+	assert.deepEqual(
+		await getQuota({
+			serverUrl: "https://clip.example",
+			privateKey,
+			signal: controller.signal,
+		}),
+		usage,
 	);
 });
