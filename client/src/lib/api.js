@@ -10,7 +10,6 @@ import {
 	decrypt,
 	encrypt,
 	freshNonce,
-	loadKey,
 	metaAad,
 	tagTokens,
 } from "./protocol/crypto.js";
@@ -28,7 +27,7 @@ const MAX_ENCRYPTED_FILE_BYTES = MAX_FILE_BYTES + 64;
 
 export async function upload({
 	serverUrl,
-	privateKey,
+	key,
 	bytes,
 	name,
 	contentType,
@@ -42,7 +41,6 @@ export async function upload({
 	if (bytes.length > MAX_FILE_BYTES) {
 		throw new Error("File is larger than 32 MB.");
 	}
-	const key = await loadKey(privateKey);
 	const metadata = {
 		...extra,
 		name: cleanName(name),
@@ -86,10 +84,10 @@ export async function upload({
 	};
 }
 
-export async function getQuota({ serverUrl, privateKey, signal }) {
+export async function getQuota({ serverUrl, key, signal }) {
 	return send(
 		serverUrl,
-		await loadKey(privateKey),
+		key,
 		"GET",
 		"/api/quota",
 		new Uint8Array(),
@@ -98,8 +96,7 @@ export async function getQuota({ serverUrl, privateKey, signal }) {
 	);
 }
 
-export async function list({ serverUrl, privateKey, tags, after, signal }) {
-	const key = await loadKey(privateKey);
+export async function list({ serverUrl, key, tags, after, signal }) {
 	const tokens = tags ? await tagTokens(key, tags) : [];
 	const params = new URLSearchParams();
 	for (const token of tokens) {
@@ -126,8 +123,7 @@ export async function list({ serverUrl, privateKey, tags, after, signal }) {
 	return { items, next: page.next || null };
 }
 
-export async function getMetadata({ serverUrl, privateKey, id, signal }) {
-	const key = await loadKey(privateKey);
+export async function getMetadata({ serverUrl, key, id, signal }) {
 	const item = await send(
 		serverUrl,
 		key,
@@ -140,14 +136,7 @@ export async function getMetadata({ serverUrl, privateKey, id, signal }) {
 	return { ...(await openMeta(key, item)), tokens: item.tokens };
 }
 
-export async function getContent({
-	serverUrl,
-	privateKey,
-	id,
-	onProgress,
-	signal,
-}) {
-	const key = await loadKey(privateKey);
+export async function getContent({ serverUrl, key, id, onProgress, signal }) {
 	const blob = await sendBytes(
 		serverUrl,
 		key,
@@ -165,14 +154,13 @@ export async function getContent({
 
 export async function updateMetadata({
 	serverUrl,
-	privateKey,
+	key,
 	id,
 	metadata,
 	thumb,
 	prevMetaHash,
 	signal,
 }) {
-	const key = await loadKey(privateKey);
 	const tokens = await tagTokens(key, metadata.tags ?? []);
 	const { meta } = await sealedMetadata(key, id, metadata, thumb);
 	const body = encodeMeta({
@@ -214,8 +202,7 @@ export async function updateMetadata({
 	};
 }
 
-export async function remove({ serverUrl, privateKey, id, signal }) {
-	const key = await loadKey(privateKey);
+export async function remove({ serverUrl, key, id, signal }) {
 	await sendBytes(
 		serverUrl,
 		key,
@@ -247,10 +234,10 @@ export async function registerKey({ serverUrl, publicKey, otc, signal }) {
 }
 
 // A signed read proves registration without spending another invitation.
-export async function isKeyRegistered({ serverUrl, privateKey, signal }) {
+export async function isKeyRegistered({ serverUrl, key, signal }) {
 	const response = await signedFetch(
 		serverUrl,
-		await loadKey(privateKey),
+		key,
 		"GET",
 		"/api/ping",
 		new Uint8Array(),

@@ -360,6 +360,7 @@ function fixture(t, receiverImport, options = {}) {
 				const loaded = await loadKey(expected.privateKey);
 				return action({
 					privateKey: expected.privateKey,
+					key: loaded,
 					publicKey: loaded.registrationKey,
 				});
 			},

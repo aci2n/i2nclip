@@ -23,9 +23,11 @@ test("portable recovery preserves content decryption, normalized tags and public
 	);
 	assert(!text.includes(JSON.parse(created.privateKey).seed));
 	await assert.rejects(openRecovery(text, "wrong"), /Wrong password/);
-	const recovered = await openRecovery(text, "test password");
+	const { identity: recovered, key: restored } = await openRecovery(
+		text,
+		"test password",
+	);
 	assert.deepEqual(Object.keys(recovered).sort(), ["privateKey", "serverUrl"]);
-	const restored = await loadKey(recovered.privateKey);
 	assert.equal(restored.registrationKey, original.registrationKey);
 	assert.equal(
 		await tagToken(restored, "vacation"),

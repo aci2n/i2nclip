@@ -43,7 +43,7 @@ test("registration checks use a signed empty ping, distinguish unauthorized keys
 	});
 	const credentials = {
 		serverUrl: "https://clip.example",
-		privateKey: key.privateKey,
+		key: await loadKey(key.privateKey),
 	};
 	assert.equal(await isKeyRegistered(credentials), true);
 	status = 401;
@@ -74,7 +74,7 @@ for (const [body, contentType, message] of [
 		);
 		const settings = {
 			serverUrl: "https://clip.example.com",
-			privateKey,
+			key: await loadKey(privateKey),
 			id: "test",
 		};
 		for (const request of [
@@ -121,7 +121,7 @@ test("upload progress uses the same response handling as fetch", async (t) => {
 	const progress = [];
 	const result = await upload({
 		serverUrl: "https://clip.example.com",
-		privateKey,
+		key: await loadKey(privateKey),
 		bytes: new Uint8Array([1, 2, 3]),
 		name: "sample.bin",
 		tags: [" Vacation, dog ", "Cat"],
@@ -162,7 +162,7 @@ test("downloaded encrypted content is capped before buffering", async (t) => {
 	await assert.rejects(
 		getContent({
 			serverUrl: "https://clip.example.com",
-			privateKey,
+			key: await loadKey(privateKey),
 			id: "test",
 		}),
 		/larger than 32 MB/,
@@ -191,7 +191,7 @@ test("reencrypting an upload uses fresh sealed content after a lost response", a
 	});
 	const options = {
 		serverUrl: "https://clip.example",
-		privateKey,
+		key: await loadKey(privateKey),
 		bytes: new Uint8Array([1]),
 		name: "file",
 		tags: [],
@@ -209,7 +209,7 @@ test("content hashes are checked before decryption", async (t) => {
 	const plain = new Uint8Array([1, 2, 3]);
 	const content = await encrypt(key, contentAad(), plain);
 	t.mock.method(globalThis, "fetch", async () => new Response(content));
-	const options = { serverUrl: "https://clip.example", privateKey };
+	const options = { serverUrl: "https://clip.example", key };
 	await assert.rejects(
 		getContent({ ...options, id: "0".repeat(64) }),
 		/Content hash mismatch/,
@@ -283,7 +283,7 @@ test("metadata GET and PUT sign the meta route and preserve decrypted fields", a
 	});
 	const credentials = {
 		serverUrl: "https://clip.example",
-		privateKey,
+		key: await loadKey(privateKey),
 		id,
 		signal: controller.signal,
 	};
@@ -325,7 +325,7 @@ test("undecryptable metadata is returned without an editable payload", async (t)
 	);
 	const item = await getMetadata({
 		serverUrl: "https://clip.example",
-		privateKey,
+		key: await loadKey(privateKey),
 		id: "a".repeat(64),
 	});
 	assert.equal(item.metadata, null);
@@ -343,7 +343,7 @@ test("Node uploads with progress callbacks fall back to fetch", async (t) => {
 	});
 	await upload({
 		serverUrl: "https://clip.example",
-		privateKey,
+		key: await loadKey(privateKey),
 		bytes: new Uint8Array([1]),
 		name: "file",
 		tags: [],
@@ -362,7 +362,7 @@ test("HTTP failures expose status without changing their error message", async (
 	await assert.rejects(
 		getMetadata({
 			serverUrl: "https://clip.example",
-			privateKey,
+			key: await loadKey(privateKey),
 			id: "a".repeat(64),
 		}),
 		(error) => error.status === 404 && error.message === "not found",
@@ -389,7 +389,7 @@ test("quota uses a signed empty GET and carries cancellation", async (t) => {
 	assert.deepEqual(
 		await getQuota({
 			serverUrl: "https://clip.example",
-			privateKey,
+			key: await loadKey(privateKey),
 			signal: controller.signal,
 		}),
 		usage,

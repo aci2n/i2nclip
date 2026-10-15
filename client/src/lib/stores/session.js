@@ -1,7 +1,6 @@
 import { get, writable } from "svelte/store";
 import * as api from "../api.js";
 import { createPersistence } from "../persistence.js";
-import { loadKey } from "../protocol/crypto.js";
 import { generatePrivateKey } from "../protocol/identity.js";
 import {
 	exportRecovery,
@@ -18,6 +17,7 @@ export function createSession({
 	defaultServerUrl = globalThis.location?.origin || "http://localhost:8080",
 } = {}) {
 	let identity = null;
+	let key = null;
 	let controller = new AbortController();
 	let epoch = 0;
 	let disposed = false;
@@ -81,17 +81,17 @@ export function createSession({
 		}
 	}
 	async function apply(value, signal) {
-		const next = value ? await validateIdentity(value) : null;
-		const loaded = next ? await loadKey(next.privateKey) : null;
+		const next = value?.identity || null;
 		signal.throwIfAborted();
 		await persistence.save(next);
 		signal.throwIfAborted();
 		invalidate();
 		identity = next;
+		key = value?.key || null;
 		publish({
 			status: "unlocked",
 			unlocked: true,
-			publicKey: loaded?.registrationKey || "",
+			publicKey: key?.registrationKey || "",
 			busy: false,
 			error: "",
 		});
@@ -110,7 +110,7 @@ export function createSession({
 			if (!identity || !get(state).unlocked || get(state).busy || disposed) {
 				throw new Error("Unlock your library first.");
 			}
-			return { serverUrl: identity.serverUrl, privateKey: identity.privateKey };
+			return { serverUrl: identity.serverUrl, key };
 		},
 		async withIdentity(operation, work) {
 			if (!context.owns(operation)) {
@@ -119,6 +119,7 @@ export function createSession({
 			operation.signal.throwIfAborted();
 			const result = await work({
 				...session.credentials(),
+				privateKey: identity.privateKey,
 				publicKey: get(state).publicKey,
 			});
 			operation.signal.throwIfAborted();
@@ -134,19 +135,20 @@ export function createSession({
 			action(async (signal) => {
 				const value = await persistence.unlock(password);
 				const next = value ? await validateIdentity(value) : null;
-				const loaded = next ? await loadKey(next.privateKey) : null;
 				signal.throwIfAborted();
-				identity = next;
+				identity = next?.identity || null;
+				key = next?.key || null;
 				publish({
 					status: "unlocked",
 					unlocked: true,
-					publicKey: loaded?.registrationKey || "",
+					publicKey: key?.registrationKey || "",
 				});
 			}),
 		lock() {
 			invalidate();
 			persistence.lock();
 			identity = null;
+			key = null;
 			publish({
 				status: "locked",
 				unlocked: false,
@@ -165,10 +167,9 @@ export function createSession({
 				checkServer(serverUrl);
 				const { privateKey } = await generatePrivateKey();
 				const next = await validateIdentity({ serverUrl, privateKey });
-				const key = await loadKey(privateKey);
 				await http.registerKey({
-					serverUrl: next.serverUrl,
-					publicKey: key.registrationKey,
+					serverUrl: next.identity.serverUrl,
+					publicKey: next.key.registrationKey,
 					otc,
 					signal,
 				});
@@ -186,7 +187,13 @@ export function createSession({
 				}
 				const next = await openRecovery(await file.text(), password);
 				signal.throwIfAborted();
-				if (!(await http.isKeyRegistered({ ...next, signal }))) {
+				if (
+					!(await http.isKeyRegistered({
+						serverUrl: next.identity.serverUrl,
+						key: next.key,
+						signal,
+					}))
+				) {
 					throw new Error("This identity is not registered on the server.");
 				}
 				return apply(next, signal);
@@ -198,18 +205,12 @@ export function createSession({
 						"A library is already configured or the client is locked.",
 					);
 				}
-				const loaded = await loadKey(value.privateKey);
-				if (loaded.registrationKey !== value.publicKey) {
+				const next = await validateIdentity(value);
+				if (next.key.registrationKey !== value.publicKey) {
 					throw new Error("Invalid paired identity.");
 				}
 				value.signal?.throwIfAborted();
-				return apply(
-					{
-						serverUrl: value.serverUrl,
-						privateKey: value.privateKey,
-					},
-					AbortSignal.any([signal, value.signal]),
-				);
+				return apply(next, AbortSignal.any([signal, value.signal]));
 			});
 			return success
 				? context.operation({
@@ -232,6 +233,7 @@ export function createSession({
 				persistence.reset();
 				invalidate();
 				identity = null;
+				key = null;
 				publish({
 					status: "new",
 					unlocked: false,
@@ -272,6 +274,7 @@ export function createSession({
 			invalidate();
 			persistence.lock();
 			identity = null;
+			key = null;
 			publish({
 				status: "locked",
 				unlocked: false,

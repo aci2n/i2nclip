@@ -59,23 +59,44 @@ export function parseTagList(text) {
  */
 export async function loadKey(privateKey) {
 	const parsed = parsePrivateKey(privateKey);
-	const { privateCryptoKey } = await materialFromSeed(
-		parsed.seed,
-		parsed.publicKey,
-	);
-	return {
-		privateCryptoKey,
-		publicKey: parsed.publicKey,
-		registrationKey: bytesToB64url(parsed.publicKey),
-		seed: parsed.seed,
-	};
+	try {
+		const { privateCryptoKey } = await materialFromSeed(
+			parsed.seed,
+			parsed.publicKey,
+		);
+		const encryptionKey = await crypto.subtle.importKey(
+			"raw",
+			await hkdf(parsed.seed, "enc"),
+			"AES-GCM",
+			false,
+			["encrypt", "decrypt"],
+		);
+		const tagKey = await crypto.subtle.importKey(
+			"raw",
+			await hkdf(parsed.seed, "tag"),
+			{ name: "HMAC", hash: "SHA-256" },
+			false,
+			["sign"],
+		);
+		return Object.freeze({
+			privateCryptoKey,
+			encryptionKey,
+			tagKey,
+			publicKey: parsed.publicKey,
+			registrationKey: bytesToB64url(parsed.publicKey),
+		});
+	} finally {
+		parsed.seed.fill(0);
+	}
 }
 
 export async function tagToken(key, tag) {
-	const seed = await seedOf(key);
-	const raw = await hmac(
-		await hkdf(seed, "tag"),
-		utf8(`tag\n${normalizeTag(tag)}`),
+	const raw = new Uint8Array(
+		await crypto.subtle.sign(
+			"HMAC",
+			key.tagKey,
+			utf8(`tag\n${normalizeTag(tag)}`),
+		),
 	);
 	return bytesToB64url(raw);
 }
@@ -93,19 +114,11 @@ export async function tagTokens(key, tags) {
 
 /** version byte || 12-byte nonce || AES-GCM ciphertext (tag appended). */
 export async function encrypt(key, aad, plaintext, nonce) {
-	const seed = await seedOf(key);
 	const iv = nonce ?? crypto.getRandomValues(new Uint8Array(12));
-	const aes = await crypto.subtle.importKey(
-		"raw",
-		await hkdf(seed, "enc"),
-		"AES-GCM",
-		false,
-		["encrypt"],
-	);
 	const ct = new Uint8Array(
 		await crypto.subtle.encrypt(
 			{ name: "AES-GCM", iv, additionalData: aad },
-			aes,
+			key.encryptionKey,
 			plaintext,
 		),
 	);
@@ -120,20 +133,12 @@ export async function decrypt(key, aad, blob) {
 	if (blob.length < 1 + 12 + 16 || blob[0] !== 1) {
 		throw new Error("crypto");
 	}
-	const seed = await seedOf(key);
 	const iv = blob.subarray(1, 13);
 	const ct = blob.subarray(13);
-	const aes = await crypto.subtle.importKey(
-		"raw",
-		await hkdf(seed, "enc"),
-		"AES-GCM",
-		false,
-		["decrypt"],
-	);
 	return new Uint8Array(
 		await crypto.subtle.decrypt(
 			{ name: "AES-GCM", iv, additionalData: aad },
-			aes,
+			key.encryptionKey,
 			ct,
 		),
 	);
@@ -162,12 +167,9 @@ export async function authorizationHeader({
 	path,
 	body,
 }) {
-	const loaded = key.privateCryptoKey
-		? key
-		: await loadKey(key.privateKey ?? key);
 	const hash = await bodyHash(body);
 	const request = requestMessage({ origin, ts, nonce, method, path, hash });
-	const { privateCryptoKey, publicKey } = loaded;
+	const { privateCryptoKey, publicKey } = key;
 	const signature = new Uint8Array(
 		await crypto.subtle.sign({ name: "Ed25519" }, privateCryptoKey, request),
 	);
@@ -176,16 +178,6 @@ export async function authorizationHeader({
 
 export function freshNonce() {
 	return bytesToB64url(crypto.getRandomValues(new Uint8Array(16)));
-}
-
-async function seedOf(key) {
-	if (key instanceof Uint8Array) {
-		return key;
-	}
-	if (key.seed) {
-		return key.seed;
-	}
-	return (await loadKey(key.privateKey ?? key)).seed;
 }
 
 async function materialFromSeed(seed, publicKey) {
@@ -242,15 +234,4 @@ async function hkdf(seed, info) {
 			256,
 		),
 	);
-}
-
-async function hmac(keyBytes, data) {
-	const key = await crypto.subtle.importKey(
-		"raw",
-		keyBytes,
-		{ name: "HMAC", hash: "SHA-256" },
-		false,
-		["sign"],
-	);
-	return new Uint8Array(await crypto.subtle.sign("HMAC", key, data));
 }

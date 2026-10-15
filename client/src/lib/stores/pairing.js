@@ -275,7 +275,7 @@ export function createPairing(session, services = {}) {
 					(identity) => identity,
 				);
 				check(current);
-				const room = await current.relay.create(credentials.privateKey);
+				const room = await current.relay.create(credentials.key);
 				attach(current, room, room.id);
 				const secret = pairingSecret();
 				await call(current, "senderSetup", {

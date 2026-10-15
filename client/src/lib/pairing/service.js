@@ -1,9 +1,5 @@
 import { utf8 } from "../protocol/bytes.js";
-import {
-	authorizationHeader,
-	freshNonce,
-	loadKey,
-} from "../protocol/crypto.js";
+import { authorizationHeader, freshNonce } from "../protocol/crypto.js";
 import { pairingContext, pairingOrigin } from "../protocol/pairing.js";
 
 const MAX_BODY = 16_384;
@@ -120,16 +116,16 @@ export async function readPairingResponse(response) {
 
 export function pairingRelay(serverUrl, signal) {
 	const origin = pairingOrigin(serverUrl);
-	async function request(method, path, payload, capability, privateKey) {
+	async function request(method, path, payload, capability, key) {
 		const body =
 			payload === undefined ? undefined : utf8(JSON.stringify(payload));
 		if (body?.length > MAX_BODY) {
 			throw new Error("Pairing message is too large.");
 		}
 		let authorization;
-		if (privateKey) {
+		if (key) {
 			authorization = await authorizationHeader({
-				key: await loadKey(privateKey),
+				key,
 				origin,
 				ts: Math.floor(Date.now() / 1000),
 				nonce: freshNonce(),
@@ -193,8 +189,7 @@ export function pairingRelay(serverUrl, signal) {
 	}
 	return {
 		origin,
-		create: (privateKey) =>
-			request("POST", "/api/pairings", { v: 1 }, null, privateKey),
+		create: (key) => request("POST", "/api/pairings", { v: 1 }, null, key),
 		join: (id, message) =>
 			request("POST", `/api/pairings/${id}/join`, { message }),
 		poll: (room) =>

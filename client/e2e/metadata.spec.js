@@ -16,7 +16,8 @@ test("generic encrypted metadata updates rename downloads and preserve file cont
 }) => {
 	await createLibrary(page, app);
 	const manifest = await recovery(page);
-	const credentials = await openRecovery(manifest.toString(), PASSWORD);
+	const { identity, key } = await openRecovery(manifest.toString(), PASSWORD);
+	const credentials = { serverUrl: identity.serverUrl, key };
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const image = await imageFixture(page, "Original panorama.png", 1920, 320);
 	await page.getByLabel("Upload", { exact: true }).setInputFiles(image);

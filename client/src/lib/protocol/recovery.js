@@ -1,10 +1,11 @@
 import { utf8 } from "./bytes.js";
 import { loadKey } from "./crypto.js";
+import { parsePrivateKey } from "./identity.js";
 import { passwordOpen, passwordSeal } from "./password.js";
 import { checkServer } from "./server.js";
 
 export const MAX_RECOVERY_BYTES = 1024 * 1024;
-export async function validateIdentity(identity) {
+function identityDocument(identity) {
 	if (
 		!identity ||
 		typeof identity.privateKey !== "string" ||
@@ -13,17 +14,21 @@ export async function validateIdentity(identity) {
 		throw new Error("Invalid library identity.");
 	}
 	checkServer(identity.serverUrl);
-	await loadKey(identity.privateKey);
+	parsePrivateKey(identity.privateKey);
 	return {
 		serverUrl: new URL(identity.serverUrl).origin,
 		privateKey: identity.privateKey,
 	};
 }
+export async function validateIdentity(value) {
+	const identity = identityDocument(value);
+	return { identity, key: await loadKey(identity.privateKey) };
+}
 export async function exportRecovery(identity, password) {
 	if (password.length < 8) {
 		throw new Error("Recovery password must be at least 8 characters.");
 	}
-	const value = await validateIdentity(identity);
+	const value = identityDocument(identity);
 	return JSON.stringify(
 		{
 			format: "i2nclip-recovery",

@@ -12,6 +12,9 @@ test("generated identities load and mismatched public keys are rejected", async 
 	const key = await loadKey(first.privateKey);
 	assert.equal(key.registrationKey, first.publicKey);
 	assert.equal(key.privateCryptoKey.extractable, false);
+	assert.equal(key.encryptionKey.extractable, false);
+	assert.equal(key.tagKey.extractable, false);
+	assert.equal(Object.hasOwn(key, "seed"), false);
 	assert.equal(parsePrivateKey(first.privateKey).seed.length, 32);
 	const mismatched = {
 		...JSON.parse(first.privateKey),

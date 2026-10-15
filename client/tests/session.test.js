@@ -151,3 +151,20 @@ test("unavailable browser storage is reported without crashing initialization", 
 	assert.equal(get(session).status, "locked");
 	assert.match(get(session).error, /access denied/);
 });
+
+test("an unlocked session reuses its crypto context and replaces it after locking", async (t) => {
+	const f = await fixture(t, { registerKey: async () => {} });
+	await f.session.create({ serverUrl, otc: "invite" });
+	const first = f.session.credentials();
+	assert.equal(first.key, f.session.credentials().key);
+	assert.equal(Object.hasOwn(first, "privateKey"), false);
+	assert.equal(first.key.registrationKey, get(f.session).publicKey);
+	f.session.lock();
+	assert.throws(() => f.session.credentials(), /Unlock/);
+	assert.equal(await f.session.unlock(password), true);
+	const next = f.session.credentials();
+	assert.notEqual(next.key, first.key);
+	assert.equal(next.key.registrationKey, first.key.registrationKey);
+	assert.equal(await f.session.forget(), true);
+	assert.throws(() => f.session.credentials(), /Unlock/);
+});
