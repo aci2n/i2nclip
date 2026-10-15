@@ -29,6 +29,6 @@ Pairing uses isolated OPAQUE attempts, explicit verification, and the relay API.
 
 ## Verification
 
-`npm test` runs unit tests; `npm run check` runs the Svelte checker; `npm run lint` and `npm run format:check` provide static checks. `make test-build` and `npm run test:build` build and inspect the web and unpacked extension directories.
+`npm test` runs unit tests; `npm run check` runs Biome checks (lint, formatting, and import organization) and the Svelte checker. `npm run fix` applies Biome fixes. Both fail on warnings. `make test-build` and `npm run test:build` build and inspect the web and unpacked extension directories.
 
 `npm run e2e` builds the web app and runs Firefox and Chromium against isolated Rust web/API listeners bound atomically to loopback port 0. It builds the Rust helper executables before launching tests. Set `I2N_TEST_DATABASE_URL` to a disposable PostgreSQL administrator connection, or use root `make test-e2e` to provision one. Tests use the browser UI without runtime shims or private-state hooks. Screenshots use per-test output directories under ignored `e2e/shots/`. See [the test pipeline](../doc/test-pipeline.md).

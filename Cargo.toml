@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 description = "Encrypted media store. The server keeps ciphertext and public keys."
 
+[lints.rust]
+unused_qualifications = "warn"
+
 [dependencies]
 # HTTP framework. Handlers look a bit like small servlet methods.
 axum = "0.8"

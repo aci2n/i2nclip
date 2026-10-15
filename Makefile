@@ -8,6 +8,9 @@ COMPOSE ?= podman compose
 DEV_PORT ?= 8080
 DEV_DB_PORT ?= 5432
 DEV_ORIGIN ?= http://localhost:$(DEV_PORT)
+# Import policy uses CLI options supported by stable rustfmt 1.10.0.
+RUSTFMT_CONFIG := imports_granularity=Crate,group_imports=StdExternalCrate
+
 DEV_DB_URL ?= postgresql://i2nclip:i2nclip-dev@127.0.0.1:$(DEV_DB_PORT)/i2nclip?sslmode=disable
 # Bound case-level concurrency without limiting concurrency inside a test.
 export RUST_TEST_THREADS ?= 4
@@ -106,17 +109,16 @@ test-all:
 # Rust/JavaScript static analysis and all formatting checks.
 lint:
 	cargo clippy --all-targets --all-features -- -D warnings
-	$(MAKE) -C client lint
+	$(MAKE) -C client check
 
-# Check Rust and client formatting without changing source files.
+# Check Rust formatting; Biome formatting and imports are covered by lint.
 format-check:
-	cargo fmt --all -- --check
-	$(MAKE) -C client format-check
+	cargo fmt --all -- --check --config $(RUSTFMT_CONFIG)
 
 # Apply Rust and client formatting, then run the repository lint checks.
 format-write:
-	cargo fmt --all
-	$(MAKE) -C client format-write
+	cargo fmt --all -- --config $(RUSTFMT_CONFIG)
+	$(MAKE) -C client fix
 
 # Run before committing: format files, apply Biome fixes, then check lint and formatting.
 pre-commit:

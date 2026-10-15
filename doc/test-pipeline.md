@@ -30,7 +30,7 @@ Browser startup is prepared before scenario execution. Screenshots use Playwrigh
 
 ## Fresh clone
 
-Prerequisites are Rust/Cargo, Node 22.23.3 from `client/.nvmrc`, npm, and Docker or rootless Podman API access. PostgreSQL image downloads and browser downloads need network access. Firefox/Chromium system libraries must be installed; on supported Linux distributions, `cd client && npx playwright install --with-deps firefox chromium` installs them after `npm ci` and may require administrator privileges.
+Prerequisites are Rust/Cargo 1.99.0 with rustfmt 1.10.0 and Clippy, Node 22.23.3 from `client/.nvmrc`, npm, and Docker or rootless Podman API access. PostgreSQL image downloads and browser downloads need network access. Firefox/Chromium system libraries must be installed; on supported Linux distributions, `cd client && npx playwright install --with-deps firefox chromium` installs them after `npm ci` and may require administrator privileges.
 
 ```sh
 git clone <repository-url> i2nclip

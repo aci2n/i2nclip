@@ -25,6 +25,9 @@
 			},
 			"suspicious": {
 				"noVar": "error"
+			},
+			"correctness": {
+				"noUnusedImports": "error"
 			}
 		}
 	},
@@ -32,6 +35,13 @@
 		"experimentalFullSupportEnabled": true,
 		"formatter": {
 			"enabled": true
+		}
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
 		}
 	}
 }

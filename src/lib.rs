@@ -27,7 +27,6 @@ use axum::Router;
 use tokio::net::TcpListener;
 
 use crate::{db::Database, pairing::Pairings, permits::Permits};
-
 pub use crate::{db::DEFAULT_REGISTRATION_TTL_SECS, error::Error};
 
 /// Fixed listen address. Publish a host port onto 8080 instead of configuring this.
@@ -106,7 +105,7 @@ pub async fn issue_registration_otc(
     limits: StorageLimits,
 ) -> Result<String, Error> {
     limits.validate()?;
-    let db = db::Database::connect(database_url).await?;
+    let db = Database::connect(database_url).await?;
     let result = db.issue_code(ttl_secs, limits).await;
     db.close().await;
     result
@@ -120,7 +119,7 @@ pub async fn set_key_limits(
 ) -> Result<(), Error> {
     limits.validate()?;
     let public = auth::parse_public_key(public_key)?;
-    let db = db::Database::connect(database_url).await?;
+    let db = Database::connect(database_url).await?;
     let result = db.set_limits(&public, limits).await;
     db.close().await;
     result
@@ -133,7 +132,7 @@ pub async fn router(database_url: &str, origin: &str) -> Result<Router, Error> {
 }
 
 async fn open_state(database_url: &str, origin: String) -> Result<AppState, Error> {
-    let db = db::Database::connect(database_url).await?;
+    let db = Database::connect(database_url).await?;
     db.initialize().await?;
     Ok(AppState::new(db, origin))
 }

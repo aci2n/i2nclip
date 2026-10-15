@@ -140,8 +140,9 @@ PostgreSQL holds ciphertext, metadata, keys, invitations, nonces, and tags. Uplo
 
 | Command | Coverage and access |
 | --- | --- |
-| `make test` | Client unit tests, Svelte checker, Rust unit/configuration tests |
-| `make lint` / `make format-check` | Rust and client static checks |
+| `make test` | Client unit tests, Biome/Svelte checks, Rust unit/configuration tests |
+| `make lint` | Clippy and client Biome/Svelte checks |
+| `make format-check` | Rust formatting and import grouping |
 | `make test-build` | Web and unpacked extension build contents |
 | `make test-db` | PostgreSQL API tests; provisions a disposable container unless `I2N_TEST_DATABASE_URL` is set |
 | `make test-e2e` | Firefox/Chromium web tests against real Rust and isolated databases; installs dependencies and browsers |
@@ -149,5 +150,7 @@ PostgreSQL holds ciphertext, metadata, keys, invitations, nonces, and tags. Uplo
 | `make test-all` | All portable suites, sequentially; resource profile is separate |
 
 With an existing disposable PostgreSQL administrator connection, set `I2N_TEST_DATABASE_URL` and run `npm run e2e --prefix client`. Screenshots use per-test directories under ignored `client/e2e/shots/`. See [client architecture](client/README.md) for state ownership.
+
+Formatting commands use stable Rust 1.99.0 / rustfmt 1.10.0, with import grouping supplied through `--config` (these settings remain unstable in configuration files). `make format-write` applies Rust formatting and Biome fixes; `make pre-commit` then verifies Clippy and client checks. Rust builds warn on redundant qualification, and Clippy treats warnings as failures.
 
 Client Makefile targets prepare locked dependencies automatically. Browser tests build their Rust helpers and bind isolated listeners to loopback port 0. PostgreSQL uses a disposable container with a random host port unless an administrator URL is explicitly supplied. See [test preparation and isolation](doc/test-pipeline.md) for fresh-clone prerequisites and commands.

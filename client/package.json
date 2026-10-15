@@ -10,14 +10,12 @@
 	"scripts": {
 		"dev": "vite",
 		"build": "vite build",
-		"check": "svelte-check --fail-on-warnings",
-		"lint": "biome lint",
-		"format:check": "biome format",
-		"format:write": "biome check --write",
+		"check": "biome check --error-on-warnings && svelte-check --fail-on-warnings",
 		"test": "node --test --test-timeout=60000 tests/*.test.js",
 		"e2e": "cargo build --bin i2nclip --example test-server --example test-database && npm run build && playwright test",
 		"build:extension": "node extension/build.js",
-		"test:build": "npm run build && npm run build:extension && node --test tests/build.js"
+		"test:build": "npm run build && npm run build:extension && node --test tests/build.js",
+		"fix": "biome check --write --error-on-warnings"
 	},
 	"dependencies": {
 		"@serenity-kit/opaque": "1.1.0",
