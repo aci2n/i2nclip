@@ -21,6 +21,8 @@ pub enum Error {
     NotFound,
     #[error("already exists")]
     Conflict,
+    #[error("Library storage limit reached.")]
+    StorageLimit,
     /// 400. The String is a safe explanation, not an echo of the request body.
     #[error("{0}")]
     BadRequest(String),

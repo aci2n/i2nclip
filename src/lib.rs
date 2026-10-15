@@ -77,10 +77,56 @@ impl AppState {
     }
 }
 
+/// Persistent limits shared by every device using a library key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StorageLimits {
+    pub max_content_bytes: i64,
+    pub max_files: i64,
+}
+
+impl Default for StorageLimits {
+    fn default() -> Self {
+        Self {
+            max_content_bytes: 512 * 1024 * 1024,
+            max_files: 10_000,
+        }
+    }
+}
+
+impl StorageLimits {
+    fn validate(self) -> Result<(), Error> {
+        if self.max_content_bytes < 0 || self.max_files < 0 {
+            return Err(Error::BadRequest(
+                "storage limits must be nonnegative integers".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Issue a code against an already initialized database.
-pub async fn issue_registration_otc(database_url: &str, ttl_secs: u64) -> Result<String, Error> {
+pub async fn issue_registration_otc(
+    database_url: &str,
+    ttl_secs: u64,
+    limits: StorageLimits,
+) -> Result<String, Error> {
+    limits.validate()?;
     let db = db::Database::connect(database_url).await?;
-    let result = db.issue_code(ttl_secs).await;
+    let result = db.issue_code(ttl_secs, limits).await;
+    db.close().await;
+    result
+}
+
+/// Change an existing key's limits without deleting files or spending an invitation.
+pub async fn set_key_limits(
+    database_url: &str,
+    public_key: &str,
+    limits: StorageLimits,
+) -> Result<(), Error> {
+    limits.validate()?;
+    let public = auth::parse_public_key(public_key)?;
+    let db = db::Database::connect(database_url).await?;
+    let result = db.set_limits(&public, limits).await;
     db.close().await;
     result
 }

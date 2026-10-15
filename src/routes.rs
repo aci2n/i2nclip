@@ -155,6 +155,7 @@ pub(crate) fn fail(err: Error) -> Response {
         Error::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized".to_string()),
         Error::TooEarly => (StatusCode::TOO_EARLY, "too early".to_string()),
         Error::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
+        Error::StorageLimit => (StatusCode::CONFLICT, err.to_string()),
         Error::Conflict => (StatusCode::CONFLICT, "already exists".to_string()),
         Error::BadRequest(message) => (StatusCode::BAD_REQUEST, message.clone()),
         Error::RegistrationFailed => (StatusCode::FORBIDDEN, "registration failed".to_string()),

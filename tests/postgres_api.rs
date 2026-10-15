@@ -182,7 +182,12 @@ async fn app(keys: &[&Identity]) -> (TestDatabase, axum::Router) {
         .await
         .unwrap();
     for key in keys {
-        sqlx::query("INSERT INTO registered_keys VALUES ($1) ON CONFLICT DO NOTHING")
+        sqlx::query("INSERT INTO registered_keys (public_key) VALUES ($1) ON CONFLICT DO NOTHING")
+            .bind(key.public.as_slice())
+            .execute(&dir.1)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO key_quotas (public_key) VALUES ($1) ON CONFLICT DO NOTHING")
             .bind(key.public.as_slice())
             .execute(&dir.1)
             .await
@@ -296,7 +301,9 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
     let owner = new_identity();
     let (dir, app) = app(&[&owner]).await;
     let new_key = new_identity();
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
+        .await
+        .unwrap();
     let id = "6666666666666666666666666666666666666666666666666666666666666666";
     for (method, path, seconds) in [
         ("POST", "/api/media".to_string(), 120),
@@ -442,7 +449,9 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     );
 
     let key = new_identity();
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
+        .await
+        .unwrap();
     let mut body = serde_json::json!({ "otc": otc, "public_key": key.registration_key() })
         .to_string()
         .into_bytes();
@@ -803,7 +812,9 @@ async fn register_rejects_bad_and_expired_otc() {
     let (status, _) = register(&app, &key, "not-a-real-code").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
+        .await
+        .unwrap();
     let conn = &dir.1;
     sqlx::query("UPDATE registration_codes SET expires_at = 0")
         .execute(conn)
@@ -820,12 +831,16 @@ async fn register_otc_is_single_use_and_idempotent_for_key() {
     let app = i2nclip::router(&dir.0, "http://i2nclip.test")
         .await
         .unwrap();
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
+        .await
+        .unwrap();
     enroll_key(&app, &key, &otc).await;
     let (status, _) = register(&app, &key, &otc).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
-    let otc2 = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
+    let otc2 = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
+        .await
+        .unwrap();
     let (status, _) = register(&app, &key, &otc2).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 }
@@ -833,7 +848,9 @@ async fn register_otc_is_single_use_and_idempotent_for_key() {
 #[tokio::test]
 async fn rejected_public_keys_do_not_consume_registration_code() {
     let (dir, app) = app(&[]).await;
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
+        .await
+        .unwrap();
     let mut identity = [0u8; 32];
     identity[0] = 1;
     for public in [identity, [0u8; 32], [2u8; 32]] {
@@ -1130,7 +1147,9 @@ async fn upload_admission_is_shared_and_releases_capacity() {
             .0,
         StatusCode::NOT_FOUND
     );
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
+        .await
+        .unwrap();
     enroll_key(&app, &new_identity(), &otc).await;
     first.abort();
     assert!(first.await.unwrap_err().is_cancelled());
@@ -1307,6 +1326,21 @@ async fn concurrent_routers_publish_one_hash() {
             .unwrap(),
         1
     );
+    for key in [&owner, &other] {
+        let actual: (i64, i64) = sqlx::query_as(
+            "SELECT used_content_bytes, file_count FROM key_quotas WHERE public_key = $1",
+        )
+        .bind(key.public.as_slice())
+        .fetch_one(&dir.1)
+        .await
+        .unwrap();
+        let expected = if key.public == winner.public {
+            (content.len() as i64, 1)
+        } else {
+            (0, 0)
+        };
+        assert_eq!(actual, expected);
+    }
 }
 
 #[tokio::test]
@@ -1496,7 +1530,9 @@ async fn invitation_race_has_one_winner() {
     let second = i2nclip::router(&dir.0, "http://i2nclip.test")
         .await
         .unwrap();
-    let code = i2nclip::issue_registration_otc(&dir.0, 3600).await.unwrap();
+    let code = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
+        .await
+        .unwrap();
     let one = new_identity();
     let two = new_identity();
     let (a, b) = tokio::join!(
@@ -1836,4 +1872,140 @@ async fn metadata_read_is_an_owner_filtered_snapshot_and_old_put_is_removed() {
         call(&app, &owner, "GET", &path, vec![]).await.0,
         StatusCode::NOT_FOUND
     );
+}
+
+#[tokio::test]
+async fn quota_cli_invitation_and_http_upload_failures_work_together() {
+    let key = new_identity();
+    let (dir, app) = app(&[]).await;
+    async fn cli(database_url: &str, args: &[&str]) -> std::process::Output {
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_i2nclip"))
+            .env_remove("I2N_DATABASE_URL_FILE")
+            .env("I2N_DATABASE_URL", database_url)
+            .args(args)
+            .output()
+            .await
+            .unwrap()
+    }
+    let issued = cli(
+        &dir.0,
+        &["otc", "issue", "--max-bytes", "29", "--max-files", "1"],
+    )
+    .await;
+    assert!(
+        issued.status.success(),
+        "{}",
+        String::from_utf8_lossy(&issued.stderr)
+    );
+    let code = String::from_utf8(issued.stdout).unwrap();
+    enroll_key(&app, &key, code.trim()).await;
+    let body = client_crypto::encode_post(&[1; 29], &[1; 29], "");
+    let (status, saved) = call(&app, &key, "POST", "/api/media", body.clone()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let saved: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+    assert_eq!(saved["bytes"], 29);
+    let second = client_crypto::encode_post(&[1; 29], &[1; 30], "");
+    let (status, error) = call(&app, &key, "POST", "/api/media", second.clone()).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&error).unwrap(),
+        serde_json::json!({ "error": "Library storage limit reached." })
+    );
+    // Updating an existing key is administrative and preserves its files.
+    let changed = cli(
+        &dir.0,
+        &[
+            "key",
+            "set-limits",
+            &key.registration_key(),
+            "--max-bytes",
+            "0",
+            "--max-files",
+            "0",
+        ],
+    )
+    .await;
+    assert!(
+        !changed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&changed.stderr)
+    );
+    assert!(String::from_utf8_lossy(&changed.stderr).contains("current usage"));
+    let (status, _) = call(
+        &app,
+        &key,
+        "GET",
+        &format!("/api/media/{}", saved["id"].as_str().unwrap()),
+        vec![],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, error) = call(&app, &key, "POST", "/api/media", body).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&error).unwrap(),
+        serde_json::json!({ "error": "already exists" })
+    );
+    assert_eq!(
+        call(&app, &key, "POST", "/api/media", second.clone())
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    let changed = cli(
+        &dir.0,
+        &[
+            "key",
+            "set-limits",
+            &key.registration_key(),
+            "--max-bytes",
+            "59",
+            "--max-files",
+            "2",
+        ],
+    )
+    .await;
+    assert!(changed.status.success());
+    assert_eq!(
+        call(&app, &key, "POST", "/api/media", second).await.0,
+        StatusCode::CREATED
+    );
+    let unknown = cli(
+        &dir.0,
+        &[
+            "key",
+            "set-limits",
+            &new_identity().registration_key(),
+            "--max-bytes",
+            "0",
+            "--max-files",
+            "0",
+        ],
+    )
+    .await;
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("not found"));
+    let invalid = cli(
+        &dir.0,
+        &[
+            "key",
+            "set-limits",
+            "invalid",
+            "--max-bytes",
+            "0",
+            "--max-files",
+            "0",
+        ],
+    )
+    .await;
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("public_key"));
+    let default_code = cli(&dir.0, &["otc", "issue"]).await;
+    assert!(default_code.status.success());
+    let defaults: (i64, i64) =
+        sqlx::query_as("SELECT max_content_bytes, max_files FROM registration_codes")
+            .fetch_one(&dir.1)
+            .await
+            .unwrap();
+    assert_eq!(defaults, (536_870_912, 10_000));
 }

@@ -1,70 +1,96 @@
-use i2nclip::issue_registration_otc;
-use i2nclip::DEFAULT_REGISTRATION_TTL_SECS;
+use clap::{Parser, Subcommand};
+use i2nclip::{StorageLimits, DEFAULT_REGISTRATION_TTL_SECS};
+
+#[derive(Parser)]
+#[command(about, version)]
+struct Cli {
+    /// Omit the command to start the web/API server.
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Manage registration invitations.
+    #[command(subcommand)]
+    Otc(OtcCommand),
+    /// Manage registered keys.
+    #[command(subcommand)]
+    Key(KeyCommand),
+}
+
+#[derive(Subcommand)]
+enum OtcCommand {
+    /// Issue a single-use invitation with storage limits.
+    Issue {
+        /// Invitation lifetime in seconds.
+        #[arg(long, default_value_t = DEFAULT_REGISTRATION_TTL_SECS, value_parser = clap::value_parser!(u64).range(1..))]
+        ttl_secs: u64,
+        /// Maximum encrypted content bytes (512 MiB by default).
+        #[arg(long, default_value_t = StorageLimits::default().max_content_bytes, value_parser = clap::value_parser!(i64).range(0..))]
+        max_bytes: i64,
+        /// Maximum number of files.
+        #[arg(long, default_value_t = StorageLimits::default().max_files, value_parser = clap::value_parser!(i64).range(0..))]
+        max_files: i64,
+    },
+}
+
+#[derive(Subcommand)]
+enum KeyCommand {
+    /// Change an existing key's limits without deleting files.
+    SetLimits {
+        public_key: String,
+        /// Maximum encrypted content bytes; zero blocks uploads.
+        #[arg(long, value_parser = clap::value_parser!(i64).range(0..))]
+        max_bytes: i64,
+        /// Maximum number of files; zero blocks uploads.
+        #[arg(long, value_parser = clap::value_parser!(i64).range(0..))]
+        max_files: i64,
+    },
+}
 
 #[tokio::main]
 async fn main() {
-    let mut args = std::env::args().skip(1);
-    match args.next().as_deref() {
-        None => {
-            if let Err(err) = i2nclip::run().await {
-                eprintln!("i2nclip: {err}");
-                std::process::exit(1);
-            }
-        }
-        Some("otc") => {
-            let sub = args.next().unwrap_or_else(|| {
-                usage_otc();
-                std::process::exit(2);
-            });
-            if sub != "issue" {
-                usage_otc();
-                std::process::exit(2);
-            }
-            let mut ttl_secs = DEFAULT_REGISTRATION_TTL_SECS;
-
-            while let Some(arg) = args.next() {
-                match arg.as_str() {
-                    "--ttl-secs" => {
-                        let text = args.next().unwrap_or_else(|| {
-                            usage_otc();
-                            std::process::exit(2);
-                        });
-                        ttl_secs = text.parse().unwrap_or_else(|_| {
-                            eprintln!("i2nclip otc issue: --ttl-secs must be a positive integer");
-                            std::process::exit(2);
-                        });
-                        if ttl_secs == 0 {
-                            eprintln!("i2nclip otc issue: --ttl-secs must be at least 1");
-                            std::process::exit(2);
-                        }
-                    }
-                    _ => {
-                        usage_otc();
-                        std::process::exit(2);
-                    }
-                }
-            }
-            match async {
-                issue_registration_otc(&i2nclip::database_url_from_env()?, ttl_secs).await
-            }
-            .await
-            {
-                Ok(code) => println!("{code}"),
-                Err(err) => {
-                    eprintln!("i2nclip otc issue: {err}");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Some(_) => {
-            eprintln!("usage: i2nclip");
-            eprintln!("       i2nclip otc issue [--ttl-secs SECS]");
-            std::process::exit(2);
-        }
+    if let Err(error) = execute(Cli::parse().command).await {
+        eprintln!("i2nclip: {error}");
+        std::process::exit(1);
     }
 }
 
-fn usage_otc() {
-    eprintln!("usage: i2nclip otc issue [--ttl-secs SECS]");
-    eprintln!("default --ttl-secs is {DEFAULT_REGISTRATION_TTL_SECS}");
+async fn execute(command: Option<Command>) -> Result<(), i2nclip::Error> {
+    match command {
+        None => i2nclip::run().await,
+        Some(Command::Otc(OtcCommand::Issue {
+            ttl_secs,
+            max_bytes,
+            max_files,
+        })) => {
+            let code = i2nclip::issue_registration_otc(
+                &i2nclip::database_url_from_env()?,
+                ttl_secs,
+                StorageLimits {
+                    max_content_bytes: max_bytes,
+                    max_files,
+                },
+            )
+            .await?;
+            println!("{code}");
+            Ok(())
+        }
+        Some(Command::Key(KeyCommand::SetLimits {
+            public_key,
+            max_bytes,
+            max_files,
+        })) => {
+            i2nclip::set_key_limits(
+                &i2nclip::database_url_from_env()?,
+                &public_key,
+                StorageLimits {
+                    max_content_bytes: max_bytes,
+                    max_files,
+                },
+            )
+            .await
+        }
+    }
 }

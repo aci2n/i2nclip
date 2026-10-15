@@ -2,9 +2,21 @@ CREATE TABLE IF NOT EXISTS registered_keys (
     public_key BYTEA PRIMARY KEY CHECK (octet_length(public_key) = 32)
 );
 
+CREATE TABLE IF NOT EXISTS key_quotas (
+    public_key BYTEA PRIMARY KEY REFERENCES registered_keys (public_key),
+    max_content_bytes BIGINT NOT NULL DEFAULT 536870912 CHECK (max_content_bytes >= 0),
+    max_files BIGINT NOT NULL DEFAULT 10000 CHECK (max_files >= 0),
+    used_content_bytes BIGINT NOT NULL DEFAULT 0 CHECK (used_content_bytes >= 0),
+    file_count BIGINT NOT NULL DEFAULT 0 CHECK (file_count >= 0),
+    CONSTRAINT key_quotas_content_limit CHECK (used_content_bytes <= max_content_bytes),
+    CONSTRAINT key_quotas_files_limit CHECK (file_count <= max_files)
+);
+
 CREATE TABLE IF NOT EXISTS registration_codes (
     code_hash BYTEA PRIMARY KEY CHECK (octet_length(code_hash) = 32),
-    expires_at BIGINT NOT NULL
+    expires_at BIGINT NOT NULL,
+    max_content_bytes BIGINT NOT NULL DEFAULT 536870912 CHECK (max_content_bytes >= 0),
+    max_files BIGINT NOT NULL DEFAULT 10000 CHECK (max_files >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS registration_codes_expires ON registration_codes (expires_at);
@@ -14,6 +26,7 @@ CREATE TABLE IF NOT EXISTS files (
     owner BYTEA NOT NULL CHECK (octet_length(owner) = 32),
     meta BYTEA NOT NULL CHECK (octet_length(meta) BETWEEN 29 AND 65536),
     content BYTEA NOT NULL CHECK (octet_length(content) BETWEEN 29 AND 33554496),
+    content_bytes BIGINT GENERATED ALWAYS AS (octet_length(content)) STORED,
     created_at BIGINT NOT NULL
 );
 

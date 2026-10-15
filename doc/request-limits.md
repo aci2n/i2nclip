@@ -1,6 +1,6 @@
 # Request deadlines, body limits, and transfer admission
 
-Status: body-read deadlines, byte caps, four-upload and sixteen-download admission, and bounded streaming implemented. Transactional PostgreSQL content storage is implemented; see [protocol.md](protocol.md). Storage quotas remain separate work.
+Status: body-read deadlines, byte caps, four-upload and sixteen-download admission, and bounded streaming implemented. Transactional PostgreSQL content storage is implemented; see [protocol.md](protocol.md). Per-key storage quotas are enforced transactionally; see [storage limits](storage-limits.md).
 
 ## Implemented deadlines
 

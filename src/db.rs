@@ -20,6 +20,7 @@ use sqlx::Transaction;
 use crate::crypto;
 use crate::frame;
 use crate::Error;
+use crate::StorageLimits;
 use crate::MAX_CONTENT;
 use crate::MAX_META;
 use crate::PAGE;
@@ -143,7 +144,12 @@ impl Database {
     }
 
     /// Store only the invitation hash and return the secret code to the admin.
-    pub(crate) async fn issue_code(&self, ttl: u64) -> Result<String, Error> {
+    pub(crate) async fn issue_code(
+        &self,
+        ttl: u64,
+        limits: StorageLimits,
+    ) -> Result<String, Error> {
+        limits.validate()?;
         let mut secret = [0; 16];
         getrandom::getrandom(&mut secret).map_err(|e| std::io::Error::other(e.to_string()))?;
         let code = URL_SAFE_NO_PAD.encode(secret);
@@ -151,12 +157,14 @@ impl Database {
         let expires = i64::try_from(crypto::now_secs().saturating_add(ttl)).unwrap_or(i64::MAX);
         sqlx::query(
             r#"
-            INSERT INTO registration_codes (code_hash, expires_at)
-            VALUES ($1, $2)
+            INSERT INTO registration_codes (code_hash, expires_at, max_content_bytes, max_files)
+            VALUES ($1, $2, $3, $4)
             "#,
         )
         .bind(hash.as_slice())
         .bind(expires)
+        .bind(limits.max_content_bytes)
+        .bind(limits.max_files)
         .execute(&self.pool)
         .await?;
         Ok(code)
@@ -166,19 +174,18 @@ impl Database {
     pub(crate) async fn consume_code(&self, code: &str, public: &[u8; 32]) -> Result<(), Error> {
         let hash = crypto::body_hash_bytes(code.trim().as_bytes());
         let mut tx = self.pool.begin().await?;
-        let result = sqlx::query(
+        let limits = sqlx::query(
             r#"
             DELETE FROM registration_codes
             WHERE code_hash = $1 AND expires_at > $2
+            RETURNING max_content_bytes, max_files
             "#,
         )
         .bind(hash.as_slice())
         .bind(crypto::now_secs() as i64)
-        .execute(&mut *tx)
-        .await?;
-        if result.rows_affected() == 0 {
-            return Err(Error::RegistrationFailed);
-        }
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(Error::RegistrationFailed)?;
         // The deletion stays uncommitted until registration succeeds. Concurrent
         // consumers wait on the same code row, so only one can spend it.
         sqlx::query(
@@ -191,7 +198,47 @@ impl Database {
         .bind(public.as_slice())
         .execute(&mut *tx)
         .await?;
+        sqlx::query(
+            "INSERT INTO key_quotas (public_key, max_content_bytes, max_files) VALUES ($1, $2, $3) ON CONFLICT (public_key) DO NOTHING",
+        )
+        .bind(public.as_slice())
+        .bind(limits.try_get::<i64, _>("max_content_bytes")?)
+        .bind(limits.try_get::<i64, _>("max_files")?)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
+        Ok(())
+    }
+
+    /// UPDATE takes the same quota-row lock as media mutations.
+    pub(crate) async fn set_limits(
+        &self,
+        public: &[u8; 32],
+        limits: StorageLimits,
+    ) -> Result<(), Error> {
+        limits.validate()?;
+        let result = sqlx::query(
+            "UPDATE key_quotas SET max_content_bytes = $2, max_files = $3 WHERE public_key = $1",
+        )
+        .bind(public.as_slice())
+        .bind(limits.max_content_bytes)
+        .bind(limits.max_files)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| match &error {
+            sqlx::Error::Database(cause)
+                if matches!(
+                    cause.constraint(),
+                    Some("key_quotas_content_limit" | "key_quotas_files_limit")
+                ) =>
+            {
+                Error::BadRequest("Storage limits cannot be lower than current usage.".into())
+            }
+            _ => error.into(),
+        })?;
+        if result.rows_affected() == 0 {
+            return Err(Error::NotFound);
+        }
         Ok(())
     }
 
@@ -203,6 +250,39 @@ impl Database {
         let id = crypto::body_hash_async(parts.content).await;
         let created_at = crypto::now_secs() as i64;
         let mut tx = self.pool.begin().await?;
+        // All media mutations lock the quota before touching file rows.
+        sqlx::query("SELECT public_key FROM key_quotas WHERE public_key = $1 FOR UPDATE")
+            .bind(owner.as_slice())
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(Error::Unauthorized)?;
+        // Keep the existing duplicate response even when the library is full.
+        let duplicate: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM files WHERE id = $1)")
+                .bind(&id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if duplicate {
+            return Err(Error::Conflict);
+        }
+        // Reserve in this transaction. Subtract before comparison so values near
+        // BIGINT's maximum cannot overflow. Failed insertion rolls this back.
+        let reserved = sqlx::query(
+            r#"
+            UPDATE key_quotas
+            SET used_content_bytes = used_content_bytes + $2, file_count = file_count + 1
+            WHERE public_key = $1
+              AND used_content_bytes <= max_content_bytes - $2
+              AND file_count < max_files
+            "#,
+        )
+        .bind(owner.as_slice())
+        .bind(parts.content.len() as i64)
+        .execute(&mut *tx)
+        .await?;
+        if reserved.rows_affected() == 0 {
+            return Err(Error::StorageLimit);
+        }
         let result = sqlx::query(
             r#"
             INSERT INTO files (id, owner, meta, content, created_at)
@@ -245,7 +325,7 @@ impl Database {
         // Tags are an AND search; equal timestamps break ties by id ascending.
         let rows = sqlx::query(
             r#"
-            SELECT id, meta, octet_length(content)::bigint AS bytes, created_at,
+            SELECT id, meta, content_bytes AS bytes, created_at,
                    ARRAY(
                        SELECT token FROM tags
                        WHERE file_id = files.id
@@ -315,7 +395,7 @@ impl Database {
         let id = frame::parse_id(id)?;
         let row = sqlx::query(
             r#"
-            SELECT id, meta, octet_length(content)::bigint AS bytes, created_at,
+            SELECT id, meta, content_bytes AS bytes, created_at,
                    ARRAY(SELECT token FROM tags WHERE file_id = files.id ORDER BY token) AS tokens
             FROM files WHERE owner = $1 AND id = $2
             "#,
@@ -349,7 +429,7 @@ impl Database {
         // READ COMMITTED this sees the preceding transaction's committed row.
         let current = sqlx::query(
             r#"
-            SELECT meta, octet_length(content)::bigint AS bytes, created_at
+            SELECT meta, content_bytes AS bytes, created_at
             FROM files
             WHERE id = $1 AND owner = $2
             FOR UPDATE
@@ -399,19 +479,28 @@ impl Database {
     /// Delete the authorized file; the foreign key cascades deletion to its tags.
     pub(crate) async fn remove(&self, owner: [u8; 32], id: &str) -> Result<(), Error> {
         let id = frame::parse_id(id)?;
-        let result = sqlx::query(
-            r#"
-            DELETE FROM files
-            WHERE id = $1 AND owner = $2
-            "#,
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT public_key FROM key_quotas WHERE public_key = $1 FOR UPDATE")
+            .bind(owner.as_slice())
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(Error::NotFound)?;
+        let bytes: i64 = sqlx::query_scalar(
+            "DELETE FROM files WHERE id = $1 AND owner = $2 RETURNING content_bytes",
         )
         .bind(id)
         .bind(owner.as_slice())
-        .execute(&self.pool)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(Error::NotFound)?;
+        sqlx::query(
+            "UPDATE key_quotas SET used_content_bytes = used_content_bytes - $2, file_count = file_count - 1 WHERE public_key = $1",
+        )
+        .bind(owner.as_slice())
+        .bind(bytes)
+        .execute(&mut *tx)
         .await?;
-        if result.rows_affected() == 0 {
-            return Err(Error::NotFound);
-        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -513,6 +602,16 @@ mod tests {
     async fn fixture() -> (Database, PgPool, FixtureDatabase) {
         let (db, admin, name) = empty_fixture().await;
         db.initialize().await.unwrap();
+        sqlx::query("INSERT INTO registered_keys (public_key) VALUES ($1)")
+            .bind([1_u8; 32].as_slice())
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO key_quotas (public_key) VALUES ($1)")
+            .bind([1_u8; 32].as_slice())
+            .execute(&db.pool)
+            .await
+            .unwrap();
         (db, admin, name)
     }
 
@@ -594,6 +693,34 @@ mod tests {
         })
         .await
         .expect("operation must wait for the preceding transaction");
+    }
+
+    async fn migrate_storage_limits(db: &Database) -> Result<(), Error> {
+        let mut tx = db.pool.begin().await?;
+        sqlx::raw_sql(include_str!("../sql/002_storage_limits.sql"))
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn assert_usage(db: &Database, owner: [u8; 32], expected: (i64, i64)) {
+        let stored: (i64, i64) = sqlx::query_as(
+            "SELECT used_content_bytes, file_count FROM key_quotas WHERE public_key = $1",
+        )
+        .bind(owner.as_slice())
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        let actual: (i64, i64) = sqlx::query_as(
+            "SELECT COALESCE(SUM(content_bytes), 0)::bigint, COUNT(*) FROM files WHERE owner = $1",
+        )
+        .bind(owner.as_slice())
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, actual);
+        assert_eq!(stored, expected);
     }
 
     fn sealed_blob(value: u8) -> [u8; 29] {
@@ -834,6 +961,13 @@ mod tests {
             .await
             .unwrap();
         let mut deletion = db.pool.begin().await.unwrap();
+        sqlx::query(
+            "UPDATE key_quotas SET used_content_bytes = 0, file_count = 0 WHERE public_key = $1",
+        )
+        .bind([1_u8; 32].as_slice())
+        .execute(&mut *deletion)
+        .await
+        .unwrap();
         sqlx::query("DELETE FROM files WHERE id = $1 AND owner = $2")
             .bind(&item.id)
             .bind([1_u8; 32].as_slice())
@@ -1101,6 +1235,15 @@ mod tests {
     #[tokio::test]
     async fn failed_upload_commit_rolls_back_content_metadata_and_tags() {
         let (db, admin, name) = fixture().await;
+        db.set_limits(
+            &[1; 32],
+            StorageLimits {
+                max_content_bytes: 29,
+                max_files: 1,
+            },
+        )
+        .await
+        .unwrap();
         sqlx::raw_sql(
             r#"
                             CREATE FUNCTION reject_commit() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -1125,19 +1268,22 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(counts, (0, 0));
+        assert_usage(&db, [1; 32], (0, 0)).await;
         sqlx::query("DROP TRIGGER reject_commit ON files")
             .execute(&db.pool)
             .await
             .unwrap();
         let item = db.add([1; 32], &body).await.unwrap();
         assert_eq!(db.content([1; 32], &item.id).await.unwrap(), vec![1; 29]);
+        assert_usage(&db, [1; 32], (29, 1)).await;
         dispose(db, admin, name).await;
     }
 
     #[tokio::test]
     async fn failed_registration_keeps_invitation_available() {
-        let (db, admin, name) = fixture().await;
-        let code = db.issue_code(3600).await.unwrap();
+        let (db, admin, name) = empty_fixture().await;
+        db.initialize().await.unwrap();
+        let code = db.issue_code(3600, StorageLimits::default()).await.unwrap();
         sqlx::raw_sql(
             r#"
             CREATE FUNCTION reject_registration() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -1145,7 +1291,7 @@ mod tests {
                 RAISE EXCEPTION 'test registration failure';
             END;
             $$;
-            CREATE TRIGGER reject_registration BEFORE INSERT ON registered_keys
+            CREATE TRIGGER reject_registration BEFORE INSERT ON key_quotas
                 FOR EACH ROW EXECUTE FUNCTION reject_registration();
             "#,
         )
@@ -1157,7 +1303,7 @@ mod tests {
             Err(Error::Db(_))
         ));
         assert!(!db.allowed(&[1; 32]).await.unwrap());
-        sqlx::query("DROP TRIGGER reject_registration ON registered_keys")
+        sqlx::query("DROP TRIGGER reject_registration ON key_quotas")
             .execute(&db.pool)
             .await
             .unwrap();
@@ -1167,6 +1313,583 @@ mod tests {
             db.consume_code(&code, &[2; 32]).await,
             Err(Error::RegistrationFailed)
         ));
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn storage_limits_enforce_boundaries_without_charging_failed_uploads() {
+        let (db, admin, name) = fixture().await;
+        let owner = [1; 32];
+        let first = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
+        let second = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), "");
+        let limits = StorageLimits {
+            max_content_bytes: 29,
+            max_files: 1,
+        };
+        db.set_limits(&owner, limits).await.unwrap();
+        let saved = db.add(owner, &first).await.unwrap();
+        assert_eq!(saved.bytes, 29);
+        assert!(matches!(db.add(owner, &first).await, Err(Error::Conflict)));
+        assert!(matches!(
+            db.add(owner, &second).await,
+            Err(Error::StorageLimit)
+        ));
+        assert_usage(&db, owner, (29, 1)).await;
+        // Exercise each limit independently, including limits near BIGINT max.
+        for limits in [
+            StorageLimits {
+                max_content_bytes: 57,
+                max_files: i64::MAX,
+            },
+            StorageLimits {
+                max_content_bytes: i64::MAX,
+                max_files: 1,
+            },
+        ] {
+            db.set_limits(&owner, limits).await.unwrap();
+            assert!(matches!(
+                db.add(owner, &second).await,
+                Err(Error::StorageLimit)
+            ));
+            assert_eq!(db.content(owner, &saved.id).await.unwrap(), sealed_blob(1));
+        }
+        // Reductions below usage fail, while metadata at the limit can change.
+        for limits in [
+            StorageLimits {
+                max_content_bytes: 28,
+                max_files: 1,
+            },
+            StorageLimits {
+                max_content_bytes: 29,
+                max_files: 0,
+            },
+        ] {
+            assert!(matches!(
+                db.set_limits(&owner, limits).await,
+                Err(Error::BadRequest(_))
+            ));
+        }
+        db.update_meta(
+            owner,
+            &saved.id,
+            &crate::reference_crypto::encode_meta(
+                &crypto::body_hash_bytes(&saved.meta),
+                &sealed_blob(3),
+                "",
+            ),
+        )
+        .await
+        .unwrap();
+        assert_usage(&db, owner, (29, 1)).await;
+        db.remove(owner, &saved.id).await.unwrap();
+        assert_usage(&db, owner, (0, 0)).await;
+        for limits in [
+            StorageLimits {
+                max_content_bytes: 0,
+                max_files: 10,
+            },
+            StorageLimits {
+                max_content_bytes: 100,
+                max_files: 0,
+            },
+        ] {
+            db.set_limits(&owner, limits).await.unwrap();
+            assert!(matches!(
+                db.add(owner, &second).await,
+                Err(Error::StorageLimit)
+            ));
+            assert_usage(&db, owner, (0, 0)).await;
+        }
+        db.set_limits(&owner, limits).await.unwrap();
+        let saved = db.add(owner, &second).await.unwrap();
+        assert_eq!(db.list(owner, &[], None).await.unwrap().0.len(), 1);
+        assert_eq!(db.metadata(owner, &saved.id).await.unwrap().bytes, 29);
+        // Another owner has its own capacity.
+        sqlx::query("INSERT INTO registered_keys (public_key) VALUES ($1)")
+            .bind([2_u8; 32].as_slice())
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO key_quotas (public_key) VALUES ($1)")
+            .bind([2_u8; 32].as_slice())
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        db.add([2; 32], &first).await.unwrap();
+        assert_usage(&db, owner, (29, 1)).await;
+        assert_usage(&db, [2; 32], (29, 1)).await;
+        assert!(matches!(
+            db.set_limits(&[3; 32], limits).await,
+            Err(Error::NotFound)
+        ));
+        assert!(matches!(
+            db.set_limits(
+                &owner,
+                StorageLimits {
+                    max_files: -1,
+                    ..limits
+                }
+            )
+            .await,
+            Err(Error::BadRequest(_))
+        ));
+        assert!(matches!(
+            db.add([3; 32], &first).await,
+            Err(Error::Unauthorized)
+        ));
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn storage_limits_serialize_uploads_and_observe_committed_limit_changes() {
+        for limits in [
+            StorageLimits {
+                max_content_bytes: 29,
+                max_files: 100,
+            },
+            StorageLimits {
+                max_content_bytes: 1000,
+                max_files: 1,
+            },
+        ] {
+            let (db, admin, name) = fixture().await;
+            db.set_limits(&[1; 32], limits).await.unwrap();
+            let first = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
+            let second = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), "");
+            let mut blocker = db.pool.begin().await.unwrap();
+            sqlx::query("SELECT public_key FROM key_quotas FOR UPDATE")
+                .execute(&mut *blocker)
+                .await
+                .unwrap();
+            let release = async {
+                wait_for_locks(&db, "%SELECT public_key FROM key_quotas%", 2).await;
+                blocker.commit().await.unwrap();
+            };
+            let (a, b, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+                tokio::join!(db.add([1; 32], &first), db.add([1; 32], &second), release)
+            })
+            .await
+            .unwrap();
+            assert!(matches!(
+                (a, b),
+                (Ok(_), Err(Error::StorageLimit)) | (Err(Error::StorageLimit), Ok(_))
+            ));
+            assert_eq!(db.list([1; 32], &[], None).await.unwrap().0.len(), 1);
+            assert_usage(&db, [1; 32], (29, 1)).await;
+            dispose(db, admin, name).await;
+        }
+        let (db, admin, name) = fixture().await;
+        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
+        let mut blocker = db.pool.begin().await.unwrap();
+        sqlx::query("UPDATE key_quotas SET max_files = 0")
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        let release = async {
+            wait_for_locks(&db, "%SELECT public_key FROM key_quotas%", 1).await;
+            blocker.commit().await.unwrap();
+        };
+        let (result, ()) = tokio::join!(db.add([1; 32], &body), release);
+        assert!(matches!(result, Err(Error::StorageLimit)));
+        // Cancelling a queued upload leaves no state or held lock.
+        db.set_limits(&[1; 32], StorageLimits::default())
+            .await
+            .unwrap();
+        let mut blocker = db.pool.begin().await.unwrap();
+        sqlx::query("SELECT public_key FROM key_quotas FOR UPDATE")
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        let upload_db = db.clone();
+        let upload_body = body.clone();
+        let upload = tokio::spawn(async move { upload_db.add([1; 32], &upload_body).await });
+        wait_for_locks(&db, "%SELECT public_key FROM key_quotas%", 1).await;
+        upload.abort();
+        assert!(upload.await.unwrap_err().is_cancelled());
+        blocker.commit().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), db.add([1; 32], &body))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(db.list([1; 32], &[], None).await.unwrap().0.len(), 1);
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn quota_usage_rolls_back_failed_deletes_and_releases_only_owned_files() {
+        let (db, admin, name) = fixture().await;
+        let owner = [1; 32];
+        let other = [2; 32];
+        let code = db.issue_code(3600, StorageLimits::default()).await.unwrap();
+        db.consume_code(&code, &other).await.unwrap();
+        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
+        let item = db.add(owner, &body).await.unwrap();
+        assert!(matches!(
+            db.remove(other, &item.id).await,
+            Err(Error::NotFound)
+        ));
+        assert_usage(&db, owner, (29, 1)).await;
+        assert_usage(&db, other, (0, 0)).await;
+        sqlx::raw_sql(
+            "CREATE FUNCTION reject_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+             BEGIN RAISE EXCEPTION 'test delete commit failure'; END; $$;
+             CREATE CONSTRAINT TRIGGER reject_delete AFTER DELETE ON files
+             DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_delete();",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        assert!(matches!(
+            db.remove(owner, &item.id).await,
+            Err(Error::Db(_))
+        ));
+        assert_usage(&db, owner, (29, 1)).await;
+        assert_eq!(db.content(owner, &item.id).await.unwrap(), sealed_blob(1));
+        sqlx::query("DROP TRIGGER reject_delete ON files")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let (a, b) = tokio::join!(db.remove(owner, &item.id), db.remove(owner, &item.id));
+        assert!(matches!(
+            (a, b),
+            (Ok(()), Err(Error::NotFound)) | (Err(Error::NotFound), Ok(()))
+        ));
+        assert_usage(&db, owner, (0, 0)).await;
+        assert!(matches!(
+            db.remove(owner, &item.id).await,
+            Err(Error::NotFound)
+        ));
+        assert_usage(&db, owner, (0, 0)).await;
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_upload_rolls_back_reserved_usage() {
+        let (db, admin, name) = fixture().await;
+        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
+        // Allow the quota reservation and duplicate lookup, but block insertion.
+        let mut blocker = db.pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE files IN SHARE MODE")
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        let upload_db = db.clone();
+        let upload_body = body.clone();
+        let upload = tokio::spawn(async move { upload_db.add([1; 32], &upload_body).await });
+        wait_for_locks(&db, "%INSERT INTO files%", 1).await;
+        upload.abort();
+        assert!(upload.await.unwrap_err().is_cancelled());
+        blocker.commit().await.unwrap();
+        // This takes the same quota lock, so it waits for cancellation rollback.
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            db.set_limits(&[1; 32], StorageLimits::default()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_usage(&db, [1; 32], (0, 0)).await;
+        db.add([1; 32], &body).await.unwrap();
+        assert_usage(&db, [1; 32], (29, 1)).await;
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_upload_and_delete_preserve_exact_usage() {
+        let (db, admin, name) = fixture().await;
+        db.set_limits(
+            &[1; 32],
+            StorageLimits {
+                max_content_bytes: 29,
+                max_files: 1,
+            },
+        )
+        .await
+        .unwrap();
+        let first = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
+        let second = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), "");
+        let item = db.add([1; 32], &first).await.unwrap();
+        let mut blocker = db.pool.begin().await.unwrap();
+        sqlx::query("SELECT public_key FROM key_quotas FOR UPDATE")
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        let release = async {
+            wait_for_locks(&db, "%SELECT public_key FROM key_quotas%", 2).await;
+            blocker.commit().await.unwrap();
+        };
+        let (upload, deletion, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(
+                db.add([1; 32], &second),
+                db.remove([1; 32], &item.id),
+                release
+            )
+        })
+        .await
+        .unwrap();
+        deletion.unwrap();
+        match upload {
+            Ok(_) => assert_usage(&db, [1; 32], (29, 1)).await,
+            Err(Error::StorageLimit) => assert_usage(&db, [1; 32], (0, 0)).await,
+            Err(error) => panic!("unexpected upload failure: {error}"),
+        }
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn invitations_transfer_limits_only_to_new_keys() {
+        let (db, admin, name) = fixture().await;
+        let custom = StorageLimits {
+            max_content_bytes: 123,
+            max_files: 4,
+        };
+        let code = db.issue_code(3600, custom).await.unwrap();
+        db.consume_code(&code, &[2; 32]).await.unwrap();
+        let current: (i64, i64) = sqlx::query_as(
+            "SELECT max_content_bytes, max_files FROM key_quotas WHERE public_key = $1",
+        )
+        .bind([2_u8; 32].as_slice())
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(current, (123, 4));
+        let code = db.issue_code(3600, StorageLimits::default()).await.unwrap();
+        db.consume_code(&code, &[2; 32]).await.unwrap();
+        let current: (i64, i64) = sqlx::query_as(
+            "SELECT max_content_bytes, max_files FROM key_quotas WHERE public_key = $1",
+        )
+        .bind([2_u8; 32].as_slice())
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(current, (123, 4));
+        assert!(matches!(
+            db.consume_code(&code, &[3; 32]).await,
+            Err(Error::RegistrationFailed)
+        ));
+        let defaults: (i64, i64) = sqlx::query_as(
+            "SELECT max_content_bytes, max_files FROM key_quotas WHERE public_key = $1",
+        )
+        .bind([1_u8; 32].as_slice())
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(defaults, (536_870_912, 10_000));
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn storage_limit_upgrade_preserves_data_and_custom_limits_on_reopen() {
+        let (db, admin, name) = empty_fixture().await;
+        sqlx::raw_sql(include_str!("../tests/fixtures/pre-storage-limits.sql"))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO registered_keys (public_key) VALUES ($1)")
+            .bind([1_u8; 32].as_slice())
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let code = "old-invitation";
+        sqlx::query("INSERT INTO registration_codes VALUES ($1, $2)")
+            .bind(crypto::body_hash_bytes(code.as_bytes()).as_slice())
+            .bind(i64::MAX)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let content = sealed_blob(1);
+        let id = crypto::body_hash(&content);
+        sqlx::query(
+            "INSERT INTO files (id, owner, content, meta, created_at) VALUES ($1, $2, $3, $3, 42)",
+        )
+        .bind(&id)
+        .bind([1_u8; 32].as_slice())
+        .bind(content.as_slice())
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        // Concurrent upgrading instances coordinate through the existing lock.
+        let (a, b) = tokio::join!(migrate_storage_limits(&db), migrate_storage_limits(&db));
+        a.unwrap();
+        b.unwrap();
+        assert_eq!(db.content([1; 32], &id).await.unwrap(), content);
+        let item = db.metadata([1; 32], &id).await.unwrap();
+        assert_eq!(
+            (item.bytes, item.created_at, item.meta),
+            (29, 42, content.to_vec())
+        );
+        let defaults: (i64, i64) =
+            sqlx::query_as("SELECT max_content_bytes, max_files FROM key_quotas")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(defaults, (536_870_912, 10_000));
+        let columns: Vec<String> = sqlx::query_scalar(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'registered_keys' ORDER BY ordinal_position",
+        ).fetch_all(&db.pool).await.unwrap();
+        assert_eq!(columns, vec!["public_key"]);
+        let usage: (i64, i64) =
+            sqlx::query_as("SELECT used_content_bytes, file_count FROM key_quotas")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(usage, (29, 1));
+        let generated: String = sqlx::query_scalar("SELECT attgenerated::text FROM pg_attribute WHERE attrelid = 'files'::regclass AND attname = 'content_bytes'")
+            .fetch_one(&db.pool).await.unwrap();
+        assert_eq!(generated, "s");
+        db.set_limits(
+            &[1; 32],
+            StorageLimits {
+                max_content_bytes: 29,
+                max_files: 1,
+            },
+        )
+        .await
+        .unwrap();
+        db.initialize().await.unwrap();
+        let limits: (i64, i64) =
+            sqlx::query_as("SELECT max_content_bytes, max_files FROM key_quotas")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(limits, (29, 1));
+        assert_usage(&db, [1; 32], (29, 1)).await;
+        db.consume_code(code, &[2; 32]).await.unwrap();
+        assert_usage(&db, [2; 32], (0, 0)).await;
+        db.set_limits(&[1; 32], StorageLimits::default())
+            .await
+            .unwrap();
+        let body = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), "");
+        db.add([1; 32], &body).await.unwrap();
+        db.initialize().await.unwrap();
+        assert_usage(&db, [1; 32], (58, 2)).await;
+        db.remove([1; 32], &id).await.unwrap();
+        assert_usage(&db, [1; 32], (29, 1)).await;
+        let defaults: (i64, i64) = sqlx::query_as(
+            "SELECT max_content_bytes, max_files FROM key_quotas WHERE public_key = $1",
+        )
+        .bind([2_u8; 32].as_slice())
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(defaults, (536_870_912, 10_000));
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn quota_checks_reject_invalid_usage_and_limit_reductions() {
+        let (db, admin, name) = fixture().await;
+        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
+        db.add([1; 32], &body).await.unwrap();
+        db.set_limits(
+            &[1; 32],
+            StorageLimits {
+                max_content_bytes: 29,
+                max_files: 1,
+            },
+        )
+        .await
+        .unwrap();
+        for (sql, constraint) in [
+            (
+                "UPDATE key_quotas SET used_content_bytes = 30",
+                "key_quotas_content_limit",
+            ),
+            (
+                "UPDATE key_quotas SET max_content_bytes = 28",
+                "key_quotas_content_limit",
+            ),
+            (
+                "UPDATE key_quotas SET file_count = 2",
+                "key_quotas_files_limit",
+            ),
+            (
+                "UPDATE key_quotas SET max_files = 0",
+                "key_quotas_files_limit",
+            ),
+        ] {
+            let error = sqlx::query(sql).execute(&db.pool).await.unwrap_err();
+            let error = error.as_database_error().unwrap();
+            assert_eq!(error.code().as_deref(), Some("23514"));
+            assert_eq!(error.constraint(), Some(constraint));
+            assert_usage(&db, [1; 32], (29, 1)).await;
+        }
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn manual_quota_migration_preserves_libraries_over_default_limits() {
+        let (db, admin, name) = empty_fixture().await;
+        sqlx::raw_sql(include_str!("../tests/fixtures/pre-storage-limits.sql"))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO registered_keys (public_key) VALUES ($1)")
+            .bind([1_u8; 32].as_slice())
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO files (id, owner, meta, content, created_at)
+             SELECT encode(sha256($2::bytea || int4send(n)), 'hex'), $1, $2,
+                    $2::bytea || int4send(n), 42 FROM generate_series(1, 10001) AS n",
+        )
+        .bind([1_u8; 32].as_slice())
+        .bind(sealed_blob(1).as_slice())
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        migrate_storage_limits(&db).await.unwrap();
+        db.initialize().await.unwrap();
+        let limits: (i64, i64) =
+            sqlx::query_as("SELECT max_content_bytes, max_files FROM key_quotas")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(limits, (536_870_912, 10_001));
+        assert_usage(&db, [1; 32], (33 * 10_001, 10_001)).await;
+        let body = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), "");
+        assert!(matches!(
+            db.add([1; 32], &body).await,
+            Err(Error::StorageLimit)
+        ));
+        migrate_storage_limits(&db).await.unwrap();
+        db.initialize().await.unwrap();
+        assert_usage(&db, [1; 32], (33 * 10_001, 10_001)).await;
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn failed_storage_upgrade_rolls_back_all_additions() {
+        let (db, admin, name) = empty_fixture().await;
+        sqlx::raw_sql(include_str!("../tests/fixtures/pre-storage-limits.sql"))
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        // Incompatible content type makes the generated-column step fail after
+        // the limit columns were added. Nothing may survive the failed startup.
+        sqlx::query("DROP TRIGGER files_immutable_content ON files")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE files DROP CONSTRAINT files_content_check")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE files ALTER COLUMN content TYPE bytea[] USING ARRAY[content]")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(migrate_storage_limits(&db).await.is_err());
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND column_name IN ('max_content_bytes', 'max_files', 'content_bytes')")
+            .fetch_one(&db.pool).await.unwrap();
+        assert_eq!(count, 0);
+        sqlx::query("ALTER TABLE files ALTER COLUMN content TYPE bytea USING content[1]")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        migrate_storage_limits(&db).await.unwrap();
+        db.initialize().await.unwrap();
         dispose(db, admin, name).await;
     }
 

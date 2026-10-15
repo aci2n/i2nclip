@@ -57,8 +57,47 @@ Administrators issue invitations with the Rust executable:
 ```sh
 i2nclip otc issue
 i2nclip otc issue --ttl-secs 3600
+i2nclip otc issue --max-bytes 1073741824 --max-files 20000
+i2nclip key set-limits PUBLIC_KEY --max-bytes 536870912 --max-files 10000
 podman exec i2nclip i2nclip otc issue
 ```
+
+Each key defaults to 512 MiB (536,870,912 bytes of encrypted content) and 10,000
+files. Invitations carry their chosen limits to newly registered keys. Registering
+an existing key again preserves its limits. Both limit flags are required for
+`key set-limits`; values are nonnegative decimal integers up to 9223372036854775807.
+Zero blocks uploads. Paired devices share one key and quota. Lowering a quota
+below current usage is rejected without changing limits or files. Downloads, metadata
+edits, and deletion remain available; deletion frees capacity automatically.
+Database checks enforce used bytes and file count at or below their limits.
+Limits and current usage live in a separate `key_quotas` row per public key;
+`registered_keys` remains key-only. Uploads reserve bytes and a file slot, and
+deletes release them, in the same transaction as the media change. Each quota
+check reads one row, without summing the library. Metadata edits do not change usage.
+Quota failures return HTTP 409 with `Library storage limit reached.` beside the
+upload. Sizes include encryption overhead, but exclude metadata and PostgreSQL
+storage overhead. Leave disk headroom for metadata, indexes, WAL, and dead tuples.
+
+For an existing pre-quota database, stop **all server instances**, back up
+PostgreSQL, and run the one-time schema/data upgrade before starting the new
+server. Use the server database URL (or equivalent psql connection settings):
+
+```sh
+psql "$I2N_DATABASE_URL" --single-transaction -v ON_ERROR_STOP=1 \
+  --file sql/002_storage_limits.sql
+```
+
+The [migration script](sql/002_storage_limits.sql) takes the schema advisory lock,
+adds the columns and quota table, and computes initial usage from stored files.
+Existing libraries receive the defaults or their actual usage, whichever is
+higher, so no files are removed and the database checks hold. Existing quota rows
+are preserved if the script is manually repeated. Errors roll back the upgrade.
+Backfilling sizes and usage may take time and additional disk space.
+
+Fresh databases get the current schema directly. Startup **never runs the
+migration or backfill**; restarts preserve limits and counters without scanning
+media. No schema-version table is needed. `IF NOT EXISTS` does not validate
+conflicting existing definitions.
 
 ## Build and run
 
