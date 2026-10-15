@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { pairingCrypto } from "../src/lib/pairing/service.js";
+import { deferred, tick } from "./helpers.js";
 
 test("isolated pairing adapters complete a verified exchange", async (t) => {
 	const sender = pairingCrypto();
@@ -50,4 +51,34 @@ test("pairing crypto adapter serializes calls, rejects disposal immediately and 
 		(error) =>
 			error.message === "Pairing authentication failed. Create a new code.",
 	);
+});
+
+test("disposing an adapter rejects while key derivation is still in flight", async (t) => {
+	const sender = pairingCrypto();
+	const receiver = pairingCrypto();
+	t.after(sender.dispose);
+	t.after(receiver.dispose);
+	const context = "context";
+	const secret = "W4TXN9RC";
+	await sender.call("senderSetup", { secret, context });
+	const first = await receiver.call("receiverStart", { secret });
+	const second = await sender.call("senderResponse", { message: first });
+	const entered = deferred();
+	const result = deferred();
+	t.mock.method(crypto.subtle, "deriveBits", () => {
+		entered.resolve();
+		return result.promise;
+	});
+	const finishing = receiver.call("receiverFinish", {
+		message: second,
+		context,
+	});
+	await entered.promise;
+	receiver.dispose();
+	await assert.rejects(finishing, { name: "AbortError" });
+	result.resolve(new Uint8Array(5).buffer);
+	await tick();
+	await assert.rejects(receiver.call("verificationCode"), {
+		name: "AbortError",
+	});
 });

@@ -138,9 +138,9 @@ test("encrypted singleton recovery, password change, reload, and forget", async 
 		await other
 			.getByRole("button", { name: "Change password", exact: true })
 			.click();
-		await expect(other.getByRole("status")).toHaveText(
-			"Master password changed.",
-		);
+		await expect(
+			other.getByRole("status").filter({ hasText: "Master password changed." }),
+		).toHaveText("Master password changed.");
 		await other.reload();
 		await other.getByLabel("Master password", { exact: true }).fill(PASSWORD);
 		await other.getByRole("button", { name: "Unlock", exact: true }).click();

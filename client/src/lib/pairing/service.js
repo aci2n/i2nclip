@@ -6,72 +6,52 @@ const MAX_BODY = 16_384;
 
 // Each pairing adapter executes one isolated, disposable PAKE attempt.
 export function pairingCrypto() {
-	let disposed = false;
+	const controller = new AbortController();
+	const { signal } = controller;
 	let running = false;
 	let execute;
-	let pending;
-	const ended = () => new DOMException("Pairing ended.", "AbortError");
 	return {
-		call(action, args = {}) {
-			if (disposed) {
-				return Promise.reject(ended());
-			}
+		async call(action, args = {}) {
+			signal.throwIfAborted();
 			if (running) {
-				return Promise.reject(new Error("Pairing is busy."));
+				throw new Error("Pairing is busy.");
 			}
 			running = true;
-			return new Promise((resolve, reject) => {
-				const job = { reject };
-				pending = job;
-				let currentExecute;
-				(async () => {
-					const { createPairingCrypto } = await import("./crypto.js");
-					if (disposed) {
-						throw ended();
-					}
-					execute ||= createPairingCrypto();
-					currentExecute = execute;
-					return currentExecute(action, args);
-				})()
-					.then(
-						(value) => {
-							if (pending === job) {
-								pending = null;
-								running = false;
-							}
-							if (disposed) {
-								reject(ended());
-							} else {
-								resolve(value);
-							}
-						},
-						() => {
-							if (pending === job) {
-								pending = null;
-								running = false;
-							}
-							reject(
-								disposed
-									? ended()
-									: new Error(
-											"Pairing authentication failed. Create a new code.",
-										),
-							);
-						},
-					)
-					.finally(() => {
-						if (disposed) {
-							currentExecute?.dispose();
-						}
-					});
+			let onAbort;
+			const stopped = new Promise((_, reject) => {
+				onAbort = () => reject(signal.reason);
+				signal.addEventListener("abort", onAbort, { once: true });
 			});
+			const work = async () => {
+				const { createPairingCrypto } = await import("./crypto.js");
+				signal.throwIfAborted();
+				execute ||= createPairingCrypto();
+				const current = execute;
+				try {
+					return await current(action, args);
+				} finally {
+					// Crypto already in flight can finish after the caller is canceled.
+					if (signal.aborted) {
+						current.dispose();
+					}
+				}
+			};
+			try {
+				const value = await Promise.race([work(), stopped]);
+				signal.throwIfAborted();
+				return value;
+			} catch {
+				signal.throwIfAborted();
+				throw new Error("Pairing authentication failed. Create a new code.");
+			} finally {
+				signal.removeEventListener("abort", onAbort);
+				running = false;
+			}
 		},
 		dispose() {
-			disposed = true;
+			controller.abort(new DOMException("Pairing ended.", "AbortError"));
 			execute?.dispose();
 			execute = null;
-			pending?.reject(ended());
-			pending = null;
 		},
 	};
 }
