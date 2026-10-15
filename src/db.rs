@@ -706,15 +706,6 @@ mod tests {
         .expect("operation must wait for the preceding transaction");
     }
 
-    async fn migrate_storage_limits(db: &Database) -> Result<(), Error> {
-        let mut tx = db.pool.begin().await?;
-        sqlx::raw_sql(include_str!("../sql/002_storage_limits.sql"))
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
     async fn assert_usage(db: &Database, owner: [u8; 32], expected: (i64, i64)) {
         let stored: (i64, i64) = sqlx::query_as(
             "SELECT used_content_bytes, file_count FROM key_quotas WHERE public_key = $1",
@@ -1690,64 +1681,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn storage_limit_upgrade_preserves_data_and_custom_limits_on_reopen() {
-        let (db, admin, name) = empty_fixture().await;
-        sqlx::raw_sql(include_str!("../tests/fixtures/pre-storage-limits.sql"))
-            .execute(&db.pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO registered_keys (public_key) VALUES ($1)")
-            .bind([1_u8; 32].as_slice())
-            .execute(&db.pool)
-            .await
-            .unwrap();
-        let code = "old-invitation";
-        sqlx::query("INSERT INTO registration_codes VALUES ($1, $2)")
-            .bind(crypto::body_hash_bytes(code.as_bytes()).as_slice())
-            .bind(i64::MAX)
-            .execute(&db.pool)
-            .await
-            .unwrap();
+    async fn quota_state_survives_reinitialization() {
+        let (db, admin, name) = fixture().await;
         let content = sealed_blob(1);
-        let id = crypto::body_hash(&content);
-        sqlx::query(
-            "INSERT INTO files (id, owner, content, meta, created_at) VALUES ($1, $2, $3, $3, 42)",
-        )
-        .bind(&id)
-        .bind([1_u8; 32].as_slice())
-        .bind(content.as_slice())
-        .execute(&db.pool)
-        .await
-        .unwrap();
-        // Concurrent upgrading instances coordinate through the existing lock.
-        let (a, b) = tokio::join!(migrate_storage_limits(&db), migrate_storage_limits(&db));
-        a.unwrap();
-        b.unwrap();
-        assert_eq!(db.content([1; 32], &id).await.unwrap(), content);
-        let item = db.metadata([1; 32], &id).await.unwrap();
-        assert_eq!(
-            (item.bytes, item.created_at, item.meta),
-            (29, 42, content.to_vec())
-        );
-        let defaults: (i64, i64) =
-            sqlx::query_as("SELECT max_content_bytes, max_files FROM key_quotas")
-                .fetch_one(&db.pool)
-                .await
-                .unwrap();
-        assert_eq!(defaults, (536_870_912, 10_000));
-        let columns: Vec<String> = sqlx::query_scalar(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = 'registered_keys' ORDER BY ordinal_position",
-        ).fetch_all(&db.pool).await.unwrap();
-        assert_eq!(columns, vec!["public_key"]);
-        let usage: (i64, i64) =
-            sqlx::query_as("SELECT used_content_bytes, file_count FROM key_quotas")
-                .fetch_one(&db.pool)
-                .await
-                .unwrap();
-        assert_eq!(usage, (29, 1));
-        let generated: String = sqlx::query_scalar("SELECT attgenerated::text FROM pg_attribute WHERE attrelid = 'files'::regclass AND attname = 'content_bytes'")
-            .fetch_one(&db.pool).await.unwrap();
-        assert_eq!(generated, "s");
+        let body = crate::reference_crypto::encode_post(&content, &content, "");
+        let item = db.add([1; 32], &body).await.unwrap();
         db.set_limits(
             &[1; 32],
             StorageLimits {
@@ -1758,32 +1696,19 @@ mod tests {
         .await
         .unwrap();
         db.initialize().await.unwrap();
-        let limits: (i64, i64) =
-            sqlx::query_as("SELECT max_content_bytes, max_files FROM key_quotas")
-                .fetch_one(&db.pool)
-                .await
-                .unwrap();
-        assert_eq!(limits, (29, 1));
+        assert_eq!(db.content([1; 32], &item.id).await.unwrap(), content);
+        let quota = db.quota([1; 32]).await.unwrap();
+        assert_eq!((quota.max_content_bytes, quota.max_files), (29, 1));
         assert_usage(&db, [1; 32], (29, 1)).await;
-        db.consume_code(code, &[2; 32]).await.unwrap();
-        assert_usage(&db, [2; 32], (0, 0)).await;
         db.set_limits(&[1; 32], StorageLimits::default())
             .await
             .unwrap();
-        let body = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), "");
-        db.add([1; 32], &body).await.unwrap();
+        let next = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), "");
+        db.add([1; 32], &next).await.unwrap();
         db.initialize().await.unwrap();
         assert_usage(&db, [1; 32], (58, 2)).await;
-        db.remove([1; 32], &id).await.unwrap();
+        db.remove([1; 32], &item.id).await.unwrap();
         assert_usage(&db, [1; 32], (29, 1)).await;
-        let defaults: (i64, i64) = sqlx::query_as(
-            "SELECT max_content_bytes, max_files FROM key_quotas WHERE public_key = $1",
-        )
-        .bind([2_u8; 32].as_slice())
-        .fetch_one(&db.pool)
-        .await
-        .unwrap();
-        assert_eq!(defaults, (536_870_912, 10_000));
         dispose(db, admin, name).await;
     }
 
@@ -1825,82 +1750,6 @@ mod tests {
             assert_eq!(error.constraint(), Some(constraint));
             assert_usage(&db, [1; 32], (29, 1)).await;
         }
-        dispose(db, admin, name).await;
-    }
-
-    #[tokio::test]
-    async fn manual_quota_migration_preserves_libraries_over_default_limits() {
-        let (db, admin, name) = empty_fixture().await;
-        sqlx::raw_sql(include_str!("../tests/fixtures/pre-storage-limits.sql"))
-            .execute(&db.pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO registered_keys (public_key) VALUES ($1)")
-            .bind([1_u8; 32].as_slice())
-            .execute(&db.pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO files (id, owner, meta, content, created_at)
-             SELECT encode(sha256($2::bytea || int4send(n)), 'hex'), $1, $2,
-                    $2::bytea || int4send(n), 42 FROM generate_series(1, 10001) AS n",
-        )
-        .bind([1_u8; 32].as_slice())
-        .bind(sealed_blob(1).as_slice())
-        .execute(&db.pool)
-        .await
-        .unwrap();
-        migrate_storage_limits(&db).await.unwrap();
-        db.initialize().await.unwrap();
-        let limits: (i64, i64) =
-            sqlx::query_as("SELECT max_content_bytes, max_files FROM key_quotas")
-                .fetch_one(&db.pool)
-                .await
-                .unwrap();
-        assert_eq!(limits, (536_870_912, 10_001));
-        assert_usage(&db, [1; 32], (33 * 10_001, 10_001)).await;
-        let body = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), "");
-        assert!(matches!(
-            db.add([1; 32], &body).await,
-            Err(Error::StorageLimit)
-        ));
-        migrate_storage_limits(&db).await.unwrap();
-        db.initialize().await.unwrap();
-        assert_usage(&db, [1; 32], (33 * 10_001, 10_001)).await;
-        dispose(db, admin, name).await;
-    }
-
-    #[tokio::test]
-    async fn failed_storage_upgrade_rolls_back_all_additions() {
-        let (db, admin, name) = empty_fixture().await;
-        sqlx::raw_sql(include_str!("../tests/fixtures/pre-storage-limits.sql"))
-            .execute(&db.pool)
-            .await
-            .unwrap();
-        // Incompatible content type makes the generated-column step fail after
-        // the limit columns were added. Nothing may survive the failed startup.
-        sqlx::query("DROP TRIGGER files_immutable_content ON files")
-            .execute(&db.pool)
-            .await
-            .unwrap();
-        sqlx::query("ALTER TABLE files DROP CONSTRAINT files_content_check")
-            .execute(&db.pool)
-            .await
-            .unwrap();
-        sqlx::query("ALTER TABLE files ALTER COLUMN content TYPE bytea[] USING ARRAY[content]")
-            .execute(&db.pool)
-            .await
-            .unwrap();
-        assert!(migrate_storage_limits(&db).await.is_err());
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND column_name IN ('max_content_bytes', 'max_files', 'content_bytes')")
-            .fetch_one(&db.pool).await.unwrap();
-        assert_eq!(count, 0);
-        sqlx::query("ALTER TABLE files ALTER COLUMN content TYPE bytea USING content[1]")
-            .execute(&db.pool)
-            .await
-            .unwrap();
-        migrate_storage_limits(&db).await.unwrap();
-        db.initialize().await.unwrap();
         dispose(db, admin, name).await;
     }
 

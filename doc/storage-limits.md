@@ -38,20 +38,11 @@ accounting. Remove the unused covering-index creation from the draft schema.
 There are no per-upload SUM/COUNT queries or accounting triggers. Database
 methods are the media writers and own counter maintenance.
 
-The migration targets the committed pre-quota schema, not intermediate unpublished
-drafts. It is a standalone, one-time SQL script, never executed at startup. Run it
-with `psql --single-transaction -v ON_ERROR_STOP=1 --file sql/002_storage_limits.sql`
-after stopping old servers and backing up the database. The script takes the
-existing advisory lock and upgrades the schema, then seeds missing quota rows
-from existing files. For existing libraries over defaults, raise initial limits
-to current usage so data is preserved and the CHECK constraints hold. Existing
-quota rows are not changed on repeat manual execution. Failures roll back the
-transaction. Fresh databases use the current initial schema; restarts run no
-backfill or media SUM/COUNT queries. No version table or runtime fallback.
-
-Backfilling generated sizes and initial usage may take time and disk space.
-Logical quotas exclude PostgreSQL indexes, WAL, and dead tuples; leave disk
-headroom. Startup does not apply data migrations.
+Databases use the current initial schema. Repeated initialization preserves data,
+limits and counters without backfills or media SUM/COUNT queries. No migrations,
+version table or runtime fallback are provided; recreate outdated development
+databases. Logical quotas exclude PostgreSQL indexes, WAL and dead tuples; leave
+disk headroom.
 
 ## Upload lifecycle and failures
 
@@ -76,11 +67,9 @@ administrator updates and CLI validation, zero/exact/exceeded limits, independen
 owners, duplicate/foreign/repeated deletion, lowering limits, concurrent uploads
 and deletes, and cancellation/rollback. Assert counters equal actual stored bytes
 and file count after successful and failed mutations and repeated startup.
-Use isolated PostgreSQL databases to verify migration from the previous schema,
-data preservation, exact usage backfill, lean authorization table, startup rollback and
-concurrent/repeated initialization without resetting configured limits. Test both
-CHECK constraints, rejection of reductions below usage, and one-time migration
-of libraries above the defaults. Run
+Use isolated PostgreSQL databases to verify data and quota preservation across
+repeated initialization. Test both CHECK constraints and rejection of reductions
+below usage. Run
 formatting, warning-free builds, standard and PostgreSQL tests. Verify generated
 help, numeric ranges, required flags, and no-argument server startup. Leave all
 changes in a cohesive commit after verification, as authorized by the user.
