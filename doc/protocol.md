@@ -37,7 +37,7 @@ A media object contains `id`, `created_at` (server Unix seconds), `bytes` (encry
 
 List queries accept repeated `tag=TOKEN` parameters and optional `after=CREATED_AT.ID`. All distinct requested tags must match. Pages contain at most 24 items, ordered by creation time descending and hash ascending. `next` is the last returned item's cursor only when another row exists. Pagination is not a snapshot: intervening mutations may change results. Unknown query keys are ignored, empty token values are ignored, and the last repeated `after` wins. The hand-written parser does not percent-decode values; use the literal token/cursor alphabet.
 
-Errors are JSON `{"error":"…"}`. Statuses include `400` for malformed data, `401` for failed authentication or replay, `403` for invalid/expired/spent registration codes, `404` for missing or unowned items, `408` for body-read timeouts, `409` for an existing sealed-content hash, `413` for oversized HTTP bodies, `503` for temporary service unavailability such as a database-pool acquisition timeout, and `500` for internal failures. Some field-size violations become `400` during frame validation. JSON and empty responses use `Cache-Control: no-store`. Content responses use `application/octet-stream` and `private, max-age=31536000, immutable`; a URL identifies immutable ciphertext. Cached copies may remain readable after deletion or authorization changes.
+Errors are JSON `{"error":"…"}`. Statuses include `429` for public endpoint rate limits, `400` for malformed data, `401` for failed authentication or replay, `403` for invalid/expired/spent registration codes, `404` for missing or unowned items, `408` for body-read timeouts, `409` for an existing sealed-content hash, `413` for oversized HTTP bodies, `503` for temporary service unavailability such as a database-pool acquisition timeout, and `500` for internal failures. Some field-size violations become `400` during frame validation. JSON and empty responses use `Cache-Control: no-store`. Content responses use `application/octet-stream` and `private, max-age=31536000, immutable`; a URL identifies immutable ciphertext. Cached copies may remain readable after deletion or authorization changes.
 
 ## Request authentication
 
@@ -125,3 +125,20 @@ Nonce cleanup runs as part of the hourly maintenance task described above. Its s
 uncached JSON contains `max_content_bytes`, `max_files`, `used_content_bytes`,
 and `file_count` for the authenticated public key only. It reads the quota row
 without aggregating media, and spends the request nonce even when rejected.
+
+## Public endpoint source limits
+
+Registration allows 10 requests/source/60 seconds and 120 globally. Health allows
+120/source/60 seconds. HTTP 429 responses use Cache-Control: no-store and a
+Retry-After rounded up to the remaining fixed window. Rejected requests do not
+read bodies or access the database. The registry holds at most 4096 live
+source/endpoint buckets and rejects new sources when full rather than evicting
+live budgets. Expired entries are pruned; restarts clear in-memory rate state.
+
+`I2N_TRUSTED_PROXIES` lists trusted peer IPs/CIDRs (default empty). Untrusted
+TCP peers cannot supply an effective forwarded address. Trusted chains use
+X-Forwarded-For, Forwarded, or X-Real-IP in that precedence, from right to left.
+Malformed selected headers fall back to the peer; the resolver does not try an
+alternative header. IPv4-mapped IPv6 normalizes to IPv4 and IPv6 /64s share budgets.
+Pairing uses the same source resolver and retains its own rate windows. Public
+router embeddings must provide ConnectInfo<SocketAddr> to distinguish TCP peers.

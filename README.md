@@ -138,6 +138,39 @@ npm run dev --prefix client
 
 PostgreSQL holds ciphertext, metadata, keys, invitations, nonces, and tags. Uploads and metadata changes commit atomically. Downloads release database connections before sending owned bytes. The eight-connection SQLx pool has a five-second acquisition timeout. Startup initializes the idempotent schema transactionally; maintenance removes expired invitations and nonces on startup and hourly. See [protocol and backend documentation](doc/README.md).
 
+## Public endpoint rate limits and Caddy
+
+Registration is limited to 10 requests per source per minute and 120 globally;
+health checks to 120 per source per minute. Pairing keeps its existing join and
+invalid-capability limits. Requests over budget return HTTP 429 with Retry-After
+before reading the body or accessing PostgreSQL. IPv6 addresses share a /64
+budget; memory is bounded, and limits reset on process restart. Signed media,
+quota, and ping endpoints keep their authentication and transfer limits.
+
+By default the TCP peer is the source and forwarded headers are ignored. Set
+`I2N_TRUSTED_PROXIES` to the actual Caddy peer IPs/CIDRs, for example
+`127.0.0.1/32,::1/128` for a loopback proxy. Trust only your proxy addresses.
+The server checks X-Forwarded-For, then Forwarded, then X-Real-IP, using the first
+present header and walking trusted hops right-to-left. Malformed headers fall
+back to the TCP peer. Missing connection metadata shares one conservative budget.
+
+Caddy supplies sanitized X-Forwarded-For by default. Strip alternative client-IP
+headers so public callers cannot assert them through the proxy:
+
+```caddyfile
+clip.example.com {
+    reverse_proxy 127.0.0.1:8080 {
+        header_up -Forwarded
+        header_up -X-Real-IP
+    }
+}
+```
+
+If a CDN or another proxy precedes Caddy, configure Caddy's `trusted_proxies` and
+`trusted_proxies_strict`, and trust the required upstream hops on the app side.
+See [Caddy's proxy-header guidance](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#headers)
+and the [rate-limit specification](doc/public-rate-limits.md) for trust and limits.
+
 ## Verification
 
 | Command | Coverage and access |

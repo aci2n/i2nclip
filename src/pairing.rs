@@ -1,9 +1,9 @@
 //! Ephemeral, bounded relay. Only the clients perform the PAKE or decrypt messages.
 use std::collections::{HashMap, VecDeque};
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::time::Duration;
 
-use axum::extract::{ConnectInfo, Path, Request, State};
+use axum::extract::{Path, Request, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
@@ -106,7 +106,7 @@ fn capability() -> Result<String, Failure> {
 }
 
 impl Pairings {
-    // Use the TCP peer, never untrusted Forwarded/X-Forwarded-For headers.
+    // Sources are resolved across configured trusted proxies and IPv6 /64s.
     // Missing connection metadata shares one conservative source bucket.
     fn admit_join(&mut self, source: Option<IpAddr>, now: Instant) -> Result<(), Failure> {
         let prune = |times: &mut VecDeque<Instant>| {
@@ -303,13 +303,6 @@ fn token(headers: &HeaderMap) -> &str {
         .unwrap_or("")
 }
 
-fn source(request: &Request) -> Option<IpAddr> {
-    request
-        .extensions()
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|peer| peer.0.ip())
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Create {
@@ -367,7 +360,7 @@ async fn create(State(state): State<AppState>, request: Request) -> Response {
 }
 
 async fn join(State(state): State<AppState>, Path(id): Path<String>, request: Request) -> Response {
-    let source = source(&request);
+    let source = crate::client_ip::rate_key(state.client_ips.source(&request));
     // Charge invalid IDs and malformed/stalled bodies before reading them.
     match state.pairings.lock() {
         Ok(mut rooms) => {
@@ -400,7 +393,12 @@ async fn submit(
     // Invalid capabilities must neither buffer a body nor occupy a read slot.
     match state.pairings.lock() {
         Ok(mut rooms) => {
-            if let Err(error) = rooms.authorize(&id, &token, source(&request), Instant::now()) {
+            if let Err(error) = rooms.authorize(
+                &id,
+                &token,
+                crate::client_ip::rate_key(state.client_ips.source(&request)),
+                Instant::now(),
+            ) {
                 return result(Err(error));
             }
         }
@@ -426,9 +424,12 @@ async fn poll(State(state): State<AppState>, Path(id): Path<String>, request: Re
     let now = Instant::now();
     match state.pairings.lock() {
         Ok(mut rooms) => {
-            if let Err(error) =
-                rooms.authorize(&id, token(request.headers()), source(&request), now)
-            {
+            if let Err(error) = rooms.authorize(
+                &id,
+                token(request.headers()),
+                crate::client_ip::rate_key(state.client_ips.source(&request)),
+                now,
+            ) {
                 return result(Err(error));
             }
             result(
@@ -449,9 +450,12 @@ async fn cancel(
     let now = Instant::now();
     match state.pairings.lock() {
         Ok(mut rooms) => {
-            if let Err(error) =
-                rooms.authorize(&id, token(request.headers()), source(&request), now)
-            {
+            if let Err(error) = rooms.authorize(
+                &id,
+                token(request.headers()),
+                crate::client_ip::rate_key(state.client_ips.source(&request)),
+                now,
+            ) {
                 return result(Err(error));
             }
             rooms.rooms.remove(&id);
@@ -466,13 +470,15 @@ async fn cancel(
 mod tests {
     use super::*;
     use axum::body::Body;
+    use axum::extract::ConnectInfo;
     use http_body_util::BodyExt;
+    use std::net::SocketAddr;
     use tower::ServiceExt;
 
     fn peer(number: u16) -> ConnectInfo<SocketAddr> {
         ConnectInfo(SocketAddr::new(
             IpAddr::V6(std::net::Ipv6Addr::new(
-                0x2001, 0xdb8, 0, 0, 0, 0, 0, number,
+                0x2001, 0xdb8, number, 0, 0, 0, 0, 1,
             )),
             12345,
         ))

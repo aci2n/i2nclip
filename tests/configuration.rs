@@ -4,6 +4,7 @@ fn command() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_i2nclip"));
     command.env("I2N_ORIGIN", "http://localhost:8080");
     command.env_remove("I2N_DATABASE_URL");
+    command.env_remove("I2N_TRUSTED_PROXIES");
     command.env_remove("I2N_DATABASE_URL_FILE");
     command
 }
@@ -119,5 +120,18 @@ fn cli_help_is_available_without_database_configuration() {
             assert!(stdout.contains(text), "missing {text} in {stdout}");
         }
         assert!(output.stderr.is_empty());
+    }
+}
+
+#[test]
+fn invalid_trusted_proxy_configuration_fails_before_database_access() {
+    for value in ["bad", "127.0.0.1,", "10.0.0.0/99"] {
+        let output = command()
+            .env("I2N_DATABASE_URL", "invalid://configuration-only")
+            .env("I2N_TRUSTED_PROXIES", value)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("I2N_TRUSTED_PROXIES"));
     }
 }

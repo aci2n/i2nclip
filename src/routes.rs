@@ -18,10 +18,16 @@ use crate::{auth, media, Error, MAX_REGISTER_BODY};
 pub(crate) const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
 
 pub(crate) fn router(state: AppState) -> Router {
-    Router::new()
+    let public = Router::new()
         .route("/api/health", get(health))
-        .route("/api/ping", get(ping))
         .route("/api/register-key", post(register_key))
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::rate_limit::public,
+        ));
+    Router::new()
+        .merge(public)
+        .route("/api/ping", get(ping))
         .merge(media::router())
         .merge(crate::pairing::router())
         .layer(tower_http::trace::TraceLayer::new_for_http())
