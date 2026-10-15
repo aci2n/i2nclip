@@ -9,7 +9,7 @@ let input = $state();
 let button = $state();
 
 async function open() {
-	draft ??= name;
+	draft = name;
 	editing = true;
 	await tick();
 	input?.focus();
@@ -59,7 +59,10 @@ async function submit(event) {
 			maxlength="255"
 			readonly={saving}
 			disabled={disabled && !saving}
-			onblur={() => (editing = false)}
+			onblur={() => {
+				draft = null;
+				editing = false;
+			}}
 			onkeydown={(event) => {
 				if (event.key === "Escape") {
 					event.preventDefault();

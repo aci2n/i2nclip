@@ -19,8 +19,9 @@ uploads. The existing app progress/error UI stays authoritative.
   storage, or protocol access. Trim surrounding whitespace; require a nonempty
   name and cap typed input at 255 characters. An unchanged name exits editing
   without an HTTP write. Escape discards the draft and returns focus to the label.
-- Blur never submits and never moves focus from the user's next control. Keep
-  unsaved/failed drafts locally for reopening; successful saving clears the draft.
+- Blur never submits and never moves focus from the user's next control. Discard
+  unsaved/failed drafts on blur; reopening starts from the saved filename.
+  Successful saving also clears the draft.
   While a save is pending, keep the input read-only and prevent another submission.
   Restore focus after Enter only if the user has not already moved elsewhere.
 - `MediaCard` exposes one generic metadata callback for filename and tags. The
@@ -40,8 +41,9 @@ uploads. The existing app progress/error UI stays authoritative.
 ## Persistence, cancellation, and failures
 
 Filename drafts are presentation state and disappear with card/view disposal.
-Failures preserve the draft and show existing card metadata feedback. Conflicts
-load current metadata while preserving the local attempted draft for review.
+Failures preserve the draft while the input remains focused and show existing
+card metadata feedback. Conflicts load current metadata while preserving the
+focused attempted draft for review. Blur discards that draft without saving.
 Blur during a pending request returns to read-only but does not cancel the
 store-owned request; a successful response updates the displayed filename.
 

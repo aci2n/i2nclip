@@ -46,7 +46,7 @@ test("filenames edit inline, save on Enter, retain failed drafts, and do not sav
 	await expect(label()).toBeVisible();
 	expect(updates).toBe(0);
 	await label().click();
-	await expect(input()).toHaveValue("Unsaved.png");
+	await expect(input()).toHaveValue(originalName);
 	await input().press("Escape");
 	await expect(label()).toBeFocused();
 	await label().click();
@@ -74,7 +74,8 @@ test("filenames edit inline, save on Enter, retain failed drafts, and do not sav
 	await card.getByText("File details", { exact: true }).click();
 	await expect(input()).toHaveCount(0);
 	await label().click();
-	await expect(input()).toHaveValue("Renamed landscape.png");
+	await expect(input()).toHaveValue(originalName);
+	await input().fill("Renamed landscape.png");
 	await page.unroute(pattern);
 	await shot(page, "filename-failed-draft");
 	await input().press("Enter");
