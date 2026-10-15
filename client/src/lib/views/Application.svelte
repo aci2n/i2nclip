@@ -81,8 +81,25 @@ onDestroy(() => {
 					>Settings</a
 				>
 			</nav>
-			<button type="button" class="secondary lock" onclick={session.lock}>
-				Lock
+			<button
+				type="button"
+				class="secondary lock"
+				aria-label="Lock"
+				title="Lock"
+				onclick={session.lock}
+			>
+				<svg
+					viewBox="0 0 24 24"
+					aria-hidden="true"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<rect x="5" y="10" width="14" height="11" rx="2" />
+					<path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3" />
+				</svg>
 			</button>
 		</header>
 		{#if page === "settings"}
@@ -123,6 +140,17 @@ nav {
 	flex-wrap: wrap;
 	gap: 1rem;
 }
+.lock {
+	display: grid;
+	place-items: center;
+	width: 3rem;
+	height: 3rem;
+	padding: 0.5rem;
+}
+.lock svg {
+	width: 1.25rem;
+	height: 1.25rem;
+}
 nav a {
 	color: var(--muted);
 	text-decoration: none;
@@ -146,7 +174,6 @@ nav a[aria-current] {
 	.lock {
 		grid-column: 2;
 		grid-row: 1;
-		min-height: 3rem;
 	}
 	nav a {
 		display: inline-flex;
