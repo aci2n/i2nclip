@@ -9,12 +9,17 @@ export function createTags(session, { http = api } = {}) {
 	let controller;
 	let disposed = false;
 	let epoch = session.epoch;
-	let ready = false;
+	let refreshNeeded = true;
 	async function refresh() {
 		const value = get(session);
-		if (disposed || !value.unlocked || !value.configured || value.busy) {
+		if (disposed || !value.unlocked || !value.configured) {
 			return false;
 		}
+		if (value.busy) {
+			refreshNeeded = true;
+			return false;
+		}
+		refreshNeeded = false;
 		controller?.abort();
 		controller = new AbortController();
 		const signal = AbortSignal.any([controller.signal, session.signal]);
@@ -45,10 +50,9 @@ export function createTags(session, { http = api } = {}) {
 			epoch = value.epoch;
 			controller?.abort();
 			state.set(empty());
-			ready = false;
+			refreshNeeded = true;
 		}
-		if (!ready && value.unlocked && value.configured && !value.busy) {
-			ready = true;
+		if (refreshNeeded && value.unlocked && value.configured && !value.busy) {
 			void refresh();
 		}
 	});

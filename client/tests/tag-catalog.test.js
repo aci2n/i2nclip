@@ -4,11 +4,11 @@ import { get, writable } from "svelte/store";
 import { createTags } from "../src/lib/stores/tags.js";
 import { deferred, tick } from "./helpers.js";
 
-test("catalog supersedes reads, keeps same-session suggestions on failure, and clears on lock/disposal", async (t) => {
+function fixture(t, { busy = false } = {}) {
 	const state = writable({
 		configured: true,
 		unlocked: true,
-		busy: false,
+		busy,
 		epoch: 0,
 	});
 	const session = {
@@ -30,6 +30,11 @@ test("catalog supersedes reads, keeps same-session suggestions on failure, and c
 		},
 	});
 	t.after(catalog.dispose);
+	return { state, catalog, calls };
+}
+
+test("catalog supersedes reads, keeps same-session suggestions on failure, and clears on lock/disposal", async (t) => {
+	const { state, catalog, calls } = fixture(t);
 	calls[0].pending.resolve({ tags: ["old"], invalid: 1 });
 	await tick();
 	assert.deepEqual(get(catalog).tags, ["old"]);
@@ -59,5 +64,66 @@ test("catalog supersedes reads, keeps same-session suggestions on failure, and c
 	assert.equal(last.signal.aborted, true);
 	last.pending.resolve({ tags: ["private"], invalid: 0 });
 	await tick();
+	assert.deepEqual(get(catalog).tags, []);
+});
+
+test("catalog coalesces busy refreshes, keeps suggestions and waits for explicit retry after failure", async (t) => {
+	const { state, catalog, calls } = fixture(t, { busy: true });
+	assert.equal(calls.length, 0);
+	assert.equal(await catalog.refresh(), false);
+	assert.equal(await catalog.refresh(), false);
+	state.update((v) => ({ ...v, busy: false }));
+	assert.equal(calls.length, 1);
+	calls[0].pending.resolve({ tags: ["old"], invalid: 0 });
+	await tick();
+	state.update((v) => ({ ...v, busy: true }));
+	assert.equal(await catalog.refresh(), false);
+	assert.equal(await catalog.refresh(), false);
+	assert.deepEqual(get(catalog).tags, ["old"]);
+	assert.equal(get(catalog).loading, false);
+	assert.equal(calls.length, 1);
+	state.update((v) => ({ ...v, busy: false }));
+	assert.equal(calls.length, 2);
+	state.update((v) => ({ ...v, busy: false }));
+	assert.equal(calls.length, 2);
+	calls[1].pending.reject(new Error("offline"));
+	await tick();
+	assert.deepEqual(get(catalog).tags, ["old"]);
+	assert.equal(get(catalog).error, "offline");
+	state.update((v) => ({ ...v, busy: true }));
+	state.update((v) => ({ ...v, busy: false }));
+	assert.equal(calls.length, 2);
+	const retry = catalog.refresh();
+	calls[2].pending.resolve({ tags: ["fresh"], invalid: 0 });
+	assert.equal(await retry, true);
+	assert.deepEqual(get(catalog).tags, ["fresh"]);
+	assert.equal(get(catalog).error, "");
+});
+
+test("catalog drops deferred work on lock and loads only the new identity after unlock", async (t) => {
+	const { state, catalog, calls } = fixture(t);
+	calls[0].pending.resolve({ tags: ["private"], invalid: 0 });
+	await tick();
+	state.update((v) => ({ ...v, busy: true }));
+	await catalog.refresh();
+	state.update((v) => ({ ...v, unlocked: false, busy: false, epoch: 1 }));
+	assert.deepEqual(get(catalog).tags, []);
+	assert.equal(calls.length, 1);
+	state.update((v) => ({ ...v, unlocked: true, busy: true, epoch: 2 }));
+	assert.equal(calls.length, 1);
+	state.update((v) => ({ ...v, busy: false }));
+	assert.equal(calls.length, 2);
+	calls[1].pending.resolve({ tags: ["new identity"], invalid: 0 });
+	await tick();
+	assert.deepEqual(get(catalog).tags, ["new identity"]);
+});
+
+test("disposing the catalog discards a deferred refresh", async (t) => {
+	const { state, catalog, calls } = fixture(t, { busy: true });
+	await catalog.refresh();
+	catalog.dispose();
+	state.update((v) => ({ ...v, busy: false }));
+	await tick();
+	assert.equal(calls.length, 0);
 	assert.deepEqual(get(catalog).tags, []);
 });

@@ -110,7 +110,8 @@ and searches again, retaining input focus. Session changes clear both chips and 
 The root-owned catalog aborts superseded requests, decrypts labels, verifies their
 HMAC tokens, skips damaged entries and clears decrypted state on session changes.
 Mutations refresh it independently of search. Failures and retry appear beside
-search. There is no polling or persistent cache. The reusable tag input owns only
+search. Refresh requests made during a busy session coalesce into one read when
+the session becomes available. There is no polling or persistent cache. The reusable tag input owns only
 suggestion visibility, keyboard navigation and DOM focus.
 
 Upload is separate from search. Its compact summary keeps progress and failures
