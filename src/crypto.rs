@@ -294,7 +294,7 @@ mod tests {
             "/api/media",
             sign_body.as_bytes(),
         );
-        let frame = encode_post(&meta_ct, &ciphertext, &fixture_tag_labels(&token));
+        let frame = encode_upload(&meta_ct, &ciphertext, &fixture_tag_labels(&token));
         #[derive(Serialize)]
         struct PrivateKey<'a> {
             v: u8,

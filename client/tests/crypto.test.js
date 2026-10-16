@@ -19,7 +19,7 @@ import {
 	requestMessage,
 	tagToken,
 } from "../src/lib/protocol/crypto.js";
-import { encodeMeta, encodePost } from "../src/lib/protocol/frame.js";
+import { encodeMeta, encodeUpload } from "../src/lib/protocol/frame.js";
 import { decode, encode } from "../src/lib/protocol/msgpack.js";
 
 const vectors = JSON.parse(
@@ -56,7 +56,7 @@ test("library identity matches the rust vectors", async () => {
 		nonce,
 	);
 	assert.equal(bytesToHex(meta), vectors.meta_ciphertext_hex);
-	const frame = encodePost({
+	const frame = encodeUpload({
 		meta,
 		content,
 		tags: [

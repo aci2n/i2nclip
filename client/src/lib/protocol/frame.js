@@ -1,7 +1,7 @@
 // Named maps match src/frame.rs; signatures cover these exact encoded bytes.
 import { encode } from "./msgpack.js";
 
-export function encodePost({ meta, content, tags }) {
+export function encodeUpload({ meta, content, tags }) {
 	return encode({ meta, content, tags });
 }
 

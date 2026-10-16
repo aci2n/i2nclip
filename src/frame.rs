@@ -26,7 +26,7 @@ struct WireTag<'a> {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PostDocument<'a> {
+struct UploadDocument<'a> {
     #[serde(with = "serde_bytes", borrow)]
     meta: &'a [u8],
     #[serde(with = "serde_bytes", borrow)]
@@ -46,7 +46,7 @@ struct MetaDocument<'a> {
     tags: Vec<WireTag<'a>>,
 }
 
-pub(crate) struct PostParts<'a> {
+pub(crate) struct UploadParts<'a> {
     pub meta: &'a [u8],
     pub content: &'a [u8],
     pub tags: Vec<Tag>,
@@ -57,12 +57,12 @@ pub(crate) struct MetaParts<'a> {
     pub tags: Vec<Tag>,
 }
 
-pub(crate) fn decode_post(bytes: &[u8]) -> Result<PostParts<'_>, Error> {
-    let doc: PostDocument<'_> = codec::decode(bytes)?;
+pub(crate) fn decode_upload(bytes: &[u8]) -> Result<UploadParts<'_>, Error> {
+    let doc: UploadDocument<'_> = codec::decode(bytes)?;
     if doc.meta.len() > MAX_META || doc.content.len() > MAX_CONTENT {
         return Err(Error::BadRequest("field too large".into()));
     }
-    Ok(PostParts {
+    Ok(UploadParts {
         meta: doc.meta,
         content: doc.content,
         tags: parse_tags(doc.tags)?,
@@ -154,7 +154,7 @@ fn collect_tokens<'a>(values: impl IntoIterator<Item = &'a str>) -> Result<Vec<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reference_crypto::{encode_meta, encode_post, fixture_tag_labels};
+    use crate::reference_crypto::{encode_meta, encode_upload, fixture_tag_labels};
     #[test]
     fn memory_profile_frame_decoding() {
         use std::hint::black_box;
@@ -163,10 +163,10 @@ mod tests {
         // extra heap needed to decode an already buffered request.
         let metadata = vec![1; MAX_META];
         let content = vec![1; MAX_CONTENT];
-        let post = encode_post(&metadata, &content, b"\x90");
+        let post = encode_upload(&metadata, &content, b"\x90");
         let put = encode_meta(&[0; 32], &metadata, b"\x90");
         let post_info = allocation_counter::measure(|| {
-            let parts = decode_post(black_box(&post)).unwrap();
+            let parts = decode_upload(black_box(&post)).unwrap();
             black_box(parts);
         });
         let put_info = allocation_counter::measure(|| {
@@ -179,7 +179,7 @@ mod tests {
         // Reproduce the old ciphertext copies as a positive control so the
         // measurement also demonstrates the allocation we removed.
         let copied_info = allocation_counter::measure(|| {
-            let parts = decode_post(black_box(&post)).unwrap();
+            let parts = decode_upload(black_box(&post)).unwrap();
             let meta = parts.meta.to_vec();
             let content = parts.content.to_vec();
             black_box((&meta, &content));
@@ -192,11 +192,11 @@ mod tests {
             .map(|n| URL_SAFE_NO_PAD.encode([n as u8; 32]))
             .collect::<Vec<_>>()
             .join("\n");
-        let small = encode_post(&metadata, &content[..1024], &fixture_tag_labels(&tags));
-        let large = encode_post(&metadata, &content, &fixture_tag_labels(&tags));
+        let small = encode_upload(&metadata, &content[..1024], &fixture_tag_labels(&tags));
+        let large = encode_upload(&metadata, &content, &fixture_tag_labels(&tags));
         let measure = |body: &[u8]| {
             allocation_counter::measure(|| {
-                black_box(decode_post(black_box(body)).unwrap());
+                black_box(decode_upload(black_box(body)).unwrap());
             })
         };
         let small_info = measure(&small);
@@ -272,7 +272,8 @@ mod tests {
                 })
                 .collect();
             let tags = codec::encode(&entries).unwrap();
-            let post = decode_post(&encode_post(b"meta", b"content", &tags)).map(|p| p.tags.len());
+            let post =
+                decode_upload(&encode_upload(b"meta", b"content", &tags)).map(|p| p.tags.len());
             let meta = decode_meta(&encode_meta(&[0; 32], b"meta", &tags)).map(|p| p.tags.len());
             if count == MAX_TAGS {
                 assert_eq!(post.unwrap(), count);
@@ -287,24 +288,24 @@ mod tests {
     #[test]
     fn documents_borrow_binary_fields_and_reject_truncation_and_trailing_data() {
         let token = URL_SAFE_NO_PAD.encode([1; 32]);
-        let body = encode_post(b"meta", b"content", &fixture_tag_labels(&token));
-        let parts = decode_post(&body).unwrap();
+        let body = encode_upload(b"meta", b"content", &fixture_tag_labels(&token));
+        let parts = decode_upload(&body).unwrap();
         assert_eq!(parts.meta, b"meta");
         assert_eq!(parts.content, b"content");
         assert_eq!(parts.tags[0].token, token);
         for length in 0..body.len() {
-            assert!(decode_post(&body[..length]).is_err());
+            assert!(decode_upload(&body[..length]).is_err());
         }
         let mut extra = body;
         extra.push(0xc0);
-        assert!(decode_post(&extra).is_err());
+        assert!(decode_upload(&extra).is_err());
         let body = encode_meta(&[7; 32], b"meta", b"\x90");
         let parts = decode_meta(&body).unwrap();
         assert_eq!(parts.prev_meta_hash, [7; 32]);
         let mut extra = body;
         extra.push(0xc0);
         assert!(decode_meta(&extra).is_err());
-        assert!(decode_post(&encode_post(&vec![0; MAX_META + 1], b"", b"\x90")).is_err());
-        assert!(decode_post(&encode_post(b"", &vec![0; MAX_CONTENT + 1], b"\x90")).is_err());
+        assert!(decode_upload(&encode_upload(&vec![0; MAX_META + 1], b"", b"\x90")).is_err());
+        assert!(decode_upload(&encode_upload(b"", &vec![0; MAX_CONTENT + 1], b"\x90")).is_err());
     }
 }

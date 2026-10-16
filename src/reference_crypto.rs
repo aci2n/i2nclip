@@ -214,7 +214,7 @@ struct TagDocument {
     label: Vec<u8>,
 }
 
-pub fn encode_post(meta: &[u8], content: &[u8], tags: &[u8]) -> Vec<u8> {
+pub fn encode_upload(meta: &[u8], content: &[u8], tags: &[u8]) -> Vec<u8> {
     #[derive(serde::Serialize)]
     struct Document<'a> {
         #[serde(with = "serde_bytes")]

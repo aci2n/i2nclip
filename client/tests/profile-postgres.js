@@ -15,7 +15,7 @@ import {
 	loadKey,
 	metaAad,
 } from "../src/lib/protocol/crypto.js";
-import { encodePost } from "../src/lib/protocol/frame.js";
+import { encodeUpload } from "../src/lib/protocol/frame.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
 import { encode } from "../src/lib/protocol/msgpack.js";
 
@@ -261,7 +261,11 @@ async function run() {
 						new Uint8Array(65536 - 43),
 					);
 					assert.equal(meta.length, 65536);
-					return { content, id, body: encodePost({ meta, content, tags: [] }) };
+					return {
+						content,
+						id,
+						body: encodeUpload({ meta, content, tags: [] }),
+					};
 				}),
 			);
 			const start = performance.now();

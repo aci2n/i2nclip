@@ -14,7 +14,7 @@ import {
 	metaAad,
 	tagTokens,
 } from "./protocol/crypto.js";
-import { encodeMeta, encodePost } from "./protocol/frame.js";
+import { encodeMeta, encodeUpload } from "./protocol/frame.js";
 import {
 	decodeMetaPlain,
 	encodeMetaPlain,
@@ -67,7 +67,7 @@ export async function upload({
 		thumb,
 	);
 	const tokens = await sealTags(key, metadata.tags);
-	const body = encodePost({
+	const body = encodeUpload({
 		meta,
 		content,
 		tags: tokens,
