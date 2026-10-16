@@ -1,4 +1,5 @@
-import { b64ToBytes, bytesToB64, utf8 } from "./protocol/bytes.js";
+import { b64ToBytes, bytesToB64 } from "./protocol/bytes.js";
+import { decode, encode } from "./protocol/msgpack.js";
 import {
 	openBytes,
 	PBKDF2_ITERATIONS,
@@ -20,12 +21,12 @@ export function createPersistence(storage) {
 		if (!text) {
 			return false;
 		}
-		record = JSON.parse(text);
+		record = decode(b64ToBytes(text));
 		if (
 			record.v !== 1 ||
 			record.iterations !== PBKDF2_ITERATIONS ||
-			typeof record.salt !== "string" ||
-			b64ToBytes(record.salt).length !== 16
+			!(record.salt instanceof Uint8Array) ||
+			record.salt.length !== 16
 		) {
 			throw new Error(
 				"Invalid saved identity. Reset this client or restore a recovery file.",
@@ -38,16 +39,12 @@ export function createPersistence(storage) {
 			throw new Error("Unlock this client first.");
 		}
 		const own = generation;
-		const encrypted = await sealBytes(
-			key,
-			utf8(JSON.stringify(identity)),
-			PURPOSE,
-		);
+		const encrypted = await sealBytes(key, encode(identity), PURPOSE);
 		if (own !== generation) {
 			throw new DOMException("Client locked.", "AbortError");
 		}
 		const next = { ...record, encrypted };
-		local().setItem(STORAGE_KEY, JSON.stringify(next));
+		local().setItem(STORAGE_KEY, bytesToB64(encode(next)));
 		record = next;
 	}
 	async function initialize(password) {
@@ -60,17 +57,17 @@ export function createPersistence(storage) {
 		const own = generation;
 		const salt = crypto.getRandomValues(new Uint8Array(16));
 		const nextKey = await wrappingKey(password, salt, PBKDF2_ITERATIONS);
-		const encrypted = await sealBytes(nextKey, utf8("null"), PURPOSE);
+		const encrypted = await sealBytes(nextKey, encode(null), PURPOSE);
 		if (own !== generation) {
 			throw new DOMException("Client locked.", "AbortError");
 		}
 		const next = {
 			v: 1,
-			salt: bytesToB64(salt),
+			salt,
 			iterations: PBKDF2_ITERATIONS,
 			encrypted,
 		};
-		local().setItem(STORAGE_KEY, JSON.stringify(next));
+		local().setItem(STORAGE_KEY, bytesToB64(encode(next)));
 		record = next;
 		key = nextKey;
 	}
@@ -79,18 +76,10 @@ export function createPersistence(storage) {
 			throw new Error("Create a master password first.");
 		}
 		const own = generation;
-		const nextKey = await wrappingKey(
-			password,
-			b64ToBytes(record.salt),
-			record.iterations,
-		);
+		const nextKey = await wrappingKey(password, record.salt, record.iterations);
 		let identity;
 		try {
-			identity = JSON.parse(
-				new TextDecoder().decode(
-					await openBytes(nextKey, record.encrypted, PURPOSE),
-				),
-			);
+			identity = decode(await openBytes(nextKey, record.encrypted, PURPOSE));
 		} catch {
 			throw new Error("Wrong password or damaged saved identity.");
 		}
@@ -113,21 +102,17 @@ export function createPersistence(storage) {
 			const own = generation;
 			const salt = crypto.getRandomValues(new Uint8Array(16));
 			const nextKey = await wrappingKey(password, salt, PBKDF2_ITERATIONS);
-			const encrypted = await sealBytes(
-				nextKey,
-				utf8(JSON.stringify(identity)),
-				PURPOSE,
-			);
+			const encrypted = await sealBytes(nextKey, encode(identity), PURPOSE);
 			if (own !== generation) {
 				throw new DOMException("Client locked.", "AbortError");
 			}
 			const next = {
 				v: 1,
-				salt: bytesToB64(salt),
+				salt,
 				iterations: PBKDF2_ITERATIONS,
 				encrypted,
 			};
-			local().setItem(STORAGE_KEY, JSON.stringify(next));
+			local().setItem(STORAGE_KEY, bytesToB64(encode(next)));
 			record = next;
 			key = nextKey;
 		},

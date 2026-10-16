@@ -16,7 +16,7 @@ let password = $state("");
 	<label class="field"
 		>Recovery file<input
 			type="file"
-			accept=".json,application/json"
+			accept=".msgpack,application/msgpack"
 			required
 			disabled={busy}
 			onchange={(event) => (file = event.currentTarget.files[0] || null)}

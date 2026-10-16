@@ -9,6 +9,7 @@ import {
 	tagToken,
 } from "../src/lib/protocol/crypto.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
+import { decode, encode } from "../src/lib/protocol/msgpack.js";
 import { exportRecovery, openRecovery } from "../src/lib/protocol/recovery.js";
 
 test("portable recovery preserves content decryption, normalized tags and public identity", async () => {
@@ -16,18 +17,21 @@ test("portable recovery preserves content decryption, normalized tags and public
 	const original = await loadKey(created.privateKey);
 	const text = await exportRecovery(
 		{
-			serverUrl: "https://clip.example.com",
-			privateKey: created.privateKey,
+			server_url: "https://clip.example.com",
+			private_key: created.privateKey,
 		},
 		"test password",
 	);
-	assert(!text.includes(JSON.parse(created.privateKey).seed));
+	assert(!Buffer.from(text).includes(created.privateKey.seed));
 	await assert.rejects(openRecovery(text, "wrong"), /Wrong password/);
 	const { identity: recovered, key: restored } = await openRecovery(
 		text,
 		"test password",
 	);
-	assert.deepEqual(Object.keys(recovered).sort(), ["privateKey", "serverUrl"]);
+	assert.deepEqual(Object.keys(recovered).sort(), [
+		"private_key",
+		"server_url",
+	]);
 	assert.equal(restored.registrationKey, original.registrationKey);
 	assert.equal(
 		await tagToken(restored, "vacation"),
@@ -42,23 +46,20 @@ test("portable recovery preserves content decryption, normalized tags and public
 	for (const changed of [
 		{ v: 99 },
 		{ encrypted: { v: 2 } },
-		{ encrypted: { ...JSON.parse(text).encrypted, iterations: 9_000_000 } },
-		{ encrypted: { ...JSON.parse(text).encrypted, salt: "AAAA" } },
-		{ encrypted: { ...JSON.parse(text).encrypted, iv: "AAAA" } },
+		{ encrypted: { ...decode(text).encrypted, iterations: 9_000_000 } },
+		{ encrypted: { ...decode(text).encrypted, salt: "AAAA" } },
+		{ encrypted: { ...decode(text).encrypted, iv: "AAAA" } },
 	]) {
 		await assert.rejects(
-			openRecovery(
-				JSON.stringify({ ...JSON.parse(text), ...changed }),
-				"test password",
-			),
+			openRecovery(encode({ ...decode(text), ...changed }), "test password"),
 			/Invalid|Wrong password/,
 		);
 	}
 	await assert.rejects(
 		exportRecovery(
 			{
-				serverUrl: "javascript:alert(1)",
-				privateKey: created.privateKey,
+				server_url: "javascript:alert(1)",
+				private_key: created.privateKey,
 			},
 			"test password",
 		),

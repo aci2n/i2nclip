@@ -295,9 +295,22 @@ mod tests {
             sign_body.as_bytes(),
         );
         let frame = encode_post(&meta_ct, &ciphertext, &fixture_tag_labels(&token));
-        let private_key = serde_json::json!({ "v": 1, "seed": URL_SAFE_NO_PAD.encode(seed), "publicKey": id.registration_key() }).to_string();
+        #[derive(Serialize)]
+        struct PrivateKey<'a> {
+            v: u8,
+            #[serde(with = "serde_bytes")]
+            seed: &'a [u8],
+            #[serde(with = "serde_bytes")]
+            public_key: &'a [u8],
+        }
+        let private_key_hex = hex(&codec::encode(&PrivateKey {
+            v: 1,
+            seed: &seed,
+            public_key: &id.public,
+        })
+        .unwrap());
         let vectors = Vectors {
-            private_key,
+            private_key_hex,
             public_hex: hex(&id.public),
             public_key: id.registration_key(),
             tag: "Vacation".to_string(),
@@ -342,7 +355,7 @@ mod tests {
 
     #[derive(Serialize)]
     struct Vectors {
-        private_key: String,
+        private_key_hex: String,
         public_hex: String,
         public_key: String,
         tag: String,

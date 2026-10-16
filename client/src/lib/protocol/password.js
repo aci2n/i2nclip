@@ -1,4 +1,4 @@
-import { b64ToBytes, bytesToB64, utf8 } from "./bytes.js";
+import { utf8 } from "./bytes.js";
 
 export const PBKDF2_ITERATIONS = 600_000;
 
@@ -29,27 +29,27 @@ export async function sealBytes(key, bytes, purpose) {
 	);
 	return {
 		v: 1,
-		iv: bytesToB64(iv),
-		ct: bytesToB64(new Uint8Array(ct)),
+		iv,
+		ct: new Uint8Array(ct),
 	};
 }
 export async function openBytes(key, record, purpose) {
 	if (
 		record?.v !== 1 ||
-		typeof record.iv !== "string" ||
-		typeof record.ct !== "string"
+		!(record.iv instanceof Uint8Array) ||
+		!(record.ct instanceof Uint8Array)
 	) {
 		throw new Error("Invalid encrypted data.");
 	}
-	const iv = b64ToBytes(record.iv);
-	if (iv.length !== 12) {
+	const iv = record.iv;
+	if (iv.length !== 12 || record.ct.length < 16) {
 		throw new Error("Invalid encrypted data.");
 	}
 	return new Uint8Array(
 		await crypto.subtle.decrypt(
 			{ name: "AES-GCM", iv, additionalData: utf8(purpose) },
 			key,
-			b64ToBytes(record.ct),
+			record.ct,
 		),
 	);
 }
@@ -59,7 +59,7 @@ export async function passwordSeal(bytes, password, purpose) {
 	const key = await wrappingKey(password, salt, iterations);
 	return {
 		...(await sealBytes(key, bytes, purpose)),
-		salt: bytesToB64(salt),
+		salt,
 		iterations,
 	};
 }
@@ -68,11 +68,11 @@ export async function passwordOpen(record, password, purpose) {
 		!Number.isInteger(record?.iterations) ||
 		record.iterations < PBKDF2_ITERATIONS ||
 		record.iterations > 2_000_000 ||
-		typeof record.salt !== "string"
+		!(record.salt instanceof Uint8Array)
 	) {
 		throw new Error("Invalid encrypted data.");
 	}
-	const salt = b64ToBytes(record.salt);
+	const salt = record.salt;
 	if (salt.length !== 16) {
 		throw new Error("Invalid encrypted data.");
 	}

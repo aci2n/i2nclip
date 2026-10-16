@@ -22,7 +22,7 @@ const vectors = JSON.parse(
 );
 
 test("tag labels share Rust vectors and bind ciphertext to the token", async () => {
-	const key = await loadKey(vectors.private_key);
+	const key = await loadKey(decode(hexToBytes(vectors.private_key_hex)));
 	const aad = tagLabelAad(vectors.token);
 	assert.equal(new TextDecoder().decode(aad), vectors.tag_label_aad);
 	const sealed = await encrypt(
@@ -50,7 +50,7 @@ test("tag labels share Rust vectors and bind ciphertext to the token", async () 
 });
 
 test("catalog isolates damaged entries and seals at most 64 distinct tags", async (t) => {
-	const key = await loadKey(vectors.private_key);
+	const key = await loadKey(decode(hexToBytes(vectors.private_key_hex)));
 	const tags = await sealTags(key, ["Vacation", "vacation", "Café"]);
 	assert.equal(tags.length, 2);
 	t.mock.method(globalThis, "fetch", async () =>
@@ -84,7 +84,7 @@ test("upload labels and encrypted metadata contain the same ordinary tags", asyn
 	const { upload } = await import("../src/lib/api.js");
 	const { decodeMetaPlain } = await import("../src/lib/protocol/meta-plain.js");
 	const { decrypt, metaAad } = await import("../src/lib/protocol/crypto.js");
-	const key = await loadKey(vectors.private_key);
+	const key = await loadKey(decode(hexToBytes(vectors.private_key_hex)));
 	let frame;
 	t.mock.method(globalThis, "fetch", async (_url, options) => {
 		frame = options.body;

@@ -1,6 +1,7 @@
 import { get, writable } from "svelte/store";
 import * as api from "../api.js";
 import { createPersistence } from "../persistence.js";
+import { bytesToB64url } from "../protocol/bytes.js";
 import { generatePrivateKey } from "../protocol/identity.js";
 import {
 	exportRecovery,
@@ -50,8 +51,8 @@ export function createSession({
 		state.update((v) => ({
 			...v,
 			configured: Boolean(identity),
-			serverUrl: identity?.serverUrl || defaultServerUrl,
-			privateKey: identity?.privateKey || "",
+			serverUrl: identity?.server_url || defaultServerUrl,
+			privateKey: identity?.private_key || "",
 			epoch,
 			...patch,
 		}));
@@ -110,7 +111,7 @@ export function createSession({
 			if (!identity || !get(state).unlocked || get(state).busy || disposed) {
 				throw new Error("Unlock your library first.");
 			}
-			return { serverUrl: identity.serverUrl, key };
+			return { serverUrl: identity.server_url, key };
 		},
 		async withIdentity(operation, work) {
 			if (!context.owns(operation)) {
@@ -119,7 +120,7 @@ export function createSession({
 			operation.signal.throwIfAborted();
 			const result = await work({
 				...session.credentials(),
-				privateKey: identity.privateKey,
+				privateKey: identity.private_key,
 				publicKey: get(state).publicKey,
 			});
 			operation.signal.throwIfAborted();
@@ -166,9 +167,12 @@ export function createSession({
 				}
 				checkServer(serverUrl);
 				const { privateKey } = await generatePrivateKey();
-				const next = await validateIdentity({ serverUrl, privateKey });
+				const next = await validateIdentity({
+					server_url: serverUrl,
+					private_key: privateKey,
+				});
 				await http.registerKey({
-					serverUrl: next.identity.serverUrl,
+					serverUrl: next.identity.server_url,
 					publicKey: next.key.registrationKey,
 					otc,
 					signal,
@@ -185,11 +189,14 @@ export function createSession({
 				if (file.size > MAX_RECOVERY_BYTES) {
 					throw new Error("Recovery file is too large.");
 				}
-				const next = await openRecovery(await file.text(), password);
+				const next = await openRecovery(
+					new Uint8Array(await file.arrayBuffer()),
+					password,
+				);
 				signal.throwIfAborted();
 				if (
 					!(await http.isKeyRegistered({
-						serverUrl: next.identity.serverUrl,
+						serverUrl: next.identity.server_url,
 						key: next.key,
 						signal,
 					}))
@@ -206,7 +213,7 @@ export function createSession({
 					);
 				}
 				const next = await validateIdentity(value);
-				if (next.key.registrationKey !== value.publicKey) {
+				if (next.key.registrationKey !== bytesToB64url(value.public_key)) {
 					throw new Error("Invalid paired identity.");
 				}
 				value.signal?.throwIfAborted();
@@ -252,15 +259,15 @@ export function createSession({
 				if (!identity || !get(state).unlocked) {
 					throw new Error("Unlock your library first.");
 				}
-				const text = await exportRecovery(identity, password);
+				const bytes = await exportRecovery(identity, password);
 				signal.throwIfAborted();
 				const url = URL.createObjectURL(
-					new Blob([text], { type: "application/json" }),
+					new Blob([bytes], { type: "application/msgpack" }),
 				);
 				try {
 					const anchor = document.createElement("a");
 					anchor.href = url;
-					anchor.download = "i2nclip-recovery.json";
+					anchor.download = "i2nclip-recovery.msgpack";
 					anchor.click();
 				} finally {
 					setTimeout(() => URL.revokeObjectURL(url), 1000);

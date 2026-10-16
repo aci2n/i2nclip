@@ -1,5 +1,6 @@
 import { get, writable } from "svelte/store";
 import { pairingCrypto, pairingRelay } from "../pairing/service.js";
+import { b64urlToBytes } from "../protocol/bytes.js";
 import {
 	formatPairingCode,
 	PAIRING_TTL_MS,
@@ -269,7 +270,7 @@ export function createPairing(session, services = {}) {
 		subscribe: state.subscribe,
 		send() {
 			const value = get(session);
-			return run("sender", value.serverUrl, async (current) => {
+			return run("sender", value.server_url, async (current) => {
 				const credentials = await session.withIdentity(
 					current.operation,
 					(identity) => identity,
@@ -321,7 +322,12 @@ export function createPairing(session, services = {}) {
 					current.operation,
 					async ({ privateKey, publicKey }) => {
 						const packet = await call(current, "transfer", {
-							value: { v: 1, serverUrl: current.server, privateKey, publicKey },
+							value: {
+								v: 1,
+								server_url: current.server,
+								private_key: privateKey,
+								public_key: b64urlToBytes(publicKey),
+							},
 						});
 						await submit(current, 4, packet);
 					},
@@ -355,10 +361,10 @@ export function createPairing(session, services = {}) {
 				});
 				if (
 					value?.v !== 1 ||
-					value.serverUrl !== current.server ||
-					typeof value.privateKey !== "string" ||
-					value.privateKey.length > 4096 ||
-					typeof value.publicKey !== "string"
+					value.server_url !== current.server ||
+					value.private_key?.v !== 1 ||
+					!(value.public_key instanceof Uint8Array) ||
+					value.public_key.length !== 32
 				) {
 					throw new Error("Invalid paired identity.");
 				}

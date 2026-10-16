@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
 import { createPersistence } from "../src/lib/persistence.js";
+import { bytesToB64 } from "../src/lib/protocol/bytes.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
+import { encode } from "../src/lib/protocol/msgpack.js";
 import { exportRecovery } from "../src/lib/protocol/recovery.js";
 import { createSession } from "../src/lib/stores/session.js";
 import { deferred } from "./helpers.js";
@@ -34,8 +36,8 @@ test("one encrypted identity survives reload, password changes, and forgetting w
 	const saved = [...f.local.values.values()][0];
 	assert.equal(f.local.values.size, 1);
 	for (const secret of [
-		privateKey,
-		JSON.parse(privateKey).seed,
+		bytesToB64(encode(privateKey)),
+		bytesToB64(privateKey.seed),
 		serverUrl,
 		password,
 	]) {
@@ -49,7 +51,7 @@ test("one encrypted identity survives reload, password changes, and forgetting w
 	assert.equal(get(restored).status, "locked");
 	assert.equal(await restored.unlock("wrong-password"), false);
 	assert.equal(await restored.unlock(password), true);
-	assert.equal(get(restored).privateKey, privateKey);
+	assert.deepEqual(get(restored).privateKey, privateKey);
 	assert.equal(await restored.changePassword(password, "new-password"), true);
 	restored.lock();
 	assert.equal(get(restored).privateKey, "");
@@ -101,8 +103,8 @@ test("locking cancels registration and rejects overlapping session mutations", a
 
 test("recovery verifies server registration and cannot replace a configured singleton", async (t) => {
 	const identity = {
-		serverUrl,
-		privateKey: (await generatePrivateKey()).privateKey,
+		server_url: serverUrl,
+		private_key: (await generatePrivateKey()).privateKey,
 	};
 	const text = await exportRecovery(identity, "recovery-password");
 	let registered = false;
@@ -112,9 +114,9 @@ test("recovery verifies server registration and cannot replace a configured sing
 	assert.equal(get(f.session).configured, false);
 	registered = true;
 	assert.equal(await f.session.restore(file, "recovery-password"), true);
-	assert.equal(get(f.session).privateKey, identity.privateKey);
+	assert.deepEqual(get(f.session).privateKey, identity.private_key);
 	assert.equal(await f.session.restore(file, "recovery-password"), false);
-	assert.equal(get(f.session).privateKey, identity.privateKey);
+	assert.deepEqual(get(f.session).privateKey, identity.private_key);
 });
 
 test("locking during encryption cannot commit or restore an unwrapped key", async () => {

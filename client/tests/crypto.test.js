@@ -27,7 +27,7 @@ const vectors = JSON.parse(
 );
 
 test("library identity matches the rust vectors", async () => {
-	const key = await loadKey(vectors.private_key);
+	const key = await loadKey(decode(hexToBytes(vectors.private_key_hex)));
 	assert.equal(bytesToHex(key.publicKey), vectors.public_hex);
 	assert.equal(key.registrationKey, vectors.public_key);
 	assert.equal(await tagToken(key, vectors.tag), vectors.token);
@@ -107,7 +107,7 @@ test("metadata document carries the complete prior ciphertext hash", () => {
 });
 
 test("metadata is authenticated against the sealed-content hash", async () => {
-	const key = await loadKey(vectors.private_key);
+	const key = await loadKey(decode(hexToBytes(vectors.private_key_hex)));
 	const meta = hexToBytes(vectors.meta_ciphertext_hex);
 	await assert.rejects(decrypt(key, metaAad("0".repeat(64)), meta));
 	assert.equal(

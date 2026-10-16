@@ -17,10 +17,10 @@ test("generated identities load and mismatched public keys are rejected", async 
 	assert.equal(Object.hasOwn(key, "seed"), false);
 	assert.equal(parsePrivateKey(first.privateKey).seed.length, 32);
 	const mismatched = {
-		...JSON.parse(first.privateKey),
-		publicKey: second.publicKey,
+		...first.privateKey,
+		public_key: second.privateKey.public_key,
 	};
-	await assert.rejects(loadKey(JSON.stringify(mismatched)), /does not match/);
+	await assert.rejects(loadKey(mismatched), /does not match/);
 	for (const text of [
 		"invalid",
 		"null",
@@ -29,4 +29,17 @@ test("generated identities load and mismatched public keys are rejected", async 
 	]) {
 		assert.throws(() => parsePrivateKey(text), /Invalid library identity/);
 	}
+});
+
+test("loading keys preserves the document and copies borrowed decoded fields", async () => {
+	const { encode, decode } = await import("../src/lib/protocol/msgpack.js");
+	const { privateKey } = await generatePrivateKey();
+	const bytes = encode(privateKey);
+	const decoded = decode(bytes);
+	const parsed = parsePrivateKey(decoded);
+	bytes.fill(0);
+	assert.deepEqual(parsed.seed, privateKey.seed);
+	await loadKey(privateKey);
+	await loadKey(privateKey);
+	assert(privateKey.seed.some((byte) => byte !== 0));
 });

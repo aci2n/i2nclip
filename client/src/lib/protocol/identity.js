@@ -1,42 +1,28 @@
-// Internal identity document. Recovery files encrypt this entire document.
-import { b64urlToBytes, bytesToB64url } from "./bytes.js";
+// The private-key document owns its binary seed and public key.
+import { b64urlToBytes } from "./bytes.js";
 
-export function parsePrivateKey(text) {
-	let value;
-	try {
-		value = JSON.parse(text);
-	} catch {
-		throw new Error("Invalid library identity.");
-	}
+export function parsePrivateKey(value) {
 	if (
 		value?.v !== 1 ||
-		typeof value.seed !== "string" ||
-		typeof value.publicKey !== "string"
+		!(value.seed instanceof Uint8Array) ||
+		value.seed.length !== 32 ||
+		!(value.public_key instanceof Uint8Array) ||
+		value.public_key.length !== 32
 	) {
 		throw new Error("Invalid library identity.");
 	}
-	const seed = decodeKey(value.seed);
-	const publicKey = decodeKey(value.publicKey);
-	return { seed, publicKey };
+	// loadKey wipes its seed. Never expose a view into the saved document.
+	return { seed: value.seed.slice(), publicKey: value.public_key.slice() };
 }
-
-function decodeKey(text) {
-	if (!/^[A-Za-z0-9_-]{43}$/.test(text)) {
-		throw new Error("Invalid library identity.");
-	}
-	const bytes = b64urlToBytes(text);
-	if (bytes.length !== 32 || bytesToB64url(bytes) !== text) {
-		throw new Error("Invalid library identity.");
-	}
-	return bytes;
-}
-
 export async function generatePrivateKey() {
 	const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
 		"sign",
 	]);
 	const jwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
-	const privateKey = JSON.stringify({ v: 1, seed: jwk.d, publicKey: jwk.x });
-	parsePrivateKey(privateKey);
+	const privateKey = {
+		v: 1,
+		seed: b64urlToBytes(jwk.d),
+		public_key: b64urlToBytes(jwk.x),
+	};
 	return { privateKey, publicKey: jwk.x };
 }
