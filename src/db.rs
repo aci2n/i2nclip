@@ -542,10 +542,7 @@ async fn replace_tags(
     .execute(&mut **tx)
     .await?;
     let tokens: Vec<_> = tags.iter().map(|tag| tag.token.as_str()).collect();
-    let labels: Vec<_> = tags
-        .iter()
-        .map(|tag| URL_SAFE_NO_PAD.decode(&tag.label).expect("validated label"))
-        .collect();
+    let labels: Vec<_> = tags.iter().map(|tag| tag.label.as_slice()).collect();
     sqlx::query(
         r#"
         INSERT INTO tags (file_id, token, label)

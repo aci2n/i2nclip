@@ -102,16 +102,21 @@ fn read_chunk<'a>(data: &'a [u8], i: &mut usize, max: usize) -> Result<&'a [u8],
     Ok(chunk)
 }
 
-/// Wire labels are sealed UTF-8 strings; only the client can authenticate them.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+/// Validated token and sealed UTF-8 label bytes; only the client authenticates them.
 pub(crate) struct Tag {
     pub token: String,
-    pub label: String,
+    pub label: Vec<u8>,
 }
 
 fn parse_tags(text: &str) -> Result<Vec<Tag>, Error> {
-    let entries: Vec<Tag> =
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct WireTag {
+        token: String,
+        label: String,
+    }
+
+    let entries: Vec<WireTag> =
         serde_json::from_str(text).map_err(|_| Error::BadRequest("invalid tag labels".into()))?;
     if entries.len() > MAX_TAGS {
         return Err(Error::BadRequest("too many tags".into()));
@@ -129,7 +134,10 @@ fn parse_tags(text: &str) -> Result<Vec<Tag>, Error> {
         }
         crypto::check_blob(&label, 285)?;
         if !tags.iter().any(|existing| existing.token == tag.token) {
-            tags.push(tag);
+            tags.push(Tag {
+                token: tag.token,
+                label,
+            });
         }
     }
     Ok(tags)
@@ -232,6 +240,17 @@ mod tests {
 
     #[test]
     fn labeled_tags_are_bounded_and_must_have_sealed_labels() {
+        let first = vec![1; 30];
+        let second = vec![1; 285];
+        let entries = serde_json::json!([
+            { "token": "A".repeat(43), "label": URL_SAFE_NO_PAD.encode(&first) },
+            { "token": "A".repeat(43), "label": URL_SAFE_NO_PAD.encode(&second) },
+            { "token": "B".repeat(43), "label": URL_SAFE_NO_PAD.encode(&second) }
+        ]);
+        let parsed = parse_tags(&entries.to_string()).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].label, first);
+        assert_eq!(parsed[1].label, second);
         let valid = |count| {
             (0..count)
                 .map(|n| format!("{n:043}"))
