@@ -38,6 +38,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # WHATWG URL parsing and origin serialization, matching browser request signatures.
 url = "2"
+rmp-serde = "1.3"
+serde_bytes = "0.11"
 
 [dev-dependencies]
 # Reference-client encryption, key derivation, and searchable tag tokens.

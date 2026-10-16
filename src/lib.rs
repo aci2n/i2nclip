@@ -7,6 +7,8 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+#[cfg(test)]
+mod codec;
 mod db;
 mod error;
 mod frame;
