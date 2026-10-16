@@ -173,7 +173,7 @@ export function createSession({
 				});
 				await http.registerKey({
 					serverUrl: next.identity.server_url,
-					publicKey: next.key.registrationKey,
+					key: next.key,
 					otc,
 					signal,
 				});

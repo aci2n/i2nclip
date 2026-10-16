@@ -7,8 +7,9 @@
 //! ```
 //!
 //! The signature covers the origin, time, nonce, method, path, and that body
-//! hash. [`verify_request`] checks the allow-list, the clock, and the
-//! signature, then remembers the nonce. No body byte is read until that
+//! hash. [`verify_request`] checks the clock and signature, plus the allow-list
+//! for ordinary requests, then remembers the nonce. Registration skips only
+//! the allow-list lookup. No body byte is read until that
 //! succeeds, so knowing a public key is not enough to make the server read a
 //! payload. [`verify_body`] then hashes the bytes and compares them to the
 //! hash from the header.
@@ -44,23 +45,32 @@ impl FromRequest<AppState> for SignedRequest {
     type Rejection = Response;
 
     async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
-        // The signature is checked here, before any body byte. It already
-        // covers the body hash from the Authorization header. Knowing a
-        // public key is not enough to reach `read_body`. The allow-list lives
-        // in PostgreSQL.
-        let (parts, body) = req.into_parts();
-        let verified = verify_request(state, &parts.method, &parts.uri, &parts.headers)
+        Self::authenticate(req, state, KeyPolicy::Registered)
             .await
-            .map_err(fail)?;
+            .map_err(fail)
+    }
+}
+
+impl SignedRequest {
+    pub(crate) async fn registration(req: Request, state: &AppState) -> Result<Self, Error> {
+        Self::authenticate(req, state, KeyPolicy::Registering).await
+    }
+
+    async fn authenticate(
+        req: Request,
+        state: &AppState,
+        policy: KeyPolicy,
+    ) -> Result<Self, Error> {
+        let (parts, body) = req.into_parts();
+        let verified =
+            verify_request(state, &parts.method, &parts.uri, &parts.headers, policy).await?;
         Ok(Self {
             verified,
             parts,
             body,
         })
     }
-}
 
-impl SignedRequest {
     pub(crate) fn owner(&self) -> [u8; 32] {
         self.verified.owner()
     }
@@ -168,13 +178,20 @@ pub(crate) fn check_timestamp(ts: u64, now: u64) -> Result<(), Error> {
     Ok(())
 }
 
+/// Registration proves key possession before it can join the allow-list.
+enum KeyPolicy {
+    Registered,
+    Registering,
+}
+
 /// Check the key, the clock, and the signature. Remember the nonce.
 /// Callers must not read the body until this returns `Ok`.
-pub(crate) async fn verify_request(
+async fn verify_request(
     state: &AppState,
     method: &Method,
     uri: &Uri,
     headers: &HeaderMap,
+    policy: KeyPolicy,
 ) -> Result<VerifiedRequest, Error> {
     // Early data can be replayed, but authentication consumes a single-use
     // nonce even for GET. Reject before reserving it so the client can retry
@@ -211,7 +228,7 @@ pub(crate) async fn verify_request(
         );
         return Err(Error::Unauthorized);
     }
-    if !state.db.allowed(&bearer.public).await? {
+    if matches!(policy, KeyPolicy::Registered) && !state.db.allowed(&bearer.public).await? {
         tracing::debug!(
             method = %method,
             path = %uri.path(),
@@ -395,10 +412,13 @@ mod tests {
                 if let Some(bearer) = bearer {
                     headers.insert("authorization", bearer.parse().unwrap());
                 }
-                let error = match verify_request(&state, &method, &uri, &headers).await {
-                    Err(error) => error,
-                    Ok(_) => panic!("early data must be rejected"),
-                };
+                let error =
+                    match verify_request(&state, &method, &uri, &headers, KeyPolicy::Registered)
+                        .await
+                    {
+                        Err(error) => error,
+                        Ok(_) => panic!("early data must be rejected"),
+                    };
                 assert!(matches!(error, Error::TooEarly));
                 let response = fail(error);
                 assert_eq!(response.status(), axum::http::StatusCode::TOO_EARLY);
@@ -409,7 +429,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", authorization.parse().unwrap());
         assert!(matches!(
-            verify_request(&state, &method, &uri, &headers).await,
+            verify_request(&state, &method, &uri, &headers, KeyPolicy::Registered).await,
             Err(Error::Db(sqlx::Error::PoolClosed))
         ));
     }

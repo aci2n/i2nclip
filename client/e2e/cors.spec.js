@@ -36,7 +36,7 @@ test("clients on another origin can read API success and authentication errors",
 			health: { ok: true },
 			status: 401,
 			error: { error: "unauthorized" },
-			registration: 400,
+			registration: 401,
 		});
 	} finally {
 		await stopServer(client.child);

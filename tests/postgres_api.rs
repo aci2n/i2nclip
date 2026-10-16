@@ -231,34 +231,24 @@ async fn app(keys: &[&Identity]) -> (TestDatabase, axum::Router) {
 }
 
 async fn enroll_key(app: &axum::Router, key: &Identity, otc: &str) {
-    let body = client_crypto::registration_body(otc, &key.public);
-    let request = Request::builder()
-        .method("POST")
-        .uri("/api/register-key")
-        .header("content-type", codec::CONTENT_TYPE)
-        .body(Body::from(body))
-        .unwrap();
-    let response = app.clone().oneshot(request).await.unwrap();
+    let (status, body) = register(app, key, otc).await;
     assert_eq!(
-        response.status(),
+        status,
         StatusCode::NO_CONTENT,
         "{}",
-        String::from_utf8_lossy(&response.into_body().collect().await.unwrap().to_bytes())
+        String::from_utf8_lossy(&body)
     );
 }
 
 async fn register(app: &axum::Router, key: &Identity, otc: &str) -> (StatusCode, Vec<u8>) {
-    let body = client_crypto::registration_body(otc, &key.public);
-    let request = Request::builder()
-        .method("POST")
-        .uri("/api/register-key")
-        .header("content-type", codec::CONTENT_TYPE)
-        .body(Body::from(body))
-        .unwrap();
-    let response = app.clone().oneshot(request).await.unwrap();
-    let status = response.status();
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    (status, bytes.to_vec())
+    call(
+        app,
+        key,
+        "POST",
+        "/api/register-key",
+        client_crypto::registration_body(otc, &key.public),
+    )
+    .await
 }
 
 async fn call(
@@ -358,9 +348,7 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
             &path,
             &payload,
         );
-        if !registration {
-            request = request.header("authorization", &authorization);
-        }
+        request = request.header("authorization", &authorization);
         let (mut sender, body) = Channel::<Bytes>::new(1);
         sender.send_data(Bytes::from(payload)).await.unwrap();
         // Wait for the first body poll so authentication has completed and
@@ -384,7 +372,7 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
         );
         assert_eq!(response.headers()["cache-control"], "no-store");
         assert!(sender.send_data(Bytes::from_static(b"late")).await.is_err());
-        if !registration {
+        {
             let replay = Request::builder()
                 .method(method)
                 .uri(&path)
@@ -475,18 +463,7 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
         .await
         .unwrap();
-    let body = client_crypto::registration_body(&otc, &key.public);
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/register-key")
-                .body(Body::from(body))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    enroll_key(&app, &key, &otc).await;
 }
 
 #[tokio::test]
@@ -575,9 +552,7 @@ async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
             sender.send_data(bytes.slice(cap..)).await.unwrap();
             drop(sender);
             let mut request = Request::builder().method(method).uri(&path);
-            if path != "/api/register-key" {
-                request = request.header("authorization", authorization);
-            }
+            request = request.header("authorization", authorization);
             if let Some(len) = declared {
                 request = request.header("content-length", len);
             }
@@ -876,11 +851,15 @@ async fn rejected_public_keys_do_not_consume_registration_code() {
     let mut identity = [0u8; 32];
     identity[0] = 1;
     for public in [identity, [0u8; 32], [2u8; 32]] {
-        let invalid = Identity {
-            seed: [0u8; 32],
-            public,
-        };
-        let (status, body) = register(&app, &invalid, &otc).await;
+        let signer = new_identity();
+        let (status, body) = call(
+            &app,
+            &signer,
+            "POST",
+            "/api/register-key",
+            client_crypto::registration_body(&otc, &public),
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
             client_crypto::document_json(&body),
@@ -2257,4 +2236,128 @@ async fn global_download_limit_still_applies_across_independent_keys() {
     assert_eq!(admitted.status(), StatusCode::OK);
     drop(admitted);
     drop(held);
+}
+
+#[tokio::test]
+async fn registration_requires_possession_and_preserves_invitations_on_verification_failure() {
+    let key = new_identity();
+    let other = new_identity();
+    let (dir, app) = app(&[]).await;
+    let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
+        .await
+        .unwrap();
+    let body = client_crypto::registration_body(&otc, &key.public);
+    for case in [
+        "missing",
+        "forged",
+        "origin",
+        "path",
+        "stale",
+        "early",
+        "mismatch",
+        "tampered",
+        "malformed",
+    ] {
+        let sent = match case {
+            "mismatch" => client_crypto::registration_body(&otc, &other.public),
+            "tampered" => client_crypto::registration_body("changed invitation", &key.public),
+            "malformed" => b"not MessagePack".to_vec(),
+            _ => body.clone(),
+        };
+        let forged = Identity {
+            seed: other.seed,
+            public: key.public,
+        };
+        let signature = client_crypto::authorization(
+            if case == "forged" { &forged } else { &key },
+            if case == "origin" {
+                "https://wrong.example"
+            } else {
+                "http://i2nclip.test"
+            },
+            crypto::now_secs() - if case == "stale" { 301 } else { 0 },
+            &client_crypto::fresh_nonce(),
+            "POST",
+            if case == "path" {
+                "/api/media"
+            } else {
+                "/api/register-key"
+            },
+            if case == "tampered" { &body } else { &sent },
+        );
+        let mut request = Request::builder().method("POST").uri("/api/register-key");
+        if case != "missing" {
+            request = request.header("authorization", signature);
+        }
+        if case == "early" {
+            request = request.header("early-data", "1");
+        }
+        let unread = matches!(
+            case,
+            "missing" | "forged" | "origin" | "path" | "stale" | "early"
+        );
+        let request_body = if unread {
+            Body::new(Body::from(sent).map_frame(|_| panic!("invalid proof must not read a body")))
+        } else {
+            Body::from(sent)
+        };
+        let response = app
+            .clone()
+            .oneshot(request.body(request_body).unwrap())
+            .await
+            .unwrap();
+        let expected = match case {
+            "early" => StatusCode::TOO_EARLY,
+            "malformed" => StatusCode::BAD_REQUEST,
+            _ => StatusCode::UNAUTHORIZED,
+        };
+        assert_eq!(response.status(), expected, "{case}");
+        let counts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM registration_codes), (SELECT count(*) FROM registered_keys), (SELECT count(*) FROM key_quotas)")
+            .fetch_one(&dir.1).await.unwrap();
+        assert_eq!(counts, (1, 0, 0), "{case}");
+    }
+    let signature = client_crypto::authorization(
+        &key,
+        "http://i2nclip.test",
+        crypto::now_secs(),
+        &client_crypto::fresh_nonce(),
+        "POST",
+        "/api/register-key",
+        &body,
+    );
+    for replay in [false, true] {
+        let request_body = if replay {
+            Body::new(Body::from(body.clone()).map_frame(|_| panic!("replay body was read")))
+        } else {
+            Body::from(body.clone())
+        };
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/register-key")
+                    .header("authorization", &signature)
+                    .body(request_body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            if replay {
+                StatusCode::UNAUTHORIZED
+            } else {
+                StatusCode::NO_CONTENT
+            }
+        );
+    }
+    assert_eq!(
+        call(&app, &key, "GET", "/api/ping", vec![]).await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(&app, &other, "GET", "/api/ping", vec![]).await.0,
+        StatusCode::UNAUTHORIZED
+    );
 }

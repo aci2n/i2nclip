@@ -3,7 +3,7 @@
 
 import { sniffContentType } from "./media/metadata.js";
 import { automaticTags } from "./media/tags.js";
-import { b64urlToBytes, hexToBytes } from "./protocol/bytes.js";
+import { hexToBytes } from "./protocol/bytes.js";
 import {
 	authorizationHeader,
 	bodyHash,
@@ -236,19 +236,18 @@ export async function remove({ serverUrl, key, id, signal }) {
 	);
 }
 
-/** Register a base64url public key with an invitation code. */
-export async function registerKey({ serverUrl, publicKey, otc, signal }) {
-	const url = new URL("/api/register-key", serverUrl);
-	const response = await fetch(url, {
-		method: "POST",
-		headers: { "content-type": CONTENT_TYPE },
-		body: encode({
-			otc: String(otc).trim(),
-			public_key: b64urlToBytes(String(publicKey).trim()),
-		}),
-		cache: "no-store",
+/** Prove possession of the key being registered and spend an invitation. */
+export async function registerKey({ serverUrl, key, otc, signal }) {
+	const body = encode({ otc: String(otc).trim(), public_key: key.publicKey });
+	const response = await signedFetch(
+		serverUrl,
+		key,
+		"POST",
+		"/api/register-key",
+		body,
+		undefined,
 		signal,
-	});
+	);
 	if (response.status === 204) {
 		return;
 	}

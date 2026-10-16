@@ -65,7 +65,7 @@ for (const [body, contentType, message] of [
 	["", "text/plain", "Service Unavailable"],
 ]) {
 	test(`API errors are consistent across endpoints: ${message}`, async (t) => {
-		const { privateKey, publicKey } = await generatePrivateKey();
+		const { privateKey } = await generatePrivateKey();
 		t.mock.method(
 			globalThis,
 			"fetch",
@@ -82,7 +82,7 @@ for (const [body, contentType, message] of [
 			id: "test",
 		};
 		for (const request of [
-			() => registerKey({ ...settings, publicKey, otc: "test" }),
+			() => registerKey({ ...settings, otc: "test" }),
 			() => list(settings),
 			() => getContent(settings),
 			() => remove(settings),
@@ -471,4 +471,65 @@ test("metadata conflicts preserve ordinary errors and HTTP fallback", async (t) 
 		message: "Conflict",
 		status: 409,
 	});
+});
+
+test("registration signs the exact invitation and binary public key with the unregistered key", async (t) => {
+	const { privateKey } = await generatePrivateKey();
+	const key = await loadKey(privateKey);
+	const controller = new AbortController();
+	t.mock.method(globalThis, "fetch", async (url, options) => {
+		assert.equal(String(url), "https://clip.example/api/register-key");
+		assert.equal(options.method, "POST");
+		assert.equal(options.headers["content-type"], "application/msgpack");
+		assert.equal(options.signal, controller.signal);
+		assert.deepEqual(decode(options.body), {
+			otc: "invitation",
+			public_key: key.publicKey,
+		});
+		const [publicKey, ts, nonce, hash, signature] =
+			options.headers.authorization.slice(7).split(".");
+		assert.equal(publicKey, key.registrationKey);
+		assert.equal(hash, await bodyHash(options.body));
+		const { b64urlToBytes } = await import("../src/lib/protocol/bytes.js");
+		const { requestMessage } = await import("../src/lib/protocol/crypto.js");
+		const verifying = await crypto.subtle.importKey(
+			"raw",
+			key.publicKey,
+			"Ed25519",
+			false,
+			["verify"],
+		);
+		assert(
+			await crypto.subtle.verify(
+				"Ed25519",
+				verifying,
+				b64urlToBytes(signature),
+				requestMessage({
+					origin: "https://clip.example",
+					ts: Number(ts),
+					nonce,
+					method: "POST",
+					path: "/api/register-key",
+					hash,
+				}),
+			),
+		);
+		return new Response(null, { status: 204 });
+	});
+	await registerKey({
+		serverUrl: "https://clip.example",
+		key,
+		otc: " invitation ",
+		signal: controller.signal,
+	});
+	controller.abort();
+	await assert.rejects(
+		registerKey({
+			serverUrl: "https://clip.example",
+			key,
+			otc: "invitation",
+			signal: controller.signal,
+		}),
+		{ name: "AbortError" },
+	);
 });

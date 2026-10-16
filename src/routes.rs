@@ -101,23 +101,32 @@ struct RegisterKeyDocument {
 }
 
 async fn register_key(State(state): State<AppState>, request: Request) -> Response {
-    let (_parts, body) = request.into_parts();
-    let bytes = match read_body_with_deadline(body, MAX_REGISTER_BODY, SHORT_BODY_DEADLINE).await {
-        Ok(bytes) => bytes,
+    let request = match auth::SignedRequest::registration(request, &state).await {
+        Ok(request) => request,
+        Err(error) => return fail(error),
+    };
+    if let Err(response) = request.check_size(MAX_REGISTER_BODY) {
+        return *response;
+    }
+    let (signer, bytes) = match request.read(MAX_REGISTER_BODY, SHORT_BODY_DEADLINE).await {
+        Ok(value) => value,
         Err(response) => return *response,
     };
-    match register_key_body(&state, &bytes).await {
+    match register_key_body(&state, signer, &bytes).await {
         Ok(()) => empty(StatusCode::NO_CONTENT),
         Err(err) => fail(err),
     }
 }
 
-async fn register_key_body(state: &AppState, body: &[u8]) -> Result<(), Error> {
+async fn register_key_body(state: &AppState, signer: [u8; 32], body: &[u8]) -> Result<(), Error> {
     let payload: RegisterKeyDocument = codec::decode(body)?;
     if payload.otc.len() > 512 || payload.public_key.len() != 32 {
         return Err(Error::BadRequest("invalid registration payload".into()));
     }
     let public = auth::validate_public_key(&payload.public_key)?;
+    if public != signer {
+        return Err(Error::Unauthorized);
+    }
     state.db.consume_code(&payload.otc, &public).await
 }
 
@@ -335,11 +344,12 @@ mod request_tests {
     }
 
     #[tokio::test]
-    async fn unsigned_media_requests_are_rejected_before_body_or_database() {
+    async fn unsigned_application_requests_are_rejected_before_body_or_database() {
         let app = app().await;
         let item = format!("/api/media/{}", "a".repeat(64));
         let meta = format!("{item}/meta");
         for (method, path) in [
+            ("POST", "/api/register-key"),
             ("GET", "/api/ping"),
             ("GET", "/api/quota"),
             ("GET", "/api/tags"),
@@ -374,30 +384,30 @@ mod request_tests {
     }
 
     #[tokio::test]
-    async fn invalid_registration_is_rejected_before_database() {
-        let app = app().await;
+    async fn invalid_registration_documents_do_not_access_invitation_database() {
+        let state = AppState::new(
+            crate::db::Database::closed_for_test().await,
+            "http://i2nclip.test".into(),
+        );
+        let signer = crate::reference_crypto::from_seed([1; 32]).public;
         let registration = crate::reference_crypto::registration_body;
         for body in [
             b"not MessagePack".to_vec(),
-            codec::encode(&json!({"otc": "code"})).unwrap(),
-            registration(&"x".repeat(513), &[2; 32]),
+            codec::encode(&json!({"otc":"code"})).unwrap(),
+            registration(&"x".repeat(513), &signer),
             registration("code", &[2; 31]),
             registration("code", &[2; 32]),
             registration("code", &[0; 32]),
         ] {
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method("POST")
-                        .uri("/api/register-key")
-                        .body(Body::from(body))
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            assert!(matches!(
+                register_key_body(&state, signer, &body).await,
+                Err(Error::BadRequest(_))
+            ));
         }
+        let other = crate::reference_crypto::from_seed([2; 32]).public;
+        assert!(matches!(
+            register_key_body(&state, signer, &registration("code", &other)).await,
+            Err(Error::Unauthorized)
+        ));
     }
 }
