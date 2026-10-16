@@ -10,7 +10,7 @@
 - Make small frequent commits after cohesive changes build without warnings. Focus on refactoring before running the final test suites. Tests must cover meaningful behavior and invariants rather than mirror implementation details. Test quality is mandatory.
 - Every test must isolate its mutable state and resources. Bind test listeners atomically to loopback port 0, use isolated databases and browser contexts, and clean up owned resources on success and failure. Verification commands must work from a fresh clone with documented toolchain/system prerequisites; never rely on developer-specific paths or existing build artifacts.
 
-- Group Rust imports by crate within each scope and visibility, separating standard-library, external, and project imports. Use imported names consistently; keep explicit qualification for ambiguous names. Client imports follow Biome ordering. Use the Makefile Rust formatting commands to enforce grouped imports; client `check`/`fix` run Biome checks and fixes.
+- Group Rust imports by crate within each scope and visibility, separating standard-library, external, and project imports. Prefer importing symbols at the top of the file and using their unqualified names in signatures and code (for example, `RegistrationRequest` rather than `auth::RegistrationRequest`). Keep explicit qualification for ambiguous names. Client imports follow Biome ordering. Use the Makefile Rust formatting commands to enforce grouped imports; client `check`/`fix` run Biome checks and fixes.
 
 ## Layout and commands
 

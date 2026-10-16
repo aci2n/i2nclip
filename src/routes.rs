@@ -19,7 +19,10 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::{auth, codec, media, pairing, AppState, Error, MAX_REGISTER_BODY};
+use crate::{
+    auth::{RegistrationRequest, SignedRequest},
+    codec, media, pairing, AppState, Error, MAX_REGISTER_BODY,
+};
 
 pub(crate) const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -86,7 +89,7 @@ async fn health() -> Response {
     document_response(StatusCode::OK, Health { ok: true })
 }
 
-async fn ping(request: auth::SignedRequest) -> Response {
+async fn ping(request: SignedRequest) -> Response {
     match request.empty().await {
         Ok(_) => empty(StatusCode::NO_CONTENT),
         Err(response) => *response,
@@ -100,7 +103,7 @@ struct RegisterKeyDocument {
 
 async fn register_key(
     State(state): State<AppState>,
-    auth::RegistrationRequest(request): auth::RegistrationRequest,
+    RegistrationRequest(request): RegistrationRequest,
 ) -> Response {
     if let Err(response) = request.check_size(MAX_REGISTER_BODY) {
         return *response;
