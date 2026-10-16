@@ -102,8 +102,7 @@ fn parse_tags(entries: Vec<WireTag<'_>>) -> Result<Vec<Tag>, Error> {
         if tag.token.len() != 32 {
             return Err(Error::BadRequest("bad tag token".into()));
         }
-        crypto::check_blob(tag.label, MAX_TAG_LABEL)?;
-        let sealed: crypto::Sealed<'_> = codec::decode(tag.label)?;
+        let sealed = crypto::check_blob(tag.label, MAX_TAG_LABEL)?;
         if sealed.ct.len() == 16 {
             return Err(Error::BadRequest("empty tag label".into()));
         }

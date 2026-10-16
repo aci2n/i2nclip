@@ -33,22 +33,21 @@ pub struct Sealed<'a> {
 
 /// Shape validation only: the server has no key to authenticate ciphertext.
 pub fn looks_sealed(blob: &[u8], max: usize) -> bool {
-    blob.len() <= max
-        && matches!(
-            codec::decode::<Sealed<'_>>(blob),
-            Ok(value) if value.v == VERSION && value.iv.len() == NONCE_LEN && value.ct.len() >= TAG_LEN
-        )
+    check_blob(blob, max).is_ok()
 }
 
 /// Require the sealed-blob shape before storing encrypted bytes.
-pub(crate) fn check_blob(bytes: &[u8], max: usize) -> Result<(), Error> {
-    if looks_sealed(bytes, max) {
-        Ok(())
-    } else {
-        Err(Error::BadRequest(
-            "encrypted MessagePack envelope required".into(),
-        ))
+pub(crate) fn check_blob(bytes: &[u8], max: usize) -> Result<Sealed<'_>, Error> {
+    if bytes.len() <= max {
+        if let Ok(value) = codec::decode::<Sealed<'_>>(bytes) {
+            if value.v == VERSION && value.iv.len() == NONCE_LEN && value.ct.len() >= TAG_LEN {
+                return Ok(value);
+            }
+        }
     }
+    Err(Error::BadRequest(
+        "encrypted MessagePack envelope required".into(),
+    ))
 }
 
 /// Lowercase hex SHA-256 of `body`. The empty body has a hash too, so GET and
