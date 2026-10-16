@@ -139,7 +139,17 @@ $effect(() => {
 				}
 			}}
 		>
-			←
+			<svg
+				viewBox="0 0 24 24"
+				aria-hidden="true"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+			>
+				<path d="m14 6-6 6 6 6" />
+			</svg>
 		</button>
 		<button
 			type="button"
@@ -152,7 +162,17 @@ $effect(() => {
 				}
 			}}
 		>
-			→
+			<svg
+				viewBox="0 0 24 24"
+				aria-hidden="true"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+			>
+				<path d="m10 6 6 6-6 6" />
+			</svg>
 		</button>
 		<button
 			type="button"
@@ -160,13 +180,23 @@ $effect(() => {
 			aria-label="Close preview"
 			onclick={onclose}
 		>
-			×
+			<svg
+				viewBox="0 0 24 24"
+				aria-hidden="true"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+			>
+				<path d="M6 6l12 12M18 6L6 18" />
+			</svg>
 		</button>
 	{/if}
 </dialog>
 
 <style>
 dialog {
+	color: inherit;
 	touch-action: pinch-zoom;
 	overscroll-behavior: contain;
 	padding: 0;
@@ -252,9 +282,17 @@ audio {
 .arrow,
 .close {
 	position: fixed;
-	font-size: 1.5rem;
+	display: grid;
+	place-items: center;
+	width: 3rem;
+	height: 3rem;
+	padding: 0.5rem;
 	background: var(--paper);
 	color: inherit;
+}
+svg {
+	width: 1.25rem;
+	height: 1.25rem;
 }
 .arrow {
 	top: 50%;
@@ -283,12 +321,6 @@ audio {
 		width: calc(100vw - 2rem);
 		max-height: calc(100dvh - 9rem);
 		padding: 1.5rem 1rem;
-	}
-	.arrow,
-	.close {
-		min-width: 3rem;
-		min-height: 3rem;
-		padding: 0.25rem 0.5rem;
 	}
 	.arrow {
 		top: auto;

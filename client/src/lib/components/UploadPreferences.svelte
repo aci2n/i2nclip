@@ -29,4 +29,9 @@ input {
 	width: auto;
 	flex: none;
 }
+@media (max-width: 32rem), (pointer: coarse) {
+	label {
+		min-height: 3rem;
+	}
+}
 </style>

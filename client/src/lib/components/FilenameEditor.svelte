@@ -116,4 +116,10 @@ input {
 	padding: 0.25rem;
 	border-radius: 0.25rem;
 }
+@media (max-width: 32rem), (pointer: coarse) {
+	form,
+	.filename {
+		min-height: 3rem;
+	}
+}
 </style>

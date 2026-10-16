@@ -68,8 +68,10 @@ function movePreview(step) {
 		>
 	</div>
 	{#if $tags.error || $tags.warning}
-		<div class="feedback" role="status">
-			<p>{$tags.error ? `Tag suggestions: ${$tags.error}` : $tags.warning}</p>
+		<div class="feedback" role={$tags.error ? "alert" : "status"}>
+			<p class:error={Boolean($tags.error)}>
+				{$tags.error ? `Tag suggestions: ${$tags.error}` : $tags.warning}
+			</p>
 			<button
 				type="button"
 				class="secondary"

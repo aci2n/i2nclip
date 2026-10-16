@@ -20,7 +20,8 @@ control commits. Do not redesign flows or add abstractions/dependencies.
   JSON/labels, format the catalog SQL consistently and remove a stale rustdoc link.
 - Shared ordinary inputs/buttons are shorter than the established 3rem touch
   controls. Set shared mobile/coarse-pointer minimums and input font sizing;
-  preserve compact desktop controls and component-owned exceptions.
+  preserve compact desktop controls and component-owned exceptions. Give checkbox
+  labels the same usable touch height.
 - Give disclosures consistent touch padding and keep filename editing targets
   at least 3rem on mobile/coarse pointers.
 - Media preview controls still use text glyphs and variable button dimensions.
@@ -47,3 +48,5 @@ image/audio/text previews in Firefox and Chromium. Check no overflow, readable
 labels, 44px touch targets and nearby feedback at 320/360px and desktop in both
 themes, using real media fixtures. Inspect actual Firefox screenshots. Run full
 unit, database, browser and web/extension build verification after cleanup.
+
+Verification completed: `make test`, `make test-db`, `make test-e2e` (60 passing browser cases), `make test-build`, `make lint` and `make format-check`. Reviewed Firefox screenshots of setup modes, settings/errors, admission, mixed media, editing, and image/audio/text previews at desktop and 320/360px in both themes.

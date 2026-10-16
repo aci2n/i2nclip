@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { tagSuggestions } from "../src/lib/ui/tag-suggestions.js";
 
-test("suggestions normalize, exclude selected tags, sort and cap locally", () => {
+test("suggestions normalize, exclude selected tags and preserve catalog order", () => {
 	assert.deepEqual(
 		tagSuggestions(["Café", "Holiday", "summer holiday"], " CAFE\u0301 ", []),
 		["Café"],
 	);
 	assert.deepEqual(
-		tagSuggestions(["Work", "Homework", "Worker"], "work", ["WORK"]),
+		tagSuggestions(["Homework", "Work", "Worker"], "work", ["WORK"]),
 		["Homework", "Worker"],
 	);
 	assert.deepEqual(tagSuggestions(["Work"], "", []), []);

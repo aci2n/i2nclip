@@ -116,6 +116,21 @@
 			cursor: default;
 		}
 	}
+	@media (max-width: 32rem), (pointer: coarse) {
+		button,
+		input:not([type="checkbox"]):not([type="hidden"]),
+		select,
+		summary {
+			min-height: 3rem;
+		}
+		input:not([type="checkbox"]):not([type="hidden"]),
+		select {
+			font-size: 1.1rem;
+		}
+		summary {
+			padding-block: 0.75rem;
+		}
+	}
 }
 
 @layer layout {

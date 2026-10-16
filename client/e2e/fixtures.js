@@ -128,14 +128,14 @@ export function audioFixture() {
 	wav.writeUInt32LE(samples * 2, 40);
 	return { name: "Voice memo.wav", mimeType: "audio/wav", buffer: wav };
 }
-export async function shot(page, name) {
+export async function shot(page, name, { fullPage = true } = {}) {
 	const directory = base.info().outputPath("screenshots");
 	await mkdir(directory, { recursive: true });
 	for (const theme of ["light", "dark"]) {
 		await page.emulateMedia({ colorScheme: theme });
 		await page.screenshot({
 			path: path.join(directory, `${name}-${theme}.png`),
-			fullPage: true,
+			fullPage,
 		});
 	}
 	await page.emulateMedia({ colorScheme: "light" });

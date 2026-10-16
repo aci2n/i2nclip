@@ -75,3 +75,5 @@ A disposable PostgreSQL administrator URL may be supplied through `I2N_TEST_DATA
 Tag search checks cover local autocomplete, keyboard selection, multiword chips, immediate AND filtering, clear-all and 320/360px layouts in both themes. Automatic-tag checks exercise the 40-tag cap and six-tag card disclosure. Catalog unit/database tests cover label authentication, partial corruption, owner isolation and session cancellation.
 
 Tag-editor browser checks verify immediate selection saves, retained failed drafts, exclusion of assigned tags, catalog cleanup after the final use, partial-corruption warnings and retry. Inspect suggestion menus and long tag chips in Firefox at 320/360px in both themes.
+
+UI consistency checks cover setup modes, expanded settings and nearby errors, lock/admission gutters, mixed media, filename editing and preview icons at desktop and 320/360px. Mobile controls retain 44px minimum targets and readable input fonts. Preview/About screenshots capture the viewport; page-layout screenshots capture the full page. Autocomplete tests exercise wheel containment and Tab/arrow scrolling to the last result, including short viewports.

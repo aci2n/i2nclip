@@ -26,6 +26,7 @@ onDestroy(admission.dispose);
 
 <style>
 main {
+	width: calc(100% - 2rem);
 	max-width: 32rem;
 	margin: 3rem auto;
 }
