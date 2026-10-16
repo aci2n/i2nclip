@@ -35,6 +35,10 @@ test("private suggestions build immediate AND-search chips with keyboard and poi
 	await expect(suggestion).toHaveCount(0);
 	await expect(search).toHaveValue("sum");
 	await search.press("ArrowDown");
+	await suggestion.press("Escape");
+	await expect(suggestion).toHaveCount(0);
+	await expect(search).toBeFocused();
+	await search.press("ArrowDown");
 	await suggestion.press("Enter");
 	await expect(page.getByRole("article")).toHaveCount(1);
 	await expect(search).toHaveValue("");

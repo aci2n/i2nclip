@@ -72,7 +72,7 @@ function movePreview(step) {
 	</div>
 	{#if $tags.error || $tags.warning}
 		<div class="feedback" role="status">
-			{$tags.error ? `Tag suggestions: ${$tags.error}` : $tags.warning}
+			<p>{$tags.error ? `Tag suggestions: ${$tags.error}` : $tags.warning}</p>
 			<button
 				type="button"
 				class="secondary"
@@ -122,6 +122,7 @@ function movePreview(step) {
 		{#each $library.cards as media (media.id)}
 			<MediaCard
 				{media}
+				suggestions={$tags.tags}
 				onreveal={(opener) => library.reveal(media.id, opener)}
 				ondownload={() => library.download(media.id)}
 				onremove={() => library.remove(media.id)}

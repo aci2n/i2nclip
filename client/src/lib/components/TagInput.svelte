@@ -21,7 +21,9 @@ let input = $state();
 let list = $state();
 let open = $state(false);
 const matches = $derived(
-	open ? tagSuggestions(suggestions, value, excluded) : [],
+	open && !disabled && !readonly
+		? tagSuggestions(suggestions, value, excluded)
+		: [],
 );
 $effect(() => {
 	onready(input);
@@ -35,8 +37,8 @@ function commit(tag) {
 	input?.focus();
 }
 function dismiss() {
-	open = false;
 	input?.focus();
+	open = false;
 }
 function focusSuggestion(index) {
 	list?.querySelectorAll("button")[index]?.focus();
@@ -165,7 +167,7 @@ li button {
 	min-height: 3rem;
 	padding: 0.5rem 0.75rem;
 	text-align: left;
-	color: inherit;
+	color: var(--accent);
 	background: transparent;
 	overflow-wrap: anywhere;
 }

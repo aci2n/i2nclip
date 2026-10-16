@@ -3,7 +3,14 @@ import { canPreview, fileSize, fileType, uploadedAt } from "../media/format.js";
 import FilenameEditor from "./FilenameEditor.svelte";
 import TagEditor from "./TagEditor.svelte";
 
-let { media, onreveal, ondownload, onremove, onupdate } = $props();
+let {
+	media,
+	suggestions = [],
+	onreveal,
+	ondownload,
+	onremove,
+	onupdate,
+} = $props();
 const type = $derived(media.metadata?.contentType || "");
 const playable = $derived(/^(audio|video)\//.test(type));
 const image = $derived(type.startsWith("image/"));
@@ -58,6 +65,7 @@ const summary = $derived(
 	{#if media.metadata}
 		<TagEditor
 			tags={media.metadata.tags || []}
+			{suggestions}
 			{name}
 			disabled={media.busy || media.deleted}
 			onsave={(tags) => onupdate({ tags })}

@@ -24,6 +24,11 @@ test("default compression updates saved format and device preference preserves o
 	await expect(
 		card.getByRole("button", { name: "Open Landscape.webp", exact: true }),
 	).toBeVisible();
+	await expect(card.locator(".tag-text")).toHaveText([
+		"image",
+		"webp",
+		"landscape",
+	]);
 	await card.getByText("File details", { exact: true }).click();
 	await expect(card.getByText("image/webp", { exact: true })).toBeVisible();
 	await expect(card.getByText("1920 × 1080", { exact: true })).toBeVisible();
@@ -49,6 +54,11 @@ test("default compression updates saved format and device preference preserves o
 		}),
 	});
 	await expect(original).toBeVisible();
+	await expect(original.locator(".tag-text")).toHaveText([
+		"image",
+		"png",
+		"landscape",
+	]);
 	const savingOriginal = page.waitForEvent("download");
 	await original.getByRole("button", { name: "Download", exact: true }).click();
 	expect(await readFile(await (await savingOriginal).path())).toEqual(

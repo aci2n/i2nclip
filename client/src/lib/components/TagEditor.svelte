@@ -1,8 +1,9 @@
 <script>
 import { tick } from "svelte";
 import { splitTags } from "../protocol/tags.js";
+import TagInput from "./TagInput.svelte";
 
-let { tags = [], disabled = false, name, onsave } = $props();
+let { tags = [], suggestions = [], disabled = false, name, onsave } = $props();
 let editing = $state(false);
 let expanded = $state(false);
 let draft = $state("");
@@ -87,23 +88,25 @@ async function persist(next, clear = false) {
 			}}
 		>
 			<div class="entry">
-				<input
-					class="chip"
-					bind:this={input}
-					bind:value={draft}
+				<TagInput
+					value={draft}
+					{suggestions}
+					excluded={tags}
+					label={`New tag for ${name}`}
 					disabled={disabled && !saving}
-					aria-label={`New tag for ${name}`}
-					placeholder="New tag"
-					autocomplete="on"
-					onkeydown={(event) => {
-						if (event.key === "Escape") {
-							event.preventDefault();
-							if (!locked) {
-								cancel();
-							}
-						}
+					readonly={locked}
+					onchange={(value) => {
+						draft = value;
 					}}
-				>
+					oncommit={(value) => {
+						draft = value;
+						void persist([...tags, value], true);
+					}}
+					onescape={cancel}
+					onready={(node) => {
+						input = node;
+					}}
+				/>
 				<button
 					class="chip"
 					type="submit"
@@ -226,10 +229,6 @@ async function persist(next, clear = false) {
 	align-items: center;
 	gap: 0.25rem;
 }
-.entry input {
-	flex: 1;
-	width: 0;
-}
 .entry button {
 	flex: none;
 }
@@ -255,9 +254,6 @@ async function persist(next, clear = false) {
 	}
 	.entry {
 		gap: 0.5rem;
-	}
-	.entry input {
-		font-size: 1.1rem;
 	}
 }
 </style>

@@ -73,3 +73,5 @@ make test-profile
 A disposable PostgreSQL administrator URL may be supplied through `I2N_TEST_DATABASE_URL`; the resource profile always owns its own container. With rootless Podman, start its API socket before running tests. Explicit `DOCKER_HOST` is honored, and the Makefile detects local Docker/Podman sockets when unset. Direct npm browser execution needs an explicit test database URL; the root Makefile provisions one.
 
 Tag search checks cover local autocomplete, keyboard selection, multiword chips, immediate AND filtering, clear-all and 320/360px layouts in both themes. Automatic-tag checks exercise the 40-tag cap and six-tag card disclosure. Catalog unit/database tests cover label authentication, partial corruption, owner isolation and session cancellation.
+
+Tag-editor browser checks verify immediate selection saves, retained failed drafts, exclusion of assigned tags, catalog cleanup after the final use, partial-corruption warnings and retry. Inspect suggestion menus and long tag chips in Firefox at 320/360px in both themes.
