@@ -105,8 +105,8 @@ Startup runs embedded SQLx migrations from `sql/`, beginning with `001_init.sql`
 before accepting requests. Applied versions and checksums are recorded in
 `_sqlx_migrations`; restarts skip applied SQL and preserve limits and counters
 without scanning media. Add future changes as new numbered files; keep applied
-migrations unchanged. Databases predating this infrastructure must already match
-the initial schema. See [Database migrations](doc/database-migrations.md).
+migrations unchanged. The schema is consolidated into one fresh-database baseline;
+databases from before this rebuild must be dropped and recreated. See [Database migrations](doc/database-migrations.md).
 
 ## Build and run
 
@@ -139,7 +139,7 @@ npm run dev --prefix client
 
 `DEV_PORT`, `DEV_DB_PORT`, and `DEV_ORIGIN` override development addresses; `DEV_DB_URL` overrides the database URL. For a separate Vite server, set `DEV_ORIGIN=http://localhost:5173`. Vite proxies `/api/` to port 8080, configurable through `I2N_API_TARGET`.
 
-PostgreSQL holds ciphertext, metadata, keys, invitations, nonces, and tags. Uploads and metadata changes commit atomically. Downloads release database connections before sending owned bytes. The eight-connection SQLx pool has a five-second acquisition timeout. Startup initializes the idempotent schema transactionally; maintenance removes expired invitations and nonces on startup and hourly. See [protocol and backend documentation](doc/README.md).
+PostgreSQL holds ciphertext, metadata, keys, invitations, nonces, and tags. Uploads and metadata changes commit atomically. Downloads release database connections before sending owned bytes. The eight-connection SQLx pool has a five-second acquisition timeout. Startup applies the embedded schema transactionally once; maintenance removes expired invitations and nonces on startup and hourly. See [protocol and backend documentation](doc/README.md).
 
 ## Verification
 
@@ -162,6 +162,6 @@ Client Makefile targets prepare locked dependencies automatically. Browser tests
 
 Uploads receive up to 40 automatic tags from their stored media type, format and filename words. They are ordinary editable tags; edits never regenerate them. Each file allows 64 tags total. Cards show six tags initially; **Show all tags** reveals the rest. Existing files are unchanged.
 
-The authenticated tag catalog returns opaque search tokens with encrypted labels. Labels are decrypted and verified only in the unlocked client, held in memory, and refreshed after changes. Existing files remain searchable but enter autocomplete only after metadata is saved. No backfill runs. Deploy the updated client and server together when changing the tag frame format.
+The authenticated tag catalog returns opaque search tokens with encrypted labels. Labels are decrypted and verified only in the unlocked client, held in memory, and refreshed after changes. Every tag has a required encrypted label. No legacy-label backfill runs. Deploy the updated client and server together when changing the tag frame format.
 
 Search and tag editing suggest existing library tags as you type. Choose a suggestion to search or save immediately; Enter also accepts a new tag. Invalid catalog entries are skipped with a warning, while valid suggestions remain available.

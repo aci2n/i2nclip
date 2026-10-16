@@ -44,9 +44,9 @@ Downloads hash-check stored bytes before decoding/decrypting. Existing malformed
 catalog records remain individually skippable; broken documents fail the request.
 Invalid responses use existing error feedback and HTTP status-text fallback.
 
-Keep database tokens as base64url text and sealed bytes as bytea. Migration 004
-removes the label version-byte check, retaining empty-label and size bounds;
-server envelope validation replaces that check. Applied migrations are unchanged.
+Keep database tokens as base64url text and sealed bytes as bytea. The subsequent [database rebuild](database-rebuild.md) consolidates the schema
+into migration 001, requires bounded nonempty labels, and removes the old
+version-byte check. Server envelope validation checks the current format.
 Keep all application limits, including the 96 KiB tag budget; recompute outer
 request caps. Borrow request content and metadata in Rust: no content-sized decode
 copy. Keep JavaScript numeric semantics and third-party API representations.

@@ -25,12 +25,10 @@ CREATE TABLE files (
     id TEXT PRIMARY KEY CHECK (id ~ '^[0-9a-f]{64}$'),
     owner BYTEA NOT NULL CHECK (octet_length(owner) = 32),
     meta BYTEA NOT NULL CHECK (octet_length(meta) BETWEEN 42 AND 65536),
-    content BYTEA NOT NULL CHECK (octet_length(content) BETWEEN 42 AND 33554496),
+    content BYTEA STORAGE EXTERNAL NOT NULL CHECK (octet_length(content) BETWEEN 42 AND 33554496),
     content_bytes BIGINT GENERATED ALWAYS AS (octet_length(content)) STORED,
     created_at BIGINT NOT NULL
 );
-
-ALTER TABLE files ALTER COLUMN content SET STORAGE EXTERNAL;
 
 CREATE INDEX files_owner_created_id ON files (owner, created_at DESC, id ASC);
 

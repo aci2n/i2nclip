@@ -12,9 +12,9 @@ No backfill, source-page-title tags, AI, persistent catalog cache or legacy fram
 
 Keep HMAC tokens for matching and add encrypted display labels, bound to their
 token by purpose-specific AAD. New upload/update frames carry a bounded MessagePack array
-of token/label pairs (binary tokens and labels, 96 KiB, 64 entries). Add a numbered
-migration with label BYTEA NOT NULL DEFAULT ''::bytea; existing empty labels remain
-searchable but are omitted from the catalog. Writes require sealed nonempty labels.
+of token/label pairs (binary tokens and labels, 96 KiB, 64 entries). The consolidated
+baseline defines label BYTEA NOT NULL without a default; all tags require sealed
+nonempty labels.
 Signed GET /api/tags returns distinct owner-scoped token/label pairs without file
 metadata/content. Label writes remain atomic with metadata and conflict checks.
 

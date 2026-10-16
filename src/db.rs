@@ -1342,6 +1342,10 @@ mod tests {
     #[tokio::test]
     async fn schema_bounds_and_immutable_content_protect_downloads() {
         let (db, admin, name) = fixture().await;
+        let storage: String = sqlx::query_scalar("SELECT attstorage::text FROM pg_attribute WHERE attrelid = 'files'::regclass AND attname = 'content'")
+            .fetch_one(&db.pool).await.unwrap();
+        assert_eq!(storage, "e");
+
         for (meta_size, content_size) in [(41_i32, 42_i32), (65537, 42), (42, 41), (42, 33554497)] {
             let error = sqlx::query(
                 r#"

@@ -1,5 +1,8 @@
 # Tag review fixes
 
+Historical change specification: its incremental migrations and empty-label
+support were superseded by the [fresh database baseline](database-rebuild.md).
+
 ## Goal, scope and exclusions
 
 Fix three findings in separate verified commits: increase encrypted-label limits,
