@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { encode } from "../src/lib/protocol/msgpack.js";
 import {
 	audioFixture,
 	createLibrary,
@@ -49,8 +50,8 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	await page.route("**/api/media/*/meta", (route) =>
 		route.fulfill({
 			status: 503,
-			contentType: "application/json",
-			body: '{"error":"Tag edits unavailable"}',
+			contentType: "application/msgpack",
+			body: Buffer.from(encode({ error: "Tag edits unavailable" })),
 		}),
 	);
 	await draft.fill("Remember");
@@ -237,8 +238,8 @@ test("upload failures survive navigation and files can be selected again", async
 		if (fail && posts === 1) {
 			await route.fulfill({
 				status: 503,
-				contentType: "application/json",
-				body: '{"error":"Upload unavailable"}',
+				contentType: "application/msgpack",
+				body: Buffer.from(encode({ error: "Upload unavailable" })),
 			});
 		} else {
 			if (posts === 2) {

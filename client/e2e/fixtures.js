@@ -79,8 +79,8 @@ export async function restore(page, app, bytes) {
 	await master(page);
 	await page.getByRole("button", { name: "Restore", exact: true }).click();
 	await page.getByLabel("Recovery file", { exact: true }).setInputFiles({
-		name: "recovery.json",
-		mimeType: "application/json",
+		name: "recovery.msgpack",
+		mimeType: "application/msgpack",
 		buffer: bytes,
 	});
 	await page.getByLabel("Recovery password", { exact: true }).fill(PASSWORD);

@@ -1,3 +1,4 @@
+import { encode } from "../src/lib/protocol/msgpack.js";
 import { deferred } from "../tests/helpers.js";
 import { createLibrary, expect, imageFixture, shot, test } from "./fixtures.js";
 
@@ -27,8 +28,8 @@ test("preview opens immediately and arrows, keys, swipes and close cancel stalle
 			await route
 				.fulfill({
 					status: 503,
-					contentType: "application/json",
-					body: '{"error":"Preview unavailable"}',
+					contentType: "application/msgpack",
+					body: Buffer.from(encode({ error: "Preview unavailable" })),
 				})
 				.catch(() => {});
 		} else {

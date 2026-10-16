@@ -1,3 +1,4 @@
+import { encode } from "../src/lib/protocol/msgpack.js";
 import { deferred } from "../tests/helpers.js";
 import { createLibrary, expect, shot, test } from "./fixtures.js";
 
@@ -124,8 +125,8 @@ test("compact upload summary shows progress and keeps failures visible when succ
 		if (posts === 1) {
 			await route.fulfill({
 				status: 503,
-				contentType: "application/json",
-				body: '{"error":"Upload unavailable"}',
+				contentType: "application/msgpack",
+				body: Buffer.from(encode({ error: "Upload unavailable" })),
 			});
 		} else {
 			await waiting.promise;

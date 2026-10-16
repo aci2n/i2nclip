@@ -5,6 +5,7 @@ import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
 import { promisify } from "node:util";
+import { b64urlToBytes } from "../src/lib/protocol/bytes.js";
 import {
 	authorizationHeader,
 	bodyHash,
@@ -16,6 +17,7 @@ import {
 } from "../src/lib/protocol/crypto.js";
 import { encodePost } from "../src/lib/protocol/frame.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
+import { encode } from "../src/lib/protocol/msgpack.js";
 
 import {
 	database as fixture,
@@ -197,9 +199,9 @@ async function run() {
 		const identity = await generatePrivateKey();
 		const registration = await fetch(`${origin}/api/register-key`, {
 			method: "POST",
-			body: JSON.stringify({
+			body: encode({
 				otc: code,
-				public_key: identity.publicKey,
+				public_key: b64urlToBytes(identity.publicKey),
 			}),
 		});
 		assert.equal(registration.status, 204);

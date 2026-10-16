@@ -1,3 +1,4 @@
+import { encode } from "../src/lib/protocol/msgpack.js";
 import {
 	audioFixture,
 	createLibrary,
@@ -149,8 +150,8 @@ test("mixed media, inline filename editing and preview icons stay consistent acr
 	await page.route("**/api/tags", (route) =>
 		route.fulfill({
 			status: 503,
-			contentType: "application/json",
-			body: '{"error":"Tag suggestions unavailable"}',
+			contentType: "application/msgpack",
+			body: Buffer.from(encode({ error: "Tag suggestions unavailable" })),
 		}),
 	);
 	await page.getByLabel("Upload", { exact: true }).setInputFiles([

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { encode } from "../src/lib/protocol/msgpack.js";
 import {
 	audioFixture,
 	createLibrary,
@@ -77,8 +78,8 @@ test("mobile tags wrap with usable touch controls and retain failed drafts", asy
 	await page.route("**/api/media/*/meta", (route) =>
 		route.fulfill({
 			status: 503,
-			contentType: "application/json",
-			body: '{"error":"Tag update unavailable"}',
+			contentType: "application/msgpack",
+			body: Buffer.from(encode({ error: "Tag update unavailable" })),
 		}),
 	);
 	await input.fill("Keep my draft");

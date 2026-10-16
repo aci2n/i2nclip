@@ -1,3 +1,4 @@
+import { decode, encode } from "../src/lib/protocol/msgpack.js";
 import { createLibrary, expect, shot, test } from "./fixtures.js";
 
 test("tag suggestions save immediately, retain failed drafts and disappear after their last use", async ({
@@ -35,8 +36,8 @@ test("tag suggestions save immediately, retain failed drafts and disappear after
 	await page.route("**/api/media/*/meta", (route) =>
 		route.fulfill({
 			status: 503,
-			contentType: "application/json",
-			body: '{"error":"Tag update unavailable"}',
+			contentType: "application/msgpack",
+			body: Buffer.from(encode({ error: "Tag update unavailable" })),
 		}),
 	);
 	await alpha.getByRole("button", { name: "beta", exact: true }).click();
@@ -84,11 +85,11 @@ test("a corrupt catalog label leaves valid suggestions usable and offers retry",
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.route("**/api/tags", async (route) => {
 		const response = await route.fetch();
-		const body = await response.json();
+		const body = decode(await response.body());
 		if (body.tags.length) {
 			body.tags.push({ ...body.tags[0], label: "invalid" });
 		}
-		await route.fulfill({ response, json: body });
+		await route.fulfill({ response, body: Buffer.from(encode(body)) });
 	});
 	await page.getByLabel("Upload", { exact: true }).setInputFiles({
 		name: "Useful notes.txt",

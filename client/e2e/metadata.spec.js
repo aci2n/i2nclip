@@ -16,8 +16,8 @@ test("decomposed Unicode tag spellings survive upload, metadata updates and cata
 }) => {
 	await createLibrary(page, app);
 	const manifest = await recovery(page);
-	const { identity, key } = await openRecovery(manifest.toString(), PASSWORD);
-	const credentials = { serverUrl: identity.serverUrl, key };
+	const { identity, key } = await openRecovery(manifest, PASSWORD);
+	const credentials = { serverUrl: identity.server_url, key };
 	const tag = "가".normalize("NFD").repeat(64);
 	const saved = await upload({
 		...credentials,
@@ -61,8 +61,8 @@ test("generic encrypted metadata updates rename downloads and preserve file cont
 		.getByRole("checkbox", { name: "Compress images to WebP" })
 		.uncheck();
 	const manifest = await recovery(page);
-	const { identity, key } = await openRecovery(manifest.toString(), PASSWORD);
-	const credentials = { serverUrl: identity.serverUrl, key };
+	const { identity, key } = await openRecovery(manifest, PASSWORD);
+	const credentials = { serverUrl: identity.server_url, key };
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const image = await imageFixture(page, "Original panorama.png", 1920, 320);
 	await page.getByLabel("Upload", { exact: true }).setInputFiles(image);

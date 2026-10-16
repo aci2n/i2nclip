@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { encode } from "../src/lib/protocol/msgpack.js";
 import { createLibrary, expect, imageFixture, shot, test } from "./fixtures.js";
 
 test("filenames edit inline, save on Enter, retain failed drafts, and do not save on blur", async ({
@@ -62,8 +63,8 @@ test("filenames edit inline, save on Enter, retain failed drafts, and do not sav
 	await page.route(pattern, (route) =>
 		route.fulfill({
 			status: 503,
-			contentType: "application/json",
-			body: '{"error":"Filename update unavailable"}',
+			contentType: "application/msgpack",
+			body: Buffer.from(encode({ error: "Filename update unavailable" })),
 		}),
 	);
 	await label().click();

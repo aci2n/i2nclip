@@ -1,3 +1,4 @@
+import { decode } from "../src/lib/protocol/msgpack.js";
 import { startServer, stopServer } from "../tests/process.js";
 import { expect, test } from "./fixtures.js";
 
@@ -14,21 +15,23 @@ test("clients on another origin can read API success and authentication errors",
 			const signed = await fetch(`${origin}/api/media`, {
 				headers: {
 					authorization: "Bearer invalid",
-					"content-type": "application/octet-stream",
+					"content-type": "application/msgpack",
 				},
 			});
 			const register = await fetch(`${origin}/api/register-key`, {
 				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: "{}",
+				headers: { "content-type": "application/msgpack" },
+				body: new Uint8Array([0x80]),
 			});
 			return {
-				health: await health.json(),
+				health: [...new Uint8Array(await health.arrayBuffer())],
 				status: signed.status,
-				error: await signed.json(),
+				error: [...new Uint8Array(await signed.arrayBuffer())],
 				registration: register.status,
 			};
 		}, app.origin);
+		result.health = decode(new Uint8Array(result.health));
+		result.error = decode(new Uint8Array(result.error));
 		expect(result).toEqual({
 			health: { ok: true },
 			status: 401,

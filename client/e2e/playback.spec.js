@@ -87,11 +87,11 @@ test("preview stops at loaded boundaries and More loads the submitted search", a
 }) => {
 	await createLibrary(page, app);
 	const manifest = await recovery(page);
-	const { identity, key } = await openRecovery(manifest.toString(), PASSWORD);
+	const { identity, key } = await openRecovery(manifest, PASSWORD);
 	const image = await imageFixture(page, "Landscape.png", 960, 540);
 	for (let index = 0; index < 25; index++) {
 		await upload({
-			serverUrl: identity.serverUrl,
+			serverUrl: identity.server_url,
 			key,
 			bytes: new Uint8Array(image.buffer),
 			name: `Landscape ${index}.png`,
