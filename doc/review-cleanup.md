@@ -42,3 +42,12 @@ inspect Firefox screenshots. Cover invalid search drafts, normalized duplicates,
 maximum frames. Preserve cross-language vectors and existing download behavior.
 Use Makefile Rust formatting, then run make test-all after the six cleanups.
 Tests retain isolated databases, listeners, contexts and resource cleanup.
+
+## Verification completed
+
+All six cleanups were committed separately after focused checks and warning-free
+builds. Final `make test-all` passed: client tests/checker, Clippy, formatting,
+web/extension build checks, PostgreSQL tests and 62 Firefox/Chromium cases,
+including the subsequent Backspace feature. Inspected Firefox screenshots of
+desktop and 320/360px chips, wrapped long labels, mixed media, filename editing
+and previews in light/dark themes.

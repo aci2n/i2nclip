@@ -104,7 +104,8 @@ The Library view subscribes to root stores and passes ordinary props/callbacks
 to components. The library owns a submitted tag array and a draft string. Enter
 or suggestion selection adds one chip and searches; removal or Clear searches
 immediately. Typing only filters the in-memory tag catalog. Pagination belongs to
-the submitted array. Session changes clear both chips and draft.
+the submitted array. Backspace in the empty search input removes the last chip
+and searches again, retaining input focus. Session changes clear both chips and draft.
 
 The root-owned catalog aborts superseded requests, decrypts labels, verifies their
 HMAC tokens, skips damaged entries and clears decrypted state on session changes.

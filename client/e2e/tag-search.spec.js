@@ -1,5 +1,68 @@
 import { createLibrary, expect, shot, test } from "./fixtures.js";
 
+test("Backspace in an empty search removes the last tag without interfering with text editing", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	await page.getByLabel("Upload", { exact: true }).setInputFiles(
+		["Summer.txt", "Winter.txt"].map((name) => ({
+			name,
+			mimeType: "text/plain",
+			buffer: Buffer.from(name),
+		})),
+	);
+	await expect(page.getByRole("article")).toHaveCount(2);
+	const search = page.getByRole("searchbox", {
+		name: "Search tags",
+		exact: true,
+	});
+	const form = page.getByRole("form", { name: "Search library", exact: true });
+	const chips = form.getByRole("button", { name: /^Remove search tag / });
+	for (const tag of ["text", "summer"]) {
+		await search.fill(tag);
+		await search.press("Enter");
+	}
+	await expect(chips).toHaveCount(2);
+	await expect(page.getByRole("article")).toHaveCount(1);
+	await search.fill("x");
+	await search.press("Backspace");
+	await expect(search).toHaveValue("");
+	await expect(chips).toHaveCount(2);
+	await search.dispatchEvent("keydown", {
+		key: "Backspace",
+		isComposing: true,
+	});
+	await expect(chips).toHaveCount(2);
+	await search.fill(" ");
+	await search.press("Backspace");
+	await expect(chips).toHaveCount(2);
+	await search.press("Backspace");
+	await expect(chips).toHaveCount(1);
+	await expect(chips).toHaveAccessibleName("Remove search tag text");
+	await expect(page.getByRole("article")).toHaveCount(2);
+	await expect(search).toBeFocused();
+	const cleared = page.waitForResponse((response) => {
+		const url = new URL(response.url());
+		return url.pathname === "/api/media" && !url.searchParams.has("tag");
+	});
+	await search.press("Backspace");
+	await cleared;
+	await expect(chips).toHaveCount(0);
+	await expect(search).toBeFocused();
+	const requests = [];
+	page.on("request", (request) => {
+		if (new URL(request.url()).pathname === "/api/media") {
+			requests.push(request);
+		}
+	});
+	await search.press("Backspace");
+	await expect(search).toHaveValue("");
+	await expect(page.getByRole("article")).toHaveCount(2);
+	expect(requests).toHaveLength(0);
+});
+
 test("private suggestions build immediate AND-search chips with keyboard and pointer controls", async ({
 	page,
 	app,

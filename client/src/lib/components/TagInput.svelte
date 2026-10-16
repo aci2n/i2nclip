@@ -14,6 +14,7 @@ let {
 	search = false,
 	onchange,
 	oncommit,
+	onemptybackspace,
 	onescape = () => {},
 	onready = () => {},
 } = $props();
@@ -73,7 +74,16 @@ function focusSuggestion(index) {
 			if (event.isComposing) {
 				return;
 			}
-			if (event.key === "ArrowDown" && !readonly && !disabled) {
+			if (
+				event.key === "Backspace" &&
+				!event.currentTarget.value &&
+				!readonly &&
+				!disabled &&
+				onemptybackspace
+			) {
+				event.preventDefault();
+				onemptybackspace();
+			} else if (event.key === "ArrowDown" && !readonly && !disabled) {
 				event.preventDefault();
 				open = true;
 				void tick().then(() => focusSuggestion(0));

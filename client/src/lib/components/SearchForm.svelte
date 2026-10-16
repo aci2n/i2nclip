@@ -41,6 +41,11 @@ let input = $state();
 				borderless
 				{onchange}
 				oncommit={onadd}
+				onemptybackspace={() => {
+					if (query.length) {
+						onremove(query.at(-1));
+					}
+				}}
 				onready={(node) => {
 					input = node;
 				}}
