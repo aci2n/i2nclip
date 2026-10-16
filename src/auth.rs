@@ -50,7 +50,21 @@ impl FromRequest<AppState> for SignedRequest {
     }
 }
 
-pub(crate) async fn authenticate_request(
+/// A verified signer enrolling with an invitation; no registered-key lookup.
+pub(crate) struct RegistrationRequest(pub(crate) SignedRequest);
+
+impl FromRequest<AppState> for RegistrationRequest {
+    type Rejection = Response;
+
+    async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
+        authenticate_request(req, state, KeyPolicy::Registering)
+            .await
+            .map(Self)
+            .map_err(fail)
+    }
+}
+
+async fn authenticate_request(
     req: Request,
     state: &AppState,
     policy: KeyPolicy,
@@ -173,7 +187,7 @@ pub(crate) fn check_timestamp(ts: u64, now: u64) -> Result<(), Error> {
 }
 
 /// Registration proves key possession before it can join the allow-list.
-pub(crate) enum KeyPolicy {
+enum KeyPolicy {
     Registered,
     Registering,
 }

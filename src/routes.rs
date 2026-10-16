@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use axum::{
     body::Body,
-    extract::{Request, State},
+    extract::State,
     http::{header, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -98,12 +98,10 @@ struct RegisterKeyDocument {
     otc: String,
 }
 
-async fn register_key(State(state): State<AppState>, request: Request) -> Response {
-    let request =
-        match auth::authenticate_request(request, &state, auth::KeyPolicy::Registering).await {
-            Ok(request) => request,
-            Err(error) => return fail(error),
-        };
+async fn register_key(
+    State(state): State<AppState>,
+    auth::RegistrationRequest(request): auth::RegistrationRequest,
+) -> Response {
     if let Err(response) = request.check_size(MAX_REGISTER_BODY) {
         return *response;
     }

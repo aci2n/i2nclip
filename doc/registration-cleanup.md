@@ -21,3 +21,14 @@ Acceptance: both commits build without warnings. Preserve authentication tests;
 verify the client signs an otc-only body, the server enrolls its signer, forged
 or weak signer headers preserve invitations, and replay/body tampering still fail.
 Run client checks, Rust tests with isolated PostgreSQL, formatting and lint.
+
+## Follow-up: registration extractor
+
+Use a distinct RegistrationRequest extractor wrapping the authenticated request.
+The registration handler destructures it and retains the same body policy.
+SignedRequest extraction always requires an enrolled key; RegistrationRequest
+extraction skips only that lookup. Share a private authentication function and
+private key policy, without generics, marker traits or duplicated body methods.
+No wire, persistence, lifecycle or failure behavior changes. Acceptance: existing
+registration, unsigned-request and registered-route tests pass; all targets build
+and lint without warnings.
