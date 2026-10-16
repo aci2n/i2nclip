@@ -316,7 +316,7 @@ impl Database {
         if result.rows_affected() == 0 {
             return Err(Error::Conflict);
         }
-        replace_tags(&mut tx, &id, &parts.tags).await?;
+        insert_tags(&mut tx, &id, &parts.tags).await?;
         tx.commit().await?;
         Ok(Item {
             id,
@@ -550,6 +550,17 @@ async fn replace_tags(
     .bind(id)
     .execute(&mut **tx)
     .await?;
+    insert_tags(tx, id, tags).await
+}
+
+async fn insert_tags(
+    tx: &mut Transaction<'_, Postgres>,
+    id: &str,
+    tags: &[frame::Tag],
+) -> Result<(), Error> {
+    if tags.is_empty() {
+        return Ok(());
+    }
     let tokens: Vec<_> = tags.iter().map(|tag| tag.token.as_str()).collect();
     let labels: Vec<_> = tags.iter().map(|tag| tag.label.as_slice()).collect();
     sqlx::query(
