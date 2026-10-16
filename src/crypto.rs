@@ -261,7 +261,12 @@ mod tests {
         let media_id = body_hash(&ciphertext);
         let meta_json = r#"{"name":"vacation-photo.jpg","content_type":"image/jpeg","size":12,"tags":["vacation","dog"],"image":{"width":32,"height":16,"taken_at":"2020:01:02 03:04:05","make":"Canon"}}"#;
         let meta_aad = meta_aad(&media_id);
-        let meta_ct = encrypt_with_nonce(&seed, &meta_aad, meta_json.as_bytes(), &nonce).unwrap();
+        let meta_plain = codec::encode(&serde_json::json!({
+            "metadata": serde_json::from_str::<serde_json::Value>(meta_json).unwrap(),
+            "thumb": null,
+        }))
+        .unwrap();
+        let meta_ct = encrypt_with_nonce(&seed, &meta_aad, &meta_plain, &nonce).unwrap();
         let token = tag_token(&seed, "Vacation").unwrap();
         let tag_label_aad = format!("i2nclip/v1 tag {token}");
         let tag_label =
@@ -308,6 +313,7 @@ mod tests {
             plaintext_utf8: String::from_utf8(plain.to_vec()).unwrap(),
             ciphertext_hex: hex(&ciphertext),
             meta_json: meta_json.to_string(),
+            meta_plaintext_hex: hex(&meta_plain),
             meta_ciphertext_hex: hex(&meta_ct),
             frame_hex: hex(&frame),
             sign_ts: 1_700_000_000,
@@ -352,6 +358,7 @@ mod tests {
         plaintext_utf8: String,
         ciphertext_hex: String,
         meta_json: String,
+        meta_plaintext_hex: String,
         meta_ciphertext_hex: String,
         frame_hex: String,
         sign_ts: u64,

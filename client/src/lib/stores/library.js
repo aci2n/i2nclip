@@ -188,7 +188,7 @@ export function createLibrary(
 			!row ||
 			row.value.busy ||
 			row.value.deleted ||
-			!canPreview(row.value.metadata?.contentType, row.value.metadata?.name)
+			!canPreview(row.value.metadata?.content_type, row.value.metadata?.name)
 		) {
 			return false;
 		}

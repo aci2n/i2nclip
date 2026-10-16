@@ -14,7 +14,7 @@ const previewable = $derived(
 	$library.cards.filter(
 		(media) =>
 			!media.deleted &&
-			canPreview(media.metadata?.contentType, media.metadata?.name),
+			canPreview(media.metadata?.content_type, media.metadata?.name),
 	),
 );
 const previewIndex = $derived(

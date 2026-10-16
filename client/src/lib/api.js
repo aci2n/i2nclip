@@ -47,13 +47,13 @@ export async function upload({
 	const metadata = {
 		...extra,
 		name: cleanName(name),
-		contentType: sniffContentType(bytes, contentType),
+		content_type: sniffContentType(bytes, contentType),
 		size: bytes.length,
 		tags: uniqueTags(tags),
 	};
 	metadata.tags = uniqueTags([
 		...metadata.tags,
-		...automaticTags(metadata.name, metadata.contentType),
+		...automaticTags(metadata.name, metadata.content_type),
 	]);
 	if (image) {
 		metadata.image = image;

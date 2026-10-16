@@ -52,7 +52,7 @@ test("library identity matches the rust vectors", async () => {
 	const meta = await encrypt(
 		key,
 		metaAad(vectors.media_id),
-		utf8(vectors.meta_json),
+		hexToBytes(vectors.meta_plaintext_hex),
 		nonce,
 	);
 	assert.equal(bytesToHex(meta), vectors.meta_ciphertext_hex);
@@ -111,9 +111,7 @@ test("metadata is authenticated against the sealed-content hash", async () => {
 	const meta = hexToBytes(vectors.meta_ciphertext_hex);
 	await assert.rejects(decrypt(key, metaAad("0".repeat(64)), meta));
 	assert.equal(
-		new TextDecoder().decode(
-			await decrypt(key, metaAad(vectors.media_id), meta),
-		),
-		vectors.meta_json,
+		bytesToHex(await decrypt(key, metaAad(vectors.media_id), meta)),
+		vectors.meta_plaintext_hex,
 	);
 });

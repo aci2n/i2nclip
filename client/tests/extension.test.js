@@ -143,7 +143,10 @@ test("bridge uploads through the root upload store and rejects overlapping work"
 	});
 	assert.deepEqual(fixture.receive(file), { ok: true, needsUnlock: false });
 	assert.equal(fixture.navigations, 1);
-	assert.deepEqual(fixture.extra[0], file.extra);
+	assert.deepEqual(fixture.extra[0], {
+		source_url: file.extra.sourceUrl,
+		source_title: file.extra.sourceTitle,
+	});
 	const uploaded = fixture.uploads[0][0];
 	assert.equal(uploaded.name, file.file.name);
 	assert.equal(uploaded.type, file.file.type);
@@ -174,7 +177,10 @@ test("locked receipt uploads exactly once when unlock finishes its busy transiti
 	assert.equal(fixture.uploads.length, 0);
 	fixture.sessionState.update((value) => ({ ...value, busy: false }));
 	assert.equal(fixture.uploads.length, 1);
-	assert.deepEqual(fixture.extra[0], file.extra);
+	assert.deepEqual(fixture.extra[0], {
+		source_url: file.extra.sourceUrl,
+		source_title: file.extra.sourceTitle,
+	});
 	fixture.batches.set({ uploading: false });
 	fixture.sessionState.update((value) => ({ ...value }));
 	assert.equal(fixture.uploads.length, 1);

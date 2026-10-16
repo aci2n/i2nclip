@@ -130,11 +130,11 @@ export function createMediaItem(
 				request.throwIfAborted();
 				const value = get(state);
 				content = new Blob([bytes], {
-					type: value.metadata?.contentType || "application/octet-stream",
+					type: value.metadata?.content_type || "application/octet-stream",
 				});
 				const url = makeUrl(content);
 				let preview = value.preview;
-				if (value.metadata?.contentType?.startsWith("audio/")) {
+				if (value.metadata?.content_type?.startsWith("audio/")) {
 					const art = audioArt(bytes);
 					if (art) {
 						preview = makeUrl(
@@ -165,7 +165,7 @@ export function createMediaItem(
 				const value = get(state);
 				if (
 					value.text === null &&
-					isText(value.metadata?.contentType, value.metadata?.name)
+					isText(value.metadata?.content_type, value.metadata?.name)
 				) {
 					const blob = content;
 					const bytes = new Uint8Array(
@@ -188,7 +188,7 @@ export function createMediaItem(
 					value.url,
 					downloadName(
 						value.metadata?.name || value.id,
-						value.metadata?.contentType,
+						value.metadata?.content_type,
 					),
 				);
 				request.throwIfAborted();

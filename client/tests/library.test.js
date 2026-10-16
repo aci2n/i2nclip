@@ -49,7 +49,7 @@ function fixture(t, options = {}) {
 const item = (id) => ({
 	id,
 	metaHash: "hash",
-	metadata: { name: id, tags: [], contentType: "application/octet-stream" },
+	metadata: { name: id, tags: [], content_type: "application/octet-stream" },
 });
 
 test("stale searches cannot publish; pagination uses the submitted query and permits one request", async (t) => {
@@ -170,7 +170,7 @@ test("generic metadata updates rename files, preserve omitted fields and preview
 		metadata: {
 			name: "Original.txt",
 			tags: ["Keep"],
-			contentType: "text/plain",
+			content_type: "text/plain",
 			size: 4,
 			camera: { model: "Example" },
 		},
@@ -328,9 +328,9 @@ test("loaded previews skip files, reuse downloads, and never reopen after close"
 	const downloads = [];
 	const created = [];
 	const revoked = [];
-	const playable = (id, contentType) => ({
+	const playable = (id, content_type) => ({
 		...item(id),
-		metadata: { ...item(id).metadata, contentType },
+		metadata: { ...item(id).metadata, content_type },
 	});
 	const f = fixture(t, {
 		http: {
@@ -392,7 +392,7 @@ test("loaded previews skip files, reuse downloads, and never reopen after close"
 	assert.equal(get(f.library).selected.id, "audio");
 	assert.equal(
 		get(f.library).cards.find((card) => card.id === "audio").metadata
-			.contentType,
+			.content_type,
 		"audio/wav",
 	);
 	const pendingDownload = f.library.reveal("video");
@@ -406,7 +406,7 @@ test("loaded previews skip files, reuse downloads, and never reopen after close"
 	assert.equal(await reopeningVideo, true);
 	assert.equal(
 		get(f.library).cards.find((card) => card.id === "video").metadata
-			.contentType,
+			.content_type,
 		"video/webm",
 	);
 	f.library.dispose();
@@ -419,7 +419,7 @@ test("rapid preview changes abort old loads and ignore their progress, results, 
 	const saved = [];
 	const items = ["a", "b", "c"].map((id) => ({
 		...item(id),
-		metadata: { ...item(id).metadata, contentType: "image/png" },
+		metadata: { ...item(id).metadata, content_type: "image/png" },
 		thumb: new Uint8Array([1]),
 	}));
 	const f = fixture(t, {
@@ -519,7 +519,10 @@ for (const ending of ["close", "search", "lock", "dispose"]) {
 			http: {
 				list: async () => ({
 					items: [
-						{ ...item("a"), metadata: { contentType: "image/png", name: "a" } },
+						{
+							...item("a"),
+							metadata: { content_type: "image/png", name: "a" },
+						},
 					],
 					next: null,
 				}),

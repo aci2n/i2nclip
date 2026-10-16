@@ -33,7 +33,7 @@ test("media reuses full-content Blob URLs for preview and saving until disposal"
 	let reads = 0;
 	const content = new Uint8Array([1, 2, 3, 4]);
 	const media = createMediaItem(
-		{ id: "image", metadata: { name: "image.png", contentType: "image/png" } },
+		{ id: "image", metadata: { name: "image.png", content_type: "image/png" } },
 		session,
 		{
 			http: {
@@ -81,7 +81,7 @@ test("text previews reuse verified content, bound decoding, save full content an
 	const media = createMediaItem(
 		{
 			id: "code",
-			metadata: { name: "source.rs", contentType: "application/octet-stream" },
+			metadata: { name: "source.rs", content_type: "application/octet-stream" },
 		},
 		session,
 		{
@@ -136,7 +136,7 @@ test("canceled text preparation cannot publish text or clear a subsequent mutati
 		credentials: () => ({}),
 	};
 	const media = createMediaItem(
-		{ id: "text", metadata: { name: "note.txt", contentType: "text/plain" } },
+		{ id: "text", metadata: { name: "note.txt", content_type: "text/plain" } },
 		owner,
 		{
 			http: {

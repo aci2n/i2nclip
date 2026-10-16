@@ -11,13 +11,13 @@ let {
 	onremove,
 	onupdate,
 } = $props();
-const type = $derived(media.metadata?.contentType || "");
+const type = $derived(media.metadata?.content_type || "");
 const playable = $derived(/^(audio|video)\//.test(type));
 const image = $derived(type.startsWith("image/"));
 const name = $derived(media.metadata?.name || media.id);
 const source = $derived.by(() => {
 	try {
-		const url = new URL(media.metadata?.sourceUrl);
+		const url = new URL(media.metadata?.source_url);
 		return ["http:", "https:"].includes(url.protocol) ? url.href : "";
 	} catch {
 		return "";
@@ -80,7 +80,7 @@ const summary = $derived(
 				<dt>Source</dt>
 				<dd>
 					<a href={source} title={source} target="_blank" rel="noreferrer">
-						{media.metadata.sourceTitle || source}
+						{media.metadata.source_title || source}
 					</a>
 				</dd>
 			{/if}

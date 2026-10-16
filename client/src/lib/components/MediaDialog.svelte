@@ -15,7 +15,7 @@ let {
 } = $props();
 const name = $derived(selected?.metadata?.name || selected?.id || "");
 const type = $derived(
-	selected?.metadata?.contentType || "application/octet-stream",
+	selected?.metadata?.content_type || "application/octet-stream",
 );
 const text = $derived(isText(type, name) ? selected?.text : null);
 let player = $state();

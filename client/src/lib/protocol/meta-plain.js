@@ -1,52 +1,25 @@
-// Plaintext inside the encrypted metadata blob (before AES-GCM).
-//
-//   uint32be  json length
-//   bytes     UTF-8 JSON (name, tags, contentType, size, image — no thumb)
-//   uint32be  thumb length (0 = none)
-//   bytes     WebP preview bytes
+// Extensible metadata and an optional binary preview share one document.
+import { decode, encode } from "./msgpack.js";
 
-import { chunk, concat, utf8 } from "./bytes.js";
-
-/** Room left for the MessagePack envelope, nonce, and GCM tag. */
+// Envelope overhead includes map fields, nonce, ciphertext length and GCM tag.
 export const MAX_META_PLAINTEXT = 64 * 1024 - 64;
 
 export function encodeMetaPlain(metadata, thumb) {
 	const clean = { ...metadata };
 	delete clean.thumb;
-	const json = utf8(JSON.stringify(clean));
-	const preview = thumb?.length ? thumb : new Uint8Array();
-	return concat([chunk(json), chunk(preview)]);
+	return encode({ metadata: clean, thumb: thumb?.length ? thumb : null });
 }
-
 export function decodeMetaPlain(bytes) {
-	let o = 0;
-	const json = readChunk(bytes, o);
-	o += 4 + json.length;
-	const thumb = readChunk(bytes, o);
-	o += 4 + thumb.length;
-	if (o !== bytes.length) {
-		throw new Error("trailing metadata");
+	const value = decode(bytes);
+	if (
+		!value?.metadata ||
+		typeof value.metadata !== "object" ||
+		Array.isArray(value.metadata) ||
+		value.metadata instanceof Uint8Array ||
+		(value.thumb !== null && !(value.thumb instanceof Uint8Array))
+	) {
+		throw new Error("Invalid metadata document.");
 	}
-	const metadata = JSON.parse(new TextDecoder().decode(json));
-	delete metadata.thumb;
-	return {
-		metadata,
-		thumb: thumb.length ? thumb : null,
-	};
-}
-
-function readChunk(bytes, offset) {
-	if (bytes.length - offset < 4) {
-		throw new Error("truncated metadata");
-	}
-	const len = new DataView(
-		bytes.buffer,
-		bytes.byteOffset + offset,
-		4,
-	).getUint32(0);
-	offset += 4;
-	if (bytes.length - offset < len) {
-		throw new Error("truncated metadata");
-	}
-	return bytes.subarray(offset, offset + len);
+	delete value.metadata.thumb;
+	return value;
 }

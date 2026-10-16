@@ -130,15 +130,15 @@ test("upload progress uses the same response handling as fetch", async (t) => {
 		tags: [" Vacation, dog ", "Cat"],
 		extra: {
 			name: "ignored",
-			sourceUrl: "https://example.com/page",
-			sourceTitle: "A page",
+			source_url: "https://example.com/page",
+			source_title: "A page",
 		},
 		onProgress: (percent) => progress.push(percent),
 	});
 	assert.equal(result.id, "saved");
 	assert.equal(result.metadata.name, "sample.bin");
-	assert.equal(result.metadata.sourceUrl, "https://example.com/page");
-	assert.equal(result.metadata.sourceTitle, "A page");
+	assert.equal(result.metadata.source_url, "https://example.com/page");
+	assert.equal(result.metadata.source_title, "A page");
 	assert.deepEqual(result.metadata.tags, [
 		"Vacation",
 		"dog",
@@ -232,9 +232,9 @@ test("metadata list and update sign their routes and preserve decrypted fields",
 	const id = "a".repeat(64);
 	const metadata = {
 		name: "photo",
-		sourceUrl: "https://example.com/photo",
-		sourceTitle: "Photo source",
-		contentType: "image/png",
+		source_url: "https://example.com/photo",
+		source_title: "Photo source",
+		content_type: "image/png",
 		tags: ["One"],
 		size: 3,
 	};

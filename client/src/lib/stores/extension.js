@@ -99,9 +99,14 @@ export function createExtensionReceiver(
 				if (file.size > MAX_FILE_BYTES) {
 					throw new Error("File is larger than 32 MB.");
 				}
+				const { sourceUrl, sourceTitle, ...extra } = message.extra || {};
 				const capture = {
 					file,
-					extra: message.extra,
+					extra: {
+						...extra,
+						...(sourceUrl === undefined ? {} : { source_url: sourceUrl }),
+						...(sourceTitle === undefined ? {} : { source_title: sourceTitle }),
+					},
 					token: message.token,
 				};
 				if (get(session).unlocked) {
