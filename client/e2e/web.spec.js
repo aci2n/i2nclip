@@ -38,7 +38,12 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	});
 	await draft.fill("Vacation");
 	await draft.press("Enter");
-	await expect(card.locator(".tag-text")).toHaveText(["Vacation"]);
+	await expect(card.locator(".tag-text")).toHaveText([
+		"image",
+		"png",
+		"landscape",
+		"Vacation",
+	]);
 	await expect(draft).toHaveValue("");
 	await expect(draft).toBeFocused();
 	await page.route("**/api/media/*/meta", (route) =>
@@ -57,18 +62,34 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	await expect(draft).toBeFocused();
 	await page.unroute("**/api/media/*/meta");
 	await draft.press("Enter");
-	await expect(card.locator(".tag-text")).toHaveText(["Vacation", "Remember"]);
+	await expect(card.locator(".tag-text")).toHaveText([
+		"image",
+		"png",
+		"landscape",
+		"Vacation",
+		"Remember",
+	]);
 	await expect(draft).toHaveValue("");
 	await card
 		.getByRole("button", { name: "Remove tag Remember", exact: true })
 		.click();
-	await expect(card.locator(".tag-text")).toHaveText(["Vacation"]);
+	await expect(card.locator(".tag-text")).toHaveText([
+		"image",
+		"png",
+		"landscape",
+		"Vacation",
+	]);
 	await expect(
 		card.getByRole("button", { name: "Remove tag Vacation", exact: true }),
 	).toBeEnabled();
 	await draft.fill("vacation");
 	await draft.press("Enter");
-	await expect(card.locator(".tag-text")).toHaveText(["Vacation"]);
+	await expect(card.locator(".tag-text")).toHaveText([
+		"image",
+		"png",
+		"landscape",
+		"Vacation",
+	]);
 	await expect(draft).toHaveValue("");
 	await draft.press("Escape");
 	await expect(
@@ -104,7 +125,8 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	await page.emulateMedia({ colorScheme: "dark" });
 	await page.setViewportSize({ width: 320, height: 800 });
 	await shot(page, "deleted-card-dark-narrow");
-	await page.getByRole("searchbox").press("Enter");
+	await page.reload();
+	await master(page);
 	await expect(card).toHaveCount(0);
 	await expect(
 		page.getByRole("heading", { name: "Your library is empty" }),
@@ -324,6 +346,9 @@ test("mixed media and feedback render in both themes at desktop and narrow width
 		await shot(page, `${test.info().project.name}-library-${width}`);
 	}
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
+	await expect(
+		page.getByRole("region", { name: "Library usage", exact: true }),
+	).toContainText("Files: 6");
 	await page.getByText("Change master password", { exact: true }).click();
 	await page
 		.getByLabel("Current master password", { exact: true })

@@ -64,7 +64,7 @@ test("stale searches cannot publish; pagination uses the submitted query and per
 		},
 	});
 	f.owner.configure();
-	const searching = f.library.search("new");
+	const searching = f.library.search(["new"]);
 	assert.equal(requests[0].signal.aborted, true);
 	requests[1].done.resolve({ items: [item("new")], next: "cursor" });
 	await searching;
@@ -77,7 +77,7 @@ test("stale searches cannot publish; pagination uses the submitted query and per
 	f.library.editDraft("unsubmitted");
 	const more = f.library.more();
 	assert.equal(await f.library.more(), false);
-	assert.equal(requests[2].tags, "new");
+	assert.deepEqual(requests[2].tags, ["new"]);
 	assert.equal(requests[2].after, "cursor");
 	requests[2].done.resolve({ items: [item("second")], next: null });
 	await more;
@@ -295,7 +295,7 @@ test("deleted cards retain their position and pagination, release URLs, and disa
 	assert.equal(await f.library.remove("a"), false);
 	assert.equal(deletes, 1);
 	assert.equal(await f.library.download("a"), false);
-	await f.library.search("");
+	await f.library.search([]);
 	assert.deepEqual(get(f.library).cards, []);
 	assert.equal(get(f.library).empty, "library");
 });
@@ -367,7 +367,7 @@ test("loaded previews skip files, reuse downloads, and never reopen after close"
 	f.owner.configure();
 	requests[0].done.resolve({ items: [], next: null });
 	await tick();
-	const searching = f.library.search("submitted");
+	const searching = f.library.search(["submitted"]);
 	requests[1].done.resolve({
 		items: [
 			playable("image", "image/png"),
@@ -546,7 +546,7 @@ for (const ending of ["close", "search", "lock", "dispose"]) {
 			f.library.closePreview();
 		}
 		if (ending === "search") {
-			await f.library.search("new");
+			await f.library.search(["new"]);
 		}
 		if (ending === "lock") {
 			f.owner.lock();
@@ -562,3 +562,35 @@ for (const ending of ["close", "search", "lock", "dispose"]) {
 		assert.equal(urls, 0);
 	});
 }
+
+test("chip search preserves multiword tags, deduplicates, clears, and rejects invalid input", async (t) => {
+	const calls = [];
+	const f = fixture(t, {
+		http: {
+			list: async (args) => {
+				calls.push(args);
+				return { items: [], next: null };
+			},
+		},
+	});
+	f.owner.configure();
+	await tick();
+	f.library.editDraft("summer holiday");
+	await f.library.addTag("summer holiday");
+	assert.deepEqual(get(f.library).query, ["summer holiday"]);
+	assert.equal(get(f.library).searchDraft, "");
+	await f.library.addTag("SUMMER HOLIDAY");
+	assert.deepEqual(get(f.library).query, ["summer holiday"]);
+	await f.library.addTag("image");
+	assert.deepEqual(calls.at(-1).tags, ["summer holiday", "image"]);
+	await f.library.removeTag("image");
+	assert.deepEqual(calls.at(-1).tags, ["summer holiday"]);
+	f.library.editDraft("bad,tag");
+	assert.equal(f.library.addTag("bad,tag"), false);
+	assert.equal(get(f.library).searchDraft, "bad,tag");
+	await f.library.clearSearch();
+	assert.deepEqual(get(f.library).query, []);
+	assert.equal(get(f.library).searchDraft, "");
+	f.owner.lock();
+	assert.deepEqual(get(f.library).query, []);
+});

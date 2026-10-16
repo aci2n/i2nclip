@@ -42,7 +42,12 @@ test("generic encrypted metadata updates rename downloads and preserve file cont
 	expect(current.thumb).toEqual(original.thumb);
 	expect(current.id).toBe(original.id);
 	expect(current.metaHash).not.toBe(original.metaHash);
-	await page.getByRole("button", { name: "Search", exact: true }).click();
+	await page
+		.getByRole("searchbox", { name: "Search tags", exact: true })
+		.fill("original");
+	await page
+		.getByRole("searchbox", { name: "Search tags", exact: true })
+		.press("Enter");
 	const card = page.getByRole("article");
 	await expect(
 		card.getByText(metadata.name, { exact: true }).first(),

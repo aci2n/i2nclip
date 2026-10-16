@@ -22,8 +22,7 @@ const previewIndex = $derived(
 );
 const previewMedia = $derived(previewable[previewIndex]);
 function clearSearch() {
-	library.editDraft("");
-	library.search("");
+	library.clearSearch();
 }
 function movePreview(step) {
 	const media = previewable[previewIndex + step];
@@ -48,7 +47,9 @@ function movePreview(step) {
 			draft={$library.searchDraft}
 			query={$library.query}
 			onchange={library.editDraft}
-			onsubmit={() => library.search($library.searchDraft)}
+			suggestions={$tags.tags}
+			onadd={library.addTag}
+			onremove={library.removeTag}
 			onclear={clearSearch}
 		/>
 		<button

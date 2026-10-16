@@ -22,9 +22,7 @@ JPEG, PNG, and BMP uploads are converted to WebP by default when the result is s
 without resizing. Turn off **Compress images to WebP** in Settings to preserve
 originals. This preference stays on this device and also applies to extension captures.
 
-Search tags with Enter or the magnifying-glass button; comma-separated tags must
-all match. The hint shows the applied filter, and **Clear search** restores all
-files. **Upload** opens the file picker independently of the search. Progress
+Search by adding tag chips with Enter or choosing a local suggestion. All selected tags must match. Remove a chip to update results, or use **Clear search** to restore all files. **Upload** opens the file picker independently of the search. Progress
 appears below the toolbar; completed filenames expand from the summary, while
 failures stay visible.
 

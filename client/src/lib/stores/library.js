@@ -1,6 +1,7 @@
 import { get, writable } from "svelte/store";
 import * as api from "../api.js";
 import { canPreview } from "../media/format.js";
+import { normalizeTag } from "../protocol/crypto.js";
 import { createMediaItem } from "./media-item.js";
 
 export function createLibrary(
@@ -14,7 +15,7 @@ export function createLibrary(
 ) {
 	const state = writable({
 		cards: [],
-		query: "",
+		query: [],
 		searchDraft: "",
 		next: null,
 		loading: false,
@@ -73,9 +74,11 @@ export function createLibrary(
 			empty: null,
 			status: "",
 			selected: null,
+			query: [],
+			searchDraft: "",
 		}));
 	}
-	async function search(query = get(state).searchDraft, more = false) {
+	async function search(query = get(state).query, more = false) {
 		if (
 			disposed ||
 			!get(session).configured ||
@@ -88,11 +91,30 @@ export function createLibrary(
 		if (more && (previous.loading || !previous.next)) {
 			return false;
 		}
+		let submitted;
+		try {
+			const seen = new Set();
+			submitted = (more ? previous.query : query)
+				.filter((tag) => {
+					const normalized = normalizeTag(tag);
+					if (seen.has(normalized)) {
+						return false;
+					}
+					seen.add(normalized);
+					return true;
+				})
+				.map((tag) => tag.trim());
+			if (submitted.length > 64) {
+				throw new Error("Too many search tags (maximum 64).");
+			}
+		} catch (error) {
+			state.update((v) => ({ ...v, status: error.message }));
+			return false;
+		}
 		searchController?.abort();
 		searchController = new AbortController();
 		const signal = AbortSignal.any([searchController.signal, session.signal]);
 		const own = ++revision;
-		const submitted = more ? previous.query : query;
 		if (!more) {
 			closePreview();
 			clearCards();
@@ -122,7 +144,7 @@ export function createLibrary(
 			state.update((v) => ({
 				...v,
 				next: page.next,
-				empty: cards.size ? null : submitted.trim() ? "search" : "library",
+				empty: cards.size ? null : submitted.length ? "search" : "library",
 			}));
 			return true;
 		} catch (error) {
@@ -178,6 +200,36 @@ export function createLibrary(
 	return {
 		subscribe: state.subscribe,
 		editDraft: (searchDraft) => state.update((v) => ({ ...v, searchDraft })),
+		addTag(tag) {
+			let normalized;
+			try {
+				normalized = normalizeTag(tag);
+			} catch (error) {
+				state.update((v) => ({ ...v, status: error.message }));
+				return false;
+			}
+			const query = get(state).query;
+			const next = query.some(
+				(existing) => normalizeTag(existing) === normalized,
+			)
+				? query
+				: [...query, tag.trim()];
+			if (next.length > 64) {
+				state.update((v) => ({
+					...v,
+					status: "Too many search tags (maximum 64).",
+				}));
+				return false;
+			}
+			state.update((v) => ({ ...v, searchDraft: "" }));
+			return search(next);
+		},
+		removeTag: (tag) =>
+			search(get(state).query.filter((existing) => existing !== tag)),
+		clearSearch() {
+			state.update((v) => ({ ...v, searchDraft: "" }));
+			return search([]);
+		},
 		search,
 		more: () => search(get(state).query, true),
 		refresh: () => search(get(state).query),

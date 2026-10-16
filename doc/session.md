@@ -100,11 +100,17 @@ file. Disposal clears text, releases the Blob and revokes its URL.
 
 ## Search and upload controls
 
-The Library view subscribes to the root stores and passes ordinary props/callbacks
-to the search form and upload summary. Search remains an explicit submission via
-Enter or Search, with all comma-separated tags required. The applied query is
-shown below the field; Clear resets the draft and submitted filter and restores
-focus to the input. Upload is a separate action outside the search form. Its
-compact summary keeps progress and failures visible; successful filenames live
-in a disclosure and completion can be dismissed. No search/upload persistence,
-protocol, batching, or cancellation behavior changes.
+The Library view subscribes to root stores and passes ordinary props/callbacks
+to components. The library owns a submitted tag array and a draft string. Enter
+or suggestion selection adds one chip and searches; removal or Clear searches
+immediately. Typing only filters the in-memory tag catalog. Pagination belongs to
+the submitted array. Session changes clear both chips and draft.
+
+The root-owned catalog aborts superseded requests, decrypts labels, verifies their
+HMAC tokens, skips damaged entries and clears decrypted state on session changes.
+Mutations refresh it independently of search. Failures and retry appear beside
+search. There is no polling or persistent cache. The reusable tag input owns only
+suggestion visibility, keyboard navigation and DOM focus.
+
+Upload is separate from search. Its compact summary keeps progress and failures
+visible; successful filenames live in a disclosure and completion can be dismissed.

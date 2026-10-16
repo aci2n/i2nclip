@@ -7,7 +7,7 @@ const textFile = (name) => ({
 	buffer: Buffer.from(name),
 });
 
-test("tag search submits explicitly, clears both draft and filter, and stays separate from Upload", async ({
+test("chip search applies on Enter, clears draft and filters, and stays separate from Upload", async ({
 	page,
 	app,
 }) => {
@@ -42,7 +42,12 @@ test("tag search submits explicitly, clears both draft and filter, and stays sep
 	});
 	await tag.fill("Work");
 	await tag.press("Enter");
-	await expect(alpha.locator(".tag-text")).toHaveText(["Work"]);
+	await expect(alpha.locator(".tag-text")).toHaveText([
+		"text",
+		"txt",
+		"alpha",
+		"Work",
+	]);
 	await tag.press("Escape");
 	const searches = [];
 	page.on("request", (request) => {
@@ -63,8 +68,8 @@ test("tag search submits explicitly, clears both draft and filter, and stays sep
 	await search.press("Enter");
 	await expect(page.getByRole("article")).toHaveCount(1);
 	await expect(
-		page.getByText("Matching all tags:", { exact: false }),
-	).toContainText("Work");
+		page.getByRole("button", { name: "Remove search tag Work", exact: true }),
+	).toBeVisible();
 	for (const width of [1100, 360, 320]) {
 		await page.setViewportSize({ width, height: 800 });
 		expect(
@@ -72,7 +77,7 @@ test("tag search submits explicitly, clears both draft and filter, and stays sep
 				() => document.documentElement.scrollWidth <= innerWidth,
 			),
 		).toBe(true);
-		for (const name of ["Search", "Clear search", "Upload"]) {
+		for (const name of ["Clear search", "Upload"]) {
 			const box = await page
 				.getByRole("button", { name, exact: true })
 				.boundingBox();
@@ -83,7 +88,7 @@ test("tag search submits explicitly, clears both draft and filter, and stays sep
 	}
 	await search.fill("missing");
 	expect(searches).toHaveLength(2);
-	await page.getByRole("button", { name: "Search", exact: true }).click();
+	await search.press("Enter");
 	await expect(
 		page.getByRole("heading", { name: "No files match your search" }),
 	).toBeVisible();

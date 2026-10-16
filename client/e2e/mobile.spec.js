@@ -22,6 +22,9 @@ test("mobile tags wrap with usable touch controls and retain failed drafts", asy
 	});
 	const card = page.getByRole("article");
 	await expect(card).toBeVisible();
+	await card
+		.getByRole("button", { name: "Show all tags", exact: true })
+		.click();
 	await page.getByRole("button", { name: "Dismiss completed uploads" }).click();
 	const add = card.getByRole("button", { name: /^Add tag to / });
 	const touch = async (locator) => {
@@ -59,7 +62,18 @@ test("mobile tags wrap with usable touch controls and retain failed drafts", asy
 	await input.press("Enter");
 	await input.fill("remember");
 	await input.press("Enter");
-	await expect(card.locator(".tag-text")).toHaveText([tag, "Remember"]);
+	await expect(card.locator(".tag-text")).toHaveText([
+		"text",
+		"txt",
+		"notes",
+		"with",
+		"a",
+		"long",
+		"descriptive",
+		"filename",
+		tag,
+		"Remember",
+	]);
 	await page.route("**/api/media/*/meta", (route) =>
 		route.fulfill({
 			status: 503,
@@ -97,7 +111,17 @@ test("mobile tags wrap with usable touch controls and retain failed drafts", asy
 	await card
 		.getByRole("button", { name: `Remove tag ${tag}`, exact: true })
 		.click();
-	await expect(card.locator(".tag-text")).toHaveText(["Remember"]);
+	await expect(card.locator(".tag-text")).toHaveText([
+		"text",
+		"txt",
+		"notes",
+		"with",
+		"a",
+		"long",
+		"descriptive",
+		"filename",
+		"Remember",
+	]);
 	await card.getByRole("button", { name: /^Open Notes/ }).click();
 	await expect(page.locator("dialog pre")).toHaveText(
 		"A readable note on a narrow screen.",

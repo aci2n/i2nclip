@@ -106,7 +106,7 @@ test("preview stops at loaded boundaries and More loads the submitted search", a
 		const url = new URL(response.url());
 		return url.pathname === "/api/media" && url.searchParams.has("tag");
 	});
-	await page.getByRole("button", { name: "Search", exact: true }).click();
+	await search.press("Enter");
 	const submittedUrl = new URL((await submitted).url());
 	await expect(page.getByRole("article")).toHaveCount(24);
 	await expect(

@@ -1,5 +1,15 @@
 <script>
-let { draft, query, onchange, onsubmit, onclear } = $props();
+import TagInput from "./TagInput.svelte";
+
+let {
+	draft,
+	query,
+	suggestions = [],
+	onchange,
+	onadd,
+	onremove,
+	onclear,
+} = $props();
 let input = $state();
 </script>
 <div class="search">
@@ -7,35 +17,54 @@ let input = $state();
 		aria-label="Search library"
 		onsubmit={(event) => {
 			event.preventDefault();
-			onsubmit();
+			if (draft.trim()) {
+				onadd(draft);
+			}
 		}}
 	>
-		<button type="submit" aria-label="Search" title="Search tags">
-			<svg
-				viewBox="0 0 24 24"
-				aria-hidden="true"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="2"
-				stroke-linecap="round"
-			>
-				<circle cx="10.5" cy="10.5" r="6.5" />
-				<path d="m16 16 4 4" />
-			</svg>
-		</button>
-		<input
-			bind:this={input}
-			type="search"
-			placeholder="Search tags"
-			aria-label="Tags, separated by commas"
-			value={draft}
-			oninput={(event) => onchange(event.currentTarget.value)}
-		>
-		{#if draft || query}
+		<div class="terms">
+			{#each query as tag}
+				<span class="chip"
+					><span>{tag}</span
+					><button
+						type="button"
+						aria-label={`Remove search tag ${tag}`}
+						onclick={() => onremove(tag)}
+					>
+						<svg
+							viewBox="0 0 24 24"
+							aria-hidden="true"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+						>
+							<path d="M6 6l12 12M18 6L6 18" />
+						</svg>
+					</button></span
+				>
+			{/each}
+			<TagInput
+				value={draft}
+				{suggestions}
+				excluded={query}
+				label="Search tags"
+				placeholder="Search tags"
+				search
+				borderless
+				{onchange}
+				oncommit={onadd}
+				onready={(node) => {
+					input = node;
+				}}
+			/>
+		</div>
+		{#if draft || query.length}
 			<button
+				class="clear"
 				type="button"
 				aria-label="Clear search"
-				title="Clear search"
+				title="Clear all search tags"
 				onclick={() => {
 					onclear();
 					input?.focus();
@@ -55,11 +84,9 @@ let input = $state();
 		{/if}
 	</form>
 	<p>
-		{#if query.trim()}
-			Matching all tags: <span>{query}</span>
-		{:else}
-			Separate tags with commas. All tags must match.
-		{/if}
+		{query.length
+			? "Matching all selected tags."
+			: "Add tags with Enter or choose a suggestion. All tags must match."}
 	</p>
 </div>
 <style>
@@ -70,8 +97,10 @@ let input = $state();
 }
 form {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
+	gap: 0.25rem;
 	min-width: 0;
+	padding-left: 0.5rem;
 	border-radius: 0.4rem;
 	background: var(--paper);
 	box-shadow: inset 0 0 0 1px var(--line);
@@ -80,22 +109,31 @@ form:focus-within {
 	outline: 2px solid var(--accent);
 	outline-offset: 2px;
 }
-input {
+.terms {
+	display: flex;
 	flex: 1;
-	width: 0;
-	min-height: 3rem;
-	padding: 0.5rem 0;
-	border: 0;
-	border-radius: 0;
-	background: transparent;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	min-width: 0;
 }
-input:focus-visible {
-	outline: none;
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	max-width: 100%;
+	margin-block: 0.25rem;
+	padding-left: 0.375rem;
+	border-radius: 0.25rem;
+	background: var(--soft);
+	color: var(--accent);
 }
-input::-webkit-search-cancel-button {
-	display: none;
+.chip span {
+	overflow-wrap: anywhere;
+	min-width: 0;
 }
-button {
+.chip button,
+.clear {
 	display: grid;
 	place-items: center;
 	flex: none;
@@ -103,25 +141,18 @@ button {
 	height: 3rem;
 	padding: 0.5rem;
 	background: transparent;
-	color: var(--muted);
-}
-button:hover {
 	color: var(--accent);
 }
-svg {
+.chip button {
+	font-size: 1.5rem;
+}
+.clear svg,
+.chip svg {
 	width: 1.25rem;
 	height: 1.25rem;
 }
 p {
 	font-size: 0.85rem;
 	overflow-wrap: anywhere;
-}
-span {
-	color: var(--accent);
-}
-@media (max-width: 32rem) {
-	input {
-		font-size: 1.1rem;
-	}
 }
 </style>
