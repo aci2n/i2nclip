@@ -23,7 +23,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::Deserialize;
 
-use crate::{crypto, Error, MAX_CONTENT, MAX_META, MAX_TAGS, MAX_TOKEN_TEXT};
+use crate::{crypto, Error, MAX_CONTENT, MAX_META, MAX_TAGS, MAX_TAG_DATA};
 
 /// Canonical SHA-256 of the complete sealed content.
 pub(crate) fn parse_id(id: &str) -> Result<String, Error> {
@@ -51,7 +51,7 @@ pub(crate) fn decode_post(bytes: &[u8]) -> Result<PostParts<'_>, Error> {
     let mut i = 0;
     let meta = read_chunk(bytes, &mut i, MAX_META)?;
     let content = read_chunk(bytes, &mut i, MAX_CONTENT)?;
-    let tags = read_chunk(bytes, &mut i, MAX_TOKEN_TEXT)?;
+    let tags = read_chunk(bytes, &mut i, MAX_TAG_DATA)?;
     if i != bytes.len() {
         return Err(Error::BadRequest("trailing bytes in body".into()));
     }
@@ -71,7 +71,7 @@ pub(crate) fn decode_meta(bytes: &[u8]) -> Result<MetaParts<'_>, Error> {
     let prev_meta_hash = bytes[..32].try_into().expect("32 bytes");
     let mut i = 32;
     let meta = read_chunk(bytes, &mut i, MAX_META)?;
-    let tags = read_chunk(bytes, &mut i, MAX_TOKEN_TEXT)?;
+    let tags = read_chunk(bytes, &mut i, MAX_TAG_DATA)?;
     if i != bytes.len() {
         return Err(Error::BadRequest("trailing bytes in body".into()));
     }
@@ -144,7 +144,7 @@ pub(crate) fn is_token(value: &str) -> bool {
 }
 
 /// `?tag=` values, already split by the HTTP handler. Each value is trimmed,
-/// then checked with the same rules as [`parse_tokens`].
+/// then checked for the token alphabet and the distinct-token limit.
 pub(crate) fn parse_query_tokens(values: Vec<String>) -> Result<Vec<String>, Error> {
     collect_tokens(values.iter().map(|value| value.trim()))
 }
@@ -258,7 +258,7 @@ mod tests {
         ] {
             assert!(parse_tags(&json).is_err());
         }
-        assert!(parse_tags(&" ".repeat(MAX_TOKEN_TEXT)).is_err());
+        assert!(parse_tags(&" ".repeat(MAX_TAG_DATA)).is_err());
     }
 
     #[test]

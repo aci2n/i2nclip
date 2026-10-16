@@ -6,11 +6,11 @@ export function tagSuggestions(tags, draft, excluded) {
 		return [];
 	}
 	const selected = new Set(excluded.map(normalizeTag));
+	// The catalog already supplies alphabetically sorted labels.
 	return tags
-		.filter(
-			(tag) =>
-				!selected.has(normalizeTag(tag)) && normalizeTag(tag).includes(query),
-		)
-		.sort((a, b) => a.localeCompare(b))
+		.filter((tag) => {
+			const normalized = normalizeTag(tag);
+			return !selected.has(normalized) && normalized.includes(query);
+		})
 		.slice(0, 10);
 }

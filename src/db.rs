@@ -307,7 +307,7 @@ impl Database {
         if result.rows_affected() == 0 {
             return Err(Error::Conflict);
         }
-        replace_tokens(&mut tx, &id, &parts.tags).await?;
+        replace_tags(&mut tx, &id, &parts.tags).await?;
         tx.commit().await?;
         Ok(Item {
             id,
@@ -320,8 +320,17 @@ impl Database {
     /// One encrypted spelling per owner-scoped token; no media payload is read.
     pub(crate) async fn tags(&self, owner: [u8; 32]) -> Result<Vec<TagLabel>, Error> {
         let rows = sqlx::query(
-            "SELECT DISTINCT ON (t.token) t.token, t.label FROM tags t              JOIN files f ON f.id = t.file_id              WHERE f.owner = $1 AND octet_length(t.label) > 0              ORDER BY t.token, t.file_id",
-        ).bind(owner.as_slice()).fetch_all(&self.pool).await?;
+            r#"
+            SELECT DISTINCT ON (t.token) t.token, t.label
+            FROM tags t
+            JOIN files f ON f.id = t.file_id
+            WHERE f.owner = $1 AND octet_length(t.label) > 0
+            ORDER BY t.token, t.file_id
+            "#,
+        )
+        .bind(owner.as_slice())
+        .fetch_all(&self.pool)
+        .await?;
         rows.into_iter()
             .map(|row| {
                 Ok(TagLabel {
@@ -449,7 +458,7 @@ impl Database {
             .bind(owner.as_slice())
             .execute(&mut *tx)
             .await?;
-        replace_tokens(&mut tx, &id, &parts.tags).await?;
+        replace_tags(&mut tx, &id, &parts.tags).await?;
         tx.commit().await?;
         Ok(MetadataUpdate::Updated(Item {
             id,
@@ -518,7 +527,7 @@ impl Database {
 }
 
 // The caller owns the transaction so a failed tag write rolls back its file change.
-async fn replace_tokens(
+async fn replace_tags(
     tx: &mut Transaction<'_, Postgres>,
     id: &str,
     tags: &[frame::Tag],
@@ -957,7 +966,7 @@ mod tests {
             .execute(&mut *writer)
             .await
             .unwrap();
-        replace_tokens(
+        replace_tags(
             &mut writer,
             &item.id,
             &labeled(std::slice::from_ref(&token)),
@@ -1274,9 +1283,7 @@ mod tests {
             .execute(&mut *tx)
             .await
             .unwrap();
-            replace_tokens(&mut tx, &id, &labeled(&tokens))
-                .await
-                .unwrap();
+            replace_tags(&mut tx, &id, &labeled(&tokens)).await.unwrap();
         }
         tx.commit().await.unwrap();
         let (first, cursor) = db.list(owner, &tags, None).await.unwrap();

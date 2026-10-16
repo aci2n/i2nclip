@@ -21,9 +21,6 @@ const previewIndex = $derived(
 	previewable.findIndex((media) => media.id === $library.selected?.id),
 );
 const previewMedia = $derived(previewable[previewIndex]);
-function clearSearch() {
-	library.clearSearch();
-}
 function movePreview(step) {
 	const media = previewable[previewIndex + step];
 	if (media) {
@@ -50,7 +47,7 @@ function movePreview(step) {
 			suggestions={$tags.tags}
 			onadd={library.addTag}
 			onremove={library.removeTag}
-			onclear={clearSearch}
+			onclear={library.clearSearch}
 		/>
 		<button
 			type="button"
@@ -112,7 +109,7 @@ function movePreview(step) {
 			{:else}
 				<h2>No files match your search</h2>
 				<p>Try different tags or clear your search to see all files.</p>
-				<button type="button" class="secondary" onclick={clearSearch}>
+				<button type="button" class="secondary" onclick={library.clearSearch}>
 					Show all files
 				</button>
 			{/if}

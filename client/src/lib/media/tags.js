@@ -29,8 +29,11 @@ export function automaticTags(name, contentType) {
 	const category =
 		/^(image|audio|video)\//.exec(type)?.[1] ||
 		(isText(type, name) ? "text" : "file");
-	const extension = /[^.]\.([\p{L}\p{N}]+)$/u.exec(name)?.[1].toLowerCase();
-	const format = FORMATS[type] || (extension === "jpeg" ? "jpg" : extension);
+	const extension = /[^.]\.([\p{L}\p{N}]+)$/u.exec(name)?.[1] || "";
+	const normalizedExtension = extension.toLowerCase();
+	const format =
+		FORMATS[type] ||
+		(normalizedExtension === "jpeg" ? "jpg" : normalizedExtension);
 	const stem = extension ? name.slice(0, -(extension.length + 1)) : name;
 	const words =
 		stem

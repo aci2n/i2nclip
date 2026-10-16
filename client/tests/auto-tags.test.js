@@ -44,3 +44,12 @@ test("automatic tags deduplicate before the cap and skip overlong words", () => 
 		"café",
 	]);
 });
+
+test("extension case folding does not truncate Unicode filenames", () => {
+	assert.deepEqual(automaticTags("Photo.İ", ""), ["file", "i\u0307", "photo"]);
+	assert.deepEqual(automaticTags("Summer.JPEG", "image/jpeg"), [
+		"image",
+		"jpg",
+		"summer",
+	]);
+});
