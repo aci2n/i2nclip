@@ -13,16 +13,15 @@ use axum::{
     routing::{get, put},
     Router,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Serialize;
-use serde_json::json;
 
 use crate::{
     auth::SignedRequest,
+    codec,
     db::{Item, MetadataUpdate},
     frame,
     permits::TransferPermit,
-    routes::{empty, fail, json_response},
+    routes::{document_response, empty, fail},
     AppState, Error, MAX_BODY, MAX_META_BODY,
 };
 
@@ -87,7 +86,7 @@ async fn tags(State(state): State<AppState>, request: SignedRequest) -> Response
         Err(response) => return *response,
     };
     match state.db.tags(owner).await {
-        Ok(tags) => json_response(StatusCode::OK, json!({ "tags": tags })),
+        Ok(tags) => document_response(StatusCode::OK, Catalog { tags }),
         Err(error) => fail(error),
     }
 }
@@ -98,7 +97,7 @@ async fn quota(State(state): State<AppState>, media: SignedRequest) -> Response 
         Err(response) => return *response,
     };
     match state.db.quota(owner).await {
-        Ok(quota) => json_response(StatusCode::OK, quota),
+        Ok(quota) => document_response(StatusCode::OK, quota),
         Err(error) => fail(error),
     }
 }
@@ -113,9 +112,12 @@ async fn list(State(state): State<AppState>, media: SignedRequest) -> Response {
         Err(response) => return *response,
     };
     match state.db.list(owner, &query, after).await {
-        Ok((items, next)) => json_response(
+        Ok((items, next)) => document_response(
             StatusCode::OK,
-            json!({ "media": items_json(items), "next": next }),
+            MediaPage {
+                media: items.into_iter().map(item_document).collect(),
+                next,
+            },
         ),
         Err(err) => fail(err),
     }
@@ -140,7 +142,7 @@ async fn upload(State(state): State<AppState>, media: SignedRequest) -> Response
     match state.db.add(owner, &body.bytes).await {
         Ok(item) => {
             tracing::info!(id = %item.id, bytes = item.bytes, "stored");
-            json_response(StatusCode::CREATED, item_json(item))
+            document_response(StatusCode::CREATED, item_document(item))
         }
         Err(err) => fail(err),
     }
@@ -178,14 +180,14 @@ async fn update_metadata(
         Err(response) => return *response,
     };
     match state.db.update_meta(owner, &id, &body).await {
-        Ok(MetadataUpdate::Updated(item)) => json_response(StatusCode::OK, item_json(item)),
-        Ok(MetadataUpdate::Conflict(item)) => json_response(
+        Ok(MetadataUpdate::Updated(item)) => document_response(StatusCode::OK, item_document(item)),
+        Ok(MetadataUpdate::Conflict(item)) => document_response(
             StatusCode::CONFLICT,
-            json!({
-                "error": "metadata changed in another page",
-                "code": "metadata_conflict",
-                "media": item_json(item),
-            }),
+            MetadataConflict {
+                error: "metadata changed in another page",
+                code: "metadata_conflict",
+                media: item_document(item),
+            },
         ),
         Err(err) => fail(err),
     }
@@ -206,26 +208,38 @@ async fn remove(
     }
 }
 
-fn items_json(items: Vec<Item>) -> Vec<MediaJson> {
-    items.into_iter().map(item_json).collect()
-}
-
-fn item_json(item: Item) -> MediaJson {
-    MediaJson {
+fn item_document(item: Item) -> MediaDocument {
+    MediaDocument {
         id: item.id,
         created_at: item.created_at,
         bytes: item.bytes,
-        // Base64 because JSON is text. The bytes are already ciphertext.
-        meta: STANDARD.encode(item.meta),
+        meta: item.meta,
     }
 }
 
 #[derive(Serialize)]
-struct MediaJson {
+struct MediaDocument {
     id: String,
     created_at: i64,
     bytes: i64,
-    meta: String,
+    #[serde(with = "serde_bytes")]
+    meta: Vec<u8>,
+}
+
+#[derive(Serialize)]
+struct Catalog {
+    tags: Vec<crate::db::TagLabel>,
+}
+#[derive(Serialize)]
+struct MediaPage {
+    media: Vec<MediaDocument>,
+    next: Option<String>,
+}
+#[derive(Serialize)]
+struct MetadataConflict {
+    error: &'static str,
+    code: &'static str,
+    media: MediaDocument,
 }
 
 const DOWNLOAD_CHUNK: usize = 64 * 1024;
@@ -245,7 +259,7 @@ fn content_response(content: Vec<u8>, permit: TransferPermit) -> Response {
     let mut response = Body::from_stream(stream).into_response();
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_static("application/octet-stream"),
+        HeaderValue::from_static(codec::CONTENT_TYPE),
     );
     response
         .headers_mut()
@@ -264,6 +278,7 @@ mod tests {
         task::Poll,
     };
 
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use http_body_util::BodyExt;
 
     use super::*;
@@ -272,7 +287,7 @@ mod tests {
     #[test]
     fn list_query_validates_cursor_and_deduplicates_tags_without_database() {
         assert_eq!(list_query(None).unwrap(), (vec![], None));
-        let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([1_u8; 32]);
+        let token = URL_SAFE_NO_PAD.encode([1_u8; 32]);
         let id = "a".repeat(64);
         let query = format!("tag={token}&tag={token}&after=123.{id}&unknown=value&");
         assert_eq!(

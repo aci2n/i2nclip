@@ -3,7 +3,7 @@
 
 import { sniffContentType } from "./media/metadata.js";
 import { automaticTags } from "./media/tags.js";
-import { b64ToBytes, hexToBytes } from "./protocol/bytes.js";
+import { b64urlToBytes, hexToBytes } from "./protocol/bytes.js";
 import {
 	authorizationHeader,
 	bodyHash,
@@ -20,6 +20,7 @@ import {
 	encodeMetaPlain,
 	MAX_META_PLAINTEXT,
 } from "./protocol/meta-plain.js";
+import { CONTENT_TYPE, decode, encode } from "./protocol/msgpack.js";
 import { openTag, sealTags } from "./protocol/tag-labels.js";
 import { uniqueTags } from "./protocol/tags.js";
 
@@ -99,6 +100,9 @@ export async function getTags({ serverUrl, key, signal }) {
 		undefined,
 		signal,
 	);
+	if (!Array.isArray(tags)) {
+		throw new Error("Invalid tag catalog.");
+	}
 	const labels = [];
 	let invalid = 0;
 	for (const entry of tags) {
@@ -197,7 +201,7 @@ export async function updateMetadata({
 		signal,
 	);
 	if (response.status === 409) {
-		const payload = await response.json();
+		const payload = await responseDocument(response);
 		if (payload.code === "metadata_conflict" && payload.media) {
 			const item = await openMeta(key, payload.media);
 			return {
@@ -209,7 +213,7 @@ export async function updateMetadata({
 	if (!response.ok) {
 		throw await responseError(response);
 	}
-	await response.json();
+	await responseDocument(response);
 	return {
 		conflict: false,
 		metaHash: await bodyHash(meta),
@@ -233,10 +237,10 @@ export async function registerKey({ serverUrl, publicKey, otc, signal }) {
 	const url = new URL("/api/register-key", serverUrl);
 	const response = await fetch(url, {
 		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify({
+		headers: { "content-type": CONTENT_TYPE },
+		body: encode({
 			otc: String(otc).trim(),
-			public_key: String(publicKey).trim(),
+			public_key: b64urlToBytes(String(publicKey).trim()),
 		}),
 		cache: "no-store",
 		signal,
@@ -266,7 +270,7 @@ export async function isKeyRegistered({ serverUrl, key, signal }) {
 }
 
 async function openMeta(key, item) {
-	const encrypted = b64ToBytes(item.meta);
+	const encrypted = item.meta;
 	const metaHash = await bodyHash(encrypted);
 	try {
 		const plain = await decrypt(key, metaAad(item.id), encrypted);
@@ -307,7 +311,7 @@ async function send(serverUrl, key, method, path, body, onProgress, signal) {
 	if (!response.ok) {
 		throw await responseError(response);
 	}
-	return response.json();
+	return responseDocument(response);
 }
 
 async function sendBytes(
@@ -344,11 +348,17 @@ async function sealedMetadata(key, id, metadata, thumb) {
 	return { meta: await encrypt(key, metaAad(id), plain), storedThumb };
 }
 
+async function responseDocument(response) {
+	return decode(new Uint8Array(await response.arrayBuffer()));
+}
+
 async function responseError(response) {
-	const text = await response.text();
-	let message = text || response.statusText;
+	let message = response.statusText || `HTTP ${response.status}`;
 	try {
-		message = JSON.parse(text).error || response.statusText;
+		const payload = await responseDocument(response);
+		if (typeof payload.error === "string" && payload.error) {
+			message = payload.error;
+		}
 	} catch {}
 	const error = new Error(message);
 	error.status = response.status;
@@ -426,7 +436,7 @@ async function signedFetch(
 	});
 	signal?.throwIfAborted();
 	const url = new URL(path, serverUrl);
-	const headers = { authorization, "content-type": "application/octet-stream" };
+	const headers = { authorization, "content-type": CONTENT_TYPE };
 	const payload = method === "GET" || method === "DELETE" ? undefined : body;
 	if (onProgress && payload && typeof XMLHttpRequest !== "undefined") {
 		return requestWithProgress(
@@ -458,6 +468,7 @@ function requestWithProgress(method, url, headers, body, onProgress, signal) {
 			action();
 		};
 		xhr.open(method, url);
+		xhr.responseType = "arraybuffer";
 		for (const [name, value] of Object.entries(headers)) {
 			xhr.setRequestHeader(name, value);
 		}
@@ -472,7 +483,7 @@ function requestWithProgress(method, url, headers, body, onProgress, signal) {
 			finish(() => {
 				try {
 					resolve(
-						new Response(xhr.status === 204 ? null : xhr.responseText, {
+						new Response(xhr.status === 204 ? null : xhr.response, {
 							status: xhr.status,
 							statusText: xhr.statusText,
 						}),

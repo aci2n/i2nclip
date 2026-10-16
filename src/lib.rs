@@ -38,12 +38,12 @@ pub(crate) const MAX_CONTENT: usize = MAX_PLAIN + 64;
 pub(crate) const MAX_META: usize = 64 * 1024;
 pub(crate) const MAX_TAGS: usize = 64;
 pub(crate) const MAX_TAG_LABEL: usize = 1024;
-/// Bound on tag JSON, including 64 maximum-size base64url labels.
+/// Bound on the encoded tag array, including 64 maximum-size binary labels.
 pub(crate) const MAX_TAG_DATA: usize = 96 * 1024;
 /// One page of the library list. The next page starts after the last row.
 pub(crate) const PAGE: usize = 24;
-pub(crate) const MAX_BODY: usize = 4 + MAX_META + 4 + MAX_CONTENT + 4 + MAX_TAG_DATA;
-pub(crate) const MAX_META_BODY: usize = 32 + 4 + MAX_META + 4 + MAX_TAG_DATA;
+pub(crate) const MAX_BODY: usize = 64 + MAX_META + MAX_CONTENT + MAX_TAG_DATA;
+pub(crate) const MAX_META_BODY: usize = 96 + MAX_META + MAX_TAG_DATA;
 /// `POST /api/register-key` accepts a small JSON object only.
 pub(crate) const MAX_REGISTER_BODY: usize = 4096;
 pub(crate) const SKEW_SECS: u64 = 300;

@@ -8,7 +8,7 @@ use axum::{
     http::{header, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
+    Router,
 };
 use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::{auth, media, pairing, AppState, Error, MAX_REGISTER_BODY};
+use crate::{auth, codec, media, pairing, AppState, Error, MAX_REGISTER_BODY};
 
 pub(crate) const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -54,7 +54,7 @@ pub(crate) async fn read_body_with_deadline(
 ) -> Result<Vec<u8>, Box<Response>> {
     match tokio::time::timeout(deadline, read_body_with_limit(body, max)).await {
         Ok(result) => result,
-        Err(_) => Err(Box::new(json_response(
+        Err(_) => Err(Box::new(document_response(
             StatusCode::REQUEST_TIMEOUT,
             json!({ "error": "request body timed out" }),
         ))),
@@ -78,7 +78,7 @@ async fn read_body_with_limit(mut body: Body, max: usize) -> Result<Vec<u8>, Box
 }
 
 async fn health() -> Response {
-    json_response(StatusCode::OK, json!({ "ok": true }))
+    document_response(StatusCode::OK, json!({ "ok": true }))
 }
 
 async fn ping(request: auth::SignedRequest) -> Response {
@@ -89,9 +89,10 @@ async fn ping(request: auth::SignedRequest) -> Response {
 }
 
 #[derive(Deserialize)]
-struct RegisterKeyJson {
+struct RegisterKeyDocument {
     otc: String,
-    public_key: String,
+    #[serde(with = "serde_bytes")]
+    public_key: Vec<u8>,
 }
 
 async fn register_key(State(state): State<AppState>, request: Request) -> Response {
@@ -107,17 +108,19 @@ async fn register_key(State(state): State<AppState>, request: Request) -> Respon
 }
 
 async fn register_key_body(state: &AppState, body: &[u8]) -> Result<(), Error> {
-    let payload: RegisterKeyJson =
-        serde_json::from_slice(body).map_err(|_| Error::BadRequest("invalid json".into()))?;
-    if payload.otc.len() > 512 || payload.public_key.len() != 43 {
+    let payload: RegisterKeyDocument = codec::decode(body)?;
+    if payload.otc.len() > 512 || payload.public_key.len() != 32 {
         return Err(Error::BadRequest("invalid registration payload".into()));
     }
-    let public = auth::parse_public_key(&payload.public_key)?;
+    let public = auth::validate_public_key(&payload.public_key)?;
     state.db.consume_code(&payload.otc, &public).await
 }
 
-pub(crate) fn json_response(status: StatusCode, body: impl Serialize) -> Response {
-    let mut response = (status, Json(body)).into_response();
+pub(crate) fn document_response(status: StatusCode, body: impl Serialize) -> Response {
+    let mut response = match codec::encode(&body) {
+        Ok(bytes) => (status, [(header::CONTENT_TYPE, codec::CONTENT_TYPE)], bytes).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -133,7 +136,7 @@ pub(crate) fn empty(status: StatusCode) -> Response {
 }
 
 pub(crate) fn too_large() -> Response {
-    json_response(
+    document_response(
         StatusCode::PAYLOAD_TOO_LARGE,
         json!({ "error": "too large" }),
     )
@@ -160,7 +163,7 @@ pub(crate) fn fail(err: Error) -> Response {
             )
         }
     };
-    let mut response = json_response(status, json!({ "error": message }));
+    let mut response = document_response(status, json!({ "error": message }));
     if status == StatusCode::SERVICE_UNAVAILABLE {
         response
             .headers_mut()
@@ -202,7 +205,7 @@ mod deadline_tests {
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            codec::decode::<serde_json::Value>(&bytes).unwrap(),
             json!({ "error": "request body timed out" })
         );
         assert!(sender.send_data(Bytes::from_static(b"late")).await.is_err());
@@ -316,7 +319,7 @@ mod request_tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = response.into_body().collect().await.unwrap().to_bytes();
         assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            crate::reference_crypto::document_json(&body),
             json!({ "ok": true })
         );
     }
@@ -363,13 +366,14 @@ mod request_tests {
     #[tokio::test]
     async fn invalid_registration_is_rejected_before_database() {
         let app = app().await;
+        let registration = crate::reference_crypto::registration_body;
         for body in [
-            "not json".to_owned(),
-            json!({ "otc": "code" }).to_string(),
-            json!({ "otc": "x".repeat(513), "public_key": "a".repeat(43) }).to_string(),
-            json!({ "otc": "code", "public_key": "short" }).to_string(),
-            json!({ "otc": "code", "public_key": "!".repeat(43) }).to_string(),
-            json!({ "otc": "code", "public_key": "A".repeat(43) }).to_string(),
+            b"not MessagePack".to_vec(),
+            codec::encode(&json!({"otc": "code"})).unwrap(),
+            registration(&"x".repeat(513), &[2; 32]),
+            registration("code", &[2; 31]),
+            registration("code", &[2; 32]),
+            registration("code", &[0; 32]),
         ] {
             let response = app
                 .clone()

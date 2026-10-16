@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-	bytesToB64url,
+	b64urlToBytes,
 	bytesToHex,
 	hexToBytes,
 	utf8,
@@ -20,7 +20,7 @@ import {
 	tagToken,
 } from "../src/lib/protocol/crypto.js";
 import { encodeMeta, encodePost } from "../src/lib/protocol/frame.js";
-import { encode } from "../src/lib/protocol/msgpack.js";
+import { decode, encode } from "../src/lib/protocol/msgpack.js";
 
 const vectors = JSON.parse(
 	readFileSync(new URL("./test-vectors.json", import.meta.url), "utf8"),
@@ -61,10 +61,8 @@ test("library identity matches the rust vectors", async () => {
 		content,
 		tags: [
 			{
-				label: bytesToB64url(
-					encode({ v: 1, iv: new Uint8Array(12), ct: new Uint8Array(17) }),
-				),
-				token: vectors.token,
+				token: b64urlToBytes(vectors.token),
+				label: encode({ v: 1, iv: new Uint8Array(12), ct: new Uint8Array(17) }),
 			},
 		],
 	});
@@ -94,17 +92,16 @@ test("library identity matches the rust vectors", async () => {
 	);
 });
 
-test("metadata frame begins with exactly the prior ciphertext hash", () => {
-	const priorMetaHash = new Uint8Array(32).fill(0x5a);
-	const body = encodeMeta({
-		prevMetaHash: priorMetaHash,
-		meta: [1, 2],
+test("metadata document carries the complete prior ciphertext hash", () => {
+	const prevMetaHash = new Uint8Array(32).fill(0x5a);
+	const meta = new Uint8Array([1, 2]);
+	assert.deepEqual(decode(encodeMeta({ prevMetaHash, meta, tags: [] })), {
+		prev_meta_hash: prevMetaHash,
+		meta,
 		tags: [],
 	});
-	assert.deepEqual(body.slice(0, 32), priorMetaHash);
-	assert.deepEqual([...body.slice(32)], [0, 0, 0, 2, 1, 2, 0, 0, 0, 2, 91, 93]);
 	assert.throws(
-		() => encodeMeta({ prevMetaHash: new Uint8Array(31), meta: [], tags: "" }),
+		() => encodeMeta({ prevMetaHash: new Uint8Array(31), meta, tags: [] }),
 		/32 bytes/,
 	);
 });

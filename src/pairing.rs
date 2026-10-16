@@ -20,7 +20,7 @@ use tokio::time::Instant;
 
 use crate::{
     auth,
-    routes::{empty, fail, json_response, read_body_with_deadline, SHORT_BODY_DEADLINE},
+    routes::{document_response, empty, fail, read_body_with_deadline, SHORT_BODY_DEADLINE},
     AppState, Error,
 };
 
@@ -345,11 +345,11 @@ pub(crate) fn router() -> Router<AppState> {
 
 fn result(value: Result<Snapshot, Failure>) -> Response {
     match value {
-        Ok(value) => json_response(StatusCode::OK, value),
+        Ok(value) => document_response(StatusCode::OK, value),
         Err(Failure::Unavailable) => fail(Error::Unavailable),
         Err(Failure::Rejected((status, message))) => {
             tracing::debug!(event = "pairing_rejected", status = status.as_u16());
-            let mut response = json_response(status, json!({"error": message}));
+            let mut response = document_response(status, json!({"error": message}));
             if status == StatusCode::TOO_MANY_REQUESTS {
                 response
                     .headers_mut()

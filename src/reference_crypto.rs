@@ -206,39 +206,57 @@ pub fn fresh_nonce() -> String {
     URL_SAFE_NO_PAD.encode(raw)
 }
 
-// Reference-client frames use the exact length-prefixed wire format.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct TagDocument {
+    #[serde(with = "serde_bytes")]
+    token: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    label: Vec<u8>,
+}
+
 pub fn encode_post(meta: &[u8], content: &[u8], tags: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    push_chunk(&mut out, meta);
-    push_chunk(&mut out, content);
-    push_chunk(&mut out, tags);
-    out
+    #[derive(serde::Serialize)]
+    struct Document<'a> {
+        #[serde(with = "serde_bytes")]
+        meta: &'a [u8],
+        #[serde(with = "serde_bytes")]
+        content: &'a [u8],
+        tags: Vec<TagDocument>,
+    }
+    codec::encode(&Document {
+        meta,
+        content,
+        tags: codec::decode(tags).unwrap(),
+    })
+    .unwrap()
 }
-
 pub fn encode_meta(prev_meta_hash: &[u8; 32], meta: &[u8], tags: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.extend_from_slice(prev_meta_hash);
-    push_chunk(&mut out, meta);
-    push_chunk(&mut out, tags);
-    out
+    #[derive(serde::Serialize)]
+    struct Document<'a> {
+        #[serde(with = "serde_bytes")]
+        prev_meta_hash: &'a [u8],
+        #[serde(with = "serde_bytes")]
+        meta: &'a [u8],
+        tags: Vec<TagDocument>,
+    }
+    codec::encode(&Document {
+        prev_meta_hash,
+        meta,
+        tags: codec::decode(tags).unwrap(),
+    })
+    .unwrap()
 }
 
-fn push_chunk(out: &mut Vec<u8>, data: &[u8]) {
-    let len = u32::try_from(data.len()).expect("chunk fits in a u32");
-    out.extend_from_slice(&len.to_be_bytes());
-    out.extend_from_slice(data);
-}
-
-// Reference HTTP fixtures have opaque tokens, not plaintext tag names. These
-// labels have valid sealed framing; crypto authentication is tested separately.
 pub fn fixture_tag_labels(tokens: &str) -> Vec<u8> {
-    let label = sealed_fixture(0, 43);
-    serde_json::to_vec(
+    codec::encode(
         &tokens
             .lines()
             .filter(|token| !token.trim().is_empty())
-            .map(|token| {
-                serde_json::json!({"token": token.trim(), "label": URL_SAFE_NO_PAD.encode(&label)})
+            .map(|token| TagDocument {
+                token: URL_SAFE_NO_PAD
+                    .decode(token.trim())
+                    .unwrap_or_else(|_| token.as_bytes().to_vec()),
+                label: sealed_fixture(0, 43),
             })
             .collect::<Vec<_>>(),
     )
@@ -263,4 +281,73 @@ pub fn sealed_fixture(value: u8, size: usize) -> Vec<u8> {
         assert!(bytes.len() > size, "unrepresentable sealed fixture size");
         length -= bytes.len() - size;
     }
+}
+
+/// Inspect test responses as JSON values, representing binary fields as byte arrays.
+pub fn document_json(bytes: &[u8]) -> serde_json::Value {
+    struct Value(serde_json::Value);
+    impl<'de> serde::Deserialize<'de> for Value {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Visitor;
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Value;
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("a document value")
+                }
+                fn visit_unit<E: serde::de::Error>(self) -> Result<Value, E> {
+                    Ok(Value(serde_json::Value::Null))
+                }
+                fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Value, E> {
+                    Ok(Value(v.into()))
+                }
+                fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Value, E> {
+                    Ok(Value(v.into()))
+                }
+                fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Value, E> {
+                    Ok(Value(v.into()))
+                }
+                fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Value, E> {
+                    Ok(Value(serde_json::json!(v)))
+                }
+                fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Value, E> {
+                    Ok(Value(v.into()))
+                }
+                fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Value, E> {
+                    Ok(Value(serde_json::json!(v)))
+                }
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                    self,
+                    mut seq: A,
+                ) -> Result<Value, A::Error> {
+                    let mut values = Vec::new();
+                    while let Some(Value(value)) = seq.next_element()? {
+                        values.push(value);
+                    }
+                    Ok(Value(values.into()))
+                }
+                fn visit_map<A: serde::de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<Value, A::Error> {
+                    let mut values = serde_json::Map::new();
+                    while let Some((key, Value(value))) = map.next_entry()? {
+                        values.insert(key, value);
+                    }
+                    Ok(Value(values.into()))
+                }
+            }
+            deserializer.deserialize_any(Visitor)
+        }
+    }
+    codec::decode::<Value>(bytes).unwrap().0
+}
+
+pub fn registration_body(otc: &str, public_key: &[u8]) -> Vec<u8> {
+    #[derive(serde::Serialize)]
+    struct Registration<'a> {
+        otc: &'a str,
+        #[serde(with = "serde_bytes")]
+        public_key: &'a [u8],
+    }
+    codec::encode(&Registration { otc, public_key }).unwrap()
 }

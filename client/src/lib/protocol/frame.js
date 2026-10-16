@@ -1,18 +1,13 @@
-// Same length-prefixed body as src/frame.rs. Lengths are big-endian uint32s.
-
-import { chunk, concat, utf8 } from "./bytes.js";
+// Named maps match src/frame.rs; signatures cover these exact encoded bytes.
+import { encode } from "./msgpack.js";
 
 export function encodePost({ meta, content, tags }) {
-	return concat([
-		chunk(meta),
-		chunk(content),
-		chunk(utf8(JSON.stringify(tags))),
-	]);
+	return encode({ meta, content, tags });
 }
 
 export function encodeMeta({ prevMetaHash, meta, tags }) {
 	if (!(prevMetaHash instanceof Uint8Array) || prevMetaHash.length !== 32) {
 		throw new TypeError("previous metadata hash must be 32 bytes");
 	}
-	return concat([prevMetaHash, chunk(meta), chunk(utf8(JSON.stringify(tags)))]);
+	return encode({ prev_meta_hash: prevMetaHash, meta, tags });
 }

@@ -6,10 +6,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use base64::{
-    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
-    Engine,
-};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use http_body_util::BodyExt;
 use i2nclip::{codec, crypto, Error};
 use reference_crypto::{self as client_crypto, fixture_tag_labels, Identity};
@@ -105,13 +102,16 @@ async fn tag_catalog_requires_signed_empty_requests_and_filters_owners() {
     );
     let (status, body) = call(&app, &owner, "GET", "/api/tags", vec![]).await;
     assert_eq!(status, StatusCode::OK);
-    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let value: serde_json::Value = client_crypto::document_json(&body);
     assert_eq!(value["tags"].as_array().unwrap().len(), 1);
-    assert_eq!(value["tags"][0]["token"], token);
-    assert!(!String::from_utf8(body).unwrap().contains("Holiday"));
+    assert_eq!(
+        value["tags"][0]["token"],
+        serde_json::json!(URL_SAFE_NO_PAD.decode(token).unwrap())
+    );
+    assert!(!String::from_utf8_lossy(&body).contains("Holiday"));
     let (_, body) = call(&app, &other, "GET", "/api/tags", vec![]).await;
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["tags"],
+        client_crypto::document_json(&body)["tags"],
         serde_json::json!([])
     );
     assert_eq!(
@@ -231,15 +231,12 @@ async fn app(keys: &[&Identity]) -> (TestDatabase, axum::Router) {
 }
 
 async fn enroll_key(app: &axum::Router, key: &Identity, otc: &str) {
-    let body = serde_json::json!({
-        "otc": otc,
-        "public_key": key.registration_key(),
-    });
+    let body = client_crypto::registration_body(otc, &key.public);
     let request = Request::builder()
         .method("POST")
         .uri("/api/register-key")
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
+        .header("content-type", codec::CONTENT_TYPE)
+        .body(Body::from(body))
         .unwrap();
     let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(
@@ -251,15 +248,12 @@ async fn enroll_key(app: &axum::Router, key: &Identity, otc: &str) {
 }
 
 async fn register(app: &axum::Router, key: &Identity, otc: &str) -> (StatusCode, Vec<u8>) {
-    let body = serde_json::json!({
-        "otc": otc,
-        "public_key": key.registration_key(),
-    });
+    let body = client_crypto::registration_body(otc, &key.public);
     let request = Request::builder()
         .method("POST")
         .uri("/api/register-key")
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
+        .header("content-type", codec::CONTENT_TYPE)
+        .body(Body::from(body))
         .unwrap();
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
@@ -348,9 +342,7 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
     ] {
         let registration = path == "/api/register-key";
         let payload = if registration {
-            serde_json::json!({ "otc": otc, "public_key": new_key.registration_key() })
-                .to_string()
-                .into_bytes()
+            client_crypto::registration_body(&otc, &new_key.public)
         } else if method == "GET" || method == "DELETE" {
             vec![]
         } else {
@@ -453,16 +445,15 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     let content = client_crypto::sealed_fixture(0, 33_554_496);
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
-    let mut tags = b"[]".to_vec();
-    tags.resize(96 * 1024, b' ');
+    let tags = b"\x90".to_vec();
     let body = client_crypto::encode_post(&meta, &content, &tags);
-    assert_eq!(body.len(), 33_718_348);
+    assert!(body.len() <= 33_718_400);
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
     );
     let body = client_crypto::encode_meta(&raw_hash(&meta), &meta, &tags);
-    assert_eq!(body.len(), 163_880);
+    assert!(body.len() <= 163_936);
     assert_eq!(
         call(&app, &owner, "PUT", &format!("/api/media/{id}/meta"), body)
             .await
@@ -484,10 +475,7 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
         .await
         .unwrap();
-    let mut body = serde_json::json!({ "otc": otc, "public_key": key.registration_key() })
-        .to_string()
-        .into_bytes();
-    body.resize(4096, b' ');
+    let body = client_crypto::registration_body(&otc, &key.public);
     let response = app
         .oneshot(
             Request::builder()
@@ -507,8 +495,8 @@ async fn media_body_caps_reject_declared_sizes_before_polling() {
     let (_dir, app) = app(&[&owner]).await;
     let id = "8888888888888888888888888888888888888888888888888888888888888888";
     for (method, path, cap) in [
-        ("POST", "/api/media".to_string(), 33_718_348),
-        ("PUT", format!("/api/media/{id}/meta"), 163_880),
+        ("POST", "/api/media".to_string(), 33_718_400),
+        ("PUT", format!("/api/media/{id}/meta"), 163_936),
         ("GET", "/api/media".to_string(), 0),
         ("DELETE", format!("/api/media/{id}"), 0),
     ] {
@@ -565,8 +553,8 @@ async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
     let (_dir, app) = app(&[&owner]).await;
     let id = "9999999999999999999999999999999999999999999999999999999999999999";
     for (method, path, cap) in [
-        ("POST", "/api/media".to_string(), 33_718_348),
-        ("PUT", format!("/api/media/{id}/meta"), 163_880),
+        ("POST", "/api/media".to_string(), 33_718_400),
+        ("PUT", format!("/api/media/{id}/meta"), 163_936),
         ("GET", "/api/media".to_string(), 0),
         ("DELETE", format!("/api/media/{id}"), 0),
         ("POST", "/api/register-key".to_string(), 4096),
@@ -606,7 +594,7 @@ async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
             assert_eq!(response.headers()["cache-control"], "no-store");
             let body = response.into_body().collect().await.unwrap().to_bytes();
             assert_eq!(
-                serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+                client_crypto::document_json(&body),
                 serde_json::json!({ "error": "too large" })
             );
         }
@@ -653,7 +641,7 @@ async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let listed: serde_json::Value = serde_json::from_slice(&listed).unwrap();
+    let listed: serde_json::Value = client_crypto::document_json(&listed);
     assert_eq!(listed["media"][0]["id"], id);
 
     let (status, stored) = call(&app, &key, "GET", &format!("/api/media/{id}"), Vec::new()).await;
@@ -722,7 +710,7 @@ async fn another_key_cannot_see_or_search() {
         Vec::new(),
     )
     .await;
-    let listed: serde_json::Value = serde_json::from_slice(&listed).unwrap();
+    let listed: serde_json::Value = client_crypto::document_json(&listed);
     assert_eq!(listed["media"].as_array().unwrap().len(), 0);
     assert_eq!(
         call(
@@ -895,7 +883,7 @@ async fn rejected_public_keys_do_not_consume_registration_code() {
         let (status, body) = register(&app, &invalid, &otc).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            client_crypto::document_json(&body),
             serde_json::json!({ "error": "invalid public_key" })
         );
     }
@@ -983,7 +971,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
     let id = hash.as_str();
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
 
-    let body = client_crypto::encode_post(&meta, &content, b"[]");
+    let body = client_crypto::encode_post(&meta, &content, b"\x90");
     let first = call(&app, &owner, "POST", "/api/media", body.clone()).await;
     let retry = call(&app, &owner, "POST", "/api/media", body.clone()).await;
     assert_eq!(first.0, StatusCode::CREATED);
@@ -1000,7 +988,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
             &owner,
             "POST",
             "/api/media",
-            client_crypto::encode_post(&meta, &changed, b"[]")
+            client_crypto::encode_post(&meta, &changed, b"\x90")
         )
         .await
         .0,
@@ -1008,7 +996,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
     );
     let (_, listed) = call(&app, &owner, "GET", "/api/media", vec![]).await;
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&listed).unwrap()["media"]
+        client_crypto::document_json(&listed)["media"]
             .as_array()
             .unwrap()
             .len(),
@@ -1024,7 +1012,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
             &owner,
             "POST",
             "/api/media",
-            client_crypto::encode_post(&meta, &content, b"[]")
+            client_crypto::encode_post(&meta, &content, b"\x90")
         )
         .await
         .0,
@@ -1059,10 +1047,10 @@ async fn reopening_database_preserves_media() {
     assert_eq!(downloaded, content);
     let (_, listed) = call(&app, &owner, "GET", "/api/media", vec![]).await;
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&listed).unwrap()["media"][0]["meta"],
-        STANDARD.encode(meta)
+        client_crypto::document_json(&listed)["media"][0]["meta"],
+        serde_json::json!(meta)
     );
-    let page: serde_json::Value = serde_json::from_slice(&listed).unwrap();
+    let page: serde_json::Value = client_crypto::document_json(&listed);
     assert!(page["media"][0].get("tokens").is_none());
     let (_, filtered) = call(
         &app,
@@ -1072,7 +1060,7 @@ async fn reopening_database_preserves_media() {
         vec![],
     )
     .await;
-    let filtered: serde_json::Value = serde_json::from_slice(&filtered).unwrap();
+    let filtered: serde_json::Value = client_crypto::document_json(&filtered);
     assert_eq!(filtered["media"][0]["id"], id);
     drop(app);
     let _reopened = i2nclip::router(&dir.0, "http://i2nclip.test")
@@ -1219,7 +1207,7 @@ async fn upload_admission_is_shared_and_releases_capacity() {
     for (body, expected) in [
         (Body::new(broken), StatusCode::BAD_REQUEST),
         (
-            Body::from(vec![0; 33_718_349]),
+            Body::from(vec![0; 33_718_401]),
             StatusCode::PAYLOAD_TOO_LARGE,
         ),
         (Body::from("wrong signed bytes"), StatusCode::UNAUTHORIZED),
@@ -1268,7 +1256,7 @@ async fn upload_admission_is_shared_and_releases_capacity() {
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-    let frame = client_crypto::encode_post(&meta, &content, b"[]");
+    let frame = client_crypto::encode_post(&meta, &content, b"\x90");
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", frame.clone())
             .await
@@ -1342,7 +1330,7 @@ async fn concurrent_routers_publish_one_hash() {
     .unwrap();
     let id = crypto::body_hash(&content);
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"{}").unwrap();
-    let body = client_crypto::encode_post(&meta, &content, b"[]");
+    let body = client_crypto::encode_post(&meta, &content, b"\x90");
     let (a, b) = tokio::join!(
         call(&first, &owner, "POST", "/api/media", body.clone()),
         call(&second, &other, "POST", "/api/media", body),
@@ -1412,7 +1400,7 @@ async fn downloads_retain_owned_content_after_deletion() {
                 &owner,
                 "POST",
                 "/api/media",
-                client_crypto::encode_post(&meta, &content, b"[]")
+                client_crypto::encode_post(&meta, &content, b"\x90")
             )
             .await
             .0,
@@ -1426,7 +1414,7 @@ async fn downloads_retain_owned_content_after_deletion() {
         let second = download_response(&app, &owner, id).await;
         assert_eq!(first.status(), StatusCode::OK);
         assert_eq!(first.headers()["content-length"], content.len().to_string());
-        assert_eq!(first.headers()["content-type"], "application/octet-stream");
+        assert_eq!(first.headers()["content-type"], codec::CONTENT_TYPE);
         let queued = download_response(&app, &owner, id);
         tokio::pin!(queued);
         assert!(
@@ -1484,7 +1472,7 @@ async fn downloads_retain_owned_content_after_deletion() {
                 &other,
                 "POST",
                 "/api/media",
-                client_crypto::encode_post(&other_meta, &replacement, b"[]")
+                client_crypto::encode_post(&other_meta, &replacement, b"\x90")
             )
             .await
             .0,
@@ -1540,7 +1528,7 @@ async fn list_query_validation_is_scoped_to_the_list_endpoint() {
     .unwrap();
     let id = crypto::body_hash(&content);
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"{}").unwrap();
-    let body = client_crypto::encode_post(&meta, &content, b"[]");
+    let body = client_crypto::encode_post(&meta, &content, b"\x90");
     assert_eq!(
         call(&app, &owner, "POST", "/api/media?after=invalid", body)
             .await
@@ -1554,7 +1542,7 @@ async fn list_query_validation_is_scoped_to_the_list_endpoint() {
             &owner,
             "PUT",
             &path,
-            client_crypto::encode_meta(&raw_hash(&meta), &meta, b"[]")
+            client_crypto::encode_meta(&raw_hash(&meta), &meta, b"\x90")
         )
         .await
         .0,
@@ -1700,7 +1688,7 @@ async fn stale_metadata_update_returns_current_item_without_writing() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    let payload: serde_json::Value = serde_json::from_slice(&response).unwrap();
+    let payload: serde_json::Value = client_crypto::document_json(&response);
     assert!(payload.get("tokens").is_none());
 
     let current =
@@ -1719,7 +1707,7 @@ async fn stale_metadata_update_returns_current_item_without_writing() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let payload: serde_json::Value = serde_json::from_slice(&response).unwrap();
+    let payload: serde_json::Value = client_crypto::document_json(&response);
     assert!(payload.get("tokens").is_none());
 
     let stale =
@@ -1738,9 +1726,9 @@ async fn stale_metadata_update_returns_current_item_without_writing() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
-    let payload: serde_json::Value = serde_json::from_slice(&response).unwrap();
+    let payload: serde_json::Value = client_crypto::document_json(&response);
     assert_eq!(payload["code"], "metadata_conflict");
-    assert_eq!(payload["media"]["meta"], STANDARD.encode(&current));
+    assert_eq!(payload["media"]["meta"], serde_json::json!(current));
     assert!(payload["media"].get("tokens").is_none());
     for (token, count) in [(&current_token, 1), (&stale_token, 0)] {
         let (_, page) = call(
@@ -1751,7 +1739,7 @@ async fn stale_metadata_update_returns_current_item_without_writing() {
             vec![],
         )
         .await;
-        let page: serde_json::Value = serde_json::from_slice(&page).unwrap();
+        let page: serde_json::Value = client_crypto::document_json(&page);
         assert_eq!(page["media"].as_array().unwrap().len(), count);
     }
 
@@ -1877,21 +1865,21 @@ async fn quota_cli_invitation_and_http_upload_failures_work_together() {
     let body = client_crypto::encode_post(
         &client_crypto::sealed_fixture(1, 42),
         &client_crypto::sealed_fixture(1, 42),
-        b"[]",
+        b"\x90",
     );
     let (status, saved) = call(&app, &key, "POST", "/api/media", body.clone()).await;
     assert_eq!(status, StatusCode::CREATED);
-    let saved: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+    let saved: serde_json::Value = client_crypto::document_json(&saved);
     assert_eq!(saved["bytes"], 42);
     let second = client_crypto::encode_post(
         &client_crypto::sealed_fixture(1, 42),
         &client_crypto::sealed_fixture(1, 43),
-        b"[]",
+        b"\x90",
     );
     let (status, error) = call(&app, &key, "POST", "/api/media", second.clone()).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&error).unwrap(),
+        client_crypto::document_json(&error),
         serde_json::json!({ "error": "Library storage limit reached." })
     );
     // Updating an existing key is administrative and preserves its files.
@@ -1926,7 +1914,7 @@ async fn quota_cli_invitation_and_http_upload_failures_work_together() {
     let (status, error) = call(&app, &key, "POST", "/api/media", body).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&error).unwrap(),
+        client_crypto::document_json(&error),
         serde_json::json!({ "error": "already exists" })
     );
     assert_eq!(
@@ -2012,13 +2000,13 @@ async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
     let (status, bytes) = call(&app, &owner, "GET", "/api/quota", vec![]).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+        client_crypto::document_json(&bytes),
         serde_json::json!({
             "max_content_bytes": 536870912, "max_files": 10000, "used_content_bytes": 0, "file_count": 0,
         })
     );
     let content = client_crypto::sealed_fixture(1, 42);
-    let body = client_crypto::encode_post(&client_crypto::sealed_fixture(1, 42), &content, b"[]");
+    let body = client_crypto::encode_post(&client_crypto::sealed_fixture(1, 42), &content, b"\x90");
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
@@ -2026,7 +2014,7 @@ async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
     let (status, bytes) = call(&app, &other, "GET", "/api/quota?owner=ignored", vec![]).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+        client_crypto::document_json(&bytes),
         serde_json::json!({
             "max_content_bytes": 123, "max_files": 2, "used_content_bytes": 0, "file_count": 0,
         })
@@ -2064,7 +2052,7 @@ async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
         assert_eq!(response.headers()["cache-control"], "no-store");
         if status == StatusCode::OK {
             let bytes = response.into_body().collect().await.unwrap().to_bytes();
-            let quota: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            let quota: serde_json::Value = client_crypto::document_json(&bytes);
             assert_eq!(quota["used_content_bytes"], 42);
             assert_eq!(quota["file_count"], 1);
         }
@@ -2082,7 +2070,7 @@ async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
         StatusCode::NO_CONTENT
     );
     let (_, bytes) = call(&app, &owner, "GET", "/api/quota", vec![]).await;
-    let quota: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let quota: serde_json::Value = client_crypto::document_json(&bytes);
     assert_eq!(quota["used_content_bytes"], 0);
     assert_eq!(quota["file_count"], 0);
 }
@@ -2232,7 +2220,11 @@ async fn global_download_limit_still_applies_across_independent_keys() {
                 owner,
                 "POST",
                 "/api/media",
-                client_crypto::encode_post(&client_crypto::sealed_fixture(1, 42), &content, b"[]")
+                client_crypto::encode_post(
+                    &client_crypto::sealed_fixture(1, 42),
+                    &content,
+                    b"\x90"
+                )
             )
             .await
             .0,

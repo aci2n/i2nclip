@@ -122,6 +122,13 @@ pub(crate) fn parse_public_key(text: &str) -> Result<[u8; 32], Error> {
     if URL_SAFE_NO_PAD.encode(public) != text {
         return Err(Error::BadRequest("invalid public_key".into()));
     }
+    validate_public_key(&public)
+}
+
+pub(crate) fn validate_public_key(bytes: &[u8]) -> Result<[u8; 32], Error> {
+    let public: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| Error::BadRequest("public_key must contain 32 bytes".into()))?;
     let key = VerifyingKey::from_bytes(&public)
         .map_err(|_| Error::BadRequest("invalid public_key".into()))?;
     if key.is_weak() {

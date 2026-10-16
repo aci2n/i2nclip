@@ -15,17 +15,25 @@ export async function sealTags(key, tags) {
 		unique.map(async (tag) => {
 			const token = await tagToken(key, tag);
 			const label = await encrypt(key, tagLabelAad(token), utf8(tag));
-			return { token, label: bytesToB64url(label) };
+			return { token: b64urlToBytes(token), label };
 		}),
 	);
 }
 
 export async function openTag(key, { token, label }) {
+	if (
+		!(token instanceof Uint8Array) ||
+		token.length !== 32 ||
+		!(label instanceof Uint8Array)
+	) {
+		throw new Error("Invalid tag record.");
+	}
+	const tokenText = bytesToB64url(token);
 	const text = new TextDecoder("utf-8", { fatal: true }).decode(
-		await decrypt(key, tagLabelAad(token), b64urlToBytes(label)),
+		await decrypt(key, tagLabelAad(tokenText), label),
 	);
 	normalizeTag(text);
-	if (text !== text.trim() || (await tagToken(key, text)) !== token) {
+	if (text !== text.trim() || (await tagToken(key, text)) !== tokenText) {
 		throw new Error("Tag label does not match its token.");
 	}
 	return text;

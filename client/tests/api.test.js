@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
 import {
 	getContent,
 	getQuota,
@@ -12,7 +11,7 @@ import {
 	updateMetadata,
 	upload,
 } from "../src/lib/api.js";
-import { bytesToB64, hexToBytes } from "../src/lib/protocol/bytes.js";
+import { hexToBytes } from "../src/lib/protocol/bytes.js";
 import {
 	authorizationHeader,
 	bodyHash,
@@ -27,6 +26,8 @@ import {
 	decodeMetaPlain,
 	encodeMetaPlain,
 } from "../src/lib/protocol/meta-plain.js";
+import { decode, encode } from "../src/lib/protocol/msgpack.js";
+import { documentResponse } from "./msgpack-response.js";
 
 test("registration checks use a signed empty ping, distinguish unauthorized keys and propagate server failures", async (t) => {
 	const key = await generatePrivateKey();
@@ -37,7 +38,7 @@ test("registration checks use a signed empty ping, distinguish unauthorized keys
 		assert(options.headers.authorization);
 		assert.equal(options.body, undefined);
 		return status === 503
-			? new Response(JSON.stringify({ error: "unavailable" }), { status })
+			? documentResponse({ error: "unavailable" }, { status })
 			: new Response(null, { status });
 	});
 	const credentials = {
@@ -55,8 +56,12 @@ test("registration checks use a signed empty ping, distinguish unauthorized keys
 });
 
 for (const [body, contentType, message] of [
-	['{"error":"permission denied"}', "application/json", "permission denied"],
-	["upstream unavailable", "text/plain", "upstream unavailable"],
+	[
+		encode({ error: "permission denied" }),
+		"application/msgpack",
+		"permission denied",
+	],
+	["upstream unavailable", "text/plain", "Service Unavailable"],
 	["", "text/plain", "Service Unavailable"],
 ]) {
 	test(`API errors are consistent across endpoints: ${message}`, async (t) => {
@@ -102,7 +107,7 @@ test("upload progress uses the same response handling as fetch", async (t) => {
 		upload = {};
 		status = 201;
 		statusText = "Created";
-		responseText = '{"id":"saved"}';
+		response = encode({ id: "saved" }).slice().buffer;
 		open(method, url) {
 			requests.push({ method, url: String(url) });
 		}
@@ -178,11 +183,7 @@ test("downloaded encrypted content is capped before buffering", async (t) => {
 test("reencrypting an upload uses fresh sealed content after a lost response", async (t) => {
 	const { privateKey } = await generatePrivateKey();
 	const bodies = [];
-	const contentOf = (body) => {
-		const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
-		const offset = 4 + view.getUint32(0);
-		return body.subarray(offset + 4, offset + 4 + view.getUint32(offset));
-	};
+	const contentOf = (body) => decode(body).content;
 
 	t.mock.method(globalThis, "fetch", async (_url, options) => {
 		bodies.push(options.body);
@@ -190,7 +191,7 @@ test("reencrypting an upload uses fresh sealed content after a lost response", a
 			throw new Error("lost response");
 		}
 		return new Response(
-			JSON.stringify({ id: await bodyHash(contentOf(options.body)) }),
+			encode({ id: await bodyHash(contentOf(options.body)) }),
 			{ status: 201 },
 		);
 	});
@@ -267,13 +268,13 @@ test("metadata list and update sign their routes and preserve decrypted fields",
 		methods.push(options.method);
 		if (options.method === "PUT") {
 			const body = options.body;
-			assert.deepEqual(body.subarray(0, 32), hexToBytes(await bodyHash(meta)));
-			const length = new DataView(
-				body.buffer,
-				body.byteOffset + 32,
-				4,
-			).getUint32(0);
-			const sealed = body.subarray(36, 36 + length);
+			const document = decode(body);
+			assert.deepEqual(
+				document.prev_meta_hash,
+				hexToBytes(await bodyHash(meta)),
+			);
+			const sealed = document.meta;
+
 			assert.deepEqual(
 				decodeMetaPlain(await decrypt(key, metaAad(id), sealed)),
 				{ metadata: renamed, thumb },
@@ -284,9 +285,9 @@ test("metadata list and update sign their routes and preserve decrypted fields",
 			id,
 			created_at: 123,
 			bytes: 32,
-			meta: bytesToB64(meta),
+			meta,
 		};
-		return Response.json(
+		return documentResponse(
 			options.method === "GET" ? { media: [item], next: null } : item,
 		);
 	});
@@ -325,13 +326,13 @@ test("undecryptable metadata is returned without an editable payload", async (t)
 	const meta = new Uint8Array(29);
 	meta[0] = 1;
 	t.mock.method(globalThis, "fetch", async () =>
-		Response.json({
+		documentResponse({
 			media: [
 				{
 					id: "a".repeat(64),
 					created_at: 1,
 					bytes: 1,
-					meta: bytesToB64(meta),
+					meta,
 				},
 			],
 			next: null,
@@ -355,7 +356,7 @@ test("Node uploads with progress callbacks fall back to fetch", async (t) => {
 	let calls = 0;
 	t.mock.method(globalThis, "fetch", async () => {
 		calls++;
-		return Response.json({ id: "saved" }, { status: 201 });
+		return documentResponse({ id: "saved" }, { status: 201 });
 	});
 	await upload({
 		serverUrl: "https://clip.example",
@@ -373,7 +374,7 @@ test("Node uploads with progress callbacks fall back to fetch", async (t) => {
 test("HTTP failures expose status without changing their error message", async (t) => {
 	const { privateKey } = await generatePrivateKey();
 	t.mock.method(globalThis, "fetch", async () =>
-		Response.json({ error: "not found" }, { status: 404 }),
+		documentResponse({ error: "not found" }, { status: 404 }),
 	);
 	await assert.rejects(
 		list({
@@ -400,7 +401,7 @@ test("quota uses a signed empty GET and carries cancellation", async (t) => {
 		assert.equal(options.body, undefined);
 		assert(options.headers.authorization.startsWith("Bearer "));
 		assert.equal(options.signal, controller.signal);
-		return Response.json(usage);
+		return documentResponse(usage);
 	});
 	assert.deepEqual(
 		await getQuota({

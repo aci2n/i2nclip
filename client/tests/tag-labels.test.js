@@ -3,17 +3,19 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { getTags } from "../src/lib/api.js";
 import {
-	bytesToB64url,
+	b64urlToBytes,
 	bytesToHex,
 	hexToBytes,
 	utf8,
 } from "../src/lib/protocol/bytes.js";
 import { encrypt, loadKey, tagToken } from "../src/lib/protocol/crypto.js";
+import { decode } from "../src/lib/protocol/msgpack.js";
 import {
 	openTag,
 	sealTags,
 	tagLabelAad,
 } from "../src/lib/protocol/tag-labels.js";
+import { documentResponse } from "./msgpack-response.js";
 
 const vectors = JSON.parse(
 	readFileSync(new URL("./test-vectors.json", import.meta.url)),
@@ -30,16 +32,19 @@ test("tag labels share Rust vectors and bind ciphertext to the token", async () 
 		hexToBytes(vectors.nonce_hex),
 	);
 	assert.equal(bytesToHex(sealed), vectors.tag_label_hex);
-	const pair = { token: vectors.token, label: bytesToB64url(sealed) };
+	const pair = { token: b64urlToBytes(vectors.token), label: sealed };
 	assert.equal(await openTag(key, pair), "Vacation");
 	await assert.rejects(
-		openTag(key, { ...pair, token: await tagToken(key, "other") }),
+		openTag(key, {
+			...pair,
+			token: b64urlToBytes(await tagToken(key, "other")),
+		}),
 	);
 	sealed[sealed.length - 1] ^= 1;
-	await assert.rejects(openTag(key, { ...pair, label: bytesToB64url(sealed) }));
+	await assert.rejects(openTag(key, { ...pair, label: sealed }));
 	const mismatch = await encrypt(key, aad, utf8("Other"));
 	await assert.rejects(
-		openTag(key, { ...pair, label: bytesToB64url(mismatch) }),
+		openTag(key, { ...pair, label: mismatch }),
 		/does not match/,
 	);
 });
@@ -49,7 +54,7 @@ test("catalog isolates damaged entries and seals at most 64 distinct tags", asyn
 	const tags = await sealTags(key, ["Vacation", "vacation", "Café"]);
 	assert.equal(tags.length, 2);
 	t.mock.method(globalThis, "fetch", async () =>
-		Response.json({
+		documentResponse({
 			tags: [tags[0], { token: tags[0].token, label: "invalid" }, tags[1]],
 		}),
 	);
@@ -83,7 +88,7 @@ test("upload labels and encrypted metadata contain the same ordinary tags", asyn
 	let frame;
 	t.mock.method(globalThis, "fetch", async (_url, options) => {
 		frame = options.body;
-		return Response.json({ id: "saved" });
+		return documentResponse({ id: "saved" });
 	});
 	const saved = await upload({
 		serverUrl: "https://clip.example",
@@ -92,21 +97,7 @@ test("upload labels and encrypted metadata contain the same ordinary tags", asyn
 		name: "Summer holiday.txt",
 		contentType: "text/plain",
 	});
-	let offset = 0;
-	const read = () => {
-		const length = new DataView(
-			frame.buffer,
-			frame.byteOffset + offset,
-			4,
-		).getUint32(0);
-		offset += 4;
-		const data = frame.subarray(offset, offset + length);
-		offset += length;
-		return data;
-	};
-	const metadata = read();
-	const content = read();
-	const tags = JSON.parse(new TextDecoder().decode(read()));
+	const { meta: metadata, content, tags } = decode(frame);
 	const { bodyHash } = await import("../src/lib/protocol/crypto.js");
 	const opened = decodeMetaPlain(
 		await decrypt(key, metaAad(await bodyHash(content)), metadata),
