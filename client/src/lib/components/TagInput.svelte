@@ -135,6 +135,7 @@ input {
 	min-height: 3rem;
 }
 input.borderless {
+	min-height: 2.5rem;
 	border: 0;
 	background: transparent;
 	box-shadow: none;
@@ -176,7 +177,10 @@ li button:focus-visible {
 	background: var(--soft);
 	color: var(--accent);
 }
-@media (max-width: 32rem) {
+@media (max-width: 32rem), (pointer: coarse) {
+	input.borderless {
+		min-height: 3rem;
+	}
 	input {
 		font-size: 1.1rem;
 	}

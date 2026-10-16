@@ -188,6 +188,8 @@ async function persist(next, clear = false) {
 	align-items: center;
 	gap: 0.25rem;
 	max-width: 100%;
+	min-height: 2rem;
+	line-height: 1.5;
 	padding: 0.125rem 0.375rem;
 	border: 0;
 	border-radius: 0.25rem;
@@ -199,7 +201,7 @@ async function persist(next, clear = false) {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	line-height: 1;
+	line-height: inherit;
 }
 .tag-list button svg {
 	width: 1rem;

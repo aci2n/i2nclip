@@ -97,10 +97,10 @@ let input = $state();
 }
 form {
 	display: flex;
-	align-items: flex-start;
+	align-items: center;
 	gap: 0.25rem;
 	min-width: 0;
-	padding-left: 0.5rem;
+	padding: 0 0.5rem;
 	border-radius: 0.4rem;
 	background: var(--paper);
 	box-shadow: inset 0 0 0 1px var(--line);
@@ -116,14 +116,17 @@ form:focus-within {
 	flex-wrap: wrap;
 	gap: 0.5rem;
 	min-width: 0;
+	padding-block: 0.25rem;
 }
 .chip {
 	display: inline-flex;
 	align-items: center;
 	gap: 0.25rem;
 	max-width: 100%;
-	margin-block: 0.25rem;
-	padding-left: 0.375rem;
+	min-height: 2rem;
+	padding: 0.125rem 0.375rem;
+	font-size: 0.85rem;
+	line-height: 1.5;
 	border-radius: 0.25rem;
 	background: var(--soft);
 	color: var(--accent);
@@ -144,7 +147,12 @@ form:focus-within {
 	color: var(--accent);
 }
 .chip button {
-	font-size: 1.5rem;
+	width: 1.5rem;
+	height: 1.5rem;
+	padding: 0.125rem;
+}
+.clear {
+	align-self: center;
 }
 .clear svg,
 .chip svg {
@@ -154,5 +162,20 @@ form:focus-within {
 p {
 	font-size: 0.85rem;
 	overflow-wrap: anywhere;
+}
+@media (max-width: 32rem), (pointer: coarse) {
+	.terms {
+		padding-block: 0;
+	}
+	.chip {
+		min-height: 3rem;
+		padding-block: 0;
+		font-size: 1rem;
+	}
+	.chip button {
+		width: 3rem;
+		height: 3rem;
+		padding: 0.5rem;
+	}
 }
 </style>
