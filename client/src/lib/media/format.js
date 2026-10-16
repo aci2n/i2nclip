@@ -1,5 +1,17 @@
 import { isText } from "./text.js";
 
+export const MEDIA_EXTENSIONS = {
+	"image/jpeg": "jpg",
+	"image/png": "png",
+	"image/gif": "gif",
+	"image/webp": "webp",
+	"video/mp4": "mp4",
+	"video/webm": "webm",
+	"audio/mpeg": "mp3",
+	"audio/ogg": "ogg",
+	"audio/wav": "wav",
+};
+
 export function canPreview(type, name) {
 	return /^(image|audio|video)\//.test(type || "") || isText(type, name);
 }
@@ -31,17 +43,7 @@ export function downloadName(name, type) {
 		String(name || "download")
 			.split(/[/\\]/)
 			.pop() || "download";
-	const ext = {
-		"image/jpeg": "jpg",
-		"image/png": "png",
-		"image/gif": "gif",
-		"image/webp": "webp",
-		"video/mp4": "mp4",
-		"video/webm": "webm",
-		"audio/mpeg": "mp3",
-		"audio/ogg": "ogg",
-		"audio/wav": "wav",
-	}[type];
+	const ext = MEDIA_EXTENSIONS[type];
 	return base.includes(".") || !ext ? base : `${base}.${ext}`;
 }
 

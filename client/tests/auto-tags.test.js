@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { downloadName } from "../src/lib/media/format.js";
 import { automaticTags } from "../src/lib/media/tags.js";
 
 test("automatic tags follow stored format and tokenize Unicode filenames", () => {
@@ -51,5 +52,32 @@ test("extension case folding does not truncate Unicode filenames", () => {
 		"image",
 		"jpg",
 		"summer",
+	]);
+});
+
+test("tag formats share download extensions while retaining caller-specific fallbacks", () => {
+	for (const [type, extension] of [
+		["image/jpeg", "jpg"],
+		["audio/mpeg", "mp3"],
+		["video/webm", "webm"],
+	]) {
+		assert.equal(downloadName("Clip", type), `Clip.${extension}`);
+		assert.equal(automaticTags("Clip", type)[1], extension);
+		assert.equal(downloadName("Clip.original", type), "Clip.original");
+	}
+	assert.equal(downloadName("Document", "application/pdf"), "Document");
+	assert.deepEqual(automaticTags("Document", "application/pdf"), [
+		"file",
+		"pdf",
+		"document",
+	]);
+	assert.equal(
+		downloadName("Notes.JPEG", "application/octet-stream"),
+		"Notes.JPEG",
+	);
+	assert.deepEqual(automaticTags("Notes.JPEG", "application/octet-stream"), [
+		"file",
+		"jpg",
+		"notes",
 	]);
 });

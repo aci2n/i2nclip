@@ -1,24 +1,17 @@
 import { uniqueTags } from "../protocol/tags.js";
+import { MEDIA_EXTENSIONS } from "./format.js";
 import { isText } from "./text.js";
 
 const FORMATS = {
-	"image/jpeg": "jpg",
-	"image/png": "png",
-	"image/webp": "webp",
-	"image/gif": "gif",
+	...MEDIA_EXTENSIONS,
 	"image/bmp": "bmp",
 	"image/x-ms-bmp": "bmp",
 	"image/svg+xml": "svg",
 	"image/avif": "avif",
 	"image/tiff": "tiff",
-	"audio/mpeg": "mp3",
 	"audio/mp4": "m4a",
-	"audio/ogg": "ogg",
-	"audio/wav": "wav",
 	"audio/x-wav": "wav",
 	"audio/flac": "flac",
-	"video/mp4": "mp4",
-	"video/webm": "webm",
 	"video/quicktime": "mov",
 	"application/pdf": "pdf",
 	"application/json": "json",
