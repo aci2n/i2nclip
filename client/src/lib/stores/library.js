@@ -78,7 +78,10 @@ export function createLibrary(
 			searchDraft: "",
 		}));
 	}
-	async function search(query = get(state).query, more = false) {
+	async function search(
+		query = get(state).query,
+		{ more = false, clearDraft = false } = {},
+	) {
 		if (
 			disposed ||
 			!get(session).configured ||
@@ -122,6 +125,7 @@ export function createLibrary(
 		state.update((v) => ({
 			...v,
 			query: submitted,
+			searchDraft: clearDraft ? "" : v.searchDraft,
 			loading: true,
 			empty: null,
 			status: "",
@@ -200,38 +204,12 @@ export function createLibrary(
 	return {
 		subscribe: state.subscribe,
 		editDraft: (searchDraft) => state.update((v) => ({ ...v, searchDraft })),
-		addTag(tag) {
-			let normalized;
-			try {
-				normalized = normalizeTag(tag);
-			} catch (error) {
-				state.update((v) => ({ ...v, status: error.message }));
-				return false;
-			}
-			const query = get(state).query;
-			const next = query.some(
-				(existing) => normalizeTag(existing) === normalized,
-			)
-				? query
-				: [...query, tag.trim()];
-			if (next.length > 64) {
-				state.update((v) => ({
-					...v,
-					status: "Too many search tags (maximum 64).",
-				}));
-				return false;
-			}
-			state.update((v) => ({ ...v, searchDraft: "" }));
-			return search(next);
-		},
+		addTag: (tag) => search([...get(state).query, tag], { clearDraft: true }),
 		removeTag: (tag) =>
 			search(get(state).query.filter((existing) => existing !== tag)),
-		clearSearch() {
-			state.update((v) => ({ ...v, searchDraft: "" }));
-			return search([]);
-		},
+		clearSearch: () => search([], { clearDraft: true }),
 		search,
-		more: () => search(get(state).query, true),
+		more: () => search(get(state).query, { more: true }),
 		refresh: () => search(get(state).query),
 		reveal,
 		closePreview,

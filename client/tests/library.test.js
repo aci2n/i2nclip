@@ -586,11 +586,47 @@ test("chip search preserves multiword tags, deduplicates, clears, and rejects in
 	await f.library.removeTag("image");
 	assert.deepEqual(calls.at(-1).tags, ["summer holiday"]);
 	f.library.editDraft("bad,tag");
-	assert.equal(f.library.addTag("bad,tag"), false);
+	assert.equal(await f.library.addTag("bad,tag"), false);
 	assert.equal(get(f.library).searchDraft, "bad,tag");
 	await f.library.clearSearch();
 	assert.deepEqual(get(f.library).query, []);
 	assert.equal(get(f.library).searchDraft, "");
 	f.owner.lock();
 	assert.deepEqual(get(f.library).query, []);
+});
+
+test("search admission preserves drafts and rejects excess tags before replacing results", async (t) => {
+	const calls = [];
+	const f = fixture(t, {
+		http: {
+			list: async (args) => {
+				calls.push(args);
+				return { items: [], next: null };
+			},
+		},
+	});
+	f.library.editDraft("Café");
+	assert.equal(await f.library.addTag("Café"), false);
+	assert.equal(get(f.library).searchDraft, "Café");
+	assert.equal(calls.length, 0);
+	f.owner.configure();
+	await tick();
+	const tags = Array.from({ length: 63 }, (_, i) => `tag${i}`);
+	await f.library.search([...tags, " Café ", "CAFE\u0301"]);
+	assert.deepEqual(get(f.library).query, [...tags, "Café"]);
+	assert.equal(get(f.library).searchDraft, "Café");
+	await f.library.addTag("CAFÉ");
+	assert.equal(get(f.library).query.length, 64);
+	assert.equal(get(f.library).searchDraft, "");
+	f.library.editDraft("overflow");
+	const count = calls.length;
+	assert.equal(await f.library.addTag("overflow"), false);
+	assert.equal(get(f.library).searchDraft, "overflow");
+	assert.deepEqual(get(f.library).query, [...tags, "Café"]);
+	assert.equal(calls.length, count);
+	assert.match(get(f.library).status, /maximum 64/);
+	f.owner.update((v) => ({ ...v, busy: true }));
+	assert.equal(await f.library.clearSearch(), false);
+	assert.equal(get(f.library).searchDraft, "overflow");
+	assert.equal(calls.length, count);
 });
