@@ -33,7 +33,9 @@ use crate::{
     AppState, Error, SKEW_SECS,
 };
 
-/// Header-authenticated request. Endpoint handlers own body/query policy.
+/// Header-authenticated request. Direct extraction also requires a registered key.
+/// RegistrationRequest wraps this value without the registered-key lookup.
+/// Endpoint handlers own body/query policy; the body hash is checked on reading.
 pub(crate) struct SignedRequest {
     verified: VerifiedRequest,
     parts: Parts,

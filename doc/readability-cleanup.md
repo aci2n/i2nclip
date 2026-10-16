@@ -61,3 +61,19 @@ repository formatting/import commands. After refactoring, run `make test-all`,
 including isolated PostgreSQL and Firefox/Chromium flows. Tests isolate mutable
 state and clean up resources on success and failure. No new tests solely for
 renames/comments; no visual review is needed unless presentation changes.
+
+## Verification completed
+
+The five code commits passed their focused checks and warning-free builds.
+The database refactor passed all 26 database unit tests; envelope changes passed
+41 Rust unit tests and all-target/all-feature Clippy. Client checks reported zero
+Svelte errors or warnings. The audio regressions verify a single input read,
+decrypted uploaded bytes/thumbnail, and bitmap release with no upload on abort.
+
+Final `make test-all` passed 138 client tests, lint, formatting, web/extension
+build checks, 67 Rust library tests, five configuration tests and 30 PostgreSQL
+API tests. Its browser stage passed 63/64: the Firefox touch test received null
+element bounds during the thumbnail-to-video transition. No presentation code or
+test was changed for this failure. The case then passed three isolated runs, and
+the complete `make test-e2e` rerun passed all 64 Firefox/Chromium cases. Browser
+tooling emitted its existing NO_COLOR/FORCE_COLOR environment notices.
