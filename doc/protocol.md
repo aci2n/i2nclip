@@ -20,7 +20,7 @@ key/database and readable success/error responses from unrelated client origins.
 
 `b64url` means URL-safe base64 without padding. Public keys are raw 32-byte Ed25519 keys (43 encoded characters); signatures are 64 bytes (86 characters). Body digests are 64 lowercase hexadecimal characters. Item identifiers (`id`) are the SHA-256 of the complete sealed content blob, encoded as 64 lowercase hexadecimal characters. The server computes them independently. Hashes are globally unique across owners while rows exist; an existing hash returns `409`. There are no UUIDs or caller-chosen content identifiers.
 
-The client generates its identity locally. The server registers only the public key. Registration carries a binary 32-byte key and requires a point accepted by dalek's `VerifyingKey::from_bytes`, and a key that is not weak (`is_weak()` is false). Invalid or weak keys return `400` before consuming an invitation. An administrator issues a one-time registration code using `i2nclip otc issue`. The code contains 16 random bytes encoded as b64url and defaults to a 24-hour lifetime. PostgreSQL stores SHA-256 of the trimmed code. Registration consumes an unexpired code and inserts the public key in one transaction. An already registered key still requires a fresh valid code; `ON CONFLICT DO NOTHING` prevents a duplicate key error. Registration does not prove possession of the private key.
+The client generates its identity locally. The server registers only the public key. Registration carries a binary 32-byte key and requires a point accepted by dalek's `VerifyingKey::from_bytes`, and a key that is not weak (`is_weak()` is false). Invalid or weak payload keys return `400` after header authentication and before consuming an invitation; invalid signatures return `401`. An administrator issues a one-time registration code using `i2nclip otc issue`. The code contains 16 random bytes encoded as b64url and defaults to a 24-hour lifetime. PostgreSQL stores SHA-256 of the trimmed code. Registration consumes an unexpired code and inserts the public key in one transaction. An already registered key still requires a fresh valid code; `ON CONFLICT DO NOTHING` prevents a duplicate key error. Registration requires proof of possession: the existing Authorization envelope is signed by the key being registered, and the binary public_key in the body must match that signer. Signature, timestamp, replay and body-hash checks precede invitation consumption.
 
 This is a fresh-format cutover: deploy client and server together with fresh
 application data and recovery files. Existing artifacts are not converted or
@@ -34,7 +34,7 @@ containers retain their native formats.
 | `GET /api/health` | None | `200`, `{"ok":true}` |
 | `GET /api/quota` | Signed empty GET | `200`, owner limits and usage |
 | `GET /api/ping` | Signed; empty body, registered key, fresh nonce | `204`, empty response; `401` if unauthorized |
-| `POST /api/register-key` | No signature; `{otc: string, public_key: bin}` | `204` |
+| `POST /api/register-key` | Signed by the registering key; `{otc: string, public_key: bin}` | `204` |
 | `GET /api/media` | Signed; client sends no body | `200`, `{"media":[…],"next":null}` or a cursor |
 | `POST /api/media` | Signed POST frame | `201`, one media object |
 | `GET /api/media/{id}` | Signed; client sends no body | `200`, encrypted content bytes |
@@ -61,7 +61,7 @@ Errors are MessagePack maps `{"error":"…"}`. Statuses include `400` for malfor
 
 ## Request authentication
 
-Every media request supplies:
+Every media request and key registration supplies:
 
 ```text
 Authorization: Bearer PUBLIC_KEY.TIMESTAMP.NONCE.BODY_HASH.SIGNATURE
@@ -81,7 +81,7 @@ BODY_HASH\n
 
 Here `\n` denotes one LF byte, including the final LF. There are no blank lines. `ORIGIN` is the server's configured public origin (`I2N_ORIGIN`), not the incoming Host header. The server parses it with the WHATWG-compatible `url` crate and serializes its origin to match the browser's `new URL(serverUrl).origin`: hostnames are normalized, internationalized domains use IDNA, IPv6 is serialized canonically, and default ports are omitted. Nondefault ports remain. Surrounding whitespace and an optional single root slash are accepted. Credentials, paths, queries, fragments, malformed ports, embedded whitespace/control characters, and URLs requiring slash/backslash repairs are rejected. Raw paths such as `/api/..` are rejected even if URL normalization would collapse them to `/`. `METHOD` is the actual HTTP method. `PATH_AND_QUERY` is the exact request target, including query ordering and percent encodings; proxies must preserve it. Timestamp parsing on the server reconstructs its canonical decimal representation for signing.
 
-The server checks timestamp distance from its clock is at most 300 seconds, checks the public-key allow-list, verifies the signature with dalek's `verify_strict`, then records the nonce **before reading the body**. Strict verification rejects weak keys and low-order signature points, including keys stored before registration validation was strengthened. Rejected signatures neither read the body nor spend the nonce. It reads with a streaming size cap and verifies the body digest before performing the operation. Even an invalid body or malformed query spends the nonce after successful header authentication. Retries must use a new nonce and signature.
+The server checks timestamp distance from its clock is at most 300 seconds, checks the public-key allow-list for ordinary requests (registration skips only this lookup), verifies the signature with dalek's `verify_strict`, then records the nonce **before reading the body**. Strict verification rejects weak keys and low-order signature points, including keys stored before registration validation was strengthened. Rejected signatures neither read the body nor spend the nonce. It reads with a streaming size cap and verifies the body digest before performing the operation. Even an invalid body or malformed query spends the nonce after successful header authentication. Retries must use a new nonce and signature.
 
 Nonces are globally unique in PostgreSQL, rather than scoped by public key. A nonce expires at `signed_timestamp + 300`; cleanup deletes entries strictly older than the current time. Future-dated requests can therefore remain acceptable for almost ten minutes from first receipt. Persistence prevents ordinary restart replay; restoring an older database or rolling the clock backward can weaken that guarantee. A captured valid request can be raced before its first use; TLS remains necessary. Authentication checks the timestamp before database work and again after nonce insertion. The second check prevents a request delayed past nonce expiry from proceeding after maintenance deletes an earlier nonce row. A request rejected at that second check may leave an expired nonce for the next cleanup sweep.
 
