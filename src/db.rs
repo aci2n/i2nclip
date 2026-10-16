@@ -52,6 +52,12 @@ pub(crate) struct Quota {
     pub file_count: i64,
 }
 
+#[derive(Serialize)]
+pub(crate) struct TagLabel {
+    pub token: String,
+    pub label: String,
+}
+
 pub(crate) enum MetadataUpdate {
     Updated(Item),
     Conflict(Item),
@@ -301,7 +307,7 @@ impl Database {
         if result.rows_affected() == 0 {
             return Err(Error::Conflict);
         }
-        replace_tokens(&mut tx, &id, &parts.tokens).await?;
+        replace_tokens(&mut tx, &id, &parts.tags).await?;
         tx.commit().await?;
         Ok(Item {
             id,
@@ -309,6 +315,21 @@ impl Database {
             bytes: parts.content.len() as i64,
             created_at,
         })
+    }
+
+    /// One encrypted spelling per owner-scoped token; no media payload is read.
+    pub(crate) async fn tags(&self, owner: [u8; 32]) -> Result<Vec<TagLabel>, Error> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT ON (t.token) t.token, t.label FROM tags t              JOIN files f ON f.id = t.file_id              WHERE f.owner = $1 AND octet_length(t.label) > 0              ORDER BY t.token, t.file_id",
+        ).bind(owner.as_slice()).fetch_all(&self.pool).await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(TagLabel {
+                    token: row.try_get("token")?,
+                    label: URL_SAFE_NO_PAD.encode(row.try_get::<Vec<u8>, _>("label")?),
+                })
+            })
+            .collect()
     }
 
     /// Return one owner-filtered metadata page without fetching content bytes.
@@ -428,7 +449,7 @@ impl Database {
             .bind(owner.as_slice())
             .execute(&mut *tx)
             .await?;
-        replace_tokens(&mut tx, &id, &parts.tokens).await?;
+        replace_tokens(&mut tx, &id, &parts.tags).await?;
         tx.commit().await?;
         Ok(MetadataUpdate::Updated(Item {
             id,
@@ -500,7 +521,7 @@ impl Database {
 async fn replace_tokens(
     tx: &mut Transaction<'_, Postgres>,
     id: &str,
-    tokens: &[String],
+    tags: &[frame::Tag],
 ) -> Result<(), Error> {
     sqlx::query(
         r#"
@@ -511,14 +532,20 @@ async fn replace_tokens(
     .bind(id)
     .execute(&mut **tx)
     .await?;
+    let tokens: Vec<_> = tags.iter().map(|tag| tag.token.as_str()).collect();
+    let labels: Vec<_> = tags
+        .iter()
+        .map(|tag| URL_SAFE_NO_PAD.decode(&tag.label).expect("validated label"))
+        .collect();
     sqlx::query(
         r#"
-        INSERT INTO tags (file_id, token)
-        SELECT $1, token FROM unnest($2::text[]) AS tokens(token)
+        INSERT INTO tags (file_id, token, label)
+        SELECT $1, token, label FROM unnest($2::text[], $3::bytea[]) AS tags(token, label)
         "#,
     )
     .bind(id)
     .bind(tokens)
+    .bind(labels)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -682,6 +709,99 @@ mod tests {
         blob
     }
 
+    fn labeled(tokens: &[String]) -> Vec<frame::Tag> {
+        frame::decode_post(&crate::reference_crypto::encode_post(
+            b"",
+            b"",
+            &tokens.join("\n"),
+        ))
+        .unwrap()
+        .tags
+    }
+
+    #[tokio::test]
+    async fn label_migration_preserves_existing_tokens_without_backfill() {
+        let (db, admin, name) = fixture().await;
+        let token = URL_SAFE_NO_PAD.encode([7; 32]);
+        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), &token);
+        let item = db.add([1; 32], &body).await.unwrap();
+        // Recreate the exact pre-002 schema and migration ledger, with live data.
+        sqlx::raw_sql(
+            "ALTER TABLE tags DROP COLUMN label; DELETE FROM _sqlx_migrations WHERE version = 2;",
+        )
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        db.initialize().await.unwrap();
+        let label: Vec<u8> = sqlx::query_scalar("SELECT label FROM tags WHERE file_id = $1")
+            .bind(&item.id)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert!(label.is_empty());
+        assert!(db.tags([1; 32]).await.unwrap().is_empty());
+        assert_eq!(
+            db.list([1; 32], &[token], None).await.unwrap().0[0].id,
+            item.id
+        );
+        db.initialize().await.unwrap();
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn tag_catalog_is_owner_scoped_distinct_and_tracks_replacements_and_deletions() {
+        let (db, admin, name) = fixture().await;
+        let token = URL_SAFE_NO_PAD.encode([7; 32]);
+        let body = |value| {
+            crate::reference_crypto::encode_post(&sealed_blob(value), &sealed_blob(value), &token)
+        };
+        let a = db.add([1; 32], &body(1)).await.unwrap();
+        let b = db.add([1; 32], &body(2)).await.unwrap();
+        let code = db.issue_code(3600, StorageLimits::default()).await.unwrap();
+        db.consume_code(&code, &[2; 32]).await.unwrap();
+        db.add([2; 32], &body(3)).await.unwrap();
+        assert_eq!(db.tags([1; 32]).await.unwrap().len(), 1);
+        assert!(db.tags([3; 32]).await.unwrap().is_empty());
+        // Empty labels model pre-migration rows, which still participate in search.
+        sqlx::query("UPDATE tags SET label = ''::bytea WHERE file_id = $1")
+            .bind(&a.id)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        db.remove([1; 32], &b.id).await.unwrap();
+        assert!(db.tags([1; 32]).await.unwrap().is_empty());
+        assert_eq!(
+            db.list([1; 32], std::slice::from_ref(&token), None)
+                .await
+                .unwrap()
+                .0
+                .len(),
+            1
+        );
+        let update = crate::reference_crypto::encode_meta(
+            &crypto::body_hash_bytes(&a.meta),
+            &sealed_blob(4),
+            &token,
+        );
+        assert!(matches!(
+            db.update_meta([1; 32], &a.id, &update).await.unwrap(),
+            MetadataUpdate::Updated(_)
+        ));
+        assert_eq!(db.tags([1; 32]).await.unwrap()[0].token, token);
+        let conflict = crate::reference_crypto::encode_meta(&[0; 32], &sealed_blob(5), "");
+        assert!(matches!(
+            db.update_meta([1; 32], &a.id, &conflict).await.unwrap(),
+            MetadataUpdate::Conflict(_)
+        ));
+        assert_eq!(db.tags([1; 32]).await.unwrap().len(), 1);
+        db.remove([1; 32], &a.id).await.unwrap();
+        assert!(db.tags([1; 32]).await.unwrap().is_empty());
+        assert_eq!(db.tags([2; 32]).await.unwrap().len(), 1);
+        db.initialize().await.unwrap();
+        assert_eq!(db.tags([2; 32]).await.unwrap().len(), 1);
+        dispose(db, admin, name).await;
+    }
+
     #[tokio::test]
     async fn bulk_tags_support_maximum_set_replacement_and_clearing() {
         let (db, admin, name) = fixture().await;
@@ -837,9 +957,13 @@ mod tests {
             .execute(&mut *writer)
             .await
             .unwrap();
-        replace_tokens(&mut writer, &item.id, std::slice::from_ref(&token))
-            .await
-            .unwrap();
+        replace_tokens(
+            &mut writer,
+            &item.id,
+            &labeled(std::slice::from_ref(&token)),
+        )
+        .await
+        .unwrap();
         // A filtered list must not expose uncommitted tag/metadata changes.
         let (listed, _) = db.list([1; 32], &[], None).await.unwrap();
         assert_eq!(listed[0].meta, original);
@@ -1150,7 +1274,9 @@ mod tests {
             .execute(&mut *tx)
             .await
             .unwrap();
-            replace_tokens(&mut tx, &id, &tokens).await.unwrap();
+            replace_tokens(&mut tx, &id, &labeled(&tokens))
+                .await
+                .unwrap();
         }
         tx.commit().await.unwrap();
         let (first, cursor) = db.list(owner, &tags, None).await.unwrap();

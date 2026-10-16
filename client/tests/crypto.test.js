@@ -53,7 +53,7 @@ test("library identity matches the rust vectors", async () => {
 	const frame = encodePost({
 		meta,
 		content,
-		tags: vectors.token,
+		tags: [{ label: `AQ${"A".repeat(38)}`, token: vectors.token }],
 	});
 	assert.equal(bytesToHex(frame), vectors.frame_hex);
 
@@ -86,10 +86,10 @@ test("metadata frame begins with exactly the prior ciphertext hash", () => {
 	const body = encodeMeta({
 		prevMetaHash: priorMetaHash,
 		meta: [1, 2],
-		tags: "",
+		tags: [],
 	});
 	assert.deepEqual(body.slice(0, 32), priorMetaHash);
-	assert.deepEqual([...body.slice(32)], [0, 0, 0, 2, 1, 2, 0, 0, 0, 0]);
+	assert.deepEqual([...body.slice(32)], [0, 0, 0, 2, 1, 2, 0, 0, 0, 2, 91, 93]);
 	assert.throws(
 		() => encodeMeta({ prevMetaHash: new Uint8Array(31), meta: [], tags: "" }),
 		/32 bytes/,

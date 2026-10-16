@@ -252,6 +252,9 @@ mod tests {
         let meta_aad = meta_aad(&media_id);
         let meta_ct = encrypt_with_nonce(&seed, &meta_aad, meta_json.as_bytes(), &nonce).unwrap();
         let token = tag_token(&seed, "Vacation").unwrap();
+        let tag_label_aad = format!("i2nclip/v1 tag {token}");
+        let tag_label =
+            encrypt_with_nonce(&seed, tag_label_aad.as_bytes(), b"Vacation", &nonce).unwrap();
         let cafe = tag_token(&seed, "Café").unwrap();
         let sign_nonce_raw = [0x22u8; 16];
         let sign_nonce = URL_SAFE_NO_PAD.encode(sign_nonce_raw);
@@ -283,6 +286,8 @@ mod tests {
             public_key: id.registration_key(),
             tag: "Vacation".to_string(),
             token,
+            tag_label_aad,
+            tag_label_hex: hex(&tag_label),
             cafe_tag: "Café".to_string(),
             cafe_token: cafe,
             media_id: media_id.to_string(),
@@ -325,6 +330,8 @@ mod tests {
         public_key: String,
         tag: String,
         token: String,
+        tag_label_aad: String,
+        tag_label_hex: String,
         cafe_tag: String,
         cafe_token: String,
         media_id: String,

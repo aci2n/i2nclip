@@ -20,6 +20,7 @@ import {
 	encodeMetaPlain,
 	MAX_META_PLAINTEXT,
 } from "./protocol/meta-plain.js";
+import { openTag, sealTags } from "./protocol/tag-labels.js";
 import { uniqueTags } from "./protocol/tags.js";
 
 // Plaintext limit. The server allows this plus a small encryption header.
@@ -64,11 +65,11 @@ export async function upload({
 		metadata,
 		thumb,
 	);
-	const tokens = await tagTokens(key, metadata.tags);
+	const tokens = await sealTags(key, metadata.tags);
 	const body = encodePost({
 		meta,
 		content,
-		tags: tokens.join("\n"),
+		tags: tokens,
 	});
 	const saved = await send(
 		serverUrl,
@@ -85,6 +86,33 @@ export async function upload({
 		metadata,
 		thumb: storedThumb,
 		metaHash: await bodyHash(meta),
+	};
+}
+
+export async function getTags({ serverUrl, key, signal }) {
+	const { tags } = await send(
+		serverUrl,
+		key,
+		"GET",
+		"/api/tags",
+		new Uint8Array(),
+		undefined,
+		signal,
+	);
+	const labels = [];
+	let invalid = 0;
+	for (const entry of tags) {
+		signal?.throwIfAborted();
+		try {
+			labels.push(await openTag(key, entry));
+		} catch {
+			invalid++;
+		}
+	}
+	signal?.throwIfAborted();
+	return {
+		tags: uniqueTags(labels).sort((a, b) => a.localeCompare(b)),
+		invalid,
 	};
 }
 
@@ -152,12 +180,12 @@ export async function updateMetadata({
 	prevMetaHash,
 	signal,
 }) {
-	const tokens = await tagTokens(key, metadata.tags ?? []);
+	const tokens = await sealTags(key, metadata.tags ?? []);
 	const { meta } = await sealedMetadata(key, id, metadata, thumb);
 	const body = encodeMeta({
 		prevMetaHash: hexToBytes(prevMetaHash),
 		meta,
-		tags: tokens.join("\n"),
+		tags: tokens,
 	});
 	const response = await signedFetch(
 		serverUrl,

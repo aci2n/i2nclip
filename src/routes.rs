@@ -329,6 +329,7 @@ mod request_tests {
         for (method, path) in [
             ("GET", "/api/ping"),
             ("GET", "/api/quota"),
+            ("GET", "/api/tags"),
             ("GET", "/api/media"),
             ("POST", "/api/media"),
             ("GET", item.as_str()),

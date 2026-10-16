@@ -5,16 +5,21 @@ import { createLibrary } from "../stores/library.js";
 import { createPairing } from "../stores/pairing.js";
 import { createPreferences } from "../stores/preferences.js";
 import { createSession } from "../stores/session.js";
+import { createTags } from "../stores/tags.js";
 import { createUploads } from "../stores/uploads.js";
 import Library from "./Library.svelte";
 import Settings from "./Settings.svelte";
 import Unlock from "./Unlock.svelte";
 
 const session = createSession();
-const library = createLibrary(session);
+const tags = createTags(session);
+const library = createLibrary(session, { onChange: tags.refresh });
 const preferences = createPreferences();
 const uploads = createUploads(session, {
-	onComplete: library.refresh,
+	onComplete: () => {
+		void tags.refresh();
+		return library.refresh();
+	},
 	preferences,
 });
 const pairing = createPairing(session);
@@ -52,6 +57,7 @@ onDestroy(() => {
 	pairing.dispose();
 	uploads.dispose();
 	library.dispose();
+	tags.dispose();
 	session.dispose();
 });
 </script>
@@ -108,6 +114,7 @@ onDestroy(() => {
 			<Library
 				{session}
 				{library}
+				{tags}
 				{uploads}
 				onsettings={(event) => navigate(event, "settings")}
 			/>

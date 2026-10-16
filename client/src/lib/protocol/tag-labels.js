@@ -1,0 +1,32 @@
+import { b64urlToBytes, bytesToB64url, utf8 } from "./bytes.js";
+import { decrypt, encrypt, normalizeTag, tagToken } from "./crypto.js";
+import { uniqueTags } from "./tags.js";
+
+export function tagLabelAad(token) {
+	return utf8(`i2nclip/v1 tag ${token}`);
+}
+
+export async function sealTags(key, tags) {
+	const unique = uniqueTags(tags);
+	if (unique.length > 64) {
+		throw new Error("Too many tags (maximum 64).");
+	}
+	return Promise.all(
+		unique.map(async (tag) => {
+			const token = await tagToken(key, tag);
+			const label = await encrypt(key, tagLabelAad(token), utf8(tag));
+			return { token, label: bytesToB64url(label) };
+		}),
+	);
+}
+
+export async function openTag(key, { token, label }) {
+	const text = new TextDecoder("utf-8", { fatal: true }).decode(
+		await decrypt(key, tagLabelAad(token), b64urlToBytes(label)),
+	);
+	normalizeTag(text);
+	if (text !== text.trim() || (await tagToken(key, text)) !== token) {
+		throw new Error("Tag label does not match its token.");
+	}
+	return text;
+}

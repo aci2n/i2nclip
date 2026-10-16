@@ -7,13 +7,11 @@ test("upload generates searchable ordinary tags with a compact disclosure", asyn
 	await createLibrary(page, app);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const name = `${Array.from({ length: 45 }, (_, i) => `a${i}`).join(" ")}.txt`;
-	await page
-		.getByLabel("Upload", { exact: true })
-		.setInputFiles({
-			name,
-			mimeType: "text/plain",
-			buffer: Buffer.from("Useful text"),
-		});
+	await page.getByLabel("Upload", { exact: true }).setInputFiles({
+		name,
+		mimeType: "text/plain",
+		buffer: Buffer.from("Useful text"),
+	});
 	const card = page.getByRole("article");
 	await expect(card.locator(".tag-text")).toHaveCount(6);
 	await card

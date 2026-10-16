@@ -82,35 +82,37 @@ Nonces are globally unique in PostgreSQL, rather than scoped by public key. A no
 
 ## Binary frames
 
-`chunk(X)` is `uint32be(byte_length(X)) || X`. Every field must be present, including zero-length token text. Decoders reject truncation, excessive field lengths, invalid UTF-8 text, and trailing bytes.
+`chunk(X)` is `uint32be(byte_length(X)) || X`. Every field must be present, including an empty JSON array for no tags. Decoders reject truncation, excessive field lengths, invalid UTF-8 text, and trailing bytes.
 
 ```text
 POST /api/media:
     chunk(encrypted_metadata)
     chunk(encrypted_content)
-    chunk(UTF8(tokens joined by LF))
+    chunk(UTF8(JSON array of {token, label}))
 
 PUT /api/media/{id}/meta:
     raw SHA-256 of the previously read encrypted metadata (32 bytes)
     chunk(encrypted_metadata)
-    chunk(UTF8(tokens joined by LF))
+    chunk(UTF8(JSON array of {token, label}))
 ```
 
-Token parsing trims lines, ignores empty lines, and removes duplicates. Each token must have 43 characters in `[A-Za-z0-9_-]`; the server does not decode it to check canonical base64. Maximum distinct tokens: 64. The server only checks encrypted blobs have version byte `0x01` and at least 29 bytes; it cannot verify GCM authentication without the client key.
+Tag entries contain an HMAC token and a base64url encrypted label. The server validates at most 64 entries, deduplicates tokens, and requires labels with version byte `0x01` and 30–285 bytes. Labels encrypt the original tag spelling using the existing encryption key, a fresh nonce and AAD `i2nclip/v1 tag TOKEN`. Clients decrypt and verify the label's HMAC before suggesting it. The server cannot verify GCM authentication without the client key. Query tokens retain their existing 43-character alphabet and deduplication rules.
+
+Signed `GET /api/tags` returns `{tags: [{token, label}]}`, one nonempty encrypted label per distinct owner-scoped token. Existing empty labels are omitted. Labels are replaced with their file's metadata and cascade on deletion; catalog reads never fetch file metadata or content.
 
 | Limit | Bytes/count |
 | --- | --- |
 | Client plaintext file | 33,554,432 (32 MiB) |
 | Server encrypted content | 33,554,496 (32 MiB + 64) |
 | Encrypted metadata | 65,536 |
-| Token text field | 4,096 |
-| Total authenticated request body | 33,624,140 |
-| Metadata PUT request body | 69,672 |
+| Tag JSON field | 32,768 |
+| Total authenticated request body | 33,652,812 |
+| Metadata PUT request body | 98,344 |
 | Media GET/DELETE request body | 0 |
 | Registration HTTP body | 4,096 |
 | Registration code text | 512 |
 
-After header authentication, each media handler selects its byte cap: POST allows 33,624,140 bytes, PUT allows 69,672 bytes (the 32-byte hash, two chunk lengths, encrypted metadata, and token text), and GET/DELETE require an empty body. Both the early Content-Length check and the streaming reader use that cap; missing or dishonest length headers cannot bypass the byte count. Nonempty GET/DELETE bodies return `413`. Authentication still happens before body reads and early size rejection, so authenticated oversized requests spend their nonce. Registration retains its separate 4,096-byte streaming cap. The server does not enforce request Content-Type. Upload admission has four global slots and one per key; content downloads have sixteen global slots and two per key, per router. Per-key permits are acquired before global permits and cover the same transfer lifetime. Each registered key defaults to 536,870,912 encrypted-content bytes (512 MiB) and 10,000 files. Administrators can assign invitation limits or update key limits through the CLI. Uploads lock the owning quota row and reserve encrypted-content bytes and a file slot in the insertion transaction; exceeding either limit returns `409` with `Library storage limit reached.`. Exact boundaries are allowed. Database checks enforce usage at or below both limits. Reductions below current usage are rejected; existing files remain readable, editable, and deletable at the limit. Deletion decrements usage in the same transaction as removing the owned file; failed, foreign, or repeated deletions release no capacity. Failed uploads roll back reservations. Metadata and PostgreSQL physical storage overhead are not included in the byte quota.
+After header authentication, each media handler selects its byte cap: POST allows 33,652,812 bytes, PUT allows 98,344 bytes (the 32-byte hash, two chunk lengths, encrypted metadata, and tag JSON), and GET/DELETE require an empty body. Both the early Content-Length check and the streaming reader use that cap; missing or dishonest length headers cannot bypass the byte count. Nonempty GET/DELETE bodies return `413`. Authentication still happens before body reads and early size rejection, so authenticated oversized requests spend their nonce. Registration retains its separate 4,096-byte streaming cap. The server does not enforce request Content-Type. Upload admission has four global slots and one per key; content downloads have sixteen global slots and two per key, per router. Per-key permits are acquired before global permits and cover the same transfer lifetime. Each registered key defaults to 536,870,912 encrypted-content bytes (512 MiB) and 10,000 files. Administrators can assign invitation limits or update key limits through the CLI. Uploads lock the owning quota row and reserve encrypted-content bytes and a file slot in the insertion transaction; exceeding either limit returns `409` with `Library storage limit reached.`. Exact boundaries are allowed. Database checks enforce usage at or below both limits. Reductions below current usage are rejected; existing files remain readable, editable, and deletable at the limit. Deletion decrements usage in the same transaction as removing the owned file; failed, foreign, or repeated deletions release no capacity. Failed uploads roll back reservations. Metadata and PostgreSQL physical storage overhead are not included in the byte quota.
 
 Complete body reads have total deadlines: 120 seconds for media POST, 30 seconds for PUT, and 10 seconds for media GET/DELETE and registration. The clock starts when body reading begins, after media authentication and early Content-Length checks, and never resets on chunks. Timeout drops the body and partial buffer and returns `408`, `{"error":"request body timed out"}`, with `Cache-Control: no-store`. Authentication nonces are already spent; timed-out registrations do not consume invitation codes. The deadline does not cover headers, authentication, subsequent hashing, or storage operations.
 
@@ -118,7 +120,7 @@ Complete body reads have total deadlines: 120 seconds for media POST, 30 seconds
 
 PostgreSQL holds registered keys, per-key limits and usage counters in `key_quotas`, hashed registration codes, spent nonces, sealed content, encrypted metadata, and tag tokens. Content is a length-constrained immutable `bytea` value with external TOAST storage. Reported size comes from the stored generated `content_bytes = octet_length(content)` column. Quota checks read one quota row, with no per-request SUM/COUNT. Startup runs pending embedded SQLx migrations; the initial migration performs no media aggregation. Every media operation filters by the authenticated owner; knowing another owner's hash does not authorize a download.
 
-The client encrypts content with `UTF8("i2nclip/v1 content")` as AAD. This purpose label is fixed and contains no owner key; each owner's encryption key is already derived from that owner's secret seed. The server cannot verify the GCM tag and cannot enforce such a client-side binding. The client hashes the complete sealed blob (`0x01 || nonce[12] || ciphertext || tag[16]`) with SHA-256 and encodes the result as 64 lowercase hexadecimal characters. It then encrypts metadata using `UTF8("i2nclip/v1 meta " + hash)` as AAD. The POST frame contains only metadata, content, and token text. The server computes the content hash; it does not accept a client identifier. Content GETs check that the received sealed bytes hash to the requested identifier before decryption.
+The client encrypts content with `UTF8("i2nclip/v1 content")` as AAD. This purpose label is fixed and contains no owner key; each owner's encryption key is already derived from that owner's secret seed. The server cannot verify the GCM tag and cannot enforce such a client-side binding. The client hashes the complete sealed blob (`0x01 || nonce[12] || ciphertext || tag[16]`) with SHA-256 and encodes the result as 64 lowercase hexadecimal characters. It then encrypts metadata using `UTF8("i2nclip/v1 meta " + hash)` as AAD. The POST frame contains only metadata, content, and tag JSON. The server computes the content hash; it does not accept a client identifier. Content GETs check that the received sealed bytes hash to the requested identifier before decryption.
 
 Startup runs numbered SQL files from `sql/` through SQLx before accepting requests. SQLx serializes migration runners with a database-local advisory lock, records applied versions and checksums in `_sqlx_migrations`, and applies each migration transactionally. Restarts validate applied migrations and skip them; failures prevent startup. Keep applied files unchanged and add a new numbered file for each schema change. `001_init.sql` is the initial migration. Existing databases must already match this schema; startup does not convert older schemas or backfill quota counters. Database workflows use PostgreSQL's default READ COMMITTED isolation. Uploads and deletions lock the owner's quota row before changing file rows; metadata updates lock the file row before comparing or replacing metadata/tags. These locks and transaction boundaries preserve counters and complete item snapshots across competing application writers.
 

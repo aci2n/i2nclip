@@ -163,3 +163,5 @@ Formatting commands use stable Rust 1.99.0 / rustfmt 1.10.0, with import groupin
 Client Makefile targets prepare locked dependencies automatically. Browser tests build their Rust helpers and bind isolated listeners to loopback port 0. PostgreSQL uses a disposable container with a random host port unless an administrator URL is explicitly supplied. See [test preparation and isolation](doc/test-pipeline.md) for fresh-clone prerequisites and commands.
 
 Uploads receive up to 40 automatic tags from their stored media type, format and filename words. They are ordinary editable tags; edits never regenerate them. Each file allows 64 tags total. Cards show six tags initially; **Show all tags** reveals the rest. Existing files are unchanged.
+
+The authenticated tag catalog returns opaque search tokens with encrypted labels. Labels are decrypted and verified only in the unlocked client, held in memory, and refreshed after changes. Existing files remain searchable but enter autocomplete only after metadata is saved. No backfill runs. Deploy the updated client and server together when changing the tag frame format.

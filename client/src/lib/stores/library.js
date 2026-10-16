@@ -8,6 +8,7 @@ export function createLibrary(
 	{
 		http = api,
 		mediaOptions = {},
+		onChange = () => {},
 		confirm = (message) => globalThis.confirm(message),
 	} = {},
 ) {
@@ -183,7 +184,13 @@ export function createLibrary(
 		reveal,
 		closePreview,
 		download: (id) => cards.get(id)?.media.download(),
-		updateMetadata: (id, patch) => cards.get(id)?.media.updateMetadata(patch),
+		async updateMetadata(id, patch) {
+			const saved = await cards.get(id)?.media.updateMetadata(patch);
+			if (saved) {
+				void onChange();
+			}
+			return saved;
+		},
 		async remove(id) {
 			const row = cards.get(id);
 			if (
@@ -197,6 +204,7 @@ export function createLibrary(
 				return false;
 			}
 			if (await row.media.remove()) {
+				void onChange();
 				closePreview();
 				return true;
 			}

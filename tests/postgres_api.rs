@@ -90,6 +90,41 @@ async fn authenticated_ping_checks_registered_signatures_empty_bodies_and_replay
     }
 }
 
+#[tokio::test]
+async fn tag_catalog_requires_signed_empty_requests_and_filters_owners() {
+    let owner = new_identity();
+    let other = new_identity();
+    let stranger = new_identity();
+    let (_db, app) = app(&[&owner, &other]).await;
+    let token = client_crypto::tag_token(&owner.seed, "Holiday").unwrap();
+    let mut content = vec![0; 30];
+    content[0] = 1;
+    let body = client_crypto::encode_post(&content, &content, &token);
+    assert_eq!(
+        call(&app, &owner, "POST", "/api/media", body).await.0,
+        StatusCode::CREATED
+    );
+    let (status, body) = call(&app, &owner, "GET", "/api/tags", vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["tags"].as_array().unwrap().len(), 1);
+    assert_eq!(value["tags"][0]["token"], token);
+    assert!(!String::from_utf8(body).unwrap().contains("Holiday"));
+    let (_, body) = call(&app, &other, "GET", "/api/tags", vec![]).await;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["tags"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        call(&app, &stranger, "GET", "/api/tags", vec![]).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&app, &owner, "GET", "/api/tags", vec![1]).await.0,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+}
+
 fn raw_hash(bytes: &[u8]) -> [u8; 32] {
     let encoded = crypto::body_hash(bytes);
     std::array::from_fn(|index| u8::from_str_radix(&encoded[index * 2..index * 2 + 2], 16).unwrap())
@@ -423,13 +458,13 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     let id = hash.as_str();
     let tags = "\n".repeat(4096);
     let body = client_crypto::encode_post(&meta, &content, &tags);
-    assert_eq!(body.len(), 33_624_140);
+    assert_eq!(body.len(), 33_652_812);
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
     );
     let body = client_crypto::encode_meta(&raw_hash(&meta), &meta, &tags);
-    assert_eq!(body.len(), 69_672);
+    assert_eq!(body.len(), 98_344);
     assert_eq!(
         call(&app, &owner, "PUT", &format!("/api/media/{id}/meta"), body)
             .await
@@ -474,8 +509,8 @@ async fn media_body_caps_reject_declared_sizes_before_polling() {
     let (_dir, app) = app(&[&owner]).await;
     let id = "8888888888888888888888888888888888888888888888888888888888888888";
     for (method, path, cap) in [
-        ("POST", "/api/media".to_string(), 33_624_140),
-        ("PUT", format!("/api/media/{id}/meta"), 69_672),
+        ("POST", "/api/media".to_string(), 33_652_812),
+        ("PUT", format!("/api/media/{id}/meta"), 98_344),
         ("GET", "/api/media".to_string(), 0),
         ("DELETE", format!("/api/media/{id}"), 0),
     ] {
@@ -532,8 +567,8 @@ async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
     let (_dir, app) = app(&[&owner]).await;
     let id = "9999999999999999999999999999999999999999999999999999999999999999";
     for (method, path, cap) in [
-        ("POST", "/api/media".to_string(), 33_624_140),
-        ("PUT", format!("/api/media/{id}/meta"), 69_672),
+        ("POST", "/api/media".to_string(), 33_652_812),
+        ("PUT", format!("/api/media/{id}/meta"), 98_344),
         ("GET", "/api/media".to_string(), 0),
         ("DELETE", format!("/api/media/{id}"), 0),
         ("POST", "/api/register-key".to_string(), 4096),
@@ -1182,7 +1217,7 @@ async fn upload_admission_is_shared_and_releases_capacity() {
     for (body, expected) in [
         (Body::new(broken), StatusCode::BAD_REQUEST),
         (
-            Body::from(vec![0; 33_624_141]),
+            Body::from(vec![0; 33_652_813]),
             StatusCode::PAYLOAD_TOO_LARGE,
         ),
         (Body::from("wrong signed bytes"), StatusCode::UNAUTHORIZED),

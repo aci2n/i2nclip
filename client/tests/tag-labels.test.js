@@ -1,0 +1,120 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import { getTags } from "../src/lib/api.js";
+import {
+	bytesToB64url,
+	bytesToHex,
+	hexToBytes,
+	utf8,
+} from "../src/lib/protocol/bytes.js";
+import { encrypt, loadKey, tagToken } from "../src/lib/protocol/crypto.js";
+import {
+	openTag,
+	sealTags,
+	tagLabelAad,
+} from "../src/lib/protocol/tag-labels.js";
+
+const vectors = JSON.parse(
+	readFileSync(new URL("./test-vectors.json", import.meta.url)),
+);
+
+test("tag labels share Rust vectors and bind ciphertext to the token", async () => {
+	const key = await loadKey(vectors.private_key);
+	const aad = tagLabelAad(vectors.token);
+	assert.equal(new TextDecoder().decode(aad), vectors.tag_label_aad);
+	const sealed = await encrypt(
+		key,
+		aad,
+		utf8("Vacation"),
+		hexToBytes(vectors.nonce_hex),
+	);
+	assert.equal(bytesToHex(sealed), vectors.tag_label_hex);
+	const pair = { token: vectors.token, label: bytesToB64url(sealed) };
+	assert.equal(await openTag(key, pair), "Vacation");
+	await assert.rejects(
+		openTag(key, { ...pair, token: await tagToken(key, "other") }),
+	);
+	sealed[sealed.length - 1] ^= 1;
+	await assert.rejects(openTag(key, { ...pair, label: bytesToB64url(sealed) }));
+	const mismatch = await encrypt(key, aad, utf8("Other"));
+	await assert.rejects(
+		openTag(key, { ...pair, label: bytesToB64url(mismatch) }),
+		/does not match/,
+	);
+});
+
+test("catalog isolates damaged entries and seals at most 64 distinct tags", async (t) => {
+	const key = await loadKey(vectors.private_key);
+	const tags = await sealTags(key, ["Vacation", "vacation", "Café"]);
+	assert.equal(tags.length, 2);
+	t.mock.method(globalThis, "fetch", async () =>
+		Response.json({
+			tags: [tags[0], { token: tags[0].token, label: "invalid" }, tags[1]],
+		}),
+	);
+	assert.deepEqual(await getTags({ key, serverUrl: "https://clip.example" }), {
+		tags: ["Café", "Vacation"],
+		invalid: 1,
+	});
+	assert.equal(
+		(
+			await sealTags(
+				key,
+				Array.from({ length: 64 }, (_, i) => `tag${i}`),
+			)
+		).length,
+		64,
+	);
+	await assert.rejects(
+		sealTags(
+			key,
+			Array.from({ length: 65 }, (_, i) => `tag${i}`),
+		),
+		/maximum 64/,
+	);
+});
+
+test("upload labels and encrypted metadata contain the same ordinary tags", async (t) => {
+	const { upload } = await import("../src/lib/api.js");
+	const { decodeMetaPlain } = await import("../src/lib/protocol/meta-plain.js");
+	const { decrypt, metaAad } = await import("../src/lib/protocol/crypto.js");
+	const key = await loadKey(vectors.private_key);
+	let frame;
+	t.mock.method(globalThis, "fetch", async (_url, options) => {
+		frame = options.body;
+		return Response.json({ id: "saved" });
+	});
+	const saved = await upload({
+		serverUrl: "https://clip.example",
+		key,
+		bytes: new Uint8Array([1]),
+		name: "Summer holiday.txt",
+		contentType: "text/plain",
+	});
+	let offset = 0;
+	const read = () => {
+		const length = new DataView(
+			frame.buffer,
+			frame.byteOffset + offset,
+			4,
+		).getUint32(0);
+		offset += 4;
+		const data = frame.subarray(offset, offset + length);
+		offset += length;
+		return data;
+	};
+	const metadata = read();
+	const content = read();
+	const tags = JSON.parse(new TextDecoder().decode(read()));
+	const { bodyHash } = await import("../src/lib/protocol/crypto.js");
+	const opened = decodeMetaPlain(
+		await decrypt(key, metaAad(await bodyHash(content)), metadata),
+	);
+	assert.deepEqual(opened.metadata.tags, saved.metadata.tags);
+	assert.deepEqual(
+		await Promise.all(tags.map((tag) => openTag(key, tag))),
+		saved.metadata.tags,
+	);
+	assert(!new TextDecoder().decode(frame).includes("holiday"));
+});

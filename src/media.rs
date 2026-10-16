@@ -29,6 +29,7 @@ use crate::{
 pub(crate) fn router() -> Router<AppState> {
     Router::new()
         .route("/api/quota", get(quota))
+        .route("/api/tags", get(tags))
         .route("/api/media", get(list).post(upload))
         .route("/api/media/{id}", get(download).delete(remove))
         .route("/api/media/{id}/meta", put(update_metadata))
@@ -78,6 +79,17 @@ fn list_query(query: Option<&str>) -> Result<ListQuery, Error> {
         }
     }
     Ok((frame::parse_query_tokens(values)?, after))
+}
+
+async fn tags(State(state): State<AppState>, request: SignedRequest) -> Response {
+    let owner = match request.empty().await {
+        Ok(owner) => owner,
+        Err(response) => return *response,
+    };
+    match state.db.tags(owner).await {
+        Ok(tags) => json_response(StatusCode::OK, json!({ "tags": tags })),
+        Err(error) => fail(error),
+    }
 }
 
 async fn quota(State(state): State<AppState>, media: SignedRequest) -> Response {

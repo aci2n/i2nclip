@@ -6,21 +6,24 @@
 //!   bytes     metadata blob
 //!   uint32be  length of encrypted content
 //!   bytes     content blob
-//!   uint32be  length of the tag-token text
-//!   bytes     UTF-8 tokens separated by '\n'
+//!   uint32be  length of the tag JSON
+//!   bytes     UTF-8 JSON token/label pairs
 //!
 //! PUT /api/media/{id}/meta
 //!   bytes     SHA-256 of the prior encrypted metadata (32 bytes)
 //!   uint32be  length of encrypted metadata
 //!   bytes     metadata blob
-//!   uint32be  length of the tag-token text
-//!   bytes     UTF-8 tokens separated by '\n'
+//!   uint32be  length of the tag JSON
+//!   bytes     UTF-8 JSON token/label pairs
 //! ```
 //!
 //! Lengths are big-endian. The JavaScript client in `client/src/lib/protocol/frame.js` writes
 //! the same layout. `client/tests/test-vectors.json` includes one full POST frame.
 
-use crate::{Error, MAX_CONTENT, MAX_META, MAX_TAGS, MAX_TOKEN_TEXT};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use serde::Deserialize;
+
+use crate::{crypto, Error, MAX_CONTENT, MAX_META, MAX_TAGS, MAX_TOKEN_TEXT};
 
 /// Canonical SHA-256 of the complete sealed content.
 pub(crate) fn parse_id(id: &str) -> Result<String, Error> {
@@ -35,13 +38,13 @@ pub(crate) fn parse_id(id: &str) -> Result<String, Error> {
 pub(crate) struct PostParts<'body> {
     pub meta: &'body [u8],
     pub content: &'body [u8],
-    pub tokens: Vec<String>,
+    pub tags: Vec<Tag>,
 }
 
 pub(crate) struct MetaParts<'body> {
     pub prev_meta_hash: [u8; 32],
     pub meta: &'body [u8],
-    pub tokens: Vec<String>,
+    pub tags: Vec<Tag>,
 }
 
 pub(crate) fn decode_post(bytes: &[u8]) -> Result<PostParts<'_>, Error> {
@@ -57,7 +60,7 @@ pub(crate) fn decode_post(bytes: &[u8]) -> Result<PostParts<'_>, Error> {
     Ok(PostParts {
         meta,
         content,
-        tokens: parse_tokens(tags)?,
+        tags: parse_tags(tags)?,
     })
 }
 
@@ -77,7 +80,7 @@ pub(crate) fn decode_meta(bytes: &[u8]) -> Result<MetaParts<'_>, Error> {
     Ok(MetaParts {
         prev_meta_hash,
         meta,
-        tokens: parse_tokens(tags)?,
+        tags: parse_tags(tags)?,
     })
 }
 
@@ -99,10 +102,37 @@ fn read_chunk<'a>(data: &'a [u8], i: &mut usize, max: usize) -> Result<&'a [u8],
     Ok(chunk)
 }
 
-/// Split newline-separated HMAC tokens. Empty lines are ignored. Duplicates
-/// are dropped so a repeated token cannot trip the SQL primary key.
-pub(crate) fn parse_tokens(text: &str) -> Result<Vec<String>, Error> {
-    collect_tokens(text.split('\n').map(str::trim))
+/// Wire labels are sealed UTF-8 strings; only the client can authenticate them.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Tag {
+    pub token: String,
+    pub label: String,
+}
+
+fn parse_tags(text: &str) -> Result<Vec<Tag>, Error> {
+    let entries: Vec<Tag> =
+        serde_json::from_str(text).map_err(|_| Error::BadRequest("invalid tag labels".into()))?;
+    if entries.len() > MAX_TAGS {
+        return Err(Error::BadRequest("too many tags".into()));
+    }
+    let mut tags: Vec<Tag> = Vec::new();
+    for tag in entries {
+        if !is_token(&tag.token) {
+            return Err(Error::BadRequest("bad tag token".into()));
+        }
+        let label = URL_SAFE_NO_PAD
+            .decode(&tag.label)
+            .map_err(|_| Error::BadRequest("bad tag label".into()))?;
+        if label.len() < 30 {
+            return Err(Error::BadRequest("empty tag label".into()));
+        }
+        crypto::check_blob(&label, 285)?;
+        if !tags.iter().any(|existing| existing.token == tag.token) {
+            tags.push(tag);
+        }
+    }
+    Ok(tags)
 }
 
 /// 32 bytes of base64url with no padding is always 43 characters from this alphabet.
@@ -191,13 +221,44 @@ mod tests {
         let large_info = measure(&large);
         assert_eq!(small_info.bytes_total, large_info.bytes_total);
         assert_eq!(small_info.bytes_max, large_info.bytes_max);
-        assert!(large_info.bytes_total <= 8192, "{large_info:?}");
+        assert!(large_info.bytes_total <= 65536, "{large_info:?}");
         assert_eq!(large_info.bytes_current, 0);
         println!("POST without tags: {post_info:?}");
         println!("PUT without tags: {put_info:?}");
         println!("Old copy pattern: {copied_info:?}");
         println!("POST with 64 tags, 1 KiB content: {small_info:?}");
         println!("POST with 64 tags, maximum content: {large_info:?}");
+    }
+
+    #[test]
+    fn labeled_tags_are_bounded_and_must_have_sealed_labels() {
+        let valid = |count| {
+            (0..count)
+                .map(|n| format!("{n:043}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert_eq!(
+            decode_post(&encode_post(b"meta", b"content", &valid(MAX_TAGS)))
+                .unwrap()
+                .tags
+                .len(),
+            MAX_TAGS
+        );
+        assert!(decode_post(&encode_post(b"meta", b"content", &valid(MAX_TAGS + 1))).is_err());
+        let tag = |label: &str| {
+            serde_json::json!([{ "token": "A".repeat(43), "label": label }]).to_string()
+        };
+        for json in [
+            tag(""),
+            tag("!"),
+            tag(&URL_SAFE_NO_PAD.encode([1; 286])),
+            "{}".into(),
+            "[]junk".into(),
+        ] {
+            assert!(parse_tags(&json).is_err());
+        }
+        assert!(parse_tags(&" ".repeat(MAX_TOKEN_TEXT)).is_err());
     }
 
     #[test]
@@ -210,7 +271,14 @@ mod tests {
         let parts = decode_post(&body).unwrap();
         assert_eq!(parts.meta, b"meta");
         assert_eq!(parts.content, b"content");
-        assert_eq!(parts.tokens, vec![token.clone()]);
+        assert_eq!(
+            parts
+                .tags
+                .iter()
+                .map(|tag| tag.token.clone())
+                .collect::<Vec<_>>(),
+            vec![token.clone()]
+        );
         assert!(decode_post(&body[..body.len() - 1]).is_err());
         let mut extra = body.clone();
         extra.push(0);
@@ -219,7 +287,13 @@ mod tests {
         let meta = decode_meta(&meta_body).unwrap();
         assert_eq!(meta.prev_meta_hash, [0; 32]);
         assert_eq!(meta.meta, b"meta");
-        assert_eq!(meta.tokens, vec![token.clone()]);
+        assert_eq!(
+            meta.tags
+                .iter()
+                .map(|tag| tag.token.clone())
+                .collect::<Vec<_>>(),
+            vec![token.clone()]
+        );
         let other = "B".repeat(43);
         let queried = parse_query_tokens(vec![
             format!(" {token} "),

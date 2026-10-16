@@ -7,7 +7,7 @@ import Uploads from "../components/Uploads.svelte";
 import { canPreview } from "../media/format.js";
 import { pickFiles, selectFiles } from "../ui/dom.js";
 
-let { session, library, uploads, onsettings } = $props();
+let { session, library, tags, uploads, onsettings } = $props();
 let filesInput = $state();
 onDestroy(() => library.closePreview());
 const previewable = $derived(
@@ -69,6 +69,19 @@ function movePreview(step) {
 			onchange={(event) => selectFiles(event, uploads.upload)}
 		>
 	</div>
+	{#if $tags.error || $tags.warning}
+		<div class="feedback" role="status">
+			{$tags.error ? `Tag suggestions: ${$tags.error}` : $tags.warning}
+			<button
+				type="button"
+				class="secondary"
+				disabled={$tags.loading}
+				onclick={tags.refresh}
+			>
+				Retry tag suggestions
+			</button>
+		</div>
+	{/if}
 	{#if $library.status}
 		<p class="feedback error" role="alert">{$library.status}</p>
 	{/if}
