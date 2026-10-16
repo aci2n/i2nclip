@@ -72,15 +72,15 @@ export async function upload({
 		content,
 		tags: tokens,
 	});
-	const saved = await send(
+	const saved = await requestDocument({
 		serverUrl,
 		key,
-		"POST",
-		"/api/media",
+		method: "POST",
+		path: "/api/media",
 		body,
-		onProgress,
+		onUploadProgress: onProgress,
 		signal,
-	);
+	});
 	return {
 		...saved,
 		createdAt: saved.created_at,
@@ -91,15 +91,14 @@ export async function upload({
 }
 
 export async function getTags({ serverUrl, key, signal }) {
-	const { tags } = await send(
+	const { tags } = await requestDocument({
 		serverUrl,
 		key,
-		"GET",
-		"/api/tags",
-		new Uint8Array(),
-		undefined,
+		method: "GET",
+		path: "/api/tags",
+		body: new Uint8Array(),
 		signal,
-	);
+	});
 	if (!Array.isArray(tags)) {
 		throw new Error("Invalid tag catalog.");
 	}
@@ -121,15 +120,14 @@ export async function getTags({ serverUrl, key, signal }) {
 }
 
 export async function getQuota({ serverUrl, key, signal }) {
-	return send(
+	return requestDocument({
 		serverUrl,
 		key,
-		"GET",
-		"/api/quota",
-		new Uint8Array(),
-		undefined,
+		method: "GET",
+		path: "/api/quota",
+		body: new Uint8Array(),
 		signal,
-	);
+	});
 }
 
 export async function list({ serverUrl, key, tags, after, signal }) {
@@ -143,15 +141,14 @@ export async function list({ serverUrl, key, tags, after, signal }) {
 	}
 	const query = params.toString();
 	const path = query ? `/api/media?${query}` : "/api/media";
-	const page = await send(
+	const page = await requestDocument({
 		serverUrl,
 		key,
-		"GET",
+		method: "GET",
 		path,
-		new Uint8Array(),
-		undefined,
+		body: new Uint8Array(),
 		signal,
-	);
+	});
 	const items = [];
 	for (const item of page.media) {
 		items.push(await openMeta(key, item));
@@ -160,15 +157,15 @@ export async function list({ serverUrl, key, tags, after, signal }) {
 }
 
 export async function getContent({ serverUrl, key, id, onProgress, signal }) {
-	const blob = await sendBytes(
+	const blob = await requestBytes({
 		serverUrl,
 		key,
-		"GET",
-		`/api/media/${id}`,
-		new Uint8Array(),
-		onProgress,
+		method: "GET",
+		path: `/api/media/${id}`,
+		body: new Uint8Array(),
+		onDownloadProgress: onProgress,
 		signal,
-	);
+	});
 	if ((await bodyHash(blob)) !== id) {
 		throw new Error("Content hash mismatch.");
 	}
@@ -191,15 +188,14 @@ export async function updateMetadata({
 		meta,
 		tags: tokens,
 	});
-	const response = await signedFetch(
+	const response = await signedFetch({
 		serverUrl,
 		key,
-		"PUT",
-		`/api/media/${id}/meta`,
+		method: "PUT",
+		path: `/api/media/${id}/meta`,
 		body,
-		undefined,
 		signal,
-	);
+	});
 	if (response.status === 409) {
 		let payload;
 		try {
@@ -225,29 +221,27 @@ export async function updateMetadata({
 }
 
 export async function remove({ serverUrl, key, id, signal }) {
-	await sendBytes(
+	await requestBytes({
 		serverUrl,
 		key,
-		"DELETE",
-		`/api/media/${id}`,
-		new Uint8Array(),
-		undefined,
+		method: "DELETE",
+		path: `/api/media/${id}`,
+		body: new Uint8Array(),
 		signal,
-	);
+	});
 }
 
 /** Prove possession of the key being registered and spend an invitation. */
 export async function registerKey({ serverUrl, key, otc, signal }) {
 	const body = encode({ otc: String(otc).trim() });
-	const response = await signedFetch(
+	const response = await signedFetch({
 		serverUrl,
 		key,
-		"POST",
-		"/api/register-key",
+		method: "POST",
+		path: "/api/register-key",
 		body,
-		undefined,
 		signal,
-	);
+	});
 	if (response.status === 204) {
 		return;
 	}
@@ -256,15 +250,14 @@ export async function registerKey({ serverUrl, key, otc, signal }) {
 
 // A signed read proves registration without spending another invitation.
 export async function isKeyRegistered({ serverUrl, key, signal }) {
-	const response = await signedFetch(
+	const response = await signedFetch({
 		serverUrl,
 		key,
-		"GET",
-		"/api/ping",
-		new Uint8Array(),
-		undefined,
+		method: "GET",
+		path: "/api/ping",
+		body: new Uint8Array(),
 		signal,
-	);
+	});
 	if (response.status !== 204 && response.status !== 401) {
 		throw await responseError(response);
 	}
@@ -298,16 +291,8 @@ async function openMeta(key, item) {
 	}
 }
 
-async function send(serverUrl, key, method, path, body, onProgress, signal) {
-	const response = await signedFetch(
-		serverUrl,
-		key,
-		method,
-		path,
-		body,
-		onProgress,
-		signal,
-	);
+async function requestDocument(request) {
+	const response = await signedFetch(request);
 	if (response.status === 204) {
 		return null;
 	}
@@ -317,28 +302,12 @@ async function send(serverUrl, key, method, path, body, onProgress, signal) {
 	return responseDocument(response);
 }
 
-async function sendBytes(
-	serverUrl,
-	key,
-	method,
-	path,
-	body,
-	onProgress,
-	signal,
-) {
-	const response = await signedFetch(
-		serverUrl,
-		key,
-		method,
-		path,
-		body,
-		undefined,
-		signal,
-	);
+async function requestBytes({ onDownloadProgress, ...request }) {
+	const response = await signedFetch(request);
 	if (!response.ok) {
 		throw await responseError(response);
 	}
-	return readBody(response, onProgress, signal);
+	return readBody(response, onDownloadProgress, request.signal);
 }
 
 async function sealedMetadata(key, id, metadata, thumb) {
@@ -416,15 +385,15 @@ async function readBody(response, onProgress, signal) {
 	return out;
 }
 
-async function signedFetch(
+async function signedFetch({
 	serverUrl,
 	key,
 	method,
 	path,
 	body,
-	onProgress,
+	onUploadProgress,
 	signal,
-) {
+}) {
 	const ts = Math.floor(Date.now() / 1000);
 	const nonce = freshNonce();
 	const origin = new URL(serverUrl).origin;
@@ -441,15 +410,15 @@ async function signedFetch(
 	const url = new URL(path, serverUrl);
 	const headers = { authorization, "content-type": CONTENT_TYPE };
 	const payload = method === "GET" || method === "DELETE" ? undefined : body;
-	if (onProgress && payload && typeof XMLHttpRequest !== "undefined") {
-		return requestWithProgress(
+	if (onUploadProgress && payload && typeof XMLHttpRequest !== "undefined") {
+		return requestWithProgress({
 			method,
 			url,
 			headers,
-			payload,
-			onProgress,
+			body: payload,
+			onUploadProgress,
 			signal,
-		);
+		});
 	}
 	return fetch(url, {
 		method,
@@ -462,7 +431,14 @@ async function signedFetch(
 	});
 }
 
-function requestWithProgress(method, url, headers, body, onProgress, signal) {
+function requestWithProgress({
+	method,
+	url,
+	headers,
+	body,
+	onUploadProgress,
+	signal,
+}) {
 	return new Promise((resolve, reject) => {
 		const xhr = new XMLHttpRequest();
 		const abort = () => xhr.abort();
@@ -477,7 +453,7 @@ function requestWithProgress(method, url, headers, body, onProgress, signal) {
 		}
 		xhr.upload.onprogress = (event) => {
 			if (event.lengthComputable) {
-				onProgress(
+				onUploadProgress(
 					Math.min(100, Math.round((event.loaded / event.total) * 100)),
 				);
 			}
