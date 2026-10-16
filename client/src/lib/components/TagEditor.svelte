@@ -1,6 +1,7 @@
 <script>
 import { tick } from "svelte";
 import { splitTags } from "../protocol/tags.js";
+import TagChip from "./TagChip.svelte";
 import TagInput from "./TagInput.svelte";
 
 let { tags = [], suggestions = [], disabled = false, name, onsave } = $props();
@@ -45,27 +46,12 @@ async function persist(next, clear = false) {
 
 <fieldset class="tag-list" aria-label={`Tags for ${name}`}>
 	{#each expanded ? tags : tags.slice(0, 6) as tag}
-		<span class="chip tag"
-			><span class="tag-text">{tag}</span
-			><button
-				type="button"
-				aria-label={`Remove tag ${tag}`}
-				disabled={locked}
-				onclick={() => persist(tags.filter((existing) => existing !== tag))}
-			>
-				<svg
-					viewBox="0 0 24 24"
-					aria-hidden="true"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-				>
-					<path d="M6 6l12 12M18 6L6 18" />
-				</svg>
-			</button></span
-		>
+		<TagChip
+			text={tag}
+			removeLabel={`Remove tag ${tag}`}
+			disabled={locked}
+			onremove={() => persist(tags.filter((existing) => existing !== tag))}
+		/>
 	{/each}
 	{#if tags.length > 6}
 		<button
@@ -208,18 +194,6 @@ async function persist(next, clear = false) {
 	height: 1rem;
 	flex: none;
 }
-.tag-text {
-	min-width: 0;
-	overflow-wrap: anywhere;
-}
-.tag button {
-	padding: 0 0.125rem;
-	border: 0;
-	background: transparent;
-	color: var(--accent);
-	font-size: 0.85rem;
-	flex: none;
-}
 .tags {
 	display: grid;
 	gap: 0.5rem;
@@ -239,14 +213,6 @@ async function persist(next, clear = false) {
 		gap: 0.5rem;
 	}
 	.chip {
-		min-height: 3rem;
-		font-size: 1rem;
-	}
-	.tag {
-		padding-block: 0;
-	}
-	.tag button {
-		min-width: 3rem;
 		min-height: 3rem;
 		font-size: 1rem;
 	}

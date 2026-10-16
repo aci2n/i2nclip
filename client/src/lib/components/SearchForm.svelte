@@ -1,4 +1,5 @@
 <script>
+import TagChip from "./TagChip.svelte";
 import TagInput from "./TagInput.svelte";
 
 let {
@@ -24,25 +25,11 @@ let input = $state();
 	>
 		<div class="terms">
 			{#each query as tag}
-				<span class="chip"
-					><span>{tag}</span
-					><button
-						type="button"
-						aria-label={`Remove search tag ${tag}`}
-						onclick={() => onremove(tag)}
-					>
-						<svg
-							viewBox="0 0 24 24"
-							aria-hidden="true"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="2"
-							stroke-linecap="round"
-						>
-							<path d="M6 6l12 12M18 6L6 18" />
-						</svg>
-					</button></span
-				>
+				<TagChip
+					text={tag}
+					removeLabel={`Remove search tag ${tag}`}
+					onremove={() => onremove(tag)}
+				/>
 			{/each}
 			<TagInput
 				value={draft}
@@ -118,25 +105,8 @@ form:focus-within {
 	min-width: 0;
 	padding-block: 0.25rem;
 }
-.chip {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.25rem;
-	max-width: 100%;
-	min-height: 2rem;
-	padding: 0.125rem 0.375rem;
-	font-size: 0.85rem;
-	line-height: 1.5;
-	border-radius: 0.25rem;
-	background: var(--soft);
-	color: var(--accent);
-}
-.chip span {
-	overflow-wrap: anywhere;
-	min-width: 0;
-}
-.chip button,
 .clear {
+	align-self: center;
 	display: grid;
 	place-items: center;
 	flex: none;
@@ -146,16 +116,7 @@ form:focus-within {
 	background: transparent;
 	color: var(--accent);
 }
-.chip button {
-	width: 1.5rem;
-	height: 1.5rem;
-	padding: 0.125rem;
-}
-.clear {
-	align-self: center;
-}
-.clear svg,
-.chip svg {
+.clear svg {
 	width: 1.25rem;
 	height: 1.25rem;
 }
@@ -166,16 +127,6 @@ p {
 @media (max-width: 32rem), (pointer: coarse) {
 	.terms {
 		padding-block: 0;
-	}
-	.chip {
-		min-height: 3rem;
-		padding-block: 0;
-		font-size: 1rem;
-	}
-	.chip button {
-		width: 3rem;
-		height: 3rem;
-		padding: 0.5rem;
 	}
 }
 </style>

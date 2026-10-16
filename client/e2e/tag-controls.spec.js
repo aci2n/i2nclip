@@ -22,7 +22,11 @@ async function alignedClear(form) {
 }
 
 async function matchingCardControls(card, touch) {
-	const chip = await card.locator(".tag").first().boundingBox();
+	const chip = await card
+		.getByRole("button", { name: /^Remove tag / })
+		.first()
+		.locator("..")
+		.boundingBox();
 	const disclosure = await card
 		.getByRole("button", { name: "Show all tags", exact: true })
 		.boundingBox();
