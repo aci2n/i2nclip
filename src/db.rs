@@ -333,7 +333,7 @@ impl Database {
             SELECT DISTINCT ON (t.token) t.token, t.label
             FROM tags t
             JOIN files f ON f.id = t.file_id
-            WHERE f.owner = $1 AND octet_length(t.label) > 0
+            WHERE f.owner = $1
             ORDER BY t.token, t.file_id
             "#,
         )
@@ -734,94 +734,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn label_migration_preserves_existing_tokens_without_backfill() {
+    async fn tag_labels_are_required_and_bounded_in_the_current_schema() {
         let (db, admin, name) = fixture().await;
-        let token = URL_SAFE_NO_PAD.encode([7; 32]);
-        let body = crate::reference_crypto::encode_post(
-            &sealed_blob(1),
-            &sealed_blob(1),
-            &fixture_tag_labels(&token),
-        );
+        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), b"\x90");
         let item = db.add([1; 32], &body).await.unwrap();
-        // Recreate the exact pre-002 schema and migration ledger, with live data.
-        sqlx::raw_sql(
-            "ALTER TABLE tags DROP COLUMN label; DELETE FROM _sqlx_migrations WHERE version >= 2;",
-        )
-        .execute(&db.pool)
-        .await
-        .unwrap();
-        db.initialize().await.unwrap();
-        let label: Vec<u8> = sqlx::query_scalar("SELECT label FROM tags WHERE file_id = $1")
-            .bind(&item.id)
-            .fetch_one(&db.pool)
-            .await
-            .unwrap();
-        assert!(label.is_empty());
-        assert!(db.tags([1; 32]).await.unwrap().is_empty());
-        assert_eq!(
-            db.list([1; 32], &[token], None).await.unwrap().0[0].id,
-            item.id
-        );
-        db.initialize().await.unwrap();
-        dispose(db, admin, name).await;
-    }
-
-    #[tokio::test]
-    async fn label_limit_migration_preserves_labels_and_widens_the_constraint() {
-        let (db, admin, name) = fixture().await;
-        // Recreate migration 002's actual label column and keep its applied ledger.
-        sqlx::raw_sql(&format!(
-            "ALTER TABLE tags DROP COLUMN label; DELETE FROM _sqlx_migrations WHERE version >= 3; {}",
-            include_str!("../sql/002_tag_labels.sql")
-        ))
-        .execute(&db.pool)
-        .await
-        .unwrap();
         let token = URL_SAFE_NO_PAD.encode([7; 32]);
-        let body = |value| {
-            crate::reference_crypto::encode_post(&sealed_blob(value), &sealed_blob(value), b"\x90")
-        };
-        let labeled = db.add([1; 32], &body(1)).await.unwrap();
-        let empty = db.add([1; 32], &body(2)).await.unwrap();
-        for item in [&labeled, &empty] {
-            sqlx::query("INSERT INTO tags (file_id, token, label) VALUES ($1, $2, $3)")
+        let missing = sqlx::query("INSERT INTO tags (file_id, token) VALUES ($1, $2)")
+            .bind(&item.id)
+            .bind(&token)
+            .execute(&db.pool)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            missing.as_database_error().unwrap().code().as_deref(),
+            Some("23502")
+        );
+        for size in [0, 42, crate::MAX_TAG_LABEL + 1] {
+            let error = sqlx::query("INSERT INTO tags (file_id, token, label) VALUES ($1, $2, $3)")
                 .bind(&item.id)
                 .bind(&token)
-                .bind(vec![1_u8; 30])
+                .bind(vec![0_u8; size])
                 .execute(&db.pool)
                 .await
-                .unwrap();
+                .unwrap_err();
+            assert_eq!(
+                error.as_database_error().unwrap().code().as_deref(),
+                Some("23514")
+            );
         }
-        sqlx::query("UPDATE tags SET label = ''::bytea WHERE file_id = $1")
-            .bind(&empty.id)
-            .execute(&db.pool)
-            .await
-            .unwrap();
-        let labels = || {
-            sqlx::query_as::<_, (String, Vec<u8>)>(
-                "SELECT file_id, label FROM tags ORDER BY file_id",
-            )
-            .fetch_all(&db.pool)
-        };
-        let before = labels().await.unwrap();
-        db.initialize().await.unwrap();
-        assert_eq!(labels().await.unwrap(), before);
-        assert_eq!(db.tags([1; 32]).await.unwrap().len(), 1);
-        sqlx::query("UPDATE tags SET label = $1 WHERE file_id = $2")
-            .bind(vec![1_u8; crate::MAX_TAG_LABEL])
-            .bind(&labeled.id)
-            .execute(&db.pool)
-            .await
-            .unwrap();
-        assert!(sqlx::query("UPDATE tags SET label = $1 WHERE file_id = $2")
-            .bind(vec![1_u8; crate::MAX_TAG_LABEL + 1])
-            .bind(&labeled.id)
-            .execute(&db.pool)
-            .await
-            .is_err());
-        let after = labels().await.unwrap();
-        db.initialize().await.unwrap();
-        assert_eq!(labels().await.unwrap(), after);
+        for size in [43, crate::MAX_TAG_LABEL] {
+            let label = crate::reference_crypto::sealed_fixture(1, size);
+            sqlx::query("INSERT INTO tags (file_id, token, label) VALUES ($1, $2, $3) ON CONFLICT (file_id, token) DO UPDATE SET label = EXCLUDED.label")
+                .bind(&item.id).bind(&token).bind(&label).execute(&db.pool).await.unwrap();
+            db.initialize().await.unwrap();
+            let labels = db.tags([1; 32]).await.unwrap();
+            assert_eq!(labels.len(), 1);
+            assert_eq!(labels[0].label, label);
+        }
         dispose(db, admin, name).await;
     }
 
@@ -843,14 +792,8 @@ mod tests {
         db.add([2; 32], &body(3)).await.unwrap();
         assert_eq!(db.tags([1; 32]).await.unwrap().len(), 1);
         assert!(db.tags([3; 32]).await.unwrap().is_empty());
-        // Empty labels model pre-migration rows, which still participate in search.
-        sqlx::query("UPDATE tags SET label = ''::bytea WHERE file_id = $1")
-            .bind(&a.id)
-            .execute(&db.pool)
-            .await
-            .unwrap();
         db.remove([1; 32], &b.id).await.unwrap();
-        assert!(db.tags([1; 32]).await.unwrap().is_empty());
+        assert_eq!(db.tags([1; 32]).await.unwrap().len(), 1);
         assert_eq!(
             db.list([1; 32], std::slice::from_ref(&token), None)
                 .await
@@ -971,12 +914,11 @@ mod tests {
         .unwrap();
         a.unwrap();
         b.unwrap();
-        let applied: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM _sqlx_migrations WHERE version = 1 AND success",
-        )
-        .fetch_one(&db.pool)
-        .await
-        .unwrap();
+        let applied: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE success")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
         assert_eq!(applied, 1);
         // Reinitialization must skip 001, rather than recreate a schema object.
         sqlx::query("DROP TRIGGER files_immutable_content ON files")
@@ -1400,7 +1342,7 @@ mod tests {
     #[tokio::test]
     async fn schema_bounds_and_immutable_content_protect_downloads() {
         let (db, admin, name) = fixture().await;
-        for (meta_size, content_size) in [(28_i32, 29_i32), (65537, 42), (42, 28), (42, 33554497)] {
+        for (meta_size, content_size) in [(41_i32, 42_i32), (65537, 42), (42, 41), (42, 33554497)] {
             let error = sqlx::query(
                 r#"
                                 INSERT INTO files (id, owner, meta, content, created_at)
