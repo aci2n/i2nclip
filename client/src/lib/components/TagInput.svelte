@@ -93,12 +93,18 @@ function focusSuggestion(index) {
 		}}
 	>
 	{#if matches.length}
-		<ul bind:this={list} aria-label="Tag suggestions">
+		<!-- Keep Tab on suggestions rather than the scrolling container. -->
+		<ul bind:this={list} tabindex="-1" aria-label="Tag suggestions">
 			{#each matches as tag, index}
 				<li>
 					<button
 						type="button"
 						onclick={() => commit(tag)}
+						onfocus={(event) =>
+							event.currentTarget.scrollIntoView({
+								block: "nearest",
+								inline: "nearest",
+							})}
 						onkeydown={(event) => {
 							if (event.key === "ArrowDown") {
 								event.preventDefault();
@@ -153,6 +159,9 @@ ul {
 	min-width: 100%;
 	width: max-content;
 	max-width: min(24rem, 100%);
+	max-height: min(15rem, 40dvh);
+	overflow-y: auto;
+	overscroll-behavior: contain;
 	z-index: 5;
 	list-style: none;
 	margin: 0;
