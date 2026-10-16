@@ -23,7 +23,7 @@ export async function sendUpload({
 	}
 	const bytes = new Uint8Array(await file.arrayBuffer());
 	signal.throwIfAborted();
-	const preview = await thumbnail(file, signal);
+	const preview = await thumbnail(file, bytes, signal);
 	signal.throwIfAborted();
 	return upload({
 		...credentials,

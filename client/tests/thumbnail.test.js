@@ -32,6 +32,7 @@ test("cancelling a video thumbnail releases its temporary URL before the decode 
 	const controller = new AbortController();
 	const preview = thumbnail(
 		new Blob(["video"], { type: "video/webm" }),
+		new Uint8Array(),
 		controller.signal,
 	);
 	controller.abort();

@@ -7,11 +7,11 @@ import { audioArt } from "./audio-art.js";
 
 const EDGE = 320;
 
-export async function thumbnail(blob, signal) {
+export async function thumbnail(blob, bytes, signal) {
 	const type = blob.type || "";
 	try {
 		if (type.startsWith("audio/")) {
-			const art = audioArt(new Uint8Array(await blob.arrayBuffer()));
+			const art = audioArt(bytes);
 			if (!art) {
 				return null;
 			}

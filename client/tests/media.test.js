@@ -3,8 +3,100 @@ import test from "node:test";
 import { get, writable } from "svelte/store";
 import { MAX_FILE_BYTES } from "../src/lib/api.js";
 import { sendUpload } from "../src/lib/media/upload.js";
+import {
+	bodyHash,
+	contentAad,
+	decrypt,
+	loadKey,
+	metaAad,
+} from "../src/lib/protocol/crypto.js";
+import { generatePrivateKey } from "../src/lib/protocol/identity.js";
+import { decodeMetaPlain } from "../src/lib/protocol/meta-plain.js";
+import { decode } from "../src/lib/protocol/msgpack.js";
 import { createMediaItem } from "../src/lib/stores/media-item.js";
 import { deferred } from "./helpers.js";
+import { documentResponse } from "./msgpack-response.js";
+
+for (const cancel of [false, true]) {
+	test(`audio uploads read once and ${cancel ? "release artwork on cancellation" : "preserve content and artwork"}`, async (t) => {
+		const art = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+		// FLAC picture block: front cover, empty MIME/description, image bytes.
+		const bytes = new Uint8Array(8 + 32 + art.length);
+		bytes.set([0x66, 0x4c, 0x61, 0x43, 0x86, 0, 0, 32 + art.length]);
+		const picture = new DataView(bytes.buffer, 8);
+		picture.setUint32(0, 3);
+		picture.setUint32(28, art.length);
+		bytes.set(art, 40);
+		const file = new File([bytes], "Cover.flac", { type: "audio/flac" });
+		const read = t.mock.method(file, "arrayBuffer", file.arrayBuffer);
+		const controller = new AbortController();
+		let closed = false;
+		let artworkRead = false;
+		const thumb = new Uint8Array([1, 2, 3]);
+		const globals = {
+			createImageBitmap: async (blob) => {
+				assert.deepEqual(new Uint8Array(await blob.arrayBuffer()), art);
+				artworkRead = true;
+				if (cancel) {
+					controller.abort();
+				}
+				return {
+					width: 16,
+					height: 8,
+					close: () => {
+						closed = true;
+					},
+				};
+			},
+			OffscreenCanvas: class {
+				getContext() {
+					return { drawImage() {} };
+				}
+				async convertToBlob() {
+					return new Blob([thumb]);
+				}
+			},
+		};
+		for (const [name, value] of Object.entries(globals)) {
+			const previous = Object.getOwnPropertyDescriptor(globalThis, name);
+			t.after(() => {
+				if (previous) {
+					Object.defineProperty(globalThis, name, previous);
+				} else {
+					delete globalThis[name];
+				}
+			});
+			Object.defineProperty(globalThis, name, { configurable: true, value });
+		}
+		const { privateKey } = await generatePrivateKey();
+		const key = await loadKey(privateKey);
+		const fetch = t.mock.method(globalThis, "fetch", async (_url, options) => {
+			const frame = decode(options.body);
+			const id = await bodyHash(frame.content);
+			assert.deepEqual(await decrypt(key, contentAad(), frame.content), bytes);
+			const preview = decodeMetaPlain(
+				await decrypt(key, metaAad(id), frame.meta),
+			);
+			assert.deepEqual(preview.thumb, thumb);
+			assert.deepEqual(preview.metadata.image, { width: 16, height: 8 });
+			return documentResponse({ id }, { status: 201 });
+		});
+		const upload = sendUpload({
+			file,
+			credentials: { serverUrl: "https://clip.example", key },
+			signal: controller.signal,
+		});
+		if (cancel) {
+			await assert.rejects(upload, { name: "AbortError" });
+		} else {
+			assert.equal((await upload).metadata.size, bytes.length);
+		}
+		assert.equal(read.mock.callCount(), 1);
+		assert.equal(fetch.mock.callCount(), cancel ? 0 : 1);
+		assert.equal(artworkRead, true);
+		assert.equal(closed, true);
+	});
+}
 
 test("oversized local files are rejected before reading bytes", async () => {
 	const file = {
