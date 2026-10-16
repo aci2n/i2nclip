@@ -179,7 +179,7 @@ fn collect_tokens<'a>(values: impl IntoIterator<Item = &'a str>) -> Result<Vec<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reference_crypto::{encode_meta, encode_post};
+    use crate::reference_crypto::{encode_meta, encode_post, fixture_tag_labels};
 
     #[test]
     fn memory_profile_frame_decoding() {
@@ -189,8 +189,8 @@ mod tests {
         // extra heap needed to decode an already buffered request.
         let metadata = vec![1; MAX_META];
         let content = vec![1; MAX_CONTENT];
-        let post = encode_post(&metadata, &content, "");
-        let put = encode_meta(&[0; 32], &metadata, "");
+        let post = encode_post(&metadata, &content, b"[]");
+        let put = encode_meta(&[0; 32], &metadata, b"[]");
         let post_info = allocation_counter::measure(|| {
             let parts = decode_post(black_box(&post)).unwrap();
             black_box(parts);
@@ -218,8 +218,8 @@ mod tests {
             .map(|n| format!("{n:043}"))
             .collect::<Vec<_>>()
             .join("\n");
-        let small = encode_post(&metadata, &content[..1024], &tags);
-        let large = encode_post(&metadata, &content, &tags);
+        let small = encode_post(&metadata, &content[..1024], &fixture_tag_labels(&tags));
+        let large = encode_post(&metadata, &content, &fixture_tag_labels(&tags));
         let measure = |body: &[u8]| {
             allocation_counter::measure(|| {
                 black_box(decode_post(black_box(body)).unwrap());
@@ -258,13 +258,22 @@ mod tests {
                 .join("\n")
         };
         assert_eq!(
-            decode_post(&encode_post(b"meta", b"content", &valid(MAX_TAGS)))
-                .unwrap()
-                .tags
-                .len(),
+            decode_post(&encode_post(
+                b"meta",
+                b"content",
+                &fixture_tag_labels(&valid(MAX_TAGS))
+            ))
+            .unwrap()
+            .tags
+            .len(),
             MAX_TAGS
         );
-        assert!(decode_post(&encode_post(b"meta", b"content", &valid(MAX_TAGS + 1))).is_err());
+        assert!(decode_post(&encode_post(
+            b"meta",
+            b"content",
+            &fixture_tag_labels(&valid(MAX_TAGS + 1))
+        ))
+        .is_err());
         let tag = |label: &str| {
             serde_json::json!([{ "token": "A".repeat(43), "label": label }]).to_string()
         };
@@ -282,11 +291,11 @@ mod tests {
 
     #[test]
     fn post_roundtrip_and_truncation() {
-        let body = encode_post(b"meta", b"content", "aaaa");
+        let body = encode_post(b"meta", b"content", &fixture_tag_labels("aaaa"));
         // "aaaa" is not a 43-char token, so decode must reject it.
         assert!(decode_post(&body).is_err());
         let token = "A".repeat(43);
-        let body = encode_post(b"meta", b"content", &token);
+        let body = encode_post(b"meta", b"content", &fixture_tag_labels(&token));
         let parts = decode_post(&body).unwrap();
         assert_eq!(parts.meta, b"meta");
         assert_eq!(parts.content, b"content");
@@ -302,7 +311,7 @@ mod tests {
         let mut extra = body.clone();
         extra.push(0);
         assert!(decode_post(&extra).is_err());
-        let meta_body = encode_meta(&[0; 32], b"meta", &token);
+        let meta_body = encode_meta(&[0; 32], b"meta", &fixture_tag_labels(&token));
         let meta = decode_meta(&meta_body).unwrap();
         assert_eq!(meta.prev_meta_hash, [0; 32]);
         assert_eq!(meta.meta, b"meta");

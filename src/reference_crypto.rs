@@ -205,19 +205,19 @@ pub fn fresh_nonce() -> String {
 }
 
 // Reference-client frames use the exact length-prefixed wire format.
-pub fn encode_post(meta: &[u8], content: &[u8], tags: &str) -> Vec<u8> {
+pub fn encode_post(meta: &[u8], content: &[u8], tags: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     push_chunk(&mut out, meta);
     push_chunk(&mut out, content);
-    push_chunk(&mut out, &fixture_tag_labels(tags));
+    push_chunk(&mut out, tags);
     out
 }
 
-pub fn encode_meta(prev_meta_hash: &[u8; 32], meta: &[u8], tags: &str) -> Vec<u8> {
+pub fn encode_meta(prev_meta_hash: &[u8; 32], meta: &[u8], tags: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(prev_meta_hash);
     push_chunk(&mut out, meta);
-    push_chunk(&mut out, &fixture_tag_labels(tags));
+    push_chunk(&mut out, tags);
     out
 }
 
@@ -229,14 +229,17 @@ fn push_chunk(out: &mut Vec<u8>, data: &[u8]) {
 
 // Reference HTTP fixtures have opaque tokens, not plaintext tag names. These
 // labels have valid sealed framing; crypto authentication is tested separately.
-fn fixture_tag_labels(tokens: &str) -> Vec<u8> {
+pub fn fixture_tag_labels(tokens: &str) -> Vec<u8> {
     let mut label = vec![0; 30];
     label[0] = 1;
-    let mut json = serde_json::to_vec(&tokens.lines().filter(|token| !token.trim().is_empty()).map(|token|
-        serde_json::json!({"token": token.trim(), "label": URL_SAFE_NO_PAD.encode(&label)})
-    ).collect::<Vec<_>>()).unwrap();
-    if !tokens.is_empty() && tokens.trim().is_empty() {
-        json.resize(32 * 1024, b' ');
-    }
-    json
+    serde_json::to_vec(
+        &tokens
+            .lines()
+            .filter(|token| !token.trim().is_empty())
+            .map(|token| {
+                serde_json::json!({"token": token.trim(), "label": URL_SAFE_NO_PAD.encode(&label)})
+            })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap()
 }

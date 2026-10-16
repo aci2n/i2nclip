@@ -12,7 +12,7 @@ use base64::{
 };
 use http_body_util::BodyExt;
 use i2nclip::{crypto, Error};
-use reference_crypto::{self as client_crypto, Identity};
+use reference_crypto::{self as client_crypto, fixture_tag_labels, Identity};
 use tower::ServiceExt;
 
 #[path = "../src/reference_crypto.rs"]
@@ -99,7 +99,7 @@ async fn tag_catalog_requires_signed_empty_requests_and_filters_owners() {
     let token = client_crypto::tag_token(&owner.seed, "Holiday").unwrap();
     let mut content = vec![0; 30];
     content[0] = 1;
-    let body = client_crypto::encode_post(&content, &content, &token);
+    let body = client_crypto::encode_post(&content, &content, &fixture_tag_labels(&token));
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
@@ -456,7 +456,8 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     content[0] = 1;
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
-    let tags = "\n".repeat(4096);
+    let mut tags = b"[]".to_vec();
+    tags.resize(32 * 1024, b' ');
     let body = client_crypto::encode_post(&meta, &content, &tags);
     assert_eq!(body.len(), 33_652_812);
     assert_eq!(
@@ -636,7 +637,7 @@ async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
     .unwrap();
 
     let token = client_crypto::tag_token(&key.seed, tag).unwrap();
-    let body = client_crypto::encode_post(&meta, &content, &token);
+    let body = client_crypto::encode_post(&meta, &content, &fixture_tag_labels(&token));
 
     let (status, bytes) = call(&app, &key, "POST", "/api/media", body).await;
     assert_eq!(
@@ -705,7 +706,7 @@ async fn another_key_cannot_see_or_search() {
     let token = client_crypto::tag_token(&owner.seed, "shared-word").unwrap();
     let other_token = client_crypto::tag_token(&other.seed, "shared-word").unwrap();
     assert_ne!(token, other_token);
-    let body = client_crypto::encode_post(&meta, &content, &token);
+    let body = client_crypto::encode_post(&meta, &content, &fixture_tag_labels(&token));
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
@@ -781,7 +782,11 @@ async fn rejects_bad_signature_replay_and_raw_jpeg() {
 
     let id = "3333333333333333333333333333333333333333333333333333333333333333";
     let meta = client_crypto::encrypt(&key.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-    let body = client_crypto::encode_post(&meta, b"\xff\xd8\xff\xd8not-encrypted", "not-a-token");
+    let body = client_crypto::encode_post(
+        &meta,
+        b"\xff\xd8\xff\xd8not-encrypted",
+        &fixture_tag_labels("not-a-token"),
+    );
     let (status, _) = call(&app, &key, "POST", "/api/media", body).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
@@ -981,7 +986,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
     let id = hash.as_str();
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
 
-    let body = client_crypto::encode_post(&meta, &content, "");
+    let body = client_crypto::encode_post(&meta, &content, b"[]");
     let first = call(&app, &owner, "POST", "/api/media", body.clone()).await;
     let retry = call(&app, &owner, "POST", "/api/media", body.clone()).await;
     assert_eq!(first.0, StatusCode::CREATED);
@@ -998,7 +1003,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
             &owner,
             "POST",
             "/api/media",
-            client_crypto::encode_post(&meta, &changed, "")
+            client_crypto::encode_post(&meta, &changed, b"[]")
         )
         .await
         .0,
@@ -1022,7 +1027,7 @@ async fn duplicate_uploads_conflict_without_replacing_content() {
             &owner,
             "POST",
             "/api/media",
-            client_crypto::encode_post(&meta, &content, "")
+            client_crypto::encode_post(&meta, &content, b"[]")
         )
         .await
         .0,
@@ -1042,7 +1047,7 @@ async fn reopening_database_preserves_media() {
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
 
     let token = client_crypto::tag_token(&owner.seed, "keep").unwrap();
-    let body = client_crypto::encode_post(&meta, &content, &token);
+    let body = client_crypto::encode_post(&meta, &content, &fixture_tag_labels(&token));
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
@@ -1266,7 +1271,7 @@ async fn upload_admission_is_shared_and_releases_capacity() {
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-    let frame = client_crypto::encode_post(&meta, &content, "");
+    let frame = client_crypto::encode_post(&meta, &content, b"[]");
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", frame.clone())
             .await
@@ -1340,7 +1345,7 @@ async fn concurrent_routers_publish_one_hash() {
     .unwrap();
     let id = crypto::body_hash(&content);
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"{}").unwrap();
-    let body = client_crypto::encode_post(&meta, &content, "");
+    let body = client_crypto::encode_post(&meta, &content, b"[]");
     let (a, b) = tokio::join!(
         call(&first, &owner, "POST", "/api/media", body.clone()),
         call(&second, &other, "POST", "/api/media", body),
@@ -1410,7 +1415,7 @@ async fn downloads_retain_owned_content_after_deletion() {
                 &owner,
                 "POST",
                 "/api/media",
-                client_crypto::encode_post(&meta, &content, "")
+                client_crypto::encode_post(&meta, &content, b"[]")
             )
             .await
             .0,
@@ -1482,7 +1487,7 @@ async fn downloads_retain_owned_content_after_deletion() {
                 &other,
                 "POST",
                 "/api/media",
-                client_crypto::encode_post(&other_meta, &replacement, "")
+                client_crypto::encode_post(&other_meta, &replacement, b"[]")
             )
             .await
             .0,
@@ -1538,7 +1543,7 @@ async fn list_query_validation_is_scoped_to_the_list_endpoint() {
     .unwrap();
     let id = crypto::body_hash(&content);
     let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"{}").unwrap();
-    let body = client_crypto::encode_post(&meta, &content, "");
+    let body = client_crypto::encode_post(&meta, &content, b"[]");
     assert_eq!(
         call(&app, &owner, "POST", "/api/media?after=invalid", body)
             .await
@@ -1552,7 +1557,7 @@ async fn list_query_validation_is_scoped_to_the_list_endpoint() {
             &owner,
             "PUT",
             &path,
-            client_crypto::encode_meta(&raw_hash(&meta), &meta, "")
+            client_crypto::encode_meta(&raw_hash(&meta), &meta, b"[]")
         )
         .await
         .0,
@@ -1611,7 +1616,7 @@ async fn failed_tag_writes_roll_back_upload_and_metadata() {
             &key,
             "POST",
             "/api/media",
-            client_crypto::encode_post(&meta, &content, &token)
+            client_crypto::encode_post(&meta, &content, &fixture_tag_labels(&token))
         )
         .await
         .0,
@@ -1634,7 +1639,7 @@ async fn failed_tag_writes_roll_back_upload_and_metadata() {
             &key,
             "POST",
             "/api/media",
-            client_crypto::encode_post(&meta, &content, &token)
+            client_crypto::encode_post(&meta, &content, &fixture_tag_labels(&token))
         )
         .await
         .0,
@@ -1658,7 +1663,7 @@ async fn failed_tag_writes_roll_back_upload_and_metadata() {
             &key,
             "PUT",
             &format!("/api/media/{id}/meta"),
-            client_crypto::encode_meta(&raw_hash(&meta), &new_meta, &token)
+            client_crypto::encode_meta(&raw_hash(&meta), &new_meta, &fixture_tag_labels(&token))
         )
         .await
         .0,
@@ -1694,7 +1699,7 @@ async fn stale_metadata_update_returns_current_item_without_writing() {
         &owner,
         "POST",
         "/api/media",
-        client_crypto::encode_post(&original, &content, &initial_token),
+        client_crypto::encode_post(&original, &content, &fixture_tag_labels(&initial_token)),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
@@ -1709,7 +1714,11 @@ async fn stale_metadata_update_returns_current_item_without_writing() {
         &owner,
         "PUT",
         &format!("/api/media/{id}/meta"),
-        client_crypto::encode_meta(&raw_hash(&original), &current, &current_token),
+        client_crypto::encode_meta(
+            &raw_hash(&original),
+            &current,
+            &fixture_tag_labels(&current_token),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1724,7 +1733,11 @@ async fn stale_metadata_update_returns_current_item_without_writing() {
         &owner,
         "PUT",
         &format!("/api/media/{id}/meta"),
-        client_crypto::encode_meta(&raw_hash(&original), &stale, &stale_token),
+        client_crypto::encode_meta(
+            &raw_hash(&original),
+            &stale,
+            &fixture_tag_labels(&stale_token),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -1758,7 +1771,11 @@ async fn stale_metadata_update_returns_current_item_without_writing() {
             &owner,
             "PUT",
             &format!("/api/media/{id}/meta"),
-            client_crypto::encode_meta(&raw_hash(&current), &stale, &stale_token),
+            client_crypto::encode_meta(
+                &raw_hash(&current),
+                &stale,
+                &fixture_tag_labels(&stale_token)
+            ),
         )
         .await
         .0,
@@ -1860,12 +1877,12 @@ async fn quota_cli_invitation_and_http_upload_failures_work_together() {
     );
     let code = String::from_utf8(issued.stdout).unwrap();
     enroll_key(&app, &key, code.trim()).await;
-    let body = client_crypto::encode_post(&[1; 29], &[1; 29], "");
+    let body = client_crypto::encode_post(&[1; 29], &[1; 29], b"[]");
     let (status, saved) = call(&app, &key, "POST", "/api/media", body.clone()).await;
     assert_eq!(status, StatusCode::CREATED);
     let saved: serde_json::Value = serde_json::from_slice(&saved).unwrap();
     assert_eq!(saved["bytes"], 29);
-    let second = client_crypto::encode_post(&[1; 29], &[1; 30], "");
+    let second = client_crypto::encode_post(&[1; 29], &[1; 30], b"[]");
     let (status, error) = call(&app, &key, "POST", "/api/media", second.clone()).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(
@@ -1996,7 +2013,7 @@ async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
         })
     );
     let content = [1; 29];
-    let body = client_crypto::encode_post(&[1; 29], &content, "");
+    let body = client_crypto::encode_post(&[1; 29], &content, b"[]");
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
@@ -2211,7 +2228,7 @@ async fn global_download_limit_still_applies_across_independent_keys() {
                 owner,
                 "POST",
                 "/api/media",
-                client_crypto::encode_post(&[1; 29], &content, "")
+                client_crypto::encode_post(&[1; 29], &content, b"[]")
             )
             .await
             .0,

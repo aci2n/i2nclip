@@ -278,7 +278,7 @@ mod tests {
             "/api/media",
             sign_body.as_bytes(),
         );
-        let frame = encode_post(&meta_ct, &ciphertext, &token);
+        let frame = encode_post(&meta_ct, &ciphertext, &fixture_tag_labels(&token));
         let private_key = serde_json::json!({ "v": 1, "seed": URL_SAFE_NO_PAD.encode(seed), "publicKey": id.registration_key() }).to_string();
         let vectors = Vectors {
             private_key,

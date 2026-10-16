@@ -560,6 +560,7 @@ async fn replace_tags(
 #[cfg(all(test, feature = "postgres-tests"))]
 mod tests {
     use super::*;
+    use crate::reference_crypto::fixture_tag_labels;
 
     // Own the temporary database even if a test assertion or initialization panics.
     struct FixtureDatabase {
@@ -719,7 +720,7 @@ mod tests {
         frame::decode_post(&crate::reference_crypto::encode_post(
             b"",
             b"",
-            &tokens.join("\n"),
+            &fixture_tag_labels(&tokens.join("\n")),
         ))
         .unwrap()
         .tags
@@ -729,7 +730,11 @@ mod tests {
     async fn label_migration_preserves_existing_tokens_without_backfill() {
         let (db, admin, name) = fixture().await;
         let token = URL_SAFE_NO_PAD.encode([7; 32]);
-        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), &token);
+        let body = crate::reference_crypto::encode_post(
+            &sealed_blob(1),
+            &sealed_blob(1),
+            &fixture_tag_labels(&token),
+        );
         let item = db.add([1; 32], &body).await.unwrap();
         // Recreate the exact pre-002 schema and migration ledger, with live data.
         sqlx::raw_sql(
@@ -759,7 +764,11 @@ mod tests {
         let (db, admin, name) = fixture().await;
         let token = URL_SAFE_NO_PAD.encode([7; 32]);
         let body = |value| {
-            crate::reference_crypto::encode_post(&sealed_blob(value), &sealed_blob(value), &token)
+            crate::reference_crypto::encode_post(
+                &sealed_blob(value),
+                &sealed_blob(value),
+                &fixture_tag_labels(&token),
+            )
         };
         let a = db.add([1; 32], &body(1)).await.unwrap();
         let b = db.add([1; 32], &body(2)).await.unwrap();
@@ -787,14 +796,14 @@ mod tests {
         let update = crate::reference_crypto::encode_meta(
             &crypto::body_hash_bytes(&a.meta),
             &sealed_blob(4),
-            &token,
+            &fixture_tag_labels(&token),
         );
         assert!(matches!(
             db.update_meta([1; 32], &a.id, &update).await.unwrap(),
             MetadataUpdate::Updated(_)
         ));
         assert_eq!(db.tags([1; 32]).await.unwrap()[0].token, token);
-        let conflict = crate::reference_crypto::encode_meta(&[0; 32], &sealed_blob(5), "");
+        let conflict = crate::reference_crypto::encode_meta(&[0; 32], &sealed_blob(5), b"[]");
         assert!(matches!(
             db.update_meta([1; 32], &a.id, &conflict).await.unwrap(),
             MetadataUpdate::Conflict(_)
@@ -820,7 +829,7 @@ mod tests {
                 &crate::reference_crypto::encode_post(
                     &sealed_blob(1),
                     &sealed_blob(1),
-                    &tokens.join("\n"),
+                    &fixture_tag_labels(&tokens.join("\n")),
                 ),
             )
             .await
@@ -840,7 +849,7 @@ mod tests {
                 &crate::reference_crypto::encode_meta(
                     &crypto::body_hash_bytes(&item.meta),
                     &sealed_blob(2),
-                    &replacement.join("\n"),
+                    &fixture_tag_labels(&replacement.join("\n")),
                 ),
             )
             .await
@@ -860,7 +869,7 @@ mod tests {
                 &crate::reference_crypto::encode_meta(
                     &crypto::body_hash_bytes(&updated.meta),
                     &sealed_blob(3),
-                    "",
+                    b"[]",
                 ),
             )
             .await
@@ -952,7 +961,7 @@ mod tests {
         let item = db
             .add(
                 [1; 32],
-                &crate::reference_crypto::encode_post(&original, &[1; 29], ""),
+                &crate::reference_crypto::encode_post(&original, &[1; 29], b"[]"),
             )
             .await
             .unwrap();
@@ -989,7 +998,7 @@ mod tests {
                     &crate::reference_crypto::encode_meta(
                         &crypto::body_hash_bytes(&original),
                         &sealed_blob(4),
-                        "",
+                        b"[]",
                     ),
                 )
                 .await
@@ -1022,7 +1031,7 @@ mod tests {
         let item = db
             .add(
                 [1; 32],
-                &crate::reference_crypto::encode_post(&original, &[1; 29], ""),
+                &crate::reference_crypto::encode_post(&original, &[1; 29], b"[]"),
             )
             .await
             .unwrap();
@@ -1044,7 +1053,7 @@ mod tests {
                     &crate::reference_crypto::encode_meta(
                         &crypto::body_hash_bytes(&original),
                         &sealed_blob(value),
-                        &token,
+                        &fixture_tag_labels(&token),
                     ),
                 )
                 .await
@@ -1089,7 +1098,11 @@ mod tests {
         let item = db
             .add(
                 [1; 32],
-                &crate::reference_crypto::encode_post(&original, &[1; 29], &token),
+                &crate::reference_crypto::encode_post(
+                    &original,
+                    &[1; 29],
+                    &fixture_tag_labels(&token),
+                ),
             )
             .await
             .unwrap();
@@ -1117,7 +1130,7 @@ mod tests {
                     &crate::reference_crypto::encode_meta(
                         &crypto::body_hash_bytes(&original),
                         &sealed_blob(3),
-                        "",
+                        b"[]",
                     ),
                 )
                 .await
@@ -1205,7 +1218,7 @@ mod tests {
         connections.clear();
         let mut content = vec![1; 100_000];
         content[0] = 1;
-        let body = crate::reference_crypto::encode_post(&[1; 29], &content, "");
+        let body = crate::reference_crypto::encode_post(&[1; 29], &content, b"[]");
         let item = db.add([1; 32], &body).await.unwrap();
         let downloaded = db.content([1; 32], &item.id).await.unwrap();
         for _ in 0..8 {
@@ -1338,7 +1351,7 @@ mod tests {
             );
         }
         let content = vec![1_u8; 100_000];
-        let body = crate::reference_crypto::encode_post(&[1; 29], &content, "");
+        let body = crate::reference_crypto::encode_post(&[1; 29], &content, b"[]");
         let item = db.add([1; 32], &body).await.unwrap();
         let error = sqlx::query("UPDATE files SET content = $1 WHERE id = $2")
             .bind(&[2_u8; 29][..])
@@ -1390,7 +1403,8 @@ mod tests {
         .await
         .unwrap();
         let token = "A".repeat(43);
-        let body = crate::reference_crypto::encode_post(&[1; 29], &[1; 29], &token);
+        let body =
+            crate::reference_crypto::encode_post(&[1; 29], &[1; 29], &fixture_tag_labels(&token));
         assert!(matches!(db.add([1; 32], &body).await, Err(Error::Db(_))));
         let counts: (i64, i64) =
             sqlx::query_as("SELECT (SELECT count(*) FROM files), (SELECT count(*) FROM tags)")
@@ -1450,8 +1464,8 @@ mod tests {
     async fn storage_limits_enforce_boundaries_without_charging_failed_uploads() {
         let (db, admin, name) = fixture().await;
         let owner = [1; 32];
-        let first = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
-        let second = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), "");
+        let first = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), b"[]");
+        let second = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), b"[]");
         let limits = StorageLimits {
             max_content_bytes: 29,
             max_files: 1,
@@ -1505,7 +1519,7 @@ mod tests {
             &crate::reference_crypto::encode_meta(
                 &crypto::body_hash_bytes(&saved.meta),
                 &sealed_blob(3),
-                "",
+                b"[]",
             ),
         )
         .await
@@ -1584,8 +1598,10 @@ mod tests {
         ] {
             let (db, admin, name) = fixture().await;
             db.set_limits(&[1; 32], limits).await.unwrap();
-            let first = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
-            let second = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), "");
+            let first =
+                crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), b"[]");
+            let second =
+                crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), b"[]");
             let mut blocker = db.pool.begin().await.unwrap();
             sqlx::query("SELECT public_key FROM key_quotas FOR UPDATE")
                 .execute(&mut *blocker)
@@ -1609,7 +1625,7 @@ mod tests {
             dispose(db, admin, name).await;
         }
         let (db, admin, name) = fixture().await;
-        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
+        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), b"[]");
         let mut blocker = db.pool.begin().await.unwrap();
         sqlx::query("UPDATE key_quotas SET max_files = 0")
             .execute(&mut *blocker)
@@ -1652,7 +1668,7 @@ mod tests {
         let other = [2; 32];
         let code = db.issue_code(3600, StorageLimits::default()).await.unwrap();
         db.consume_code(&code, &other).await.unwrap();
-        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
+        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), b"[]");
         let item = db.add(owner, &body).await.unwrap();
         assert!(matches!(
             db.remove(other, &item.id).await,
@@ -1696,7 +1712,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_upload_rolls_back_reserved_usage() {
         let (db, admin, name) = fixture().await;
-        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
+        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), b"[]");
         // Allow the quota reservation and duplicate lookup, but block insertion.
         let mut blocker = db.pool.begin().await.unwrap();
         sqlx::query("LOCK TABLE files IN SHARE MODE")
@@ -1736,8 +1752,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let first = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
-        let second = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), "");
+        let first = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), b"[]");
+        let second = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), b"[]");
         let item = db.add([1; 32], &first).await.unwrap();
         let mut blocker = db.pool.begin().await.unwrap();
         sqlx::query("SELECT public_key FROM key_quotas FOR UPDATE")
@@ -1812,7 +1828,7 @@ mod tests {
     async fn quota_state_survives_reinitialization() {
         let (db, admin, name) = fixture().await;
         let content = sealed_blob(1);
-        let body = crate::reference_crypto::encode_post(&content, &content, "");
+        let body = crate::reference_crypto::encode_post(&content, &content, b"[]");
         let item = db.add([1; 32], &body).await.unwrap();
         db.set_limits(
             &[1; 32],
@@ -1831,7 +1847,7 @@ mod tests {
         db.set_limits(&[1; 32], StorageLimits::default())
             .await
             .unwrap();
-        let next = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), "");
+        let next = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), b"[]");
         db.add([1; 32], &next).await.unwrap();
         db.initialize().await.unwrap();
         assert_usage(&db, [1; 32], (58, 2)).await;
@@ -1843,7 +1859,7 @@ mod tests {
     #[tokio::test]
     async fn quota_checks_reject_invalid_usage_and_limit_reductions() {
         let (db, admin, name) = fixture().await;
-        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), "");
+        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), b"[]");
         db.add([1; 32], &body).await.unwrap();
         db.set_limits(
             &[1; 32],
