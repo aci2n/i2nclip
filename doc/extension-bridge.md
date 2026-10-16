@@ -126,9 +126,9 @@ Only HTTP(S) source URLs are stored; strip URL credentials, preserve query/hash,
 and omit blank titles. Source context must never use media alt text as page title.
 
 The capture request, upload batch, sendUpload, and api.upload consistently call
-arbitrary extensions extra. sendUpload supplies name/contentType/tags/image as
+arbitrary extensions extra. sendUpload supplies name/content_type/tags/image as
 explicit upload arguments. api.upload merges extra before the authoritative
-name/contentType/size/tags fields and encrypts the resulting complete metadata.
+name/content_type/size/tags fields and encrypts the resulting complete metadata.
 Ordinary Upload is unchanged. Source fields are inside existing encrypted metadata, including after filename/tag edits;
 no server endpoint, schema, dependencies, or persistent extension state changes.
 Cancellation/disposal drops context with the pending File through existing paths.
@@ -141,3 +141,7 @@ Do not scrape page content, fetch source pages, persist extra context separately
 or add compatibility handling. Acceptance: source follows the File through capture,
 locked receipt, upload, encryption, and metadata edits; manual files omit it. Check
 build/static output and actual Firefox details in both themes and narrow widths.
+
+The native extension handoff retains `sourceUrl` and `sourceTitle`. The web
+receiver maps those known fields to `source_url` and `source_title` before the
+ordinary upload workflow encodes MessagePack metadata.

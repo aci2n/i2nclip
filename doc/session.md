@@ -17,9 +17,11 @@ key. Locking, forgetting, replacement, resetting, and disposal invalidate work a
 release key references. Session mutations reject overlap. API calls receive the
 loaded crypto context rather than importing keys for every request.
 
-One atomic localStorage record holds the encrypted identity/server and password
+One atomic base64-wrapped MessagePack localStorage record holds the encrypted identity/server and password
 derivation material. Failed writes preserve the previous record and identity.
 Recovery independently encrypts one identity and is validated before saving.
+Recovery files use `.msgpack`; imports read bytes after checking file size.
+Compression preferences are also base64-wrapped MessagePack booleans.
 There are no migrations or unlock caches in sessionStorage.
 
 Setup offers Create, Restore, and Pair device. Create and Pair use a view-local

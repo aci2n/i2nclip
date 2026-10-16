@@ -113,7 +113,7 @@ export async function tagTokens(key, tags) {
 	return out;
 }
 
-/** version byte || 12-byte nonce || AES-GCM ciphertext (tag appended). */
+/** MessagePack envelope with version, nonce and authenticated ciphertext. */
 export async function encrypt(key, aad, plaintext, nonce) {
 	const iv = nonce ?? crypto.getRandomValues(new Uint8Array(12));
 	const ct = new Uint8Array(

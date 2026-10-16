@@ -72,7 +72,9 @@ export async function recovery(page) {
 	await page
 		.getByRole("button", { name: "Download recovery file", exact: true })
 		.click();
-	return readFile(await (await downloading).path());
+	const download = await downloading;
+	expect(download.suggestedFilename()).toBe("i2nclip-recovery.msgpack");
+	return readFile(await download.path());
 }
 export async function restore(page, app, bytes) {
 	await page.goto(`${app.origin}/?page=settings`);

@@ -48,11 +48,18 @@ After authentication and explicit sender approval, HKDF-SHA256 derives separate
 AES-256-GCM keys for the identity transfer and save acknowledgment from the PAKE
 session key. The HKDF salt is the pairing context and info is `transfer` or
 `acknowledgment`. Each packet uses a fresh 12-byte nonce. AAD additionally binds
-direction and protocol step. JSON packets contain `v: 1`, `iv`, and `ct` encoded
-as unpadded base64url. The identity plaintext contains `v`, `serverUrl`,
-`privateKey`, and `publicKey`; the acknowledgment contains `v: 1, saved: true`.
+direction and protocol step. MessagePack packets contain `v: 1`, binary `iv`, and binary `ct`.
+The identity plaintext map contains `v`, `server_url`, `private_key` (a key
+document), and binary `public_key`; the acknowledgment contains `v: 1, saved: true`.
 
 The receiver validates the identity and selected server, checks that no library is configured, and saves the encrypted identity to localStorage before acknowledgment. The master password is never transferred. Session and pairing stores own operation handles and cancellation. Locking, forgetting, replacement, and disposal end the attempt; stale transfers and acknowledgments are rejected. Closing the page ends pairing. Expiry and bounded relay retries remain enforced.
+
+Relay request/response bodies use `application/msgpack`. Messages are opaque
+MessagePack bin values. At the OPAQUE adapter boundary, library-owned string
+representations are encoded/decoded as MessagePack; OPAQUE's own formats and
+cryptographic parameters are unchanged. Transfer and acknowledgment plaintexts
+also use MessagePack. Decrypted binary fields are copied before temporary
+plaintext buffers are wiped.
 
 ## Relay API
 
@@ -68,7 +75,7 @@ a rolling sixty-second window per server process. Failed participant requests
 rooms) share this budget so those endpoints cannot evade room-enumeration
 limits. Authenticated participant requests do not spend that budget.
 Invalid room IDs, malformed
-JSON, and requests whose body reads stall or find all read slots occupied count
+MessagePack, and requests whose body reads stall or find all read slots occupied count
 toward these limits. Rate-limit rejection returns `429` with `Retry-After: 60`
 before reading the body. Rate records are bounded by the global admission limit
 and expire without extending the window on rejection.
@@ -111,7 +118,7 @@ They never retry room creation/join or start a second PAKE attempt with the same
 code. After a successful save, acknowledgment failures do not delete the room,
 so an acknowledgment already accepted by the relay remains available.
 
-Request bodies and client-read responses are capped at 16 KiB; message strings
+Request bodies and client-read responses are capped at 16 KiB; binary messages
 are capped at 8 KiB. Bodies and client requests have ten-second deadlines.
 Clients poll once per second with one request in flight, and independently
 enforce expiry. Responses are `no-store`. Errors use `401`, `404`, `409`, `413`,

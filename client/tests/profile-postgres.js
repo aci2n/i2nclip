@@ -69,6 +69,7 @@ async function postgresMemory() {
 
 async function signedHeaders(key, method, pathname, body) {
 	return {
+		"content-type": "application/msgpack",
 		authorization: await authorizationHeader({
 			key,
 			origin,
@@ -199,6 +200,7 @@ async function run() {
 		const identity = await generatePrivateKey();
 		const registration = await fetch(`${origin}/api/register-key`, {
 			method: "POST",
+			headers: { "content-type": "application/msgpack" },
 			body: encode({
 				otc: code,
 				public_key: b64urlToBytes(identity.publicKey),
@@ -256,9 +258,10 @@ async function run() {
 					const meta = await encrypt(
 						key,
 						metaAad(id),
-						new Uint8Array(65536 - 29),
+						new Uint8Array(65536 - 43),
 					);
-					return { content, id, body: encodePost({ meta, content, tags: "" }) };
+					assert.equal(meta.length, 65536);
+					return { content, id, body: encodePost({ meta, content, tags: [] }) };
 				}),
 			);
 			const start = performance.now();

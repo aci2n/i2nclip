@@ -1,5 +1,5 @@
-// A small WebP for the library card. Raw bytes sit after the JSON in the
-// encrypted metadata envelope, so the list can paint a card without
+// A small WebP for the library card, encrypted with the metadata in one
+// MessagePack document, so the list can paint a card without
 // downloading the original. Audio uses embedded cover art when the file has
 // some. A failure here just means the card has no preview.
 

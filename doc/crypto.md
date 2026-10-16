@@ -4,7 +4,7 @@ The browser implements client cryptography in `client/src/lib/protocol/crypto.js
 
 ## Identity and keys
 
-A library identity is JSON `{ "v": 1, "seed": "…", "publicKey": "…" }`. The seed and public key are each 32 bytes encoded as canonical unpadded base64url. The seed is a randomly generated Ed25519 secret seed, not a password. The public key is derived from it. The browser checks their correspondence by signing and verifying a fixed probe message when loading the identity. The unlocked session retains non-extractable signing, encryption and tag keys for API calls; lock/disposal releases their references.
+A private-key document is a MessagePack map `{v: 1, seed: bin, public_key: bin}`. The seed and public key are each 32 raw bytes. The containing identity is `{server_url: string, private_key: key-document}`. Key loading copies owned buffers before wiping temporary seeds. The seed is a randomly generated Ed25519 secret seed, not a password. The public key is derived from it. The browser checks their correspondence by signing and verifying a fixed probe message when loading the identity. The unlocked session retains non-extractable signing, encryption and tag keys for API calls; lock/disposal releases their references.
 
 The same seed is the input key material for HKDF-SHA256:
 
@@ -21,10 +21,10 @@ These fixed labels separate encryption and search keys. The signing key uses the
 Both use AES-256-GCM with `K_enc`, independently sampled 12-byte CSPRNG nonces, and full 16-byte authentication tags:
 
 ```text
-0x01 || nonce[12] || ciphertext || authentication_tag[16]
+MessagePack({v: 1, iv: nonce[12] as bin, ct: ciphertext || authentication_tag[16] as bin})
 ```
 
-The overhead is exactly 29 bytes, including empty plaintext. Rust uses `aes-gcm`; the browser uses WebCrypto. The associated data is exactly:
+The encoded overhead is 42–45 bytes, depending on the ciphertext length prefix. Rust uses `aes-gcm`; the browser uses WebCrypto. The associated data is exactly:
 
 ```text
 content:  UTF8("i2nclip/v1 content")
@@ -33,20 +33,26 @@ metadata: UTF8("i2nclip/v1 meta " + ciphertext_sha256)
 
 No newline or NUL is appended. Associated data is authenticated but not stored in the blob. Content uses fixed purpose AAD to avoid a circular dependency between its ciphertext and its hash. Its AAD does not include the owner public key: content encryption already uses `K_enc` derived from that owner's secret seed, so another identity has a different key. The server cannot verify the GCM tag and therefore cannot use this AAD to enforce ownership at upload time.
 
-The complete sealed content (version, nonce, ciphertext, tag) is hashed using SHA-256 to form its 64-character lowercase hexadecimal identifier. Clients compare this hash against the requested URL before decrypting. Metadata AAD includes that hash, binding metadata to the exact content and preventing metadata swaps between hashes. Distinct purpose labels prevent content/metadata substitution. The version byte is checked by the decoder; the version/purpose are also represented in the AAD. Decryption authenticates before returning plaintext.
+The complete sealed content (version, nonce, ciphertext, tag) is hashed using SHA-256 to form its 64-character lowercase hexadecimal identifier. Clients compare this hash against the requested URL before decrypting. Metadata AAD includes that hash, binding metadata to the exact content and preventing metadata swaps between hashes. Distinct purpose labels prevent content/metadata substitution. The version field is checked by the decoder; the version/purpose are also represented in the AAD. Decryption authenticates before returning plaintext.
 
 Every encryption under this library key shares one nonce collision domain, including metadata edits, content uploads, and all browsers restoring the same identity. AAD does **not** make nonce reuse safe. Random 96-bit nonces have approximate collision probability `q(q-1)/2^97` after `q` encryptions. NIST SP 800-38D §8.3 caps invocations at `2^32` per key for this random-IV construction across devices; this is an outer limit, not a recommended application target. The project has no tracked key-use budget or rotation procedure. See [NIST SP 800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf).
 
 Production paths generate fresh nonces. Rust's test-only `encrypt_with_nonce` and JavaScript's optional nonce parameter exist for deterministic tests and permit unsafe reuse by callers. The shared fixture reuses a test key/nonce across content and metadata; those public fixture values must never be used for actual data.
 
-Current metadata plaintext is:
+Current metadata plaintext is one MessagePack map:
 
 ```text
-uint32be(JSON byte length) || UTF8(JSON)
-uint32be(thumbnail byte length) || raw WebP thumbnail
+{metadata: map, thumb: bin | null}
 ```
 
-Typical JSON fields are `name`, `contentType`, `size` (plaintext bytes), `tags` (readable spellings), and optional `image` details. A zero-length thumbnail means none. The client strips a `thumb` JSON property and rejects trailing bytes when decoding. The maximum complete plaintext is `65,536 - 29 = 65,507` bytes. It drops the thumbnail if necessary; oversized JSON alone can still cause server rejection. The server treats this plaintext structure as opaque. The shared metadata crypto vector predates this structure and encrypts raw JSON; it validates the cipher/AAD rather than the current metadata payload format.
+Typical fields are `name`, `content_type`, `size` (plaintext bytes), `tags`
+(readable spellings), optional `source_url`, `source_title`, and `image` details.
+Metadata remains extensible; unknown fields are preserved. The thumbnail is raw
+WebP bytes or null. A nested `thumb` property is removed. The decoder validates
+the document shape and rejects trailing data. The conservative plaintext budget
+is `65,536 - 64 = 65,472` bytes. The client drops the thumbnail if necessary;
+metadata alone can still exceed the server cap. Shared vectors cover this
+MessagePack plaintext, its envelope, and the complete upload document.
 
 ## Searchable tags
 
@@ -67,9 +73,9 @@ The digest comparison need not hide the digest: body hashes and signatures are t
 
 ## Saved identity and recovery (client-side)
 
-PBKDF2-HMAC-SHA256 derives a non-extractable 256-bit AES-GCM key from exact UTF-8 master-password bytes, a fresh 16-byte salt, and 600,000 iterations. One localStorage record holds the salt, iteration count, and encrypted single identity. Encryption uses a fresh 12-byte IV, a full GCM tag, and AAD `i2nclip/local-identity/1`. Password changes verify the old password and encrypt a replacement record with a fresh salt and IV. No passwords, upload sources, or workflow state are saved.
+PBKDF2-HMAC-SHA256 derives a non-extractable 256-bit AES-GCM key from exact UTF-8 master-password bytes, a fresh 16-byte salt, and 600,000 iterations. One atomic base64-wrapped MessagePack localStorage record holds the salt, iteration count, and encrypted single identity. Encryption uses a fresh 12-byte IV, a full GCM tag, and AAD `i2nclip/local-identity/1`. Password changes verify the old password and encrypt a replacement record with a fresh salt and IV. No passwords, upload sources, or workflow state are saved.
 
-Recovery format is `{format: "i2nclip-recovery", v: 1, encrypted: ...}`. Its independent password protects the server URL and identity document using AAD `i2nclip/recovery/1`. Recovery derives its own key and salt. Imports validate the identity and encrypt it under the destination client's master-password key. Recovery readers enforce 600,000–2,000,000 PBKDF2 iterations and a one-MiB file limit. Recovery files keep their password after a master-password change. This greenfield project provides no format migration.
+The downloaded `i2nclip-recovery.msgpack` file contains the MessagePack map `{format: "i2nclip-recovery", v: 1, encrypted: ...}`. Password envelopes store `v`, binary `iv`, binary `ct`, binary `salt`, and `iterations`. Its independent password protects the server URL and identity document using AAD `i2nclip/recovery/1`. Recovery derives its own key and salt. Imports validate the identity and encrypt it under the destination client's master-password key. Recovery readers enforce 600,000–2,000,000 PBKDF2 iterations and a one-MiB file limit. Recovery files keep their password after a master-password change. This greenfield project provides no format migration.
 
 Passwords and library seeds never reach the server. Encryption at rest does not protect an unlocked client from compromised application code. JavaScript strings and browser-managed memory cannot be reliably overwritten; locking releases references, cancels work, and prevents stale results from re-entering the application.
 

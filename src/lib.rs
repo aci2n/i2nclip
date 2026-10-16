@@ -44,7 +44,7 @@ pub(crate) const MAX_TAG_DATA: usize = 96 * 1024;
 pub(crate) const PAGE: usize = 24;
 pub(crate) const MAX_BODY: usize = 64 + MAX_META + MAX_CONTENT + MAX_TAG_DATA;
 pub(crate) const MAX_META_BODY: usize = 96 + MAX_META + MAX_TAG_DATA;
-/// `POST /api/register-key` accepts a small JSON object only.
+/// `POST /api/register-key` accepts a small MessagePack map only.
 pub(crate) const MAX_REGISTER_BODY: usize = 4096;
 pub(crate) const SKEW_SECS: u64 = 300;
 
