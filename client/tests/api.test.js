@@ -134,7 +134,14 @@ test("upload progress uses the same response handling as fetch", async (t) => {
 	assert.equal(result.metadata.name, "sample.bin");
 	assert.equal(result.metadata.sourceUrl, "https://example.com/page");
 	assert.equal(result.metadata.sourceTitle, "A page");
-	assert.deepEqual(result.metadata.tags, ["Vacation", "dog", "Cat"]);
+	assert.deepEqual(result.metadata.tags, [
+		"Vacation",
+		"dog",
+		"Cat",
+		"file",
+		"bin",
+		"sample",
+	]);
 	assert.deepEqual(progress, [100]);
 	assert.deepEqual(requests, [
 		{ method: "POST", url: "https://clip.example.com/api/media" },

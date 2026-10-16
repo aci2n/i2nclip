@@ -35,7 +35,7 @@ pub const LISTEN: &str = "0.0.0.0:8080";
 pub(crate) const MAX_PLAIN: usize = 32 * 1024 * 1024;
 pub(crate) const MAX_CONTENT: usize = MAX_PLAIN + 64;
 pub(crate) const MAX_META: usize = 64 * 1024;
-pub(crate) const MAX_TAGS: usize = 32;
+pub(crate) const MAX_TAGS: usize = 64;
 /// Bound on newline-separated search-token text, including ignored empty lines.
 pub(crate) const MAX_TOKEN_TEXT: usize = 4096;
 /// One page of the library list. The next page starts after the last row.

@@ -2,6 +2,7 @@
 // HTTP requests contain signatures and ciphertext, never the private key.
 
 import { sniffContentType } from "./media/metadata.js";
+import { automaticTags } from "./media/tags.js";
 import { b64ToBytes, hexToBytes } from "./protocol/bytes.js";
 import {
 	authorizationHeader,
@@ -48,6 +49,10 @@ export async function upload({
 		size: bytes.length,
 		tags: uniqueTags(tags),
 	};
+	metadata.tags = uniqueTags([
+		...metadata.tags,
+		...automaticTags(metadata.name, metadata.contentType),
+	]);
 	if (image) {
 		metadata.image = image;
 	}

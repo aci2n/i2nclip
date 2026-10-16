@@ -4,6 +4,7 @@ import { splitTags } from "../protocol/tags.js";
 
 let { tags = [], disabled = false, name, onsave } = $props();
 let editing = $state(false);
+let expanded = $state(false);
 let draft = $state("");
 let saving = $state(false);
 let input = $state();
@@ -42,7 +43,7 @@ async function persist(next, clear = false) {
 </script>
 
 <fieldset class="tag-list" aria-label={`Tags for ${name}`}>
-	{#each tags as tag}
+	{#each expanded ? tags : tags.slice(0, 6) as tag}
 		<span class="chip tag"
 			><span class="tag-text">{tag}</span
 			><button
@@ -65,6 +66,16 @@ async function persist(next, clear = false) {
 			</button></span
 		>
 	{/each}
+	{#if tags.length > 6}
+		<button
+			type="button"
+			class="chip"
+			aria-expanded={expanded}
+			onclick={() => (expanded = !expanded)}
+		>
+			{expanded ? "Show fewer tags" : "Show all tags"}
+		</button>
+	{/if}
 	{#if editing}
 		<form
 			class="tags"

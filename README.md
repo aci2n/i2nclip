@@ -161,3 +161,5 @@ With an existing disposable PostgreSQL administrator connection, set `I2N_TEST_D
 Formatting commands use stable Rust 1.99.0 / rustfmt 1.10.0, with import grouping supplied through `--config` (these settings remain unstable in configuration files). `make format-write` applies Rust formatting and Biome fixes; `make pre-commit` then verifies Clippy and client checks. Rust builds warn on redundant qualification, and Clippy treats warnings as failures.
 
 Client Makefile targets prepare locked dependencies automatically. Browser tests build their Rust helpers and bind isolated listeners to loopback port 0. PostgreSQL uses a disposable container with a random host port unless an administrator URL is explicitly supplied. See [test preparation and isolation](doc/test-pipeline.md) for fresh-clone prerequisites and commands.
+
+Uploads receive up to 40 automatic tags from their stored media type, format and filename words. They are ordinary editable tags; edits never regenerate them. Each file allows 64 tags total. Cards show six tags initially; **Show all tags** reveals the rest. Existing files are unchanged.

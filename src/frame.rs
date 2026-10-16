@@ -196,8 +196,8 @@ mod tests {
         println!("POST without tags: {post_info:?}");
         println!("PUT without tags: {put_info:?}");
         println!("Old copy pattern: {copied_info:?}");
-        println!("POST with 32 tags, 1 KiB content: {small_info:?}");
-        println!("POST with 32 tags, maximum content: {large_info:?}");
+        println!("POST with 64 tags, 1 KiB content: {small_info:?}");
+        println!("POST with 64 tags, maximum content: {large_info:?}");
     }
 
     #[test]
@@ -230,7 +230,7 @@ mod tests {
         .unwrap();
         assert_eq!(queried, vec![token, other]);
         assert!(parse_query_tokens(vec!["nope".into()]).is_err());
-        let many: Vec<String> = (0..33).map(|n| format!("{n:043}")).collect();
+        let many: Vec<String> = (0..MAX_TAGS + 1).map(|n| format!("{n:043}")).collect();
         assert!(parse_query_tokens(many).is_err());
     }
 }
