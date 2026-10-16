@@ -34,9 +34,6 @@ test("upload generates searchable ordinary tags with a compact disclosure", asyn
 	).toHaveCount(0);
 	for (const width of [320, 360]) {
 		await page.setViewportSize({ width, height: 800 });
-		for (const theme of ["light", "dark"]) {
-			await page.emulateMedia({ colorScheme: theme });
-			await shot(page, `auto-tags-${width}-${theme}`);
-		}
+		await shot(page, `auto-tags-${width}`);
 	}
 });

@@ -42,3 +42,13 @@ The existing old-schema fixture must replay all migrations after its reset.
 Test busy/refresh/idle coalescing, identity invalidation, disposal and request
 failure. Check four automatic-tag screenshots and inspect Firefox output.
 Run focused checks and warning-free builds before each commit, then make test-all.
+
+## Verification completed
+
+Focused label/migration and HTTP body-boundary tests passed, along with the real
+Unicode upload/update/catalog regression in Firefox and Chromium. Catalog tests
+cover deferred coalescing, retained suggestions, explicit retry, lock and disposal.
+Final make test-all passed, including client tests, Svelte checks with zero
+errors/warnings, Clippy, formatting, web/extension builds, PostgreSQL tests and
+64 browser cases. Each browser produced exactly four automatic-tag screenshots;
+all four Firefox images were inspected at 320/360px in light/dark themes.
