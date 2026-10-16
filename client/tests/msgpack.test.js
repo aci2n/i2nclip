@@ -17,6 +17,8 @@ test("named maps and binary fields match Rust and reject incomplete or trailing 
 		new Uint8Array([0xc1]),
 		new Uint8Array([...bytes, 0xc0]),
 		new Uint8Array([...bytes, 0xc4]),
+		new Uint8Array([...bytes, 0x91]),
+		new Uint8Array([...bytes, 0x81]),
 		new Uint8Array([0xdd, 0xff, 0xff, 0xff, 0xff]),
 	]) {
 		assert.throws(() => decode(invalid));

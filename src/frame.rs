@@ -261,14 +261,17 @@ mod tests {
 
     #[test]
     fn full_tag_sets_fit_both_documents_and_limits_reject_excess() {
-        let tokens = |count| {
-            (0..count)
-                .map(|n| URL_SAFE_NO_PAD.encode([n as u8; 32]))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
+        let label = crate::reference_crypto::sealed_fixture(1, MAX_TAG_LABEL);
         for count in [MAX_TAGS, MAX_TAGS + 1] {
-            let tags = fixture_tag_labels(&tokens(count));
+            let tokens: Vec<_> = (0..count).map(|n| [n as u8; 32]).collect();
+            let entries: Vec<_> = tokens
+                .iter()
+                .map(|token| WireTag {
+                    token,
+                    label: &label,
+                })
+                .collect();
+            let tags = codec::encode(&entries).unwrap();
             let post = decode_post(&encode_post(b"meta", b"content", &tags)).map(|p| p.tags.len());
             let meta = decode_meta(&encode_meta(&[0; 32], b"meta", &tags)).map(|p| p.tags.len());
             if count == MAX_TAGS {

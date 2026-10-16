@@ -2,7 +2,7 @@
 
 use std::io::ErrorKind;
 
-use serde::{de::IgnoredAny, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::Error;
 
@@ -18,7 +18,9 @@ pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, Error> {
     decoder.set_max_depth(32);
     let value = T::deserialize(&mut decoder)
         .map_err(|_| Error::BadRequest("invalid MessagePack document".into()))?;
-    match IgnoredAny::deserialize(&mut decoder) {
+    // A scalar probe reads exactly one marker. A recursive probe could mistake
+    // an incomplete trailing array/map for the end of the original document.
+    match u8::deserialize(&mut decoder) {
         Err(rmp_serde::decode::Error::InvalidMarkerRead(error))
             if error.kind() == ErrorKind::UnexpectedEof =>
         {
@@ -52,10 +54,13 @@ mod tests {
         for invalid in [&bytes[..bytes.len() - 1], &[][..], b"\xc1"] {
             assert!(decode::<Document<'_>>(invalid).is_err());
         }
-        for suffix in [b"\xc0".as_slice(), b"\xc4", b"\xc1"] {
+        for marker in 0..=u8::MAX {
             let mut extra = bytes.clone();
-            extra.extend_from_slice(suffix);
-            assert!(decode::<Document<'_>>(&extra).is_err());
+            extra.push(marker);
+            assert!(
+                decode::<Document<'_>>(&extra).is_err(),
+                "trailing {marker:02x}"
+            );
         }
     }
 

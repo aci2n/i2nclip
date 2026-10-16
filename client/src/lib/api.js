@@ -201,14 +201,18 @@ export async function updateMetadata({
 		signal,
 	);
 	if (response.status === 409) {
-		const payload = await responseDocument(response);
-		if (payload.code === "metadata_conflict" && payload.media) {
+		let payload;
+		try {
+			payload = await responseDocument(response);
+		} catch {}
+		if (payload?.code === "metadata_conflict" && payload.media) {
 			const item = await openMeta(key, payload.media);
 			return {
 				conflict: true,
 				item,
 			};
 		}
+		throw await responseError(response, payload);
 	}
 	if (!response.ok) {
 		throw await responseError(response);
@@ -352,10 +356,10 @@ async function responseDocument(response) {
 	return decode(new Uint8Array(await response.arrayBuffer()));
 }
 
-async function responseError(response) {
+async function responseError(response, document) {
 	let message = response.statusText || `HTTP ${response.status}`;
 	try {
-		const payload = await responseDocument(response);
+		const payload = document ?? (await responseDocument(response));
 		if (typeof payload.error === "string" && payload.error) {
 			message = payload.error;
 		}

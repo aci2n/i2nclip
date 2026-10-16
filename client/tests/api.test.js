@@ -446,3 +446,29 @@ test("canceling a streaming download stops its reader without unhandled cancella
 	);
 	assert.equal(canceled, true);
 });
+
+test("metadata conflicts preserve ordinary errors and HTTP fallback", async (t) => {
+	const { privateKey } = await generatePrivateKey();
+	const key = await loadKey(privateKey);
+	let response = documentResponse(
+		{ error: "Library storage limit reached." },
+		{ status: 409 },
+	);
+	t.mock.method(globalThis, "fetch", async () => response);
+	const options = {
+		serverUrl: "https://clip.example",
+		key,
+		id: "a".repeat(64),
+		prevMetaHash: "0".repeat(64),
+		metadata: { name: "x", tags: [] },
+	};
+	await assert.rejects(updateMetadata(options), {
+		message: "Library storage limit reached.",
+		status: 409,
+	});
+	response = new Response("upstream", { status: 409, statusText: "Conflict" });
+	await assert.rejects(updateMetadata(options), {
+		message: "Conflict",
+		status: 409,
+	});
+});
