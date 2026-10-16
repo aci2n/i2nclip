@@ -45,32 +45,27 @@ impl FromRequest<AppState> for SignedRequest {
     type Rejection = Response;
 
     async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
-        Self::authenticate(req, state, KeyPolicy::Registered)
+        authenticate_request(req, state, KeyPolicy::Registered)
             .await
             .map_err(fail)
     }
 }
 
+pub(crate) async fn authenticate_request(
+    req: Request,
+    state: &AppState,
+    policy: KeyPolicy,
+) -> Result<SignedRequest, Error> {
+    let (parts, body) = req.into_parts();
+    let verified = verify_request(state, &parts.method, &parts.uri, &parts.headers, policy).await?;
+    Ok(SignedRequest {
+        verified,
+        parts,
+        body,
+    })
+}
+
 impl SignedRequest {
-    pub(crate) async fn registration(req: Request, state: &AppState) -> Result<Self, Error> {
-        Self::authenticate(req, state, KeyPolicy::Registering).await
-    }
-
-    async fn authenticate(
-        req: Request,
-        state: &AppState,
-        policy: KeyPolicy,
-    ) -> Result<Self, Error> {
-        let (parts, body) = req.into_parts();
-        let verified =
-            verify_request(state, &parts.method, &parts.uri, &parts.headers, policy).await?;
-        Ok(Self {
-            verified,
-            parts,
-            body,
-        })
-    }
-
     pub(crate) fn owner(&self) -> [u8; 32] {
         self.verified.owner()
     }
@@ -179,7 +174,7 @@ pub(crate) fn check_timestamp(ts: u64, now: u64) -> Result<(), Error> {
 }
 
 /// Registration proves key possession before it can join the allow-list.
-enum KeyPolicy {
+pub(crate) enum KeyPolicy {
     Registered,
     Registering,
 }

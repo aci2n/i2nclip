@@ -101,10 +101,11 @@ struct RegisterKeyDocument {
 }
 
 async fn register_key(State(state): State<AppState>, request: Request) -> Response {
-    let request = match auth::SignedRequest::registration(request, &state).await {
-        Ok(request) => request,
-        Err(error) => return fail(error),
-    };
+    let request =
+        match auth::authenticate_request(request, &state, auth::KeyPolicy::Registering).await {
+            Ok(request) => request,
+            Err(error) => return fail(error),
+        };
     if let Err(response) = request.check_size(MAX_REGISTER_BODY) {
         return *response;
     }
@@ -118,6 +119,7 @@ async fn register_key(State(state): State<AppState>, request: Request) -> Respon
     }
 }
 
+// TODO: remove public_key from the payload, just use what comes from the auth header
 async fn register_key_body(state: &AppState, signer: [u8; 32], body: &[u8]) -> Result<(), Error> {
     let payload: RegisterKeyDocument = codec::decode(body)?;
     if payload.otc.len() > 512 || payload.public_key.len() != 32 {
