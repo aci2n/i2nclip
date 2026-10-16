@@ -1,4 +1,4 @@
-import { normalizeTag } from "../protocol/crypto.js";
+import { normalizeTag } from "../protocol/tags.js";
 
 export function tagSuggestions(tags, draft, excluded) {
 	const query = draft.trim().normalize("NFC").toLowerCase();

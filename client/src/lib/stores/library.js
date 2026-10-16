@@ -1,7 +1,7 @@
 import { get, writable } from "svelte/store";
 import * as api from "../api.js";
 import { canPreview } from "../media/format.js";
-import { normalizeTag } from "../protocol/crypto.js";
+import { normalizeTag } from "../protocol/tags.js";
 import { createMediaItem } from "./media-item.js";
 
 export function createLibrary(

@@ -18,6 +18,7 @@ import {
 } from "./bytes.js";
 import { parsePrivateKey } from "./identity.js";
 import { decode, encode } from "./msgpack.js";
+import { normalizeTag, parseTagList } from "./tags.js";
 
 const PKCS8_PREFIX = hexToBytes("302e020100300506032b657004220420");
 
@@ -27,30 +28,6 @@ export function contentAad() {
 
 export function metaAad(id) {
 	return utf8(`i2nclip/v1 meta ${id}`);
-}
-
-/** Trim, NFC, lowercase. Same rules as `normalize_tag` in Rust. */
-export function normalizeTag(tag) {
-	const text = tag.trim().normalize("NFC").toLowerCase();
-	if (!text || [...text].length > 64 || /[\n\r,]/.test(text)) {
-		throw new Error("bad tag");
-	}
-	return text;
-}
-
-/** Split user-entered tags while preserving spelling in encrypted metadata. */
-export function splitTags(text) {
-	if (Array.isArray(text)) {
-		return text.flatMap(splitTags);
-	}
-	return String(text ?? "")
-		.split(",")
-		.map((tag) => tag.trim())
-		.filter(Boolean);
-}
-
-export function parseTagList(text) {
-	return splitTags(text).map(normalizeTag);
 }
 
 /**

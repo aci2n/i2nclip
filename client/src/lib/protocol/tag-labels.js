@@ -1,6 +1,6 @@
 import { b64urlToBytes, bytesToB64url, utf8 } from "./bytes.js";
-import { decrypt, encrypt, normalizeTag, tagToken } from "./crypto.js";
-import { uniqueTags } from "./tags.js";
+import { decrypt, encrypt, tagToken } from "./crypto.js";
+import { normalizeTag, uniqueTags } from "./tags.js";
 
 export function tagLabelAad(token) {
 	return utf8(`i2nclip/v1 tag ${token}`);
