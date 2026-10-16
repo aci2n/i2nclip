@@ -23,7 +23,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::Deserialize;
 
-use crate::{crypto, Error, MAX_CONTENT, MAX_META, MAX_TAGS, MAX_TAG_DATA};
+use crate::{crypto, Error, MAX_CONTENT, MAX_META, MAX_TAGS, MAX_TAG_DATA, MAX_TAG_LABEL};
 
 /// Canonical SHA-256 of the complete sealed content.
 pub(crate) fn parse_id(id: &str) -> Result<String, Error> {
@@ -132,7 +132,7 @@ fn parse_tags(text: &str) -> Result<Vec<Tag>, Error> {
         if label.len() < 30 {
             return Err(Error::BadRequest("empty tag label".into()));
         }
-        crypto::check_blob(&label, 285)?;
+        crypto::check_blob(&label, MAX_TAG_LABEL)?;
         if !tags.iter().any(|existing| existing.token == tag.token) {
             tags.push(Tag {
                 token: tag.token,
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn labeled_tags_are_bounded_and_must_have_sealed_labels() {
         let first = vec![1; 30];
-        let second = vec![1; 285];
+        let second = vec![1; MAX_TAG_LABEL];
         let entries = serde_json::json!([
             { "token": "A".repeat(43), "label": URL_SAFE_NO_PAD.encode(&first) },
             { "token": "A".repeat(43), "label": URL_SAFE_NO_PAD.encode(&second) },
@@ -280,13 +280,40 @@ mod tests {
         for json in [
             tag(""),
             tag("!"),
-            tag(&URL_SAFE_NO_PAD.encode([1; 286])),
+            tag(&URL_SAFE_NO_PAD.encode([1; MAX_TAG_LABEL + 1])),
             "{}".into(),
             "[]junk".into(),
         ] {
             assert!(parse_tags(&json).is_err());
         }
         assert!(parse_tags(&" ".repeat(MAX_TAG_DATA)).is_err());
+    }
+
+    #[test]
+    fn maximum_labels_fit_upload_and_metadata_tag_fields() {
+        let entries: Vec<_> = (0..MAX_TAGS)
+            .map(|n| {
+                serde_json::json!({
+                    "token": format!("{n:043}"),
+                    "label": URL_SAFE_NO_PAD.encode([1; MAX_TAG_LABEL])
+                })
+            })
+            .collect();
+        let mut json = serde_json::to_vec(&entries).unwrap();
+        assert!(json.len() <= MAX_TAG_DATA);
+        json.resize(MAX_TAG_DATA, b' ');
+        let post = encode_post(b"meta", b"content", &json);
+        let meta = encode_meta(&[0; 32], b"meta", &json);
+        for tags in [
+            decode_post(&post).unwrap().tags,
+            decode_meta(&meta).unwrap().tags,
+        ] {
+            assert_eq!(tags.len(), MAX_TAGS);
+            assert!(tags.iter().all(|tag| tag.label.len() == MAX_TAG_LABEL));
+        }
+        json.push(b' ');
+        assert!(decode_post(&encode_post(b"meta", b"content", &json)).is_err());
+        assert!(decode_meta(&encode_meta(&[0; 32], b"meta", &json)).is_err());
     }
 
     #[test]

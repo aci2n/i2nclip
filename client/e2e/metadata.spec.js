@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { list, updateMetadata } from "../src/lib/api.js";
+import { getTags, list, updateMetadata, upload } from "../src/lib/api.js";
 import { openRecovery } from "../src/lib/protocol/recovery.js";
 import {
 	createLibrary,
@@ -9,6 +9,48 @@ import {
 	recovery,
 	test,
 } from "./fixtures.js";
+
+test("decomposed Unicode tag spellings survive upload, metadata updates and catalog decryption", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	const manifest = await recovery(page);
+	const { identity, key } = await openRecovery(manifest.toString(), PASSWORD);
+	const credentials = { serverUrl: identity.serverUrl, key };
+	const tag = "가".normalize("NFD").repeat(64);
+	const saved = await upload({
+		...credentials,
+		bytes: new TextEncoder().encode("Unicode tag regression"),
+		name: "Unicode.txt",
+		contentType: "text/plain",
+		tags: [tag],
+	});
+	const original = (
+		await list({ ...credentials, tags: [tag.normalize("NFC")] })
+	).items[0];
+	expect(original.id).toBe(saved.id);
+	expect(original.metadata.tags).toContain(tag);
+	expect((await getTags(credentials)).tags).toContain(tag);
+	const updatedTag = "나".normalize("NFD").repeat(64);
+	const metadata = { ...original.metadata, tags: [updatedTag] };
+	const updated = await updateMetadata({
+		...credentials,
+		id: original.id,
+		metadata,
+		thumb: original.thumb,
+		prevMetaHash: original.metaHash,
+	});
+	expect(updated.conflict).toBe(false);
+	const current = await list({
+		...credentials,
+		tags: [updatedTag.normalize("NFC")],
+	});
+	expect(current.items).toHaveLength(1);
+	expect(current.items[0].metadata.tags).toEqual([updatedTag]);
+	expect((await getTags(credentials)).tags).toEqual([updatedTag]);
+	expect((await list({ ...credentials, tags: [tag] })).items).toHaveLength(0);
+});
 
 test("generic encrypted metadata updates rename downloads and preserve file content", async ({
 	page,

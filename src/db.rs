@@ -738,7 +738,7 @@ mod tests {
         let item = db.add([1; 32], &body).await.unwrap();
         // Recreate the exact pre-002 schema and migration ledger, with live data.
         sqlx::raw_sql(
-            "ALTER TABLE tags DROP COLUMN label; DELETE FROM _sqlx_migrations WHERE version = 2;",
+            "ALTER TABLE tags DROP COLUMN label; DELETE FROM _sqlx_migrations WHERE version >= 2;",
         )
         .execute(&db.pool)
         .await
@@ -756,6 +756,60 @@ mod tests {
             item.id
         );
         db.initialize().await.unwrap();
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn label_limit_migration_preserves_labels_and_widens_the_constraint() {
+        let (db, admin, name) = fixture().await;
+        // Recreate migration 002's actual label column and keep its applied ledger.
+        sqlx::raw_sql(&format!(
+            "ALTER TABLE tags DROP COLUMN label; DELETE FROM _sqlx_migrations WHERE version >= 3; {}",
+            include_str!("../sql/002_tag_labels.sql")
+        ))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        let token = URL_SAFE_NO_PAD.encode([7; 32]);
+        let body = |value| {
+            crate::reference_crypto::encode_post(
+                &sealed_blob(value),
+                &sealed_blob(value),
+                &fixture_tag_labels(&token),
+            )
+        };
+        let labeled = db.add([1; 32], &body(1)).await.unwrap();
+        let empty = db.add([1; 32], &body(2)).await.unwrap();
+        sqlx::query("UPDATE tags SET label = ''::bytea WHERE file_id = $1")
+            .bind(&empty.id)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let labels = || {
+            sqlx::query_as::<_, (String, Vec<u8>)>(
+                "SELECT file_id, label FROM tags ORDER BY file_id",
+            )
+            .fetch_all(&db.pool)
+        };
+        let before = labels().await.unwrap();
+        db.initialize().await.unwrap();
+        assert_eq!(labels().await.unwrap(), before);
+        assert_eq!(db.tags([1; 32]).await.unwrap().len(), 1);
+        sqlx::query("UPDATE tags SET label = $1 WHERE file_id = $2")
+            .bind(vec![1_u8; crate::MAX_TAG_LABEL])
+            .bind(&labeled.id)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(sqlx::query("UPDATE tags SET label = $1 WHERE file_id = $2")
+            .bind(vec![1_u8; crate::MAX_TAG_LABEL + 1])
+            .bind(&labeled.id)
+            .execute(&db.pool)
+            .await
+            .is_err());
+        let after = labels().await.unwrap();
+        db.initialize().await.unwrap();
+        assert_eq!(labels().await.unwrap(), after);
         dispose(db, admin, name).await;
     }
 

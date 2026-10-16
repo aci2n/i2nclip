@@ -36,8 +36,9 @@ pub(crate) const MAX_PLAIN: usize = 32 * 1024 * 1024;
 pub(crate) const MAX_CONTENT: usize = MAX_PLAIN + 64;
 pub(crate) const MAX_META: usize = 64 * 1024;
 pub(crate) const MAX_TAGS: usize = 64;
-/// Bound on newline-separated search-token text, including ignored empty lines.
-pub(crate) const MAX_TAG_DATA: usize = 32768;
+pub(crate) const MAX_TAG_LABEL: usize = 1024;
+/// Bound on tag JSON, including 64 maximum-size base64url labels.
+pub(crate) const MAX_TAG_DATA: usize = 96 * 1024;
 /// One page of the library list. The next page starts after the last row.
 pub(crate) const PAGE: usize = 24;
 pub(crate) const MAX_BODY: usize = 4 + MAX_META + 4 + MAX_CONTENT + 4 + MAX_TAG_DATA;

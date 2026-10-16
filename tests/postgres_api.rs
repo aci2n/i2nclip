@@ -457,15 +457,15 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
     let mut tags = b"[]".to_vec();
-    tags.resize(32 * 1024, b' ');
+    tags.resize(96 * 1024, b' ');
     let body = client_crypto::encode_post(&meta, &content, &tags);
-    assert_eq!(body.len(), 33_652_812);
+    assert_eq!(body.len(), 33_718_348);
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
     );
     let body = client_crypto::encode_meta(&raw_hash(&meta), &meta, &tags);
-    assert_eq!(body.len(), 98_344);
+    assert_eq!(body.len(), 163_880);
     assert_eq!(
         call(&app, &owner, "PUT", &format!("/api/media/{id}/meta"), body)
             .await
@@ -510,8 +510,8 @@ async fn media_body_caps_reject_declared_sizes_before_polling() {
     let (_dir, app) = app(&[&owner]).await;
     let id = "8888888888888888888888888888888888888888888888888888888888888888";
     for (method, path, cap) in [
-        ("POST", "/api/media".to_string(), 33_652_812),
-        ("PUT", format!("/api/media/{id}/meta"), 98_344),
+        ("POST", "/api/media".to_string(), 33_718_348),
+        ("PUT", format!("/api/media/{id}/meta"), 163_880),
         ("GET", "/api/media".to_string(), 0),
         ("DELETE", format!("/api/media/{id}"), 0),
     ] {
@@ -568,8 +568,8 @@ async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
     let (_dir, app) = app(&[&owner]).await;
     let id = "9999999999999999999999999999999999999999999999999999999999999999";
     for (method, path, cap) in [
-        ("POST", "/api/media".to_string(), 33_652_812),
-        ("PUT", format!("/api/media/{id}/meta"), 98_344),
+        ("POST", "/api/media".to_string(), 33_718_348),
+        ("PUT", format!("/api/media/{id}/meta"), 163_880),
         ("GET", "/api/media".to_string(), 0),
         ("DELETE", format!("/api/media/{id}"), 0),
         ("POST", "/api/register-key".to_string(), 4096),
@@ -1222,7 +1222,7 @@ async fn upload_admission_is_shared_and_releases_capacity() {
     for (body, expected) in [
         (Body::new(broken), StatusCode::BAD_REQUEST),
         (
-            Body::from(vec![0; 33_652_813]),
+            Body::from(vec![0; 33_718_349]),
             StatusCode::PAYLOAD_TOO_LARGE,
         ),
         (Body::from("wrong signed bytes"), StatusCode::UNAUTHORIZED),
