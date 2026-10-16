@@ -342,12 +342,10 @@ pub fn document_json(bytes: &[u8]) -> serde_json::Value {
     codec::decode::<Value>(bytes).unwrap().0
 }
 
-pub fn registration_body(otc: &str, public_key: &[u8]) -> Vec<u8> {
+pub fn registration_body(otc: &str) -> Vec<u8> {
     #[derive(serde::Serialize)]
     struct Registration<'a> {
         otc: &'a str,
-        #[serde(with = "serde_bytes")]
-        public_key: &'a [u8],
     }
-    codec::encode(&Registration { otc, public_key }).unwrap()
+    codec::encode(&Registration { otc }).unwrap()
 }

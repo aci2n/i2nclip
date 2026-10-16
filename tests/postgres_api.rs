@@ -246,7 +246,7 @@ async fn register(app: &axum::Router, key: &Identity, otc: &str) -> (StatusCode,
         key,
         "POST",
         "/api/register-key",
-        client_crypto::registration_body(otc, &key.public),
+        client_crypto::registration_body(otc),
     )
     .await
 }
@@ -332,7 +332,7 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
     ] {
         let registration = path == "/api/register-key";
         let payload = if registration {
-            client_crypto::registration_body(&otc, &new_key.public)
+            client_crypto::registration_body(&otc)
         } else if method == "GET" || method == "DELETE" {
             vec![]
         } else {
@@ -840,46 +840,6 @@ async fn register_otc_is_single_use_and_idempotent_for_key() {
         .unwrap();
     let (status, _) = register(&app, &key, &otc2).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-}
-
-#[tokio::test]
-async fn rejected_public_keys_do_not_consume_registration_code() {
-    let (dir, app) = app(&[]).await;
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
-        .await
-        .unwrap();
-    let mut identity = [0u8; 32];
-    identity[0] = 1;
-    for public in [identity, [0u8; 32], [2u8; 32]] {
-        let signer = new_identity();
-        let (status, body) = call(
-            &app,
-            &signer,
-            "POST",
-            "/api/register-key",
-            client_crypto::registration_body(&otc, &public),
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(
-            client_crypto::document_json(&body),
-            serde_json::json!({ "error": "invalid public_key" })
-        );
-    }
-    let conn = &dir.1;
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM registered_keys")
-            .fetch_one(conn)
-            .await
-            .unwrap(),
-        0
-    );
-    let valid = new_identity();
-    enroll_key(&app, &valid, &otc).await;
-    assert_eq!(
-        call(&app, &valid, "GET", "/api/media", vec![]).await.0,
-        StatusCode::OK
-    );
 }
 
 #[tokio::test]
@@ -2246,21 +2206,20 @@ async fn registration_requires_possession_and_preserves_invitations_on_verificat
     let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
         .await
         .unwrap();
-    let body = client_crypto::registration_body(&otc, &key.public);
+    let body = client_crypto::registration_body(&otc);
     for case in [
         "missing",
         "forged",
+        "weak",
         "origin",
         "path",
         "stale",
         "early",
-        "mismatch",
         "tampered",
         "malformed",
     ] {
         let sent = match case {
-            "mismatch" => client_crypto::registration_body(&otc, &other.public),
-            "tampered" => client_crypto::registration_body("changed invitation", &key.public),
+            "tampered" => client_crypto::registration_body("changed invitation"),
             "malformed" => b"not MessagePack".to_vec(),
             _ => body.clone(),
         };
@@ -2268,8 +2227,16 @@ async fn registration_requires_possession_and_preserves_invitations_on_verificat
             seed: other.seed,
             public: key.public,
         };
+        let weak = Identity {
+            seed: key.seed,
+            public: [0; 32],
+        };
         let signature = client_crypto::authorization(
-            if case == "forged" { &forged } else { &key },
+            match case {
+                "forged" => &forged,
+                "weak" => &weak,
+                _ => &key,
+            },
             if case == "origin" {
                 "https://wrong.example"
             } else {
@@ -2294,7 +2261,7 @@ async fn registration_requires_possession_and_preserves_invitations_on_verificat
         }
         let unread = matches!(
             case,
-            "missing" | "forged" | "origin" | "path" | "stale" | "early"
+            "missing" | "forged" | "weak" | "origin" | "path" | "stale" | "early"
         );
         let request_body = if unread {
             Body::new(Body::from(sent).map_frame(|_| panic!("invalid proof must not read a body")))

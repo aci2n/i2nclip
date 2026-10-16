@@ -20,7 +20,7 @@ key/database and readable success/error responses from unrelated client origins.
 
 `b64url` means URL-safe base64 without padding. Public keys are raw 32-byte Ed25519 keys (43 encoded characters); signatures are 64 bytes (86 characters). Body digests are 64 lowercase hexadecimal characters. Item identifiers (`id`) are the SHA-256 of the complete sealed content blob, encoded as 64 lowercase hexadecimal characters. The server computes them independently. Hashes are globally unique across owners while rows exist; an existing hash returns `409`. There are no UUIDs or caller-chosen content identifiers.
 
-The client generates its identity locally. The server registers only the public key. Registration carries a binary 32-byte key and requires a point accepted by dalek's `VerifyingKey::from_bytes`, and a key that is not weak (`is_weak()` is false). Invalid or weak payload keys return `400` after header authentication and before consuming an invitation; invalid signatures return `401`. An administrator issues a one-time registration code using `i2nclip otc issue`. The code contains 16 random bytes encoded as b64url and defaults to a 24-hour lifetime. PostgreSQL stores SHA-256 of the trimmed code. Registration consumes an unexpired code and inserts the public key in one transaction. An already registered key still requires a fresh valid code; `ON CONFLICT DO NOTHING` prevents a duplicate key error. Registration requires proof of possession: the existing Authorization envelope is signed by the key being registered, and the binary public_key in the body must match that signer. Signature, timestamp, replay and body-hash checks precede invitation consumption.
+The client generates its identity locally. The server registers only the public key. Registration takes its public key from the verified Authorization header. Invalid or weak signer keys and invalid signatures return `401` before consuming an invitation. An administrator issues a one-time registration code using `i2nclip otc issue`. The code contains 16 random bytes encoded as b64url and defaults to a 24-hour lifetime. PostgreSQL stores SHA-256 of the trimmed code. Registration consumes an unexpired code and inserts the public key in one transaction. An already registered key still requires a fresh valid code; `ON CONFLICT DO NOTHING` prevents a duplicate key error. Registration requires proof of possession: the existing Authorization envelope is signed by the key being registered, and the body contains only the invitation code. Signature, timestamp, replay and body-hash checks precede invitation consumption.
 
 This is a fresh-format cutover: deploy client and server together with fresh
 application data and recovery files. Existing artifacts are not converted or
@@ -34,7 +34,7 @@ containers retain their native formats.
 | `GET /api/health` | None | `200`, `{"ok":true}` |
 | `GET /api/quota` | Signed empty GET | `200`, owner limits and usage |
 | `GET /api/ping` | Signed; empty body, registered key, fresh nonce | `204`, empty response; `401` if unauthorized |
-| `POST /api/register-key` | Signed by the registering key; `{otc: string, public_key: bin}` | `204` |
+| `POST /api/register-key` | Signed by the registering key; `{otc: string}` | `204` |
 | `GET /api/media` | Signed; client sends no body | `200`, `{"media":[…],"next":null}` or a cursor |
 | `POST /api/media` | Signed POST frame | `201`, one media object |
 | `GET /api/media/{id}` | Signed; client sends no body | `200`, encrypted content bytes |

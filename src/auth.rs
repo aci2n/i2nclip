@@ -14,8 +14,7 @@
 //! payload. [`verify_body`] then hashes the bytes and compares them to the
 //! hash from the header.
 //!
-//! A missing key and a bad signature both become 401. Malformed public keys
-//! submitted for registration become 400.
+//! A missing key, malformed signer key, and a bad signature become 401.
 
 use std::time::Duration;
 

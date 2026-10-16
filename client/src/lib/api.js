@@ -238,7 +238,7 @@ export async function remove({ serverUrl, key, id, signal }) {
 
 /** Prove possession of the key being registered and spend an invitation. */
 export async function registerKey({ serverUrl, key, otc, signal }) {
-	const body = encode({ otc: String(otc).trim(), public_key: key.publicKey });
+	const body = encode({ otc: String(otc).trim() });
 	const response = await signedFetch(
 		serverUrl,
 		key,

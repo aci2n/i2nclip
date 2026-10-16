@@ -473,7 +473,7 @@ test("metadata conflicts preserve ordinary errors and HTTP fallback", async (t) 
 	});
 });
 
-test("registration signs the exact invitation and binary public key with the unregistered key", async (t) => {
+test("registration signs the otc-only body with the unregistered key", async (t) => {
 	const { privateKey } = await generatePrivateKey();
 	const key = await loadKey(privateKey);
 	const controller = new AbortController();
@@ -484,7 +484,6 @@ test("registration signs the exact invitation and binary public key with the unr
 		assert.equal(options.signal, controller.signal);
 		assert.deepEqual(decode(options.body), {
 			otc: "invitation",
-			public_key: key.publicKey,
 		});
 		const [publicKey, ts, nonce, hash, signature] =
 			options.headers.authorization.slice(7).split(".");

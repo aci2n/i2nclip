@@ -96,8 +96,6 @@ async fn ping(request: auth::SignedRequest) -> Response {
 #[derive(Deserialize)]
 struct RegisterKeyDocument {
     otc: String,
-    #[serde(with = "serde_bytes")]
-    public_key: Vec<u8>,
 }
 
 async fn register_key(State(state): State<AppState>, request: Request) -> Response {
@@ -119,17 +117,12 @@ async fn register_key(State(state): State<AppState>, request: Request) -> Respon
     }
 }
 
-// TODO: remove public_key from the payload, just use what comes from the auth header
 async fn register_key_body(state: &AppState, signer: [u8; 32], body: &[u8]) -> Result<(), Error> {
     let payload: RegisterKeyDocument = codec::decode(body)?;
-    if payload.otc.len() > 512 || payload.public_key.len() != 32 {
+    if payload.otc.len() > 512 {
         return Err(Error::BadRequest("invalid registration payload".into()));
     }
-    let public = auth::validate_public_key(&payload.public_key)?;
-    if public != signer {
-        return Err(Error::Unauthorized);
-    }
-    state.db.consume_code(&payload.otc, &public).await
+    state.db.consume_code(&payload.otc, &signer).await
 }
 
 pub(crate) fn document_response(status: StatusCode, body: impl Serialize) -> Response {
@@ -395,21 +388,13 @@ mod request_tests {
         let registration = crate::reference_crypto::registration_body;
         for body in [
             b"not MessagePack".to_vec(),
-            codec::encode(&json!({"otc":"code"})).unwrap(),
-            registration(&"x".repeat(513), &signer),
-            registration("code", &[2; 31]),
-            registration("code", &[2; 32]),
-            registration("code", &[0; 32]),
+            codec::encode(&json!({})).unwrap(),
+            registration(&"x".repeat(513)),
         ] {
             assert!(matches!(
                 register_key_body(&state, signer, &body).await,
                 Err(Error::BadRequest(_))
             ));
         }
-        let other = crate::reference_crypto::from_seed([2; 32]).public;
-        assert!(matches!(
-            register_key_body(&state, signer, &registration("code", &other)).await,
-            Err(Error::Unauthorized)
-        ));
     }
 }
