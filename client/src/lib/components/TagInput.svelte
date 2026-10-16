@@ -136,8 +136,6 @@ function focusSuggestion(index) {
 	min-width: 0;
 }
 input {
-	width: 100%;
-	min-width: 0;
 	min-height: 3rem;
 }
 input.borderless {
@@ -189,9 +187,6 @@ li button:focus-visible {
 @media (max-width: 32rem), (pointer: coarse) {
 	input.borderless {
 		min-height: 3rem;
-	}
-	input {
-		font-size: 1.1rem;
 	}
 }
 </style>
