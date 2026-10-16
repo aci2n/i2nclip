@@ -13,7 +13,8 @@ use sha2::Sha256;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::{
-    crypto::{body_hash, looks_sealed, request_message},
+    codec,
+    crypto::{body_hash, looks_sealed, request_message, Sealed},
     Error,
 };
 
@@ -90,11 +91,11 @@ pub fn encrypt_with_nonce(
             },
         )
         .map_err(|_| Error::Crypto)?;
-    let mut out = Vec::with_capacity(1 + NONCE_LEN + ciphertext.len());
-    out.push(VERSION);
-    out.extend_from_slice(nonce);
-    out.extend_from_slice(&ciphertext);
-    Ok(out)
+    codec::encode(&Sealed {
+        v: VERSION,
+        iv: nonce,
+        ct: &ciphertext,
+    })
 }
 
 /// Inverse of [`encrypt`]. Fails closed: wrong key, wrong id, or any tampering
@@ -103,8 +104,9 @@ pub fn decrypt(seed: &[u8; 32], aad: &[u8], blob: &[u8]) -> Result<Vec<u8>, Erro
     if !looks_sealed(blob, usize::MAX) {
         return Err(Error::Crypto);
     }
-    let nonce = &blob[1..1 + NONCE_LEN];
-    let ciphertext = &blob[1 + NONCE_LEN..];
+    let sealed: Sealed<'_> = codec::decode(blob)?;
+    let nonce = sealed.iv;
+    let ciphertext = sealed.ct;
     let key = derive_key(seed, b"enc");
     let cipher = Aes256Gcm::new_from_slice(&key).expect("AES-256 key is 32 bytes");
     cipher
@@ -230,8 +232,7 @@ fn push_chunk(out: &mut Vec<u8>, data: &[u8]) {
 // Reference HTTP fixtures have opaque tokens, not plaintext tag names. These
 // labels have valid sealed framing; crypto authentication is tested separately.
 pub fn fixture_tag_labels(tokens: &str) -> Vec<u8> {
-    let mut label = vec![0; 30];
-    label[0] = 1;
+    let label = sealed_fixture(0, 43);
     serde_json::to_vec(
         &tokens
             .lines()
@@ -242,4 +243,24 @@ pub fn fixture_tag_labels(tokens: &str) -> Vec<u8> {
             .collect::<Vec<_>>(),
     )
     .unwrap()
+}
+
+/// A structurally valid envelope with an exact encoded size, without authentication.
+pub fn sealed_fixture(value: u8, size: usize) -> Vec<u8> {
+    let iv = [value; 12];
+    let mut length = size.saturating_sub(26);
+    loop {
+        let ciphertext = vec![value; length];
+        let bytes = codec::encode(&Sealed {
+            v: 1,
+            iv: &iv,
+            ct: &ciphertext,
+        })
+        .unwrap();
+        if bytes.len() == size {
+            return bytes;
+        }
+        assert!(bytes.len() > size, "unrepresentable sealed fixture size");
+        length -= bytes.len() - size;
+    }
 }

@@ -7,8 +7,8 @@
 
 import { chunk, concat, utf8 } from "./bytes.js";
 
-/** Room left for the 1-byte version, 12-byte nonce, and 16-byte GCM tag. */
-export const MAX_META_PLAINTEXT = 64 * 1024 - 29;
+/** Room left for the MessagePack envelope, nonce, and GCM tag. */
+export const MAX_META_PLAINTEXT = 64 * 1024 - 64;
 
 export function encodeMetaPlain(metadata, thumb) {
 	const clean = { ...metadata };

@@ -11,7 +11,7 @@ use base64::{
     Engine,
 };
 use http_body_util::BodyExt;
-use i2nclip::{crypto, Error};
+use i2nclip::{codec, crypto, Error};
 use reference_crypto::{self as client_crypto, fixture_tag_labels, Identity};
 use tower::ServiceExt;
 
@@ -97,8 +97,7 @@ async fn tag_catalog_requires_signed_empty_requests_and_filters_owners() {
     let stranger = new_identity();
     let (_db, app) = app(&[&owner, &other]).await;
     let token = client_crypto::tag_token(&owner.seed, "Holiday").unwrap();
-    let mut content = vec![0; 30];
-    content[0] = 1;
+    let content = client_crypto::sealed_fixture(0, 43);
     let body = client_crypto::encode_post(&content, &content, &fixture_tag_labels(&token));
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
@@ -450,10 +449,8 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
         StatusCode::OK
     );
     // The server checks ciphertext framing, not the authentication tag.
-    let mut meta = vec![0u8; 65_536];
-    meta[0] = 1;
-    let mut content = vec![0u8; 33_554_496];
-    content[0] = 1;
+    let meta = client_crypto::sealed_fixture(0, 65_536);
+    let content = client_crypto::sealed_fixture(0, 33_554_496);
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
     let mut tags = b"[]".to_vec();
@@ -1867,7 +1864,7 @@ async fn quota_cli_invitation_and_http_upload_failures_work_together() {
     }
     let issued = cli(
         &dir.0,
-        &["otc", "issue", "--max-bytes", "29", "--max-files", "1"],
+        &["otc", "issue", "--max-bytes", "42", "--max-files", "1"],
     )
     .await;
     assert!(
@@ -1877,12 +1874,20 @@ async fn quota_cli_invitation_and_http_upload_failures_work_together() {
     );
     let code = String::from_utf8(issued.stdout).unwrap();
     enroll_key(&app, &key, code.trim()).await;
-    let body = client_crypto::encode_post(&[1; 29], &[1; 29], b"[]");
+    let body = client_crypto::encode_post(
+        &client_crypto::sealed_fixture(1, 42),
+        &client_crypto::sealed_fixture(1, 42),
+        b"[]",
+    );
     let (status, saved) = call(&app, &key, "POST", "/api/media", body.clone()).await;
     assert_eq!(status, StatusCode::CREATED);
     let saved: serde_json::Value = serde_json::from_slice(&saved).unwrap();
-    assert_eq!(saved["bytes"], 29);
-    let second = client_crypto::encode_post(&[1; 29], &[1; 30], b"[]");
+    assert_eq!(saved["bytes"], 42);
+    let second = client_crypto::encode_post(
+        &client_crypto::sealed_fixture(1, 42),
+        &client_crypto::sealed_fixture(1, 43),
+        b"[]",
+    );
     let (status, error) = call(&app, &key, "POST", "/api/media", second.clone()).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(
@@ -1937,7 +1942,7 @@ async fn quota_cli_invitation_and_http_upload_failures_work_together() {
             "set-limits",
             &key.registration_key(),
             "--max-bytes",
-            "59",
+            "85",
             "--max-files",
             "2",
         ],
@@ -2012,8 +2017,8 @@ async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
             "max_content_bytes": 536870912, "max_files": 10000, "used_content_bytes": 0, "file_count": 0,
         })
     );
-    let content = [1; 29];
-    let body = client_crypto::encode_post(&[1; 29], &content, b"[]");
+    let content = client_crypto::sealed_fixture(1, 42);
+    let body = client_crypto::encode_post(&client_crypto::sealed_fixture(1, 42), &content, b"[]");
     assert_eq!(
         call(&app, &owner, "POST", "/api/media", body).await.0,
         StatusCode::CREATED
@@ -2060,7 +2065,7 @@ async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
         if status == StatusCode::OK {
             let bytes = response.into_body().collect().await.unwrap().to_bytes();
             let quota: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(quota["used_content_bytes"], 29);
+            assert_eq!(quota["used_content_bytes"], 42);
             assert_eq!(quota["file_count"], 1);
         }
     }
@@ -2219,8 +2224,7 @@ async fn global_download_limit_still_applies_across_independent_keys() {
     let mut held = Vec::new();
     let mut ids = Vec::new();
     for (n, owner) in owners.iter().enumerate() {
-        let mut content = vec![1; 29];
-        content[1] = n as u8;
+        let content = client_crypto::sealed_fixture(n as u8, 42);
         let id = crypto::body_hash(&content);
         assert_eq!(
             call(
@@ -2228,7 +2232,7 @@ async fn global_download_limit_still_applies_across_independent_keys() {
                 owner,
                 "POST",
                 "/api/media",
-                client_crypto::encode_post(&[1; 29], &content, b"[]")
+                client_crypto::encode_post(&client_crypto::sealed_fixture(1, 42), &content, b"[]")
             )
             .await
             .0,

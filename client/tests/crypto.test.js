@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { bytesToHex, hexToBytes, utf8 } from "../src/lib/protocol/bytes.js";
+import {
+	bytesToB64url,
+	bytesToHex,
+	hexToBytes,
+	utf8,
+} from "../src/lib/protocol/bytes.js";
 import {
 	authorizationHeader,
 	bodyHash,
@@ -15,6 +20,7 @@ import {
 	tagToken,
 } from "../src/lib/protocol/crypto.js";
 import { encodeMeta, encodePost } from "../src/lib/protocol/frame.js";
+import { encode } from "../src/lib/protocol/msgpack.js";
 
 const vectors = JSON.parse(
 	readFileSync(new URL("./test-vectors.json", import.meta.url), "utf8"),
@@ -53,7 +59,14 @@ test("library identity matches the rust vectors", async () => {
 	const frame = encodePost({
 		meta,
 		content,
-		tags: [{ label: `AQ${"A".repeat(38)}`, token: vectors.token }],
+		tags: [
+			{
+				label: bytesToB64url(
+					encode({ v: 1, iv: new Uint8Array(12), ct: new Uint8Array(17) }),
+				),
+				token: vectors.token,
+			},
+		],
 	});
 	assert.equal(bytesToHex(frame), vectors.frame_hex);
 

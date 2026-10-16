@@ -710,10 +710,8 @@ mod tests {
         assert_eq!(stored, expected);
     }
 
-    fn sealed_blob(value: u8) -> [u8; 29] {
-        let mut blob = [value; 29];
-        blob[0] = 1;
-        blob
+    fn sealed_blob(value: u8) -> Vec<u8> {
+        crate::reference_crypto::sealed_fixture(value, 42)
     }
 
     fn labeled(tokens: &[String]) -> Vec<frame::Tag> {
@@ -772,14 +770,19 @@ mod tests {
         .unwrap();
         let token = URL_SAFE_NO_PAD.encode([7; 32]);
         let body = |value| {
-            crate::reference_crypto::encode_post(
-                &sealed_blob(value),
-                &sealed_blob(value),
-                &fixture_tag_labels(&token),
-            )
+            crate::reference_crypto::encode_post(&sealed_blob(value), &sealed_blob(value), b"[]")
         };
         let labeled = db.add([1; 32], &body(1)).await.unwrap();
         let empty = db.add([1; 32], &body(2)).await.unwrap();
+        for item in [&labeled, &empty] {
+            sqlx::query("INSERT INTO tags (file_id, token, label) VALUES ($1, $2, $3)")
+                .bind(&item.id)
+                .bind(&token)
+                .bind(vec![1_u8; 30])
+                .execute(&db.pool)
+                .await
+                .unwrap();
+        }
         sqlx::query("UPDATE tags SET label = ''::bytea WHERE file_id = $1")
             .bind(&empty.id)
             .execute(&db.pool)
@@ -1009,13 +1012,13 @@ mod tests {
     #[tokio::test]
     async fn waiting_metadata_update_reads_committed_metadata_and_tags() {
         let (db, admin, name) = fixture().await;
-        let original = [1; 29];
+        let original = sealed_blob(1);
         let committed = sealed_blob(2);
         let token = URL_SAFE_NO_PAD.encode([3; 32]);
         let item = db
             .add(
                 [1; 32],
-                &crate::reference_crypto::encode_post(&original, &[1; 29], b"[]"),
+                &crate::reference_crypto::encode_post(&original, &sealed_blob(1), b"[]"),
             )
             .await
             .unwrap();
@@ -1081,11 +1084,11 @@ mod tests {
     #[tokio::test]
     async fn competing_metadata_updates_have_one_winner() {
         let (db, admin, name) = fixture().await;
-        let original = [1; 29];
+        let original = sealed_blob(1);
         let item = db
             .add(
                 [1; 32],
-                &crate::reference_crypto::encode_post(&original, &[1; 29], b"[]"),
+                &crate::reference_crypto::encode_post(&original, &sealed_blob(1), b"[]"),
             )
             .await
             .unwrap();
@@ -1099,6 +1102,7 @@ mod tests {
         for value in [2, 3] {
             let db = db.clone();
             let id = item.id.clone();
+            let original = original.clone();
             tasks.push(tokio::spawn(async move {
                 let token = URL_SAFE_NO_PAD.encode([value; 32]);
                 db.update_meta(
@@ -1147,14 +1151,14 @@ mod tests {
     #[tokio::test]
     async fn committed_deletion_prevents_waiting_metadata_update() {
         let (db, admin, name) = fixture().await;
-        let original = [1; 29];
+        let original = sealed_blob(1);
         let token = URL_SAFE_NO_PAD.encode([2; 32]);
         let item = db
             .add(
                 [1; 32],
                 &crate::reference_crypto::encode_post(
                     &original,
-                    &[1; 29],
+                    &sealed_blob(1),
                     &fixture_tag_labels(&token),
                 ),
             )
@@ -1270,9 +1274,8 @@ mod tests {
         );
         assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "1");
         connections.clear();
-        let mut content = vec![1; 100_000];
-        content[0] = 1;
-        let body = crate::reference_crypto::encode_post(&[1; 29], &content, b"[]");
+        let content = crate::reference_crypto::sealed_fixture(1, 100_000);
+        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &content, b"[]");
         let item = db.add([1; 32], &body).await.unwrap();
         let downloaded = db.content([1; 32], &item.id).await.unwrap();
         for _ in 0..8 {
@@ -1341,8 +1344,8 @@ mod tests {
             )
             .bind(&id)
             .bind(owner.as_slice())
-            .bind(&[1_u8; 29][..])
-            .bind(&[1_u8; 29][..])
+            .bind(&[1_u8; 42][..])
+            .bind(&[1_u8; 42][..])
             .bind(created_at)
             .execute(&mut *tx)
             .await
@@ -1355,7 +1358,7 @@ mod tests {
             first.iter().map(|item| &item.id).collect::<Vec<_>>(),
             ids[..PAGE].iter().collect::<Vec<_>>()
         );
-        assert!(first.iter().all(|item| item.bytes == 29));
+        assert!(first.iter().all(|item| item.bytes == 42));
         assert_eq!(cursor, Some(format!("100.{}", ids[PAGE - 1])));
         let after = Some((
             first.last().unwrap().created_at,
@@ -1385,7 +1388,7 @@ mod tests {
     #[tokio::test]
     async fn schema_bounds_and_immutable_content_protect_downloads() {
         let (db, admin, name) = fixture().await;
-        for (meta_size, content_size) in [(28_i32, 29_i32), (65537, 29), (29, 28), (29, 33554497)] {
+        for (meta_size, content_size) in [(28_i32, 29_i32), (65537, 42), (42, 28), (42, 33554497)] {
             let error = sqlx::query(
                 r#"
                                 INSERT INTO files (id, owner, meta, content, created_at)
@@ -1404,11 +1407,11 @@ mod tests {
                 Some("23514")
             );
         }
-        let content = vec![1_u8; 100_000];
-        let body = crate::reference_crypto::encode_post(&[1; 29], &content, b"[]");
+        let content = crate::reference_crypto::sealed_fixture(1, 100_000);
+        let body = crate::reference_crypto::encode_post(&sealed_blob(1), &content, b"[]");
         let item = db.add([1; 32], &body).await.unwrap();
         let error = sqlx::query("UPDATE files SET content = $1 WHERE id = $2")
-            .bind(&[2_u8; 29][..])
+            .bind(&[2_u8; 42][..])
             .bind(&item.id)
             .execute(&db.pool)
             .await
@@ -1435,7 +1438,7 @@ mod tests {
         db.set_limits(
             &[1; 32],
             StorageLimits {
-                max_content_bytes: 29,
+                max_content_bytes: 42,
                 max_files: 1,
             },
         )
@@ -1457,8 +1460,11 @@ mod tests {
         .await
         .unwrap();
         let token = "A".repeat(43);
-        let body =
-            crate::reference_crypto::encode_post(&[1; 29], &[1; 29], &fixture_tag_labels(&token));
+        let body = crate::reference_crypto::encode_post(
+            &sealed_blob(1),
+            &sealed_blob(1),
+            &fixture_tag_labels(&token),
+        );
         assert!(matches!(db.add([1; 32], &body).await, Err(Error::Db(_))));
         let counts: (i64, i64) =
             sqlx::query_as("SELECT (SELECT count(*) FROM files), (SELECT count(*) FROM tags)")
@@ -1472,8 +1478,8 @@ mod tests {
             .await
             .unwrap();
         let item = db.add([1; 32], &body).await.unwrap();
-        assert_eq!(db.content([1; 32], &item.id).await.unwrap(), vec![1; 29]);
-        assert_usage(&db, [1; 32], (29, 1)).await;
+        assert_eq!(db.content([1; 32], &item.id).await.unwrap(), sealed_blob(1));
+        assert_usage(&db, [1; 32], (42, 1)).await;
         dispose(db, admin, name).await;
     }
 
@@ -1521,18 +1527,18 @@ mod tests {
         let first = crate::reference_crypto::encode_post(&sealed_blob(1), &sealed_blob(1), b"[]");
         let second = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), b"[]");
         let limits = StorageLimits {
-            max_content_bytes: 29,
+            max_content_bytes: 42,
             max_files: 1,
         };
         db.set_limits(&owner, limits).await.unwrap();
         let saved = db.add(owner, &first).await.unwrap();
-        assert_eq!(saved.bytes, 29);
+        assert_eq!(saved.bytes, 42);
         assert!(matches!(db.add(owner, &first).await, Err(Error::Conflict)));
         assert!(matches!(
             db.add(owner, &second).await,
             Err(Error::StorageLimit)
         ));
-        assert_usage(&db, owner, (29, 1)).await;
+        assert_usage(&db, owner, (42, 1)).await;
         // Exercise each limit independently, including limits near BIGINT max.
         for limits in [
             StorageLimits {
@@ -1558,7 +1564,7 @@ mod tests {
                 max_files: 1,
             },
             StorageLimits {
-                max_content_bytes: 29,
+                max_content_bytes: 42,
                 max_files: 0,
             },
         ] {
@@ -1578,7 +1584,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_usage(&db, owner, (29, 1)).await;
+        assert_usage(&db, owner, (42, 1)).await;
         db.remove(owner, &saved.id).await.unwrap();
         assert_usage(&db, owner, (0, 0)).await;
         for limits in [
@@ -1601,7 +1607,7 @@ mod tests {
         db.set_limits(&owner, limits).await.unwrap();
         let saved = db.add(owner, &second).await.unwrap();
         assert_eq!(db.list(owner, &[], None).await.unwrap().0.len(), 1);
-        assert_eq!(saved.bytes, 29);
+        assert_eq!(saved.bytes, 42);
         // Another owner has its own capacity.
         sqlx::query("INSERT INTO registered_keys (public_key) VALUES ($1)")
             .bind([2_u8; 32].as_slice())
@@ -1614,8 +1620,8 @@ mod tests {
             .await
             .unwrap();
         db.add([2; 32], &first).await.unwrap();
-        assert_usage(&db, owner, (29, 1)).await;
-        assert_usage(&db, [2; 32], (29, 1)).await;
+        assert_usage(&db, owner, (42, 1)).await;
+        assert_usage(&db, [2; 32], (42, 1)).await;
         assert!(matches!(
             db.set_limits(&[3; 32], limits).await,
             Err(Error::NotFound)
@@ -1642,7 +1648,7 @@ mod tests {
     async fn storage_limits_serialize_uploads_and_observe_committed_limit_changes() {
         for limits in [
             StorageLimits {
-                max_content_bytes: 29,
+                max_content_bytes: 42,
                 max_files: 100,
             },
             StorageLimits {
@@ -1675,7 +1681,7 @@ mod tests {
                 (Ok(_), Err(Error::StorageLimit)) | (Err(Error::StorageLimit), Ok(_))
             ));
             assert_eq!(db.list([1; 32], &[], None).await.unwrap().0.len(), 1);
-            assert_usage(&db, [1; 32], (29, 1)).await;
+            assert_usage(&db, [1; 32], (42, 1)).await;
             dispose(db, admin, name).await;
         }
         let (db, admin, name) = fixture().await;
@@ -1728,7 +1734,7 @@ mod tests {
             db.remove(other, &item.id).await,
             Err(Error::NotFound)
         ));
-        assert_usage(&db, owner, (29, 1)).await;
+        assert_usage(&db, owner, (42, 1)).await;
         assert_usage(&db, other, (0, 0)).await;
         sqlx::raw_sql(
             "CREATE FUNCTION reject_delete() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -1743,7 +1749,7 @@ mod tests {
             db.remove(owner, &item.id).await,
             Err(Error::Db(_))
         ));
-        assert_usage(&db, owner, (29, 1)).await;
+        assert_usage(&db, owner, (42, 1)).await;
         assert_eq!(db.content(owner, &item.id).await.unwrap(), sealed_blob(1));
         sqlx::query("DROP TRIGGER reject_delete ON files")
             .execute(&db.pool)
@@ -1790,7 +1796,7 @@ mod tests {
         .unwrap();
         assert_usage(&db, [1; 32], (0, 0)).await;
         db.add([1; 32], &body).await.unwrap();
-        assert_usage(&db, [1; 32], (29, 1)).await;
+        assert_usage(&db, [1; 32], (42, 1)).await;
         dispose(db, admin, name).await;
     }
 
@@ -1800,7 +1806,7 @@ mod tests {
         db.set_limits(
             &[1; 32],
             StorageLimits {
-                max_content_bytes: 29,
+                max_content_bytes: 42,
                 max_files: 1,
             },
         )
@@ -1829,7 +1835,7 @@ mod tests {
         .unwrap();
         deletion.unwrap();
         match upload {
-            Ok(_) => assert_usage(&db, [1; 32], (29, 1)).await,
+            Ok(_) => assert_usage(&db, [1; 32], (42, 1)).await,
             Err(Error::StorageLimit) => assert_usage(&db, [1; 32], (0, 0)).await,
             Err(error) => panic!("unexpected upload failure: {error}"),
         }
@@ -1887,7 +1893,7 @@ mod tests {
         db.set_limits(
             &[1; 32],
             StorageLimits {
-                max_content_bytes: 29,
+                max_content_bytes: 42,
                 max_files: 1,
             },
         )
@@ -1896,17 +1902,17 @@ mod tests {
         db.initialize().await.unwrap();
         assert_eq!(db.content([1; 32], &item.id).await.unwrap(), content);
         let quota = db.quota([1; 32]).await.unwrap();
-        assert_eq!((quota.max_content_bytes, quota.max_files), (29, 1));
-        assert_usage(&db, [1; 32], (29, 1)).await;
+        assert_eq!((quota.max_content_bytes, quota.max_files), (42, 1));
+        assert_usage(&db, [1; 32], (42, 1)).await;
         db.set_limits(&[1; 32], StorageLimits::default())
             .await
             .unwrap();
         let next = crate::reference_crypto::encode_post(&sealed_blob(2), &sealed_blob(2), b"[]");
         db.add([1; 32], &next).await.unwrap();
         db.initialize().await.unwrap();
-        assert_usage(&db, [1; 32], (58, 2)).await;
+        assert_usage(&db, [1; 32], (84, 2)).await;
         db.remove([1; 32], &item.id).await.unwrap();
-        assert_usage(&db, [1; 32], (29, 1)).await;
+        assert_usage(&db, [1; 32], (42, 1)).await;
         dispose(db, admin, name).await;
     }
 
@@ -1918,7 +1924,7 @@ mod tests {
         db.set_limits(
             &[1; 32],
             StorageLimits {
-                max_content_bytes: 29,
+                max_content_bytes: 42,
                 max_files: 1,
             },
         )
@@ -1926,7 +1932,7 @@ mod tests {
         .unwrap();
         for (sql, constraint) in [
             (
-                "UPDATE key_quotas SET used_content_bytes = 30",
+                "UPDATE key_quotas SET used_content_bytes = 43",
                 "key_quotas_content_limit",
             ),
             (
@@ -1946,7 +1952,7 @@ mod tests {
             let error = error.as_database_error().unwrap();
             assert_eq!(error.code().as_deref(), Some("23514"));
             assert_eq!(error.constraint(), Some(constraint));
-            assert_usage(&db, [1; 32], (29, 1)).await;
+            assert_usage(&db, [1; 32], (42, 1)).await;
         }
         dispose(db, admin, name).await;
     }

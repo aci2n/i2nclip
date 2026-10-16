@@ -17,6 +17,7 @@ import {
 	utf8,
 } from "./bytes.js";
 import { parsePrivateKey } from "./identity.js";
+import { decode, encode } from "./msgpack.js";
 
 const PKCS8_PREFIX = hexToBytes("302e020100300506032b657004220420");
 
@@ -122,19 +123,20 @@ export async function encrypt(key, aad, plaintext, nonce) {
 			plaintext,
 		),
 	);
-	const out = new Uint8Array(1 + iv.length + ct.length);
-	out[0] = 1;
-	out.set(iv, 1);
-	out.set(ct, 1 + iv.length);
-	return out;
+	return encode({ v: 1, iv, ct });
 }
 
 export async function decrypt(key, aad, blob) {
-	if (blob.length < 1 + 12 + 16 || blob[0] !== 1) {
+	const { v, iv, ct } = decode(blob);
+	if (
+		v !== 1 ||
+		!(iv instanceof Uint8Array) ||
+		iv.length !== 12 ||
+		!(ct instanceof Uint8Array) ||
+		ct.length < 16
+	) {
 		throw new Error("crypto");
 	}
-	const iv = blob.subarray(1, 13);
-	const ct = blob.subarray(13);
 	return new Uint8Array(
 		await crypto.subtle.decrypt(
 			{ name: "AES-GCM", iv, additionalData: aad },

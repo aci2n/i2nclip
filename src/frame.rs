@@ -240,8 +240,8 @@ mod tests {
 
     #[test]
     fn labeled_tags_are_bounded_and_must_have_sealed_labels() {
-        let first = vec![1; 30];
-        let second = vec![1; MAX_TAG_LABEL];
+        let first = crate::reference_crypto::sealed_fixture(1, 43);
+        let second = crate::reference_crypto::sealed_fixture(1, MAX_TAG_LABEL);
         let entries = serde_json::json!([
             { "token": "A".repeat(43), "label": URL_SAFE_NO_PAD.encode(&first) },
             { "token": "A".repeat(43), "label": URL_SAFE_NO_PAD.encode(&second) },
@@ -295,7 +295,7 @@ mod tests {
             .map(|n| {
                 serde_json::json!({
                     "token": format!("{n:043}"),
-                    "label": URL_SAFE_NO_PAD.encode([1; MAX_TAG_LABEL])
+                    "label": URL_SAFE_NO_PAD.encode(crate::reference_crypto::sealed_fixture(1, MAX_TAG_LABEL))
                 })
             })
             .collect();

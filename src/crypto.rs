@@ -11,22 +11,33 @@
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signature, VerifyingKey};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::Error;
+use crate::{codec, Error};
 
 const VERSION: u8 = 1;
 const NONCE_LEN: usize = 12;
 const TAG_LEN: usize = 16;
 
-/// True when `blob` is short enough and starts with version 1.
-///
-/// The server uses this to refuse an obvious raw file. It does not decrypt,
-/// so a random string that happens to start with `0x01` still passes. That is
-/// acceptable: an authorized client can already store anything in their own
-/// folder of rows. The check exists so a JPEG is not written by mistake.
+/// The application-owned encryption envelope; ciphertext includes the GCM tag.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sealed<'a> {
+    pub v: u8,
+    #[serde(with = "serde_bytes", borrow)]
+    pub iv: &'a [u8],
+    #[serde(with = "serde_bytes", borrow)]
+    pub ct: &'a [u8],
+}
+
+/// Shape validation only: the server has no key to authenticate ciphertext.
 pub fn looks_sealed(blob: &[u8], max: usize) -> bool {
-    blob.len() >= 1 + NONCE_LEN + TAG_LEN && blob.len() <= max && blob[0] == VERSION
+    blob.len() <= max
+        && matches!(
+            codec::decode::<Sealed<'_>>(blob),
+            Ok(value) if value.v == VERSION && value.iv.len() == NONCE_LEN && value.ct.len() >= TAG_LEN
+        )
 }
 
 /// Require the sealed-blob shape before storing encrypted bytes.
@@ -35,7 +46,7 @@ pub(crate) fn check_blob(bytes: &[u8], max: usize) -> Result<(), Error> {
         Ok(())
     } else {
         Err(Error::BadRequest(
-            "encrypted blob required (version byte, not a raw file)".into(),
+            "encrypted MessagePack envelope required".into(),
         ))
     }
 }

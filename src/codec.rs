@@ -6,14 +6,14 @@ use serde::{de::IgnoredAny, Deserialize, Serialize};
 
 use crate::Error;
 
-pub(crate) const CONTENT_TYPE: &str = "application/msgpack";
+pub const CONTENT_TYPE: &str = "application/msgpack";
 
-pub(crate) fn encode(value: &impl Serialize) -> Result<Vec<u8>, Error> {
+pub fn encode(value: &impl Serialize) -> Result<Vec<u8>, Error> {
     rmp_serde::to_vec_named(value)
         .map_err(|_| Error::BadRequest("invalid MessagePack document".into()))
 }
 
-pub(crate) fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, Error> {
+pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, Error> {
     let mut decoder = rmp_serde::Deserializer::from_read_ref(bytes);
     decoder.set_max_depth(32);
     let value = T::deserialize(&mut decoder)
