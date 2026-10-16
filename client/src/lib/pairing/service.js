@@ -1,5 +1,5 @@
-import { utf8 } from "../protocol/bytes.js";
 import { authorizationHeader, freshNonce } from "../protocol/crypto.js";
+import { CONTENT_TYPE, decode, encode } from "../protocol/msgpack.js";
 import { pairingContext, pairingOrigin } from "../protocol/pairing.js";
 
 const MAX_BODY = 16_384;
@@ -88,7 +88,7 @@ export async function readPairingResponse(response) {
 		offset += chunk.length;
 	}
 	try {
-		return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+		return decode(bytes);
 	} catch {
 		throw new Error("Invalid pairing response.");
 	}
@@ -97,8 +97,7 @@ export async function readPairingResponse(response) {
 export function pairingRelay(serverUrl, signal) {
 	const origin = pairingOrigin(serverUrl);
 	async function request(method, path, payload, capability, key) {
-		const body =
-			payload === undefined ? undefined : utf8(JSON.stringify(payload));
+		const body = payload === undefined ? undefined : encode(payload);
 		if (body?.length > MAX_BODY) {
 			throw new Error("Pairing message is too large.");
 		}
@@ -123,7 +122,7 @@ export function pairingRelay(serverUrl, signal) {
 			method,
 			body,
 			headers: {
-				"content-type": "application/json",
+				"content-type": CONTENT_TYPE,
 				...(authorization ? { authorization } : {}),
 			},
 			signal: combined,
@@ -161,7 +160,7 @@ export function pairingRelay(serverUrl, signal) {
 			value.remaining_secs < 0 ||
 			value.remaining_secs > 120 ||
 			(value.step > 0 &&
-				(typeof value.message !== "string" || value.message.length > 8192))
+				(!(value.message instanceof Uint8Array) || value.message.length > 8192))
 		) {
 			throw new Error("Invalid pairing response.");
 		}

@@ -15,12 +15,15 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::json;
+use serde_bytes::ByteBuf;
 use tokio::time::Instant;
 
 use crate::{
-    auth,
-    routes::{document_response, empty, fail, read_body_with_deadline, SHORT_BODY_DEADLINE},
+    auth, codec,
+    routes::{
+        document_response, empty, error_response, fail, read_body_with_deadline,
+        SHORT_BODY_DEADLINE,
+    },
     AppState, Error,
 };
 
@@ -72,7 +75,7 @@ impl Pairings {
     fn authorize(&self, id: &str, token: &str, source: Option<IpAddr>) -> Result<(), Failure> {
         self.with_state(|state, now| state.authorize(id, token, source, now).map(|_| ()))
     }
-    fn join(&self, id: &str, message: String) -> Result<Snapshot, Failure> {
+    fn join(&self, id: &str, message: ByteBuf) -> Result<Snapshot, Failure> {
         self.with_state(|state, now| state.join(id, message, now))
     }
     fn submit(
@@ -80,7 +83,7 @@ impl Pairings {
         id: &str,
         token: &str,
         step: usize,
-        message: String,
+        message: ByteBuf,
     ) -> Result<Snapshot, Failure> {
         self.with_state(|state, now| state.submit(id, token, step, message, now))
     }
@@ -106,7 +109,7 @@ struct Room {
     created: Instant,
     sender: String,
     receiver: Option<String>,
-    messages: Vec<String>,
+    messages: Vec<ByteBuf>,
 }
 
 #[derive(Serialize)]
@@ -116,7 +119,7 @@ struct Snapshot {
     instance: String,
     remaining_secs: u64,
     step: usize,
-    message: Option<String>,
+    message: Option<ByteBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     capability: Option<String>,
 }
@@ -285,7 +288,7 @@ impl PairingState {
             .ok_or((StatusCode::NOT_FOUND, "pairing ended or expired"))
     }
 
-    fn join(&mut self, id: &str, message: String, now: Instant) -> Result<Snapshot, Rejection> {
+    fn join(&mut self, id: &str, message: ByteBuf, now: Instant) -> Result<Snapshot, Rejection> {
         valid_message(&message)?;
         let room = self.room(id, now)?;
         if room.receiver.is_some() {
@@ -302,7 +305,7 @@ impl PairingState {
         id: &str,
         token: &str,
         step: usize,
-        message: String,
+        message: ByteBuf,
         now: Instant,
     ) -> Result<Snapshot, Rejection> {
         valid_message(&message)?;
@@ -327,7 +330,7 @@ impl PairingState {
     }
 }
 
-fn valid_message(message: &str) -> Result<(), Rejection> {
+fn valid_message(message: &[u8]) -> Result<(), Rejection> {
     if message.is_empty() || message.len() > MAX_MESSAGE {
         Err((StatusCode::BAD_REQUEST, "invalid pairing message"))
     } else {
@@ -349,7 +352,7 @@ fn result(value: Result<Snapshot, Failure>) -> Response {
         Err(Failure::Unavailable) => fail(Error::Unavailable),
         Err(Failure::Rejected((status, message))) => {
             tracing::debug!(event = "pairing_rejected", status = status.as_u16());
-            let mut response = document_response(status, json!({"error": message}));
+            let mut response = error_response(status, message);
             if status == StatusCode::TOO_MANY_REQUESTS {
                 response
                     .headers_mut()
@@ -380,21 +383,21 @@ fn source(request: &Request) -> Option<IpAddr> {
 struct Create {
     v: u8,
 }
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Message {
-    message: String,
+    message: ByteBuf,
 }
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Submission {
     step: usize,
-    message: String,
+    message: ByteBuf,
 }
 
-async fn json_body<T: DeserializeOwned>(request: Request) -> Result<T, Box<Response>> {
+async fn document_body<T: DeserializeOwned>(request: Request) -> Result<T, Box<Response>> {
     let bytes = read_body_with_deadline(request.into_body(), MAX_BODY, SHORT_BODY_DEADLINE).await?;
-    serde_json::from_slice(&bytes)
+    codec::decode(&bytes)
         .map_err(|_| Box::new(fail(Error::BadRequest("invalid pairing payload".into()))))
 }
 
@@ -403,10 +406,7 @@ async fn create(State(state): State<AppState>, request: auth::SignedRequest) -> 
         Ok(value) => value,
         Err(response) => return *response,
     };
-    if !matches!(
-        serde_json::from_slice::<Create>(&bytes),
-        Ok(Create { v: 1 })
-    ) {
+    if !matches!(codec::decode::<Create>(&bytes), Ok(Create { v: 1 })) {
         return fail(Error::BadRequest("invalid pairing version".into()));
     }
     result(state.pairings.create(owner))
@@ -421,7 +421,7 @@ async fn join(State(state): State<AppState>, Path(id): Path<String>, request: Re
         Ok(permit) => permit,
         Err(_) => return fail(Error::Unavailable),
     };
-    let message: Message = match json_body(request).await {
+    let message: Message = match document_body(request).await {
         Ok(value) => value,
         Err(response) => return *response,
     };
@@ -442,7 +442,7 @@ async fn submit(
         Ok(permit) => permit,
         Err(_) => return fail(Error::Unavailable),
     };
-    let message: Submission = match json_body(request).await {
+    let message: Submission = match document_body(request).await {
         Ok(value) => value,
         Err(response) => return *response,
     };
@@ -500,7 +500,7 @@ mod tests {
         pairings.authorize(&created.id, token, None).unwrap();
         tokio::time::advance(TTL).await;
         assert!(matches!(
-            clone.submit(&created.id, token, 2, "late body".into()),
+            clone.submit(&created.id, token, 2, b"late body".to_vec().into()),
             Err(Failure::Rejected((StatusCode::NOT_FOUND, _)))
         ));
     }
@@ -568,7 +568,15 @@ mod tests {
             let (body, expected) = if number.is_multiple_of(2) {
                 (Body::from("not json"), StatusCode::BAD_REQUEST)
             } else {
-                (Body::from(r#"{"message":"init"}"#), StatusCode::NOT_FOUND)
+                (
+                    Body::from(
+                        codec::encode(&Message {
+                            message: b"init".to_vec().into(),
+                        })
+                        .unwrap(),
+                    ),
+                    StatusCode::NOT_FOUND,
+                )
             };
             let response = app
                 .clone()
@@ -608,7 +616,12 @@ mod tests {
                     .method("POST")
                     .uri("/api/pairings/XXXX/join")
                     .extension(peer(2))
-                    .body(Body::from(r#"{"message":"init"}"#))
+                    .body(Body::from(
+                        codec::encode(&Message {
+                            message: b"init".to_vec().into(),
+                        })
+                        .unwrap(),
+                    ))
                     .unwrap(),
             )
             .await
@@ -621,7 +634,12 @@ mod tests {
                     .method("POST")
                     .uri("/api/pairings/XXXX/join")
                     .extension(peer(1))
-                    .body(Body::from(r#"{"message":"init"}"#))
+                    .body(Body::from(
+                        codec::encode(&Message {
+                            message: b"init".to_vec().into(),
+                        })
+                        .unwrap(),
+                    ))
                     .unwrap(),
             )
             .await
@@ -778,8 +796,14 @@ mod tests {
         assert!(canceled.await.unwrap_err().is_cancelled());
         assert_eq!(body_capacity(&state), 1);
         for (body, expected) in [
-            ("not json", StatusCode::BAD_REQUEST),
-            (r#"{"message":"init"}"#, StatusCode::OK),
+            (b"not MessagePack".to_vec(), StatusCode::BAD_REQUEST),
+            (
+                codec::encode(&Message {
+                    message: b"init".to_vec().into(),
+                })
+                .unwrap(),
+                StatusCode::OK,
+            ),
         ] {
             let response = app
                 .clone()
@@ -819,9 +843,15 @@ mod tests {
         assert_eq!(sender.id.len(), 4);
         assert!(sender.id.bytes().all(|byte| ALPHABET.contains(&byte)));
         assert_eq!(sender.instance.len(), 22);
-        let receiver = rooms.join(&sender.id, "init".into(), now).unwrap();
+        let receiver = rooms
+            .join(&sender.id, b"init".to_vec().into(), now)
+            .unwrap();
         assert_eq!(
-            rooms.join(&sender.id, "other".into(), now).err().unwrap().0,
+            rooms
+                .join(&sender.id, b"other".to_vec().into(), now)
+                .err()
+                .unwrap()
+                .0,
             StatusCode::CONFLICT
         );
         let send = sender.capability.unwrap();
@@ -829,7 +859,7 @@ mod tests {
         assert_ne!(send, recv);
         assert_eq!(
             rooms
-                .submit(&sender.id, "wrong", 2, "response".into(), now)
+                .submit(&sender.id, "wrong", 2, b"response".to_vec().into(), now)
                 .err()
                 .unwrap()
                 .0,
@@ -837,7 +867,7 @@ mod tests {
         );
         assert_eq!(
             rooms
-                .submit(&sender.id, &recv, 2, "response".into(), now)
+                .submit(&sender.id, &recv, 2, b"response".to_vec().into(), now)
                 .err()
                 .unwrap()
                 .0,
@@ -845,7 +875,7 @@ mod tests {
         );
         assert_eq!(
             rooms
-                .submit(&sender.id, &send, 4, "payload".into(), now)
+                .submit(&sender.id, &send, 4, b"payload".to_vec().into(), now)
                 .err()
                 .unwrap()
                 .0,
@@ -859,21 +889,33 @@ mod tests {
         ] {
             assert_eq!(
                 rooms
-                    .submit(&sender.id, token, step, message.into(), now)
+                    .submit(
+                        &sender.id,
+                        token,
+                        step,
+                        message.as_bytes().to_vec().into(),
+                        now
+                    )
                     .unwrap()
                     .step,
                 step
             );
             assert_eq!(
                 rooms
-                    .submit(&sender.id, token, step, message.into(), now)
+                    .submit(
+                        &sender.id,
+                        token,
+                        step,
+                        message.as_bytes().to_vec().into(),
+                        now
+                    )
                     .unwrap()
                     .step,
                 step
             );
             assert_eq!(
                 rooms
-                    .submit(&sender.id, token, step, "replacement".into(), now)
+                    .submit(&sender.id, token, step, b"replacement".to_vec().into(), now)
                     .err()
                     .unwrap()
                     .0,
@@ -886,8 +928,9 @@ mod tests {
                 .unwrap()
                 .snapshot(&sender.id, now, None)
                 .message
-                .as_deref(),
-            Some("ack")
+                .as_ref()
+                .map(|bytes| bytes.as_slice()),
+            Some(b"ack".as_slice())
         );
     }
 
@@ -897,7 +940,11 @@ mod tests {
         let mut rooms = PairingState::default();
         let first = create_room(&mut rooms, now);
         rooms
-            .join(&first.id, "init".into(), now + Duration::from_secs(119))
+            .join(
+                &first.id,
+                b"init".to_vec().into(),
+                now + Duration::from_secs(119),
+            )
             .unwrap();
         assert_eq!(
             rooms.room(&first.id, now + TTL).err().unwrap().0,
@@ -950,9 +997,11 @@ mod tests {
             StatusCode::SERVICE_UNAVAILABLE
         );
         let id = rooms.rooms.keys().next().unwrap().clone();
-        assert!(rooms.join(&id, String::new(), now).is_err());
-        assert!(rooms.join(&id, "x".repeat(MAX_MESSAGE + 1), now).is_err());
-        assert!(rooms.join(&id, "x".repeat(MAX_MESSAGE), now).is_ok());
+        assert!(rooms.join(&id, ByteBuf::new(), now).is_err());
+        assert!(rooms
+            .join(&id, vec![b'x'; MAX_MESSAGE + 1].into(), now)
+            .is_err());
+        assert!(rooms.join(&id, vec![b'x'; MAX_MESSAGE].into(), now).is_ok());
     }
 
     #[tokio::test]

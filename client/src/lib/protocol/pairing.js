@@ -1,4 +1,5 @@
-import { b64urlToBytes, bytesToB64url, utf8 } from "./bytes.js";
+import { b64urlToBytes, utf8 } from "./bytes.js";
+import { decode, encode } from "./msgpack.js";
 import { checkServer } from "./server.js";
 
 export const PAIRING_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -121,7 +122,7 @@ function aad(context, direction) {
 
 export async function sealPairing(keys, context, direction, value) {
 	const iv = crypto.getRandomValues(new Uint8Array(12));
-	const plain = utf8(JSON.stringify(value));
+	const plain = encode(value);
 	if (plain.length > 4096) {
 		throw new Error("Invalid pairing payload.");
 	}
@@ -131,10 +132,10 @@ export async function sealPairing(keys, context, direction, value) {
 			keys[direction],
 			plain,
 		);
-		return JSON.stringify({
+		return encode({
 			v: 1,
-			iv: bytesToB64url(iv),
-			ct: bytesToB64url(new Uint8Array(ciphertext)),
+			iv,
+			ct: new Uint8Array(ciphertext),
 		});
 	} finally {
 		plain.fill(0);
@@ -142,19 +143,19 @@ export async function sealPairing(keys, context, direction, value) {
 }
 
 export async function openPairing(keys, context, direction, packet) {
-	if (typeof packet !== "string" || packet.length > 8192) {
+	if (!(packet instanceof Uint8Array) || packet.length > 8192) {
 		throw new Error("Invalid pairing payload.");
 	}
-	const value = JSON.parse(packet);
+	const value = decode(packet);
 	if (
 		value.v !== 1 ||
-		typeof value.iv !== "string" ||
-		typeof value.ct !== "string"
+		!(value.iv instanceof Uint8Array) ||
+		!(value.ct instanceof Uint8Array)
 	) {
 		throw new Error("Invalid pairing payload.");
 	}
-	const iv = b64urlToBytes(value.iv);
-	const ct = b64urlToBytes(value.ct);
+	const iv = value.iv;
+	const ct = value.ct;
 	if (iv.length !== 12 || ct.length > 4112 || ct.length < 16) {
 		throw new Error("Invalid pairing payload.");
 	}
@@ -166,7 +167,7 @@ export async function openPairing(keys, context, direction, packet) {
 		),
 	);
 	try {
-		return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plain));
+		return structuredClone(decode(plain));
 	} finally {
 		plain.fill(0);
 	}

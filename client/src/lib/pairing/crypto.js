@@ -1,4 +1,5 @@
 import * as opaque from "@serenity-kit/opaque";
+import { decode, encode } from "../protocol/msgpack.js";
 import { openPairing, pairingKeys, sealPairing } from "../protocol/pairing.js";
 
 // Each service executor owns exactly one PAKE attempt. OPAQUE's server is the sending
@@ -54,7 +55,7 @@ export function createPairingCrypto() {
 				const result = opaque.client.startLogin({ password: secret });
 				loginState = result.clientLoginState;
 				phase = "receiver-wait";
-				return result.startLoginRequest;
+				return encode(result.startLoginRequest);
 			}
 			case "senderResponse": {
 				expect("sender-wait");
@@ -63,12 +64,12 @@ export function createPairingCrypto() {
 					serverSetup: setup,
 					userIdentifier: context,
 					registrationRecord: record,
-					startLoginRequest: args.message,
+					startLoginRequest: decode(args.message),
 					identifiers: identifiers(),
 				});
 				loginState = result.serverLoginState;
 				setup = record = undefined;
-				return result.loginResponse;
+				return encode(result.loginResponse);
 			}
 			case "receiverFinish": {
 				expect("receiver-wait");
@@ -76,7 +77,7 @@ export function createPairingCrypto() {
 				context = args.context;
 				const result = opaque.client.finishLogin({
 					clientLoginState: loginState,
-					loginResponse: args.message,
+					loginResponse: decode(args.message),
 					password: secret,
 					identifiers: identifiers(),
 				});
@@ -86,14 +87,14 @@ export function createPairingCrypto() {
 				}
 				keys = await pairingKeys(result.sessionKey, context);
 				phase = "receiver-authenticated";
-				return result.finishLoginRequest;
+				return encode(result.finishLoginRequest);
 			}
 			case "senderFinish": {
 				expect("sender-finish");
 				phase = "failed";
 				const result = opaque.server.finishLogin({
 					serverLoginState: loginState,
-					finishLoginRequest: args.message,
+					finishLoginRequest: decode(args.message),
 				});
 				loginState = undefined;
 				keys = await pairingKeys(result.sessionKey, context);

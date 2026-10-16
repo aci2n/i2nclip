@@ -12,6 +12,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use serde_json::json;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -54,9 +55,9 @@ pub(crate) async fn read_body_with_deadline(
 ) -> Result<Vec<u8>, Box<Response>> {
     match tokio::time::timeout(deadline, read_body_with_limit(body, max)).await {
         Ok(result) => result,
-        Err(_) => Err(Box::new(document_response(
+        Err(_) => Err(Box::new(error_response(
             StatusCode::REQUEST_TIMEOUT,
-            json!({ "error": "request body timed out" }),
+            "request body timed out",
         ))),
     }
 }
@@ -78,7 +79,11 @@ async fn read_body_with_limit(mut body: Body, max: usize) -> Result<Vec<u8>, Box
 }
 
 async fn health() -> Response {
-    document_response(StatusCode::OK, json!({ "ok": true }))
+    #[derive(Serialize)]
+    struct Health {
+        ok: bool,
+    }
+    document_response(StatusCode::OK, Health { ok: true })
 }
 
 async fn ping(request: auth::SignedRequest) -> Response {
@@ -127,6 +132,14 @@ pub(crate) fn document_response(status: StatusCode, body: impl Serialize) -> Res
     response
 }
 
+pub(crate) fn error_response(status: StatusCode, message: &str) -> Response {
+    #[derive(Serialize)]
+    struct ErrorDocument<'a> {
+        error: &'a str,
+    }
+    document_response(status, ErrorDocument { error: message })
+}
+
 pub(crate) fn empty(status: StatusCode) -> Response {
     let mut response = status.into_response();
     response
@@ -136,10 +149,7 @@ pub(crate) fn empty(status: StatusCode) -> Response {
 }
 
 pub(crate) fn too_large() -> Response {
-    document_response(
-        StatusCode::PAYLOAD_TOO_LARGE,
-        json!({ "error": "too large" }),
-    )
+    error_response(StatusCode::PAYLOAD_TOO_LARGE, "too large")
 }
 
 pub(crate) fn fail(err: Error) -> Response {
@@ -163,7 +173,7 @@ pub(crate) fn fail(err: Error) -> Response {
             )
         }
     };
-    let mut response = document_response(status, json!({ "error": message }));
+    let mut response = error_response(status, &message);
     if status == StatusCode::SERVICE_UNAVAILABLE {
         response
             .headers_mut()

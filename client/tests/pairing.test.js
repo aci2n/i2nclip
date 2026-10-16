@@ -7,6 +7,7 @@ import { readPairingResponse } from "../src/lib/pairing/service.js";
 import { bytesToB64url } from "../src/lib/protocol/bytes.js";
 import { loadKey } from "../src/lib/protocol/crypto.js";
 import { generatePrivateKey } from "../src/lib/protocol/identity.js";
+import { decode, encode } from "../src/lib/protocol/msgpack.js";
 import {
 	formatPairingCode,
 	formatVerificationCode,
@@ -130,16 +131,20 @@ test("real OPAQUE pairing transfers identity and verifies an encrypted save ackn
 		/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/,
 	);
 	assert.equal(await receiver("verificationCode", {}), verification);
-	const value = { v: 1, privateKey: "identity", serverUrl: origin };
+	const value = {
+		v: 1,
+		private_key: { v: 1, seed: new Uint8Array([1, 2, 3]) },
+		server_url: origin,
+	};
 	const packet = await sender("transfer", { value });
-	assert(!packet.includes("identity"));
+	assert(!Buffer.from(packet).includes("identity"));
 	assert.deepEqual(await receiver("receive", { message: packet }), value);
 	await assert.rejects(
 		receiver("receive", { message: packet }),
 		/Invalid pairing step/,
 	);
 	const ack = await receiver("acknowledge", {});
-	assert(!ack.includes("saved"));
+	assert(!Buffer.from(ack).includes("saved"));
 	await sender("verifyAcknowledgment", { message: ack });
 	await assert.rejects(sender("verificationCode", {}), /Invalid pairing step/);
 	await assert.rejects(
@@ -200,11 +205,11 @@ test("verification support is authenticated and mixed old/new clients cannot pai
 	await sender("senderSetup", { secret: password, context });
 	const legacyLogin = opaque.client.startLogin({ password });
 	const response = await sender("senderResponse", {
-		message: legacyLogin.startLoginRequest,
+		message: encode(legacyLogin.startLoginRequest),
 	});
 	const legacyFinish = opaque.client.finishLogin({
 		clientLoginState: legacyLogin.clientLoginState,
-		loginResponse: response,
+		loginResponse: decode(response),
 		password,
 		identifiers,
 	});
@@ -234,12 +239,12 @@ test("verification support is authenticated and mixed old/new clients cannot pai
 		serverSetup,
 		registrationRecord,
 		userIdentifier: context,
-		startLoginRequest: initial,
+		startLoginRequest: decode(initial),
 		identifiers,
 	});
 	await assert.rejects(
 		receiver("receiverFinish", {
-			message: legacyResponse.loginResponse,
+			message: encode(legacyResponse.loginResponse),
 			context,
 		}),
 	);
@@ -261,11 +266,9 @@ test("transfer encryption rejects tampering, direction swaps, and different room
 	await assert.rejects(
 		openPairing(keys, `${context} changed`, "transfer", packet),
 	);
-	const parsed = JSON.parse(packet);
-	parsed.ct = `${parsed.ct[0] === "A" ? "B" : "A"}${parsed.ct.slice(1)}`;
-	await assert.rejects(
-		openPairing(keys, context, "transfer", JSON.stringify(parsed)),
-	);
+	const parsed = decode(packet);
+	parsed.ct[0] ^= 1;
+	await assert.rejects(openPairing(keys, context, "transfer", encode(parsed)));
 	await assert.rejects(
 		openPairing(keys, context, "transfer", "x".repeat(8193)),
 	);
@@ -378,9 +381,9 @@ function fixture(t, receiverImport, options = {}) {
 				value.signal.throwIfAborted();
 				state.set({
 					...get(state),
-					serverUrl: value.serverUrl,
-					privateKey: value.privateKey,
-					publicKey: value.publicKey,
+					serverUrl: value.server_url,
+					privateKey: value.private_key,
+					publicKey: bytesToB64url(value.public_key),
 					configured: true,
 					epoch: "receiver",
 				});
@@ -433,6 +436,7 @@ test("pairing requires explicit approval and reports success only after durable 
 		state.set({
 			...get(state),
 			...value,
+			privateKey: value.private_key,
 			configured: true,
 			epoch: "receiver",
 		});
@@ -460,17 +464,17 @@ test("pairing requires explicit approval and reports success only after durable 
 	saving.resolve();
 	assert.equal(await receiving, true);
 	assert.equal(await sending, true);
-	assert.equal(get(f.receiverState).privateKey, key.privateKey);
+	assert.deepEqual(get(f.receiverState).privateKey, key.privateKey);
 	assert.equal(get(f.sender).status, "New device connected.");
 	assert.equal(get(f.sender).verificationCode, "");
 	assert.equal(get(f.receiver).verificationCode, "");
 	assert(
 		f.transcript.every(
 			(message) =>
-				!message.includes(key.privateKey) &&
-				!message.includes("new-password") &&
-				!message.includes(verification) &&
-				!message.includes(verification.replace("-", "")),
+				!Buffer.from(message).includes(key.privateKey.seed) &&
+				!Buffer.from(message).includes("new-password") &&
+				!Buffer.from(message).includes(verification) &&
+				!Buffer.from(message).includes(verification.replace("-", "")),
 		),
 	);
 });
@@ -635,7 +639,7 @@ test("lost acknowledgment preserves the saved library without claiming sender su
 	await until(() => get(f.sender).approval);
 	f.sender.approve();
 	assert.equal(await receiving, true);
-	assert.equal(get(f.receiverState).privateKey, key.privateKey);
+	assert.deepEqual(get(f.receiverState).privateKey, key.privateKey);
 	assert.match(
 		get(f.receiver).status,
 		/Library saved and unlocked, but confirmation failed/,
@@ -659,6 +663,6 @@ for (const step of [2, 3, 4, 5]) {
 		assert.equal(await receiving, true);
 		assert.equal(await sending, true);
 		assert.equal(f.transcript.length, 5);
-		assert.equal(get(f.receiverState).privateKey, key.privateKey);
+		assert.deepEqual(get(f.receiverState).privateKey, key.privateKey);
 	});
 }

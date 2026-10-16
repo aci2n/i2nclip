@@ -11,7 +11,7 @@ unused_qualifications = "warn"
 [dependencies]
 # HTTP framework. Handlers look a bit like small servlet methods.
 axum = "0.8"
-# Base64 for ciphertext and base64url for public keys, bearer tokens, and tags.
+# Base64url for public keys, bearer tokens, and database tag tokens.
 base64 = "0.22"
 # Declarative CLI commands, validation, and help.
 clap = { version = "4", features = ["derive"] }
@@ -27,7 +27,6 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 testcontainers = { version = "0.28", optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "migrate", "macros"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 sha2 = "0.10"
 # Implements Rust's Error trait the way a base exception type would.
 thiserror = "2"

@@ -270,7 +270,7 @@ export function createPairing(session, services = {}) {
 		subscribe: state.subscribe,
 		send() {
 			const value = get(session);
-			return run("sender", value.server_url, async (current) => {
+			return run("sender", value.serverUrl, async (current) => {
 				const credentials = await session.withIdentity(
 					current.operation,
 					(identity) => identity,
