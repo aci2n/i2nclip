@@ -30,8 +30,7 @@ export function createPersistence(
 		: window,
 ) {
 	const local = () => storage ?? globalThis.localStorage;
-	let record: SavedIdentity | null = null;
-	let key: CryptoKey | null = null;
+	let unlocked: { record: SavedIdentity; key: CryptoKey } | null = null;
 	let generation = 0;
 	let observed: string | null = null;
 	function unchanged(expected: string | null) {
@@ -51,7 +50,6 @@ export function createPersistence(
 		const text = local().getItem(STORAGE_KEY);
 		observed = text;
 		if (!text) {
-			record = null;
 			return null;
 		}
 		const value = document(decode(b64ToBytes(text)));
@@ -65,54 +63,46 @@ export function createPersistence(
 				"Invalid saved identity. Reset this client or restore a recovery file.",
 			);
 		}
-		record = {
+		return {
 			...value,
 			v: 1,
 			iterations: value.iterations,
 			salt: binary(value.salt),
 			encrypted: value.encrypted,
 		};
-		return record;
 	}
 	async function save(identity: Identity | null) {
-		if (!key || !record) {
+		const current = unlocked;
+		if (!current) {
 			throw new Error("Unlock this client first.");
 		}
-		const previous = record;
 		const expected = observed;
 		const own = generation;
-		const encrypted = await sealBytes(key, encode(identity), PURPOSE);
+		const encrypted = await sealBytes(current.key, encode(identity), PURPOSE);
 		if (own !== generation) {
 			throw new DOMException("Client locked.", "AbortError");
 		}
-		const next = { ...previous, encrypted };
+		const next = { ...current.record, encrypted };
 		write(next, expected);
-		record = next;
+		unlocked = { ...current, record: next };
 	}
-	async function initialize(password: string) {
-		if (record || local().getItem(STORAGE_KEY)) {
-			throw new Error("A master password is already configured.");
-		}
-		if (password.length < 8) {
-			throw new Error("Master password must be at least 8 characters.");
-		}
+	async function setPassword(password: string, identity: unknown) {
 		const expected = observed;
 		const own = generation;
 		const salt = crypto.getRandomValues(new Uint8Array(16));
 		const nextKey = await wrappingKey(password, salt, PBKDF2_ITERATIONS);
-		const encrypted = await sealBytes(nextKey, encode(null), PURPOSE);
+		const encrypted = await sealBytes(nextKey, encode(identity), PURPOSE);
 		if (own !== generation) {
 			throw new DOMException("Client locked.", "AbortError");
 		}
-		const next = {
-			v: 1 as const,
+		const next: SavedIdentity = {
+			v: 1,
 			salt,
 			iterations: PBKDF2_ITERATIONS,
 			encrypted,
 		};
 		write(next, expected);
-		record = next;
-		key = nextKey;
+		unlocked = { record: next, key: nextKey };
 	}
 	async function unlock(password: string) {
 		const saved = loadRecord();
@@ -132,88 +122,60 @@ export function createPersistence(
 			throw new DOMException("Client locked.", "AbortError");
 		}
 		unchanged(expected);
-		key = nextKey;
+		unlocked = { record: saved, key: nextKey };
 		return identity;
+	}
+	function lock() {
+		generation++;
+		unlocked = null;
 	}
 	return {
 		onExternalChange(changed: () => void) {
-			function invalidate() {
-				generation++;
-				key = null;
-				record = null;
-				changed();
-			}
-			function check() {
-				let current: string | null;
-				try {
-					current = local().getItem(STORAGE_KEY);
-				} catch {
-					invalidate();
-					return;
-				}
-				if (current === observed) {
-					return;
-				}
-				observed = current;
-				invalidate();
-			}
 			function storageChanged(event: Event) {
-				if ("storageArea" in event && event.storageArea !== local()) {
-					return;
-				}
 				if (
 					!("key" in event) ||
 					(event.key !== null && event.key !== STORAGE_KEY)
 				) {
 					return;
 				}
-				check();
+				try {
+					if ("storageArea" in event && event.storageArea !== local()) {
+						return;
+					}
+					if (local().getItem(STORAGE_KEY) === observed) {
+						return;
+					}
+				} catch {
+					// The session locks and reports storage failures when it re-reads.
+				}
+				changed();
 			}
 			events?.addEventListener("storage", storageChanged);
-			events?.addEventListener("pageshow", check);
-			return () => {
-				events?.removeEventListener("storage", storageChanged);
-				events?.removeEventListener("pageshow", check);
-			};
+			return () => events?.removeEventListener("storage", storageChanged);
 		},
 		read: () => loadRecord() !== null,
-		initialize,
+		async initialize(password: string) {
+			if (local().getItem(STORAGE_KEY)) {
+				throw new Error("A master password is already configured.");
+			}
+			if (password.length < 8) {
+				throw new Error("Master password must be at least 8 characters.");
+			}
+			return setPassword(password, null);
+		},
 		unlock,
 		save,
 		async changePassword(current: string, password: string) {
 			if (password.length < 8) {
 				throw new Error("Master password must be at least 8 characters.");
 			}
-			const identity = await unlock(current);
-			const expected = observed;
-			const own = generation;
-			const salt = crypto.getRandomValues(new Uint8Array(16));
-			const nextKey = await wrappingKey(password, salt, PBKDF2_ITERATIONS);
-			const encrypted = await sealBytes(nextKey, encode(identity), PURPOSE);
-			if (own !== generation) {
-				throw new DOMException("Client locked.", "AbortError");
-			}
-			const next = {
-				v: 1 as const,
-				salt,
-				iterations: PBKDF2_ITERATIONS,
-				encrypted,
-			};
-			write(next, expected);
-			record = next;
-			key = nextKey;
+			return setPassword(password, await unlock(current));
 		},
-		lock() {
-			generation++;
-			key = null;
-		},
+		lock,
 		reset() {
-			unchanged(observed);
 			local().removeItem(STORAGE_KEY);
 			observed = null;
-			generation++;
-			record = null;
-			key = null;
+			lock();
 		},
 	};
 }

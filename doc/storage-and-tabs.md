@@ -28,7 +28,8 @@ session-owned operations and prevent in-flight persistence operations from
 writing obsolete state. Compare the current persisted text before committing an
 asynchronous write; reject a conflict with an ordinary actionable error. This is
 a stale-write check, not a lock or transaction. Simultaneous mutations can race;
-no distributed coordination is promised. Recheck on pageshow for suspended tabs.
+no distributed coordination is promised. See [session simplification](session-simplification.md)
+for the subsequent removal of the optional pageshow check.
 Malformed records display the existing recovery/reset error. Remove listeners on
 disposal; never apply stale asynchronous completions.
 

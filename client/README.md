@@ -7,7 +7,7 @@ from `extension/` to JavaScript in `dist/extension/`. Installation and configura
 
 ## Ownership
 
-`src/main.ts` mounts the app through a `data-app` element reference. Each tab unlocks independently. Saved identity changes cancel other sessions and require unlocking again; storage events and pageshow checks handle invalidation without cross-tab locks.
+`src/main.ts` mounts the app through a `data-app` element reference. Each tab unlocks independently. Saved identity changes cancel other sessions and require unlocking again; storage events handle invalidation without cross-tab locks.
 
 `views/Application.svelte` owns one session, library, uploads, and pairing store. The library survives navigation between Library and Settings. Views subscribe to stores, control workflows, and pass ordinary state and callback props to isolated components. Components may hold temporary input/focus state; they never receive or import stores. HTML IDs are prohibited. Controls use nested labels and browser tests use accessible names.
 

@@ -217,8 +217,7 @@ test("external password changes cancel sessions, clear keys and require independ
 	assert.equal(await second.unlock(password), false);
 	assert.equal(await second.unlock("changed-password"), true);
 	assert.equal(await first.forget(), true);
-	// pageshow catches changes missed while a tab was suspended.
-	events.dispatchEvent(new Event("pageshow"));
+	events.dispatchEvent(storageEvent(local));
 	assert.equal(get(second).status, "locked");
 	assert.equal(await second.unlock("changed-password"), true);
 	assert.equal(get(second).configured, false);
@@ -230,7 +229,6 @@ test("external password changes cancel sessions, clear keys and require independ
 	const afterDisposal = get(second);
 	local.setItem("i2nclip.identity", "damaged");
 	events.dispatchEvent(storageEvent(local));
-	events.dispatchEvent(new Event("pageshow"));
 	assert.equal(get(second), afterDisposal);
 });
 

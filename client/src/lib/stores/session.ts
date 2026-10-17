@@ -82,32 +82,39 @@ export function createSession({
 		error: "",
 	});
 	const context = createSessionContext(state);
-	try {
-		if (persistence.read()) {
-			state.update((v) => ({ ...v, status: "locked" }));
-		}
-	} catch (error) {
-		state.update((v) => ({
-			...v,
-			status: "locked",
-			error: errorMessage(error),
-		}));
-	}
 	function invalidate() {
 		epoch++;
 		controller.abort();
 		controller = new AbortController();
 		context.invalidate();
 	}
-	function publish(patch: Partial<SessionState> = {}) {
-		state.update((v) => ({
-			...v,
+	function publish(patch: {
+		status?: SessionState["status"];
+		busy?: boolean;
+		error?: string;
+	}) {
+		state.update((value) => ({
+			...value,
+			...patch,
+			unlocked: (patch.status ?? value.status) === "unlocked",
 			configured: Boolean(library),
 			serverUrl: library?.identity.server_url || defaultServerUrl,
 			privateKey: library?.identity.private_key || "",
+			publicKey: library?.key.registrationKey || "",
 			epoch,
-			...patch,
 		}));
+	}
+	function savedState(error = ""): { status: "new" | "locked"; error: string } {
+		try {
+			return { status: persistence.read() ? "locked" : "new", error };
+		} catch (failure) {
+			return { status: "locked", error: errorMessage(failure) };
+		}
+	}
+	function clear(status: "new" | "locked", error = "") {
+		invalidate();
+		library = null;
+		publish({ status, busy: false, error });
 	}
 	async function action(
 		work: (
@@ -146,8 +153,6 @@ export function createSession({
 		library = value;
 		publish({
 			status: "unlocked",
-			unlocked: true,
-			publicKey: library?.key.registrationKey || "",
 			busy: false,
 			error: "",
 		});
@@ -159,22 +164,13 @@ export function createSession({
 		}
 		return library;
 	}
+	publish(savedState());
 	const stopWatching = persistence.onExternalChange(() => {
-		if (disposed) {
-			return;
-		}
-		invalidate();
 		persistence.lock();
-		library = null;
-		let status: SessionState["status"] = "locked";
-		let error =
-			"Saved identity changed in another tab. Unlock this client again.";
-		try {
-			status = persistence.read() ? "locked" : "new";
-		} catch (failure) {
-			error = errorMessage(failure);
-		}
-		publish({ status, unlocked: false, publicKey: "", busy: false, error });
+		const { status, error } = savedState(
+			"Saved identity changed in another tab. Unlock this client again.",
+		);
+		clear(status, error);
 	});
 	const session = {
 		subscribe: state.subscribe,
@@ -202,7 +198,7 @@ export function createSession({
 				serverUrl: current.identity.server_url,
 				key: current.key,
 				privateKey: current.identity.private_key,
-				publicKey: get(state).publicKey,
+				publicKey: current.key.registrationKey,
 			});
 			operation.signal.throwIfAborted();
 			return result;
@@ -211,7 +207,7 @@ export function createSession({
 			action(async (signal) => {
 				await persistence.initialize(password);
 				signal.throwIfAborted();
-				publish({ status: "unlocked", unlocked: true });
+				publish({ status: "unlocked" });
 			}),
 		unlock: (password: string) =>
 			action(async (signal) => {
@@ -219,23 +215,11 @@ export function createSession({
 				const next = value ? await validateIdentity(value) : null;
 				signal.throwIfAborted();
 				library = next;
-				publish({
-					status: "unlocked",
-					unlocked: true,
-					publicKey: library?.key.registrationKey || "",
-				});
+				publish({ status: "unlocked" });
 			}),
 		lock() {
-			invalidate();
 			persistence.lock();
-			library = null;
-			publish({
-				status: "locked",
-				unlocked: false,
-				publicKey: "",
-				busy: false,
-				error: "",
-			});
+			clear("locked");
 		},
 		create: ({ serverUrl, otc }: { serverUrl: string; otc: string }) =>
 			action(async (signal) => {
@@ -317,15 +301,7 @@ export function createSession({
 			}
 			try {
 				persistence.reset();
-				invalidate();
-				library = null;
-				publish({
-					status: "new",
-					unlocked: false,
-					publicKey: "",
-					busy: false,
-					error: "",
-				});
+				clear("new");
 				return true;
 			} catch (error) {
 				publish({ error: errorMessage(error) });
@@ -357,16 +333,7 @@ export function createSession({
 			}
 			disposed = true;
 			stopWatching();
-			invalidate();
-			persistence.lock();
-			library = null;
-			publish({
-				status: "locked",
-				unlocked: false,
-				publicKey: "",
-				busy: false,
-				error: "",
-			});
+			session.lock();
 		},
 	};
 	return session;

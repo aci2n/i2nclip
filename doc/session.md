@@ -3,8 +3,8 @@
 Each web tab owns an independent session and unlocks separately. A change to the
 saved identity or master password invalidates other tabs, clears their loaded
 keys, and cancels pending work. Those tabs must unlock again. Local Lock affects
-only its own tab. Persistence listens for identity storage changes and rechecks
-on pageshow; listeners are removed when the session ends. Stale async writes are
+only its own tab. Persistence listens for identity storage changes; its listener is removed when
+the session ends. Stale async writes are
 rejected by comparing the current record before writing. There are no cross-tab
 locks or shared unlocked keys.
 The root application view owns session, library, uploads, and pairing stores
