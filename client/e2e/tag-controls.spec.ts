@@ -77,6 +77,24 @@ test("tag controls fit desktop search and keep consistent alignment when wrapped
 	const card = page.getByRole("article");
 	await expect(card).toHaveCount(1);
 	await matchingCardControls(card, false);
+	const visibleTags = await card
+		.getByRole("button", { name: /^Search for tag / })
+		.count();
+	await card
+		.getByRole("button", { name: "Show all tags", exact: true })
+		.click();
+	await expect(
+		card.getByRole("button", { name: /^Search for tag / }),
+	).not.toHaveCount(visibleTags);
+	await card
+		.getByRole("button", { name: "Show fewer tags", exact: true })
+		.click();
+	await expect(
+		card.getByRole("button", { name: /^Search for tag / }),
+	).toHaveCount(visibleTags);
+	await expect(
+		page.getByRole("button", { name: /^Remove search tag / }),
+	).toHaveCount(0);
 	const form = page.getByRole("form", { name: "Search library" });
 	const search = page.getByRole("searchbox", { name: "Search tags" });
 	const empty = await form.boundingBox();

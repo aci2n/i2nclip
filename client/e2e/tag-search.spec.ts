@@ -171,3 +171,56 @@ test("private suggestions build immediate AND-search chips with keyboard and poi
 	await form.getByRole("button", { name: "Clear search", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(2);
 });
+
+test("refresh preserves the submitted search and card tags select filters", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	const refresh = page.getByRole("button", { name: "Refresh", exact: true });
+	await expect(refresh).toBeEnabled();
+	const unfiltered = page.waitForRequest((request) => {
+		const url = new URL(request.url());
+		return url.pathname === "/api/media" && !url.searchParams.has("tag");
+	});
+	await refresh.click();
+	await unfiltered;
+	await expect(refresh).toBeEnabled();
+	await page.getByLabel("Upload", { exact: true }).setInputFiles(
+		["Summer.txt", "Winter.txt"].map((name) => ({
+			name,
+			mimeType: "text/plain",
+			buffer: Buffer.from(name),
+		})),
+	);
+	await expect(page.getByRole("article")).toHaveCount(2);
+	await page
+		.getByRole("button", { name: "Search for tag summer", exact: true })
+		.click();
+	await expect(page.getByRole("article")).toHaveCount(1);
+	const form = page.getByRole("form", { name: "Search library" });
+	await expect(
+		form.getByRole("button", { name: "Remove search tag summer", exact: true }),
+	).toHaveCount(1);
+	const tag = page.getByRole("button", {
+		name: "Search for tag summer",
+		exact: true,
+	});
+	await tag.focus();
+	await tag.press("Enter");
+	await expect(
+		form.getByRole("button", { name: /^Remove search tag / }),
+	).toHaveCount(1);
+	const search = page.getByRole("searchbox", { name: "Search tags" });
+	await search.fill("unfinished");
+	await expect(refresh).toBeEnabled();
+	const filtered = page.waitForRequest(
+		(request) => new URL(request.url()).pathname === "/api/media",
+	);
+	await refresh.click();
+	const request = await filtered;
+	expect(new URL(request.url()).searchParams.getAll("tag")).toHaveLength(1);
+	await expect(page.getByRole("article")).toHaveCount(1);
+	await expect(search).toHaveValue("unfinished");
+});

@@ -9,6 +9,7 @@ interface Props {
 	suggestions?: string[];
 	disabled?: boolean;
 	name: string;
+	onsearch: (tag: string) => void;
 	onsave: (tags: string[]) => Promise<boolean>;
 }
 
@@ -17,6 +18,7 @@ let {
 	suggestions = [],
 	disabled = false,
 	name,
+	onsearch,
 	onsave,
 }: Props = $props();
 let editing = $state(false);
@@ -64,16 +66,18 @@ async function persist(next: string[], clear = false) {
 			text={tag}
 			removeLabel={`Remove tag ${tag}`}
 			disabled={locked}
+			onselect={() => onsearch(tag)}
 			onremove={() => persist(tags.filter((existing) => existing !== tag))}
 		/>
 	{/each}
 	{#if tags.length > 6}
 		<button
 			type="button"
-			class="chip"
+			class="disclosure"
 			aria-expanded={expanded}
 			onclick={() => (expanded = !expanded)}
 		>
+			<span aria-hidden="true">{expanded ? "▴" : "▾"}</span>
 			{expanded ? "Show fewer tags" : "Show all tags"}
 		</button>
 	{/if}
@@ -181,6 +185,16 @@ async function persist(next: string[], clear = false) {
 	min-height: 2rem;
 	font-size: 0.85rem;
 }
+.disclosure {
+	min-height: 2rem;
+	padding: 0.125rem 0.375rem;
+	gap: 0.25rem;
+	background: transparent;
+	color: var(--accent);
+	font-size: inherit;
+	text-decoration: underline;
+	text-underline-offset: 0.25rem;
+}
 .chip {
 	display: inline-flex;
 	align-items: center;
@@ -224,7 +238,8 @@ async function persist(next: string[], clear = false) {
 	.tag-list {
 		gap: 0.5rem;
 	}
-	.chip {
+	.chip,
+	.disclosure {
 		min-height: 3rem;
 		font-size: 1rem;
 	}

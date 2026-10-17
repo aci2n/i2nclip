@@ -55,15 +55,25 @@ function movePreview(step: number) {
 	</section>
 {:else}
 	<div class="toolbar">
-		<SearchForm
-			draft={$library.searchDraft}
-			query={$library.query}
-			onchange={library.editDraft}
-			suggestions={$tags.tags}
-			onadd={library.addTag}
-			onremove={library.removeTag}
-			onclear={library.clearSearch}
-		/>
+		<div class="search-container">
+			<SearchForm
+				draft={$library.searchDraft}
+				query={$library.query}
+				onchange={library.editDraft}
+				suggestions={$tags.tags}
+				onadd={library.addTag}
+				onremove={library.removeTag}
+				onclear={library.clearSearch}
+			/>
+		</div>
+		<button
+			type="button"
+			class="secondary refresh"
+			disabled={$library.loading || $session.busy}
+			onclick={library.refresh}
+		>
+			Refresh
+		</button>
 		<button
 			type="button"
 			class="upload"
@@ -137,6 +147,7 @@ function movePreview(step: number) {
 			<MediaCard
 				{media}
 				suggestions={$tags.tags}
+				onsearch={library.addTag}
 				onreveal={(opener) => library.reveal(media.id, opener)}
 				ondownload={() => library.download(media.id)}
 				onremove={() => library.remove(media.id)}
@@ -168,12 +179,16 @@ function movePreview(step: number) {
 <style>
 .toolbar {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-columns: minmax(0, 1fr) auto auto;
 	align-items: start;
 	gap: 0.5rem;
 	margin-bottom: 1rem;
 }
-.upload {
+.search-container {
+	min-width: 0;
+}
+.upload,
+.refresh {
 	min-height: 3rem;
 }
 .empty > button {
@@ -193,5 +208,13 @@ function movePreview(step: number) {
 .more {
 	display: block;
 	margin: 1.5rem auto;
+}
+@media (max-width: 32rem) {
+	.toolbar {
+		grid-template-columns: 1fr 1fr;
+	}
+	.search-container {
+		grid-column: 1 / -1;
+	}
 }
 </style>

@@ -8,6 +8,7 @@ import TagEditor from "./TagEditor.svelte";
 interface Props {
 	media: MediaState;
 	suggestions?: string[];
+	onsearch: (tag: string) => void;
 	onreveal: (opener: HTMLElement) => void;
 	ondownload: () => void;
 	onremove: () => void;
@@ -17,6 +18,7 @@ interface Props {
 let {
 	media,
 	suggestions = [],
+	onsearch,
 	onreveal,
 	ondownload,
 	onremove,
@@ -78,6 +80,7 @@ const summary = $derived(
 			tags={media.metadata.tags || []}
 			{suggestions}
 			{name}
+			{onsearch}
 			disabled={media.busy || media.deleted}
 			onsave={(tags) => onupdate({ tags })}
 		/>

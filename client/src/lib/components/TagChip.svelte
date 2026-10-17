@@ -3,13 +3,32 @@ interface Props {
 	text: string;
 	removeLabel: string;
 	disabled?: boolean;
+	onselect?: () => void;
 	onremove: () => void;
 }
-let { text, removeLabel, disabled = false, onremove }: Props = $props();
+let {
+	text,
+	removeLabel,
+	disabled = false,
+	onselect,
+	onremove,
+}: Props = $props();
 </script>
 
 <span class="chip">
-	<span class="tag-text">{text}</span>
+	{#if onselect}
+		<button
+			class="tag-text select"
+			type="button"
+			aria-label={`Search for tag ${text}`}
+			{disabled}
+			onclick={onselect}
+		>
+			{text}
+		</button>
+	{:else}
+		<span class="tag-text">{text}</span>
+	{/if}
 	<button type="button" aria-label={removeLabel} {disabled} onclick={onremove}>
 		<svg
 			viewBox="0 0 24 24"
@@ -52,6 +71,18 @@ button {
 	border: 0;
 	background: transparent;
 	color: inherit;
+}
+button.select {
+	display: block;
+	flex: 0 1 auto;
+	width: auto;
+	height: auto;
+	text-align: left;
+	font-size: inherit;
+	line-height: inherit;
+}
+button.select:hover {
+	text-decoration: underline;
 }
 svg {
 	width: 1rem;
