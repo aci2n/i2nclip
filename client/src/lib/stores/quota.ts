@@ -3,6 +3,7 @@ import type { Quota, QuotaApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
 import type { SessionReader } from "./session.ts";
+import { libraryReady } from "./session.ts";
 
 const empty = (): {
 	value: Quota | null;
@@ -20,37 +21,28 @@ export function createQuota(
 	let disposed = false;
 	let epoch = session.epoch;
 	const unsubscribe = session.subscribe((value) => {
-		if (value.epoch !== epoch || !value.unlocked || !value.configured) {
+		if (value.epoch !== epoch) {
 			epoch = value.epoch;
-			controller?.abort();
 			state.set(empty());
 		}
 	});
 	async function refresh() {
 		const value = get(session);
-		if (
-			disposed ||
-			get(state).loading ||
-			!value.configured ||
-			!value.unlocked ||
-			value.busy
-		) {
+		if (disposed || get(state).loading || !libraryReady(value)) {
 			return false;
 		}
 		controller = new AbortController();
 		const signal = AbortSignal.any([controller.signal, session.signal]);
-		const own = session.epoch;
-		const current = () => !disposed && !signal.aborted && own === session.epoch;
 		state.set({ value: null, loading: true, error: "" });
 		try {
 			const quota = await http.getQuota({ ...session.credentials(), signal });
-			if (!current()) {
+			if (signal.aborted) {
 				return false;
 			}
 			state.set({ value: quota, loading: false, error: "" });
 			return true;
 		} catch (error) {
-			if (current()) {
+			if (!signal.aborted) {
 				state.set({ value: null, loading: false, error: errorMessage(error) });
 			}
 			return false;

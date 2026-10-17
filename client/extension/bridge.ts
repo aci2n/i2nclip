@@ -12,7 +12,7 @@ export function installBridge() {
 				: {};
 		if (
 			sender.id !== browser.runtime.id ||
-			message?.channel !== "i2nclip-extension-v1"
+			message.channel !== "i2nclip-extension-v1"
 		) {
 			return;
 		}

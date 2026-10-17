@@ -17,14 +17,12 @@ export interface LoadedIdentity {
 
 export const MAX_RECOVERY_BYTES = 1024 * 1024;
 function identityDocument(input: unknown): Identity {
-	const identity = document(input);
-	if (!identity) {
-		throw new Error("Invalid library identity.");
-	}
-	checkServer(string(identity.server_url));
+	const identity = document(input, "Invalid library identity.");
+	const server = string(identity.server_url);
+	checkServer(server);
 	const parsed = parsePrivateKey(identity.private_key);
 	return {
-		server_url: new URL(string(identity.server_url)).origin,
+		server_url: new URL(server).origin,
 		private_key: { v: 1, seed: parsed.seed, public_key: parsed.publicKey },
 	};
 }
@@ -62,7 +60,7 @@ export async function openRecovery(
 	} catch {
 		throw new Error("Invalid recovery file.");
 	}
-	if (file?.format !== "i2nclip-recovery" || file.v !== 1) {
+	if (file.format !== "i2nclip-recovery" || file.v !== 1) {
 		throw new Error("Invalid recovery file.");
 	}
 	const plain = await passwordOpen(

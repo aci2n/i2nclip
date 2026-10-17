@@ -53,7 +53,7 @@ for (const cancel of [false, true]) {
 			},
 			OffscreenCanvas: class {
 				getContext() {
-					return { drawImage() {} };
+					return { canvas: this, drawImage() {} };
 				}
 				async convertToBlob() {
 					return new Blob([thumb]);
@@ -132,6 +132,7 @@ test("media reuses full-content Blob URLs for preview and saving until disposal"
 	const revoked: Array<string> = [];
 	const saved: Array<string> = [];
 	let reads = 0;
+	let progress: api.Progress | undefined;
 	const content = new Uint8Array([1, 2, 3, 4]);
 	const media = createMediaItem(
 		mediaData({
@@ -142,7 +143,8 @@ test("media reuses full-content Blob URLs for preview and saving until disposal"
 		{
 			http: {
 				...api,
-				getContent: async () => {
+				getContent: async ({ onProgress }) => {
+					progress = onProgress;
 					reads++;
 					return content;
 				},
@@ -159,6 +161,8 @@ test("media reuses full-content Blob URLs for preview and saving until disposal"
 	);
 	t.after(media.dispose);
 	assert.equal(await media.reveal(), "blob:full");
+	assertPresent(progress)(99);
+	assert.equal(get(media).progress, null);
 	assert.equal(await media.reveal(), "blob:full");
 	assert.equal(await media.download(), true);
 	assert.equal(reads, 1);

@@ -21,7 +21,7 @@ function encoder(t: test.TestContext, encode: () => Promise<Blob>) {
 				assert.equal(height, 480);
 			}
 			getContext() {
-				return { drawImage() {} };
+				return { canvas: this, drawImage() {} };
 			}
 			convertToBlob(options: unknown) {
 				assert.deepEqual(options, { type: "image/webp", quality: 0.85 });

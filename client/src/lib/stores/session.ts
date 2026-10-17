@@ -22,6 +22,9 @@ export interface SessionSnapshot {
 	busy: boolean;
 	epoch: number;
 }
+export function libraryReady(value: SessionSnapshot) {
+	return value.unlocked && value.configured && !value.busy;
+}
 export interface SessionState extends SessionSnapshot {
 	status: "new" | "locked" | "unlocked";
 	serverUrl: string;
@@ -51,6 +54,7 @@ export interface PairingSession extends Readable<PairingSessionState> {
 	importPairing(value: PairedIdentity): Promise<SessionOperation | false>;
 }
 export type Session = ReturnType<typeof createSession>;
+// Invalidation aborts the previous signal before publishing the new epoch.
 export interface SessionReader extends Readable<SessionSnapshot> {
 	readonly signal: AbortSignal;
 	readonly epoch: number;

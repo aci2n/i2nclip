@@ -87,6 +87,7 @@ test("identity changes abort quota reads and late results cannot replace the new
 	pending[0].result.resolve({ ...usage, file_count: 999 });
 	assert.equal(await old, false);
 	assert.deepEqual(get(quota).value, usage);
+	session.invalidate();
 	session.update((value) => ({ ...value, unlocked: false }));
 	assert.equal(get(quota).value, null);
 	assert.equal(await quota.refresh(), false);

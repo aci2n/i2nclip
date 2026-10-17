@@ -128,9 +128,7 @@ export function createPairing(
 	}
 	async function step(current: Task, ownedRoom: JoinedRoom, expected: number) {
 		while (true) {
-			check(current);
 			const room = await retry(current, () => current.relay.poll(ownedRoom));
-			check(current);
 			if (room.id !== ownedRoom.id || room.instance !== ownedRoom.instance) {
 				throw new Error("Pairing session changed. Create a new code.");
 			}
@@ -147,8 +145,10 @@ export function createPairing(
 		}
 	}
 	async function retry<T>(current: Task, action: () => Promise<T>): Promise<T> {
+		check(current);
+		let result: T;
 		try {
-			return await action();
+			result = await action();
 		} catch (error) {
 			check(current);
 			if (
@@ -158,11 +158,12 @@ export function createPairing(
 			) {
 				throw error;
 			}
-			// Polls and identical submissions are idempotent. Never repeat room
-			// creation/join or generate another PAKE message for this attempt.
+			// Retry only idempotent polls and identical submissions, once.
 			await wait(current);
-			return action();
+			result = await action();
 		}
+		check(current);
+		return result;
 	}
 	async function call<T>(
 		current: Task,
@@ -173,31 +174,15 @@ export function createPairing(
 		check(current);
 		return result;
 	}
-	async function verification(current: Task) {
-		const code = await call(current, async (crypto) =>
-			crypto.verificationCode(),
-		);
-		if (
-			typeof code !== "string" ||
-			!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(
-				code,
-			)
-		) {
-			throw new Error("Invalid verification code. Create a new pairing code.");
-		}
-		return code;
-	}
 	async function submit(
 		current: Task,
 		ownedRoom: JoinedRoom,
 		number: number,
 		message: Uint8Array<ArrayBuffer>,
 	) {
-		check(current);
 		const result = await retry(current, () =>
 			current.relay.submit(ownedRoom, number, message),
 		);
-		check(current);
 		if (
 			result.id !== ownedRoom.id ||
 			result.instance !== ownedRoom.instance ||
@@ -334,11 +319,7 @@ export function createPairing(
 		}
 	}
 	function attach(current: Task, room: JoinedRoom, id: string) {
-		if (
-			room.id !== id ||
-			typeof room.capability !== "string" ||
-			!/^[A-Za-z0-9_-]{43}$/.test(room.capability)
-		) {
+		if (room.id !== id) {
 			throw new Error("Invalid pairing response.");
 		}
 		current.room = room;
@@ -391,7 +372,9 @@ export function createPairing(
 				update({
 					approval: true,
 					code: "",
-					verificationCode: await verification(current),
+					verificationCode: await call(current, (crypto) =>
+						crypto.verificationCode(),
+					),
 					status:
 						"Compare this code with the new device. Send your library only if they match. This gives it full access.",
 				});
@@ -456,7 +439,9 @@ export function createPairing(
 				);
 				await submit(current, room, 3, finish);
 				update({
-					verificationCode: await verification(current),
+					verificationCode: await call(current, (crypto) =>
+						crypto.verificationCode(),
+					),
 					status: "Compare this code on your unlocked device before approving.",
 				});
 				const input = await call(current, async (crypto) =>
@@ -466,7 +451,7 @@ export function createPairing(
 				);
 				const value = document(input);
 				if (
-					value?.v !== 1 ||
+					value.v !== 1 ||
 					value.server_url !== current.server ||
 					document(value.private_key).v !== 1 ||
 					!(value.public_key instanceof Uint8Array) ||

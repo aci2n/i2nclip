@@ -3,6 +3,7 @@ import type { TagApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
 import type { SessionReader } from "./session.ts";
+import { libraryReady } from "./session.ts";
 
 const empty = (): {
 	tags: string[];
@@ -36,12 +37,10 @@ export function createTags(
 		controller?.abort();
 		controller = new AbortController();
 		const signal = AbortSignal.any([controller.signal, session.signal]);
-		const current = () =>
-			!disposed && !signal.aborted && epoch === session.epoch;
 		state.update((v) => ({ ...v, loading: true, error: "" }));
 		try {
 			const result = await http.getTags({ ...session.credentials(), signal });
-			if (!current()) {
+			if (signal.aborted) {
 				return false;
 			}
 			state.set({
@@ -52,7 +51,7 @@ export function createTags(
 			});
 			return true;
 		} catch (error) {
-			if (current()) {
+			if (!signal.aborted) {
 				state.update((v) => ({
 					...v,
 					loading: false,
@@ -63,13 +62,12 @@ export function createTags(
 		}
 	}
 	const unsubscribe = session.subscribe((value) => {
-		if (value.epoch !== epoch || !value.unlocked || !value.configured) {
+		if (value.epoch !== epoch) {
 			epoch = value.epoch;
-			controller?.abort();
 			state.set(empty());
 			refreshNeeded = true;
 		}
-		if (refreshNeeded && value.unlocked && value.configured && !value.busy) {
+		if (refreshNeeded && libraryReady(value)) {
 			void refresh();
 		}
 	});
@@ -78,8 +76,8 @@ export function createTags(
 		refresh,
 		dispose() {
 			disposed = true;
-			unsubscribe();
 			controller?.abort();
+			unsubscribe();
 			state.set(empty());
 		},
 	};

@@ -48,7 +48,7 @@ export async function openBytes(
 ) {
 	const record = document(input);
 	if (
-		record?.v !== 1 ||
+		record.v !== 1 ||
 		!(record.iv instanceof Uint8Array) ||
 		!(record.ct instanceof Uint8Array)
 	) {

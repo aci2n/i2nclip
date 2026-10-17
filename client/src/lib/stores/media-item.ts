@@ -53,28 +53,19 @@ export function createMediaItem(
 		progress: null,
 	});
 	const controller = new AbortController();
-	const epoch = session.epoch;
 	const signal = AbortSignal.any([controller.signal, session.signal]);
 	const ownedUrls = new Set<string>();
-	let disposed = false;
 	let content: Blob | null = null;
 	let activeLoad: AbortSignal | null = null;
-	function current() {
-		return !disposed && !signal.aborted && session.epoch === epoch;
-	}
 	function makeUrl(blob: Blob) {
-		if (!current()) {
-			return "";
-		}
 		const url = urls.createObjectURL(blob);
 		ownedUrls.add(url);
 		return url;
 	}
 	function dispose() {
-		if (disposed) {
+		if (controller.signal.aborted) {
 			return;
 		}
-		disposed = true;
 		controller.abort();
 		for (const url of ownedUrls) {
 			urls.revokeObjectURL(url);
@@ -94,20 +85,20 @@ export function createMediaItem(
 	const onAbort = () => dispose();
 	signal.addEventListener("abort", onAbort, { once: true });
 	const thumb = initial.thumb;
-	if (thumb?.length) {
+	if (thumb?.length && !signal.aborted) {
 		const preview = makeUrl(new Blob([thumb], { type: "image/webp" }));
 		state.update((value) => ({ ...value, preview }));
 	}
 	// Mutations only need the item's lifetime and its ordinary busy guard.
 	async function mutate(work: () => Promise<boolean>) {
-		if (!current() || get(state).busy || get(state).deleted) {
+		if (signal.aborted || get(state).busy || get(state).deleted) {
 			return false;
 		}
 		state.update((v) => ({ ...v, busy: true, message: "", error: false }));
 		try {
 			return await work();
 		} catch (error) {
-			if (current()) {
+			if (!signal.aborted) {
 				state.update((v) => ({
 					...v,
 					message: errorMessage(error),
@@ -116,7 +107,7 @@ export function createMediaItem(
 			}
 			return false;
 		} finally {
-			if (current()) {
+			if (!signal.aborted) {
 				state.update((v) => ({ ...v, busy: false }));
 			}
 		}
@@ -127,7 +118,7 @@ export function createMediaItem(
 		useContent: (blob: Blob, signal: AbortSignal) => Promise<T>,
 	) {
 		if (
-			!current() ||
+			signal.aborted ||
 			get(state).busy ||
 			get(state).deleted ||
 			callerSignal?.aborted
@@ -177,12 +168,11 @@ export function createMediaItem(
 				}
 				state.update((v) => ({ ...v, url, preview }));
 			}
-			request.throwIfAborted();
 			const result = await useContent(blob, request);
 			request.throwIfAborted();
 			return result;
 		} catch (error) {
-			if (!request.aborted && current()) {
+			if (!request.aborted) {
 				state.update((v) => ({
 					...v,
 					message: errorMessage(error),
@@ -218,7 +208,7 @@ export function createMediaItem(
 				return get(state).url;
 			}),
 		download: () =>
-			withContent(undefined, async (_blob, request) => {
+			withContent(undefined, async () => {
 				const value = get(state);
 				await download(
 					value.url,
@@ -227,7 +217,6 @@ export function createMediaItem(
 						value.metadata?.content_type || "",
 					),
 				);
-				request.throwIfAborted();
 				return true;
 			}),
 		updateMetadata: (patch: Metadata) =>
@@ -248,7 +237,7 @@ export function createMediaItem(
 					prevMetaHash: value.metaHash,
 					signal,
 				});
-				if (!current()) {
+				if (signal.aborted) {
 					return false;
 				}
 				if (result.conflict) {
@@ -267,7 +256,7 @@ export function createMediaItem(
 					id: initial.id,
 					signal,
 				});
-				if (!current()) {
+				if (signal.aborted) {
 					return false;
 				}
 				dispose();

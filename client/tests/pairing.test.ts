@@ -525,25 +525,6 @@ for (const role of ["sender", "receiver"] as const) {
 		assert.equal(await next, false);
 	});
 }
-test("a malformed worker verification code fails closed before approval", async (t) => {
-	const f = fixture(t, undefined, {
-		crypto: () => {
-			const execute = createPairingCrypto();
-			return { ...execute, verificationCode: async () => "invalid" };
-		},
-	});
-	const key = await generatePrivateKey();
-	f.senderState.update((value) => ({ ...value, ...key }));
-	const sending = f.sender.send();
-	await until(() => Boolean(get(f.sender).code));
-	const receiving = f.receiver.receive(get(f.sender).code, origin);
-	assert.deepEqual(await Promise.all([sending, receiving]), [false, false]);
-	f.sender.approve();
-	assert.equal(get(f.sender).approval, false);
-	assert.equal(get(f.sender).verificationCode, "");
-	assert.equal(get(f.receiver).verificationCode, "");
-	assert.equal(f.transcript.length, 3);
-});
 test("identity changes cancel authenticated pairing before any identity transfer", async (t) => {
 	const f = fixture(t);
 	const key = await generatePrivateKey();

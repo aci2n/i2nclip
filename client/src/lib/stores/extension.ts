@@ -38,7 +38,7 @@ interface Capture {
 	token: string;
 }
 
-// This root-owned receiver exists only in the tab admitted by the Web Lock.
+// Each app tab owns its receiver and at most one pending capture.
 export function createExtensionReceiver(
 	session: CaptureSession,
 	uploads: CaptureUploads,
@@ -76,16 +76,7 @@ export function createExtensionReceiver(
 			complete(capture, false, true);
 		}
 	}
-	function upload(capture = pending) {
-		if (
-			disposed ||
-			!capture ||
-			!get(session).unlocked ||
-			!get(session).configured ||
-			rejection()
-		) {
-			return false;
-		}
+	function upload(capture: Capture) {
 		pending = null;
 		const own = epoch;
 		onupload();
@@ -94,17 +85,15 @@ export function createExtensionReceiver(
 				complete(capture, ok, own !== session.epoch);
 			}
 		});
-		return true;
 	}
 	const unsubscribeSession = session.subscribe((value) => {
-		if (value.epoch !== epoch) {
-			epoch = value.epoch;
+		if (value.epoch !== epoch || (value.unlocked && !value.configured)) {
 			discard();
 		}
-		if (value.unlocked && !value.configured) {
-			discard();
+		epoch = value.epoch;
+		if (pending && value.unlocked && !rejection()) {
+			upload(pending);
 		}
-		upload();
 	});
 	function receive(event: CaptureEvent) {
 		const message =
@@ -112,14 +101,13 @@ export function createExtensionReceiver(
 				? (event.data as Record<string, unknown>)
 				: null;
 		if (
-			disposed ||
 			event.source !== browser ||
 			event.origin !== browser.location.origin ||
 			message?.channel !== "i2nclip-extension-v1" ||
 			(message.type !== "probe" && message.type !== "file") ||
 			typeof message.token !== "string" ||
 			message.token.length > 80 ||
-			!message?.token
+			!message.token
 		) {
 			return;
 		}

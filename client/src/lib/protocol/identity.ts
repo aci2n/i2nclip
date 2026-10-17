@@ -10,7 +10,7 @@ export interface PrivateKeyDocument {
 export function parsePrivateKey(input: unknown) {
 	const value = document(input, "Invalid library identity.");
 	if (
-		value?.v !== 1 ||
+		value.v !== 1 ||
 		!(value.seed instanceof Uint8Array) ||
 		value.seed.length !== 32 ||
 		!(value.public_key instanceof Uint8Array) ||

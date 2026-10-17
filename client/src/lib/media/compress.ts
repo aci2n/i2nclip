@@ -8,19 +8,16 @@ export async function compressImage(file: File, signal: AbortSignal) {
 	try {
 		bitmap = await createImageBitmap(file);
 		signal.throwIfAborted();
-		const canvas =
-			typeof OffscreenCanvas !== "undefined"
-				? new OffscreenCanvas(bitmap.width, bitmap.height)
-				: document.createElement("canvas");
-		canvas.width = bitmap.width;
-		canvas.height = bitmap.height;
 		const context =
-			"convertToBlob" in canvas
-				? canvas.getContext("2d")
-				: canvas.getContext("2d");
+			typeof OffscreenCanvas !== "undefined"
+				? new OffscreenCanvas(bitmap.width, bitmap.height).getContext("2d")
+				: document.createElement("canvas").getContext("2d");
 		if (!context) {
 			throw new Error("Canvas context unavailable.");
 		}
+		const { canvas } = context;
+		canvas.width = bitmap.width;
+		canvas.height = bitmap.height;
 		context.drawImage(bitmap, 0, 0);
 		const blob =
 			"convertToBlob" in canvas

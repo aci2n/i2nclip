@@ -34,8 +34,7 @@ server in the recovery identity. Stores own validation, registration and saving.
 
 The library owns searches, media items, and preview selection (item ID and opener).
 The Library view passes the selected card directly to the dialog; its content,
-loading, error, and progress state have one source of truth. Cancellation and
-revision checks suppress stale results. Pagination uses the submitted query and
+loading, error, and progress state have one source of truth. Session and request cancellation suppress stale results. Pagination uses the submitted query and
 permits one request at a time. The separate uploads store owns sequential batches
 and refreshes the submitted search after completion. Individual failures do not
 stop a batch; only failure names/messages remain for manual resubmission through

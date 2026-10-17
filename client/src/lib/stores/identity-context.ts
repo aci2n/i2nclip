@@ -49,22 +49,19 @@ export function createSessionContext(state: Readable<IdentitySnapshot>) {
 			const combined = signal
 				? AbortSignal.any([signal, controller.signal])
 				: controller.signal;
-			let disposed = false;
 			const operation = {
 				signal: combined,
 				abort(reason?: unknown) {
-					if (controller.signal.aborted || disposed) {
+					if (controller.signal.aborted) {
 						return;
 					}
 					controller.abort(reason);
 					onInvalidated?.();
 				},
 				dispose() {
-					if (disposed) {
+					if (!operations.delete(operation)) {
 						return;
 					}
-					disposed = true;
-					operations.delete(operation);
 					unsubscribe();
 					controller.abort();
 				},

@@ -82,9 +82,7 @@ async function persist(next: string[], clear = false) {
 			class="tags"
 			onsubmit={(event) => {
 				event.preventDefault();
-				if (!locked) {
-					persist([...tags, draft], true);
-				}
+				persist([...tags, draft], true);
 			}}
 		>
 			<div class="entry">

@@ -58,19 +58,16 @@ async function webp(source: ImageBitmap | HTMLVideoElement) {
 	const scale = Math.min(1, EDGE / Math.max(width, height));
 	const targetWidth = Math.max(1, Math.round(width * scale));
 	const targetHeight = Math.max(1, Math.round(height * scale));
-	const canvas =
-		typeof OffscreenCanvas !== "undefined"
-			? new OffscreenCanvas(targetWidth, targetHeight)
-			: document.createElement("canvas");
-	canvas.width = targetWidth;
-	canvas.height = targetHeight;
 	const context =
-		"convertToBlob" in canvas
-			? canvas.getContext("2d")
-			: canvas.getContext("2d");
+		typeof OffscreenCanvas !== "undefined"
+			? new OffscreenCanvas(targetWidth, targetHeight).getContext("2d")
+			: document.createElement("canvas").getContext("2d");
 	if (!context) {
 		throw new Error("Canvas context unavailable.");
 	}
+	const { canvas } = context;
+	canvas.width = targetWidth;
+	canvas.height = targetHeight;
 	context.drawImage(source, 0, 0, canvas.width, canvas.height);
 	const file =
 		"convertToBlob" in canvas

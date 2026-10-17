@@ -8,6 +8,7 @@ import { normalizeTag } from "../protocol/tags.ts";
 import type { MediaItem, MediaOptions, MediaState } from "./media-item.ts";
 import { createMediaItem } from "./media-item.ts";
 import type { SessionReader } from "./session.ts";
+import { libraryReady } from "./session.ts";
 export interface LibraryState {
 	cards: MediaState[];
 	query: string[];
@@ -52,7 +53,6 @@ export function createLibrary(
 	let disposed = false;
 	let searchController: AbortController | undefined;
 	let previewController: AbortController | null = null;
-	let revision = 0;
 	let lastEpoch = session.epoch;
 	function publishCards() {
 		state.update((v) => ({
@@ -77,9 +77,7 @@ export function createLibrary(
 		cards.set(item.id, row);
 		row.unsubscribe = media.subscribe((value) => {
 			row.value = value;
-			if (!disposed) {
-				publishCards();
-			}
+			publishCards();
 		});
 	}
 	function closePreview() {
@@ -88,7 +86,6 @@ export function createLibrary(
 		state.update((v) => ({ ...v, selected: null }));
 	}
 	function reset() {
-		revision++;
 		closePreview();
 		searchController?.abort();
 		clearCards();
@@ -107,12 +104,7 @@ export function createLibrary(
 		query = get(state).query,
 		{ more = false, clearDraft = false } = {},
 	) {
-		if (
-			disposed ||
-			!get(session).configured ||
-			!get(session).unlocked ||
-			get(session).busy
-		) {
+		if (disposed || !libraryReady(get(session))) {
 			return false;
 		}
 		const previous = get(state);
@@ -142,7 +134,6 @@ export function createLibrary(
 		searchController?.abort();
 		searchController = new AbortController();
 		const signal = AbortSignal.any([searchController.signal, session.signal]);
-		const own = ++revision;
 		if (!more) {
 			closePreview();
 			clearCards();
@@ -164,7 +155,7 @@ export function createLibrary(
 				after: more ? previous.next : null,
 				signal,
 			});
-			if (disposed || signal.aborted || own !== revision) {
+			if (signal.aborted) {
 				return false;
 			}
 			for (const item of page.items) {
@@ -177,28 +168,23 @@ export function createLibrary(
 			}));
 			return true;
 		} catch (error) {
-			if (!disposed && own === revision && !signal.aborted) {
+			if (!signal.aborted) {
 				state.update((v) => ({ ...v, status: errorMessage(error) }));
 			}
 			return false;
 		} finally {
-			if (!disposed && own === revision) {
+			if (!signal.aborted) {
 				state.update((v) => ({ ...v, loading: false }));
 			}
 		}
 	}
 	const unsubscribe = session.subscribe((value) => {
-		if (disposed) {
-			return;
-		}
 		if (value.epoch !== lastEpoch) {
 			lastEpoch = value.epoch;
 			reset();
 		}
 		if (
-			value.configured &&
-			value.unlocked &&
-			!value.busy &&
+			libraryReady(value) &&
 			!get(state).loading &&
 			!cards.size &&
 			get(state).empty === null &&

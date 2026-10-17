@@ -5,6 +5,7 @@ import type { SendOptions } from "../media/upload.ts";
 import { sendUpload } from "../media/upload.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import type { SessionReader } from "./session.ts";
+import { libraryReady } from "./session.ts";
 export interface UploadState {
 	uploading: boolean;
 	progress: {
@@ -42,28 +43,22 @@ export function createUploads(
 ) {
 	const state = writable(empty());
 	const controller = new AbortController();
-	let disposed = false;
-	let revision = 0;
 	let epoch = session.epoch;
 	const unsubscribe = session.subscribe((value) => {
 		if (epoch !== value.epoch) {
 			epoch = value.epoch;
-			revision++;
 			state.set(empty());
 		}
 	});
 	async function upload(files: File[], extra: Metadata = {}) {
 		if (
-			disposed ||
+			controller.signal.aborted ||
 			get(state).uploading ||
 			!files.length ||
-			!get(session).unlocked ||
-			!get(session).configured ||
-			get(session).busy
+			!libraryReady(get(session))
 		) {
 			return false;
 		}
-		const own = ++revision;
 		const signal = AbortSignal.any([controller.signal, session.signal]);
 		const credentials = session.credentials();
 		const compressImages = preferences ? get(preferences).compressImages : true;
@@ -76,7 +71,7 @@ export function createUploads(
 		}));
 		const failed: UploadState["failures"] = [];
 		for (const [index, file] of files.entries()) {
-			if (disposed || signal.aborted || own !== revision) {
+			if (signal.aborted) {
 				break;
 			}
 			state.update((v) => ({
@@ -97,7 +92,7 @@ export function createUploads(
 					credentials,
 					signal,
 					onProgress: (percent) => {
-						if (!finished && !disposed && !signal.aborted && own === revision) {
+						if (!finished && !signal.aborted) {
 							state.update((v) => ({
 								...v,
 								progress: {
@@ -110,21 +105,21 @@ export function createUploads(
 						}
 					},
 				});
-				if (!disposed && !signal.aborted && own === revision) {
+				if (!signal.aborted) {
 					state.update((v) => ({
 						...v,
 						completed: [...v.completed, { id: item.id, name: file.name }],
 					}));
 				}
 			} catch (error) {
-				if (!disposed && !signal.aborted && own === revision) {
+				if (!signal.aborted) {
 					failed.push({ name: file.name, error: errorMessage(error) });
 				}
 			} finally {
 				finished = true;
 			}
 		}
-		if (disposed || signal.aborted || own !== revision) {
+		if (signal.aborted) {
 			return false;
 		}
 		state.update((v) => ({
@@ -137,7 +132,7 @@ export function createUploads(
 				: "Upload complete.",
 		}));
 		await onComplete();
-		return !disposed && !signal.aborted && own === revision && !failed.length;
+		return !signal.aborted && !failed.length;
 	}
 
 	return {
@@ -150,8 +145,6 @@ export function createUploads(
 				status: v.failures.length || v.uploading ? v.status : "",
 			})),
 		dispose() {
-			disposed = true;
-			revision++;
 			controller.abort();
 			unsubscribe();
 			state.set(empty());

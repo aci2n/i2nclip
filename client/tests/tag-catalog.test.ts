@@ -12,12 +12,24 @@ function fixture(t: test.TestContext, { busy = false } = {}) {
 		busy,
 		epoch: 0,
 	});
+	let controller = new AbortController();
+	let epoch = get(state).epoch;
+	const unsubscribe = state.subscribe((value) => {
+		if (value.epoch !== epoch) {
+			epoch = value.epoch;
+			controller.abort();
+			controller = new AbortController();
+		}
+	});
+	t.after(unsubscribe);
 	const session = {
 		...state,
 		get epoch() {
 			return get(state).epoch;
 		},
-		signal: new AbortController().signal,
+		get signal() {
+			return controller.signal;
+		},
 		credentials: () => ({ serverUrl: "https://clip.example", key: testKey() }),
 	};
 	const calls: {

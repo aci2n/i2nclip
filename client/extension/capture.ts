@@ -323,7 +323,7 @@ export async function handleUploadResult(
 			? (input as Record<string, unknown>)
 			: {};
 	if (
-		message?.type !== "upload-complete" ||
+		message.type !== "upload-complete" ||
 		sender.id !== browser.runtime.id ||
 		sender.frameId !== 0 ||
 		!sender.tab ||
