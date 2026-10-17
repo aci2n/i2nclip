@@ -2,10 +2,14 @@ import { writable } from "svelte/store";
 import { b64ToBytes, bytesToB64 } from "../protocol/bytes.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
 
+export interface PreferenceStorage {
+	getItem(key: string): string | null;
+	setItem(key: string, value: string): void;
+}
 const KEY = "i2nclip.compress-images";
 
 export function createPreferences(
-	storage: Pick<Storage, "getItem" | "setItem"> = globalThis.localStorage,
+	storage: PreferenceStorage = globalThis.localStorage,
 ) {
 	let compressImages = true;
 	let error = "";

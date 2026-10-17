@@ -1,4 +1,5 @@
 import { get, writable } from "svelte/store";
+import type { LibraryApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
 import { canPreview } from "../media/format.ts";
@@ -17,6 +18,12 @@ export interface LibraryState {
 	status: string;
 	selected: { id: string; opener?: HTMLElement } | null;
 }
+export interface LibraryOptions {
+	http?: LibraryApi;
+	mediaOptions?: MediaOptions;
+	onChange?: () => unknown;
+	confirm?: (message: string) => boolean;
+}
 export type Library = ReturnType<typeof createLibrary>;
 
 export function createLibrary(
@@ -26,15 +33,7 @@ export function createLibrary(
 		mediaOptions = {},
 		onChange = () => {},
 		confirm = (message: string) => globalThis.confirm(message),
-	}: {
-		http?: Pick<
-			typeof api,
-			"list" | "getContent" | "updateMetadata" | "remove"
-		>;
-		mediaOptions?: MediaOptions;
-		onChange?: () => unknown;
-		confirm?: (message: string) => boolean;
-	} = {},
+	}: LibraryOptions = {},
 ) {
 	const state = writable<LibraryState>({
 		cards: [],

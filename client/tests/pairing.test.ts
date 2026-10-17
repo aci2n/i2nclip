@@ -4,12 +4,8 @@ import * as opaque from "@serenity-kit/opaque";
 import type { Writable } from "svelte/store";
 import { get, writable } from "svelte/store";
 import type { Credentials } from "../src/lib/api.ts";
-import {
-	type CryptoArgs,
-	type CryptoResults,
-	createPairingCrypto,
-} from "../src/lib/pairing/crypto.ts";
-import type { Room } from "../src/lib/pairing/service.ts";
+import { createPairingCrypto } from "../src/lib/pairing/crypto.ts";
+import type { JoinedRoom, Room } from "../src/lib/pairing/service.ts";
 import { readPairingResponse } from "../src/lib/pairing/service.ts";
 import { bytesToB64url } from "../src/lib/protocol/bytes.ts";
 import { loadKey } from "../src/lib/protocol/crypto.ts";
@@ -50,7 +46,6 @@ const sessionSnapshot: SessionState = {
 	publicKey: "",
 	error: "",
 };
-
 const room = {
 	v: 1,
 	id: "K7MP",
@@ -62,7 +57,6 @@ const room = {
 };
 const origin = "https://clip.example";
 const context = pairingContext(origin, room);
-
 test("verification codes preserve all 40 derived bits and match independent HKDF vectors", async () => {
 	assert.equal(
 		context,
@@ -98,7 +92,6 @@ test("verification codes preserve all 40 derived bits and match independent HKDF
 		assert.equal(keys.verificationCode, expected);
 	}
 });
-
 test("pairing codes preserve all eight secret characters and normalize typing", () => {
 	assert.equal(PAIRING_ALPHABET.length, 32);
 	for (let i = 0; i < 100; i++) {
@@ -128,61 +121,52 @@ test("pairing codes preserve all eight secret characters and normalize typing", 
 	assert.throws(() => pairingOrigin("http://clip.example"), /HTTPS/);
 	assert.throws(() => pairingContext(origin, { ...room, v: 2 }), /Invalid/);
 });
-
 async function authenticate(
 	sender: ReturnType<typeof createPairingCrypto>,
 	receiver: ReturnType<typeof createPairingCrypto>,
 	receiverContext = context,
 	secret = "W4TXN9RC",
 ) {
-	await sender("senderSetup", { secret: "W4TXN9RC", context });
-	const first = await receiver("receiverStart", { secret });
-	const second = await sender("senderResponse", { message: first });
-	const third = await receiver("receiverFinish", {
+	await sender.senderSetup({ secret: "W4TXN9RC", context });
+	const first = await receiver.receiverStart({ secret });
+	const second = await sender.senderResponse({ message: first });
+	const third = await receiver.receiverFinish({
 		message: second,
 		context: receiverContext,
 	});
-	await sender("senderFinish", { message: third });
+	await sender.senderFinish({ message: third });
 }
-
 test("real OPAQUE pairing transfers identity and verifies an encrypted save acknowledgment", async () => {
 	const sender = createPairingCrypto();
 	const receiver = createPairingCrypto();
-	await assert.rejects(sender("verificationCode", {}), /Invalid pairing step/);
-	await assert.rejects(
-		receiver("verificationCode", {}),
-		/Invalid pairing step/,
-	);
+	await assert.rejects(sender.verificationCode(), /Invalid pairing step/);
+	await assert.rejects(receiver.verificationCode(), /Invalid pairing step/);
 	await authenticate(sender, receiver);
-	const verification = await sender("verificationCode", {});
+	const verification = await sender.verificationCode();
 	assert.match(
 		verification,
 		/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/,
 	);
-	assert.equal(await receiver("verificationCode", {}), verification);
+	assert.equal(await receiver.verificationCode(), verification);
 	const value = {
 		v: 1,
 		private_key: { v: 1, seed: new Uint8Array([1, 2, 3]) },
 		server_url: origin,
 	};
-	const packet = await sender("transfer", { value });
+	const packet = await sender.transfer({ value });
 	assert(!Buffer.from(packet).includes("identity"));
-	assert.deepEqual(await receiver("receive", { message: packet }), value);
+	assert.deepEqual(await receiver.receive({ message: packet }), value);
 	await assert.rejects(
-		receiver("receive", { message: packet }),
+		receiver.receive({ message: packet }),
 		/Invalid pairing step/,
 	);
-	const ack = await receiver("acknowledge", {});
+	const ack = await receiver.acknowledge();
 	assert(!Buffer.from(ack).includes("saved"));
-	await sender("verifyAcknowledgment", { message: ack });
-	await assert.rejects(sender("verificationCode", {}), /Invalid pairing step/);
-	await assert.rejects(
-		receiver("verificationCode", {}),
-		/Invalid pairing step/,
-	);
-	await assert.rejects(sender("transfer", { value }), /Invalid pairing step/);
+	await sender.verifyAcknowledgment({ message: ack });
+	await assert.rejects(sender.verificationCode(), /Invalid pairing step/);
+	await assert.rejects(receiver.verificationCode(), /Invalid pairing step/);
+	await assert.rejects(sender.transfer({ value }), /Invalid pairing step/);
 });
-
 test("wrong secret and altered session bindings cannot complete authentication", async () => {
 	for (const [binding, secret] of [
 		[context, "W4TXN9RD"],
@@ -191,38 +175,30 @@ test("wrong secret and altered session bindings cannot complete authentication",
 		const sender = createPairingCrypto();
 		const receiver = createPairingCrypto();
 		await assert.rejects(authenticate(sender, receiver, binding, secret));
+		await assert.rejects(sender.verificationCode(), /Invalid pairing step/);
+		await assert.rejects(receiver.verificationCode(), /Invalid pairing step/);
 		await assert.rejects(
-			sender("verificationCode", {}),
+			receiver.receiverFinish({ message: new Uint8Array(), context }),
 			/Invalid pairing step/,
 		);
 		await assert.rejects(
-			receiver("verificationCode", {}),
-			/Invalid pairing step/,
-		);
-		await assert.rejects(
-			receiver("receiverFinish", { message: "retry", context }),
-			/Invalid pairing step/,
-		);
-		await assert.rejects(
-			sender("transfer", { value: {} }),
+			sender.transfer({ value: {} }),
 			/Invalid pairing step/,
 		);
 	}
 });
-
 test("separate OPAQUE sessions using the same original secret have different verification codes", async () => {
 	const codes: Array<string> = [];
 	for (let attempt = 0; attempt < 2; attempt++) {
 		const sender = createPairingCrypto();
 		const receiver = createPairingCrypto();
 		await authenticate(sender, receiver);
-		const code = await sender("verificationCode", {});
-		assert.equal(await receiver("verificationCode", {}), code);
+		const code = await sender.verificationCode();
+		assert.equal(await receiver.verificationCode(), code);
 		codes.push(code);
 	}
 	assert.notEqual(codes[0], codes[1]);
 });
-
 test("verification support is authenticated and mixed old/new clients cannot pair", async () => {
 	await opaque.ready;
 	const identifiers = {
@@ -231,9 +207,9 @@ test("verification support is authenticated and mixed old/new clients cannot pai
 	};
 	const password = "W4TXN9RC";
 	const sender = createPairingCrypto();
-	await sender("senderSetup", { secret: password, context });
+	await sender.senderSetup({ secret: password, context });
 	const legacyLogin = opaque.client.startLogin({ password });
-	const response = await sender("senderResponse", {
+	const response = await sender.senderResponse({
 		message: encode(legacyLogin.startLoginRequest),
 	});
 	const legacyFinish = opaque.client.finishLogin({
@@ -243,12 +219,8 @@ test("verification support is authenticated and mixed old/new clients cannot pai
 		identifiers,
 	});
 	assert.equal(legacyFinish, undefined);
-	await assert.rejects(sender("verificationCode", {}), /Invalid pairing step/);
-	await assert.rejects(
-		sender("transfer", { value: {} }),
-		/Invalid pairing step/,
-	);
-
+	await assert.rejects(sender.verificationCode(), /Invalid pairing step/);
+	await assert.rejects(sender.transfer({ value: {} }), /Invalid pairing step/);
 	const serverSetup = opaque.server.createSetup();
 	const registration = opaque.client.startRegistration({ password });
 	const registrationResponse = opaque.server.createRegistrationResponse({
@@ -263,7 +235,7 @@ test("verification support is authenticated and mixed old/new clients cannot pai
 		identifiers,
 	});
 	const receiver = createPairingCrypto();
-	const initial = await receiver("receiverStart", { secret: password });
+	const initial = await receiver.receiverStart({ secret: password });
 	const legacyResponse = opaque.server.startLogin({
 		serverSetup,
 		registrationRecord,
@@ -272,17 +244,13 @@ test("verification support is authenticated and mixed old/new clients cannot pai
 		identifiers,
 	});
 	await assert.rejects(
-		receiver("receiverFinish", {
+		receiver.receiverFinish({
 			message: encode(legacyResponse.loginResponse),
 			context,
 		}),
 	);
-	await assert.rejects(
-		receiver("verificationCode", {}),
-		/Invalid pairing step/,
-	);
+	await assert.rejects(receiver.verificationCode(), /Invalid pairing step/);
 });
-
 test("transfer encryption rejects tampering, direction swaps, and different rooms", async () => {
 	const keys = await pairingKeys(
 		bytesToB64url(crypto.getRandomValues(new Uint8Array(64))),
@@ -304,7 +272,6 @@ test("transfer encryption rejects tampering, direction swaps, and different room
 		openPairing(keys, context, "transfer", "x".repeat(8193)),
 	);
 });
-
 test("relay responses are capped while streaming regardless of Content-Length", async () => {
 	let canceled = false;
 	const response = new Response(
@@ -321,7 +288,6 @@ test("relay responses are capped while streaming regardless of Content-Length", 
 	await assert.rejects(readPairingResponse(response), /too large/);
 	assert.equal(canceled, true);
 });
-
 function fixture(
 	t: test.TestContext,
 	receiverImport?: (
@@ -334,7 +300,7 @@ function fixture(
 		loseSubmission?: number;
 	} = {},
 ) {
-	let snapshot: Room;
+	let snapshot: JoinedRoom;
 	let removed = 0;
 	let lostSubmission = false;
 	let lostPoll = false;
@@ -381,7 +347,7 @@ function fixture(
 			removed++;
 		},
 	});
-	const crypto = () => ({ call: createPairingCrypto(), dispose() {} });
+	const crypto = createPairingCrypto;
 	const senderState = writable<SessionState>({
 		...sessionSnapshot,
 		configured: true,
@@ -468,7 +434,6 @@ function fixture(
 		removed: () => removed,
 	};
 }
-
 async function until(predicate: () => boolean) {
 	const deadline = Date.now() + 5000;
 	while (!predicate()) {
@@ -476,7 +441,6 @@ async function until(predicate: () => boolean) {
 		await new Promise((resolve) => setTimeout(resolve, 5));
 	}
 }
-
 test("pairing requires explicit approval and reports success only after durable save", async (t) => {
 	const saving = deferred();
 	const f = fixture(t, async (value, state) => {
@@ -527,7 +491,6 @@ test("pairing requires explicit approval and reports success only after durable 
 		),
 	);
 });
-
 for (const role of ["sender", "receiver"] as const) {
 	test(`${role} rejects verification without transferring or retaining a code`, async (t) => {
 		const f = fixture(t);
@@ -558,24 +521,11 @@ for (const role of ["sender", "receiver"] as const) {
 		assert.equal(await next, false);
 	});
 }
-
 test("a malformed worker verification code fails closed before approval", async (t) => {
 	const f = fixture(t, undefined, {
 		crypto: () => {
 			const execute = createPairingCrypto();
-			function call<A extends keyof CryptoResults>(
-				action: A,
-				args?: CryptoArgs,
-			): Promise<CryptoResults[A]>;
-			async function call(
-				action: keyof CryptoResults,
-				args?: CryptoArgs,
-			): Promise<CryptoResults[keyof CryptoResults]> {
-				return action === "verificationCode"
-					? "invalid"
-					: execute(action, args);
-			}
-			return { call, dispose() {} };
+			return { ...execute, verificationCode: async () => "invalid" };
 		},
 	});
 	const key = await generatePrivateKey();
@@ -590,7 +540,6 @@ test("a malformed worker verification code fails closed before approval", async 
 	assert.equal(get(f.receiver).verificationCode, "");
 	assert.equal(f.transcript.length, 3);
 });
-
 test("identity changes cancel authenticated pairing before any identity transfer", async (t) => {
 	const f = fixture(t);
 	const key = await generatePrivateKey();
@@ -610,9 +559,8 @@ test("identity changes cancel authenticated pairing before any identity transfer
 	assert.equal(get(f.receiverState).privateKey, "");
 	assert(f.removed() >= 1);
 });
-
 test("cancellation during room creation removes a late room without publishing its code", async (t) => {
-	const create = deferred<Room>();
+	const create = deferred<JoinedRoom>();
 	const entered = deferred();
 	let removed = 0;
 	const session = writable<SessionState>({ ...sessionSnapshot });
@@ -630,7 +578,7 @@ test("cancellation during room creation removes a late room without publishing i
 			importPairing: async () => false,
 		},
 		{
-			crypto: () => ({ call: createPairingCrypto(), dispose() {} }),
+			crypto: createPairingCrypto,
 			relay: () => ({
 				join: async () => assert.fail("unexpected join"),
 				poll: async () => assert.fail("unexpected poll"),
@@ -655,7 +603,6 @@ test("cancellation during room creation removes a late room without publishing i
 	assert.equal(removed, 1);
 	assert.equal(get(pairing).code, "");
 });
-
 test("expired pairing cannot transfer a key even when the relay still offers approval", async (t) => {
 	let elapsed = 0;
 	const f = fixture(t, undefined, { now: () => elapsed });
@@ -665,7 +612,7 @@ test("expired pairing cannot transfer a key even when the relay still offers app
 	await until(() => Boolean(get(f.sender).code));
 	const receiving = f.receiver.receive(get(f.sender).code, origin);
 	await until(() => get(f.sender).approval);
-	elapsed = 120_001;
+	elapsed = 120001;
 	f.sender.approve();
 	assert.equal(await sending, false);
 	assert.match(get(f.sender).status, /expired/);
@@ -674,13 +621,16 @@ test("expired pairing cannot transfer a key even when the relay still offers app
 	assert.equal(await receiving, false);
 	assert.equal(f.transcript.length, 3);
 });
-
 test("canceling during receiver save prevents acknowledgment and stale completion", async (t) => {
 	const entered = deferred();
 	const finish = deferred();
 	const f = fixture(
 		t,
-		async (value: { signal: { throwIfAborted: () => void } }) => {
+		async (value: {
+			signal: {
+				throwIfAborted: () => void;
+			};
+		}) => {
 			entered.resolve();
 			await finish.promise;
 			value.signal.throwIfAborted();
@@ -703,7 +653,6 @@ test("canceling during receiver save prevents acknowledgment and stale completio
 	f.sender.cancel();
 	assert.equal(await sending, false);
 });
-
 test("lost acknowledgment preserves the saved library without claiming sender success", async (t) => {
 	const f = fixture(t, undefined, { rejectAck: true });
 	const key = await generatePrivateKey();
@@ -724,7 +673,6 @@ test("lost acknowledgment preserves the saved library without claiming sender su
 	assert.equal(await sending, false);
 	assert.notEqual(get(f.sender).status, "New device connected.");
 });
-
 for (const step of [2, 3, 4, 5]) {
 	test(`lost response at step ${step} retries the same message without another authentication attempt`, async (t) => {
 		const f = fixture(t, undefined, { loseSubmission: step, losePoll: true });

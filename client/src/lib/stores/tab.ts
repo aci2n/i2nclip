@@ -1,7 +1,8 @@
 import { writable } from "svelte/store";
 import { errorMessage } from "../error.ts";
-export interface TabBrowser
-	extends Pick<EventTarget, "addEventListener" | "removeEventListener"> {
+export interface TabBrowser {
+	addEventListener(type: string, listener: (event: Event) => void): void;
+	removeEventListener(type: string, listener: (event: Event) => void): void;
 	navigator: {
 		locks?: {
 			request(

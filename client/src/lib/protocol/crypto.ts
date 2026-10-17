@@ -10,12 +10,14 @@ import { decode, encode } from "./msgpack.ts";
 import { normalizeTag, parseTagList } from "./tags.ts";
 import { bytes, document } from "./value.ts";
 export type LoadedKey = Awaited<ReturnType<typeof loadKey>>;
-interface RequestMessage {
+interface RequestContext {
 	origin: string;
 	ts: number;
 	nonce: string;
 	method: string;
 	path: string;
+}
+interface RequestMessage extends RequestContext {
 	hash: string;
 }
 
@@ -171,7 +173,7 @@ export async function authorizationHeader({
 	method,
 	path,
 	body,
-}: Omit<RequestMessage, "hash"> & {
+}: RequestContext & {
 	key: LoadedKey;
 	body?: Uint8Array<ArrayBuffer>;
 }) {

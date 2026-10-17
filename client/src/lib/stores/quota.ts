@@ -1,4 +1,5 @@
 import { get, writable } from "svelte/store";
+import type { QuotaApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
 import type { SessionReader } from "./session.ts";
@@ -12,7 +13,7 @@ const empty = (): {
 // Settings owns this store; identity changes and navigation dispose pending reads.
 export function createQuota(
 	session: SessionReader,
-	{ http = api }: { http?: Pick<typeof api, "getQuota"> } = {},
+	{ http = api }: { http?: QuotaApi } = {},
 ) {
 	const state = writable(empty());
 	let controller: AbortController | undefined;

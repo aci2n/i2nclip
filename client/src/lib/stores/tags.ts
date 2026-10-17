@@ -1,4 +1,5 @@
 import { get, writable } from "svelte/store";
+import type { TagApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
 import type { SessionReader } from "./session.ts";
@@ -13,7 +14,7 @@ const empty = (): {
 // Application owns the catalog for the unlocked identity, independently of pages.
 export function createTags(
 	session: SessionReader,
-	{ http = api }: { http?: Pick<typeof api, "getTags"> } = {},
+	{ http = api }: { http?: TagApi } = {},
 ) {
 	const state = writable(empty());
 	let controller: AbortController | undefined;

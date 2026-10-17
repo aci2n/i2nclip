@@ -1,4 +1,5 @@
 import { get, writable } from "svelte/store";
+import type { MediaApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
 import { audioArt } from "../media/audio-art.ts";
@@ -11,7 +12,6 @@ import {
 } from "../media/text.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { uniqueTags } from "../protocol/tags.ts";
-import { requireValue } from "../required.ts";
 import type { SessionReader } from "./session.ts";
 export interface MediaState extends api.Media {
 	busy: boolean;
@@ -24,9 +24,13 @@ export interface MediaState extends api.Media {
 	error: boolean;
 	progress: number | null;
 }
+export interface ObjectUrls {
+	createObjectURL(blob: Blob): string;
+	revokeObjectURL(url: string): void;
+}
 export interface MediaOptions {
-	http?: Pick<typeof api, "getContent" | "updateMetadata" | "remove">;
-	urls?: Pick<typeof URL, "createObjectURL" | "revokeObjectURL">;
+	http?: MediaApi;
+	urls?: ObjectUrls;
 	download?: (url: string, filename: string) => unknown;
 }
 export type MediaItem = ReturnType<typeof createMediaItem>;
@@ -89,13 +93,10 @@ export function createMediaItem(
 	}
 	const onAbort = () => dispose();
 	signal.addEventListener("abort", onAbort, { once: true });
-	if (initial.thumb?.length) {
-		state.update((v) => ({
-			...v,
-			preview: makeUrl(
-				new Blob([requireValue(initial.thumb)], { type: "image/webp" }),
-			),
-		}));
+	const thumb = initial.thumb;
+	if (thumb?.length) {
+		const preview = makeUrl(new Blob([thumb], { type: "image/webp" }));
+		state.update((value) => ({ ...value, preview }));
 	}
 	// Mutations only need the item's lifetime and its ordinary busy guard.
 	async function mutate(work: () => Promise<boolean>) {
@@ -123,7 +124,7 @@ export function createMediaItem(
 	// Content loading alone supports caller cancellation. Keep its guards here.
 	async function withContent<T>(
 		callerSignal: AbortSignal | undefined,
-		useContent: (signal: AbortSignal) => Promise<T>,
+		useContent: (blob: Blob, signal: AbortSignal) => Promise<T>,
 	) {
 		if (
 			!current() ||
@@ -146,7 +147,8 @@ export function createMediaItem(
 		request.addEventListener("abort", release, { once: true });
 		state.update((v) => ({ ...v, busy: true, message: "", error: false }));
 		try {
-			if (!get(state).url) {
+			let blob = content;
+			if (!blob) {
 				const bytes = await http.getContent({
 					...session.credentials(),
 					id: initial.id,
@@ -159,10 +161,11 @@ export function createMediaItem(
 				});
 				request.throwIfAborted();
 				const value = get(state);
-				content = new Blob([bytes], {
+				blob = new Blob([bytes], {
 					type: value.metadata?.content_type || "application/octet-stream",
 				});
-				const url = makeUrl(content);
+				content = blob;
+				const url = makeUrl(blob);
 				let preview = value.preview;
 				if (value.metadata?.content_type?.startsWith("audio/")) {
 					const art = audioArt(bytes);
@@ -175,7 +178,7 @@ export function createMediaItem(
 				state.update((v) => ({ ...v, url, preview }));
 			}
 			request.throwIfAborted();
-			const result = await useContent(request);
+			const result = await useContent(blob, request);
 			request.throwIfAborted();
 			return result;
 		} catch (error) {
@@ -195,13 +198,12 @@ export function createMediaItem(
 	return {
 		subscribe: state.subscribe,
 		reveal: (callerSignal?: AbortSignal) =>
-			withContent(callerSignal, async (request) => {
+			withContent(callerSignal, async (blob, request) => {
 				const value = get(state);
 				if (
 					value.text === null &&
 					isText(value.metadata?.content_type || "", value.metadata?.name)
 				) {
-					const blob = requireValue(content);
 					const bytes = new Uint8Array(
 						await blob.slice(0, TEXT_PREVIEW_BYTES).arrayBuffer(),
 					);
@@ -216,7 +218,7 @@ export function createMediaItem(
 				return get(state).url;
 			}),
 		download: () =>
-			withContent(undefined, async (request) => {
+			withContent(undefined, async (_blob, request) => {
 				const value = get(state);
 				await download(
 					value.url,

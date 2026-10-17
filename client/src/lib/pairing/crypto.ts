@@ -3,197 +3,254 @@ import { decode, encode } from "../protocol/msgpack.ts";
 import type { PairingKeys } from "../protocol/pairing.ts";
 import { openPairing, pairingKeys, sealPairing } from "../protocol/pairing.ts";
 import { bytes as binary, document, string } from "../protocol/value.ts";
-import { requireValue } from "../required.ts";
-export interface CryptoArgs {
-	context?: string;
-	secret?: string;
-	message?: unknown;
-	value?: unknown;
+export interface PairingCrypto {
+	senderSetup(args: { context: string; secret: string }): Promise<null>;
+	receiverStart(args: { secret: string }): Promise<Uint8Array<ArrayBuffer>>;
+	senderResponse(args: {
+		message: Uint8Array<ArrayBuffer>;
+	}): Promise<Uint8Array<ArrayBuffer>>;
+	receiverFinish(args: {
+		context: string;
+		message: Uint8Array<ArrayBuffer>;
+	}): Promise<Uint8Array<ArrayBuffer>>;
+	senderFinish(args: { message: Uint8Array<ArrayBuffer> }): Promise<null>;
+	verificationCode(): Promise<string>;
+	transfer(args: { value: unknown }): Promise<Uint8Array<ArrayBuffer>>;
+	receive(args: { message: Uint8Array<ArrayBuffer> }): Promise<unknown>;
+	acknowledge(): Promise<Uint8Array<ArrayBuffer>>;
+	verifyAcknowledgment(args: {
+		message: Uint8Array<ArrayBuffer>;
+	}): Promise<null>;
+	dispose(): void;
 }
-export interface CryptoResults {
-	senderSetup: null;
-	receiverStart: Uint8Array<ArrayBuffer>;
-	senderResponse: Uint8Array<ArrayBuffer>;
-	receiverFinish: Uint8Array<ArrayBuffer>;
-	senderFinish: null;
-	verificationCode: string;
-	transfer: Uint8Array<ArrayBuffer>;
-	receive: unknown;
-	acknowledge: Uint8Array<ArrayBuffer>;
-	verifyAcknowledgment: null;
-}
-export type CryptoAction = keyof CryptoResults;
+type CryptoState =
+	| { phase: "initial" | "failed" | "complete" | "disposed" }
+	| { phase: "sender-wait"; context: string; setup: string; record: string }
+	| { phase: "sender-finish"; context: string; loginState: string }
+	| { phase: "receiver-wait"; secret: string; loginState: string }
+	| {
+			phase:
+				| "sender-authenticated"
+				| "receiver-authenticated"
+				| "sender-acknowledgment"
+				| "receiver-save";
+			context: string;
+			keys: PairingKeys;
+	  };
 
-// Each service executor owns exactly one PAKE attempt. OPAQUE's server is the sending
-// device; its setup and password file never leave that device.
-export function createPairingCrypto() {
-	let phase = "initial";
-	let context: string | undefined;
-	let setup: string | undefined;
-	let record: string | undefined;
-	let loginState: string | undefined;
-	let secret: string | undefined;
-	let keys: PairingKeys | undefined;
-	const identifiers = () => ({
+function identifiers(context: string) {
+	return {
 		client: `${context} receiver verification-code`,
 		server: `${context} sender verification-code`,
-	});
-	function expect(expected: string) {
-		if (phase !== expected) {
-			throw new Error("Invalid pairing step.");
-		}
-	}
-	function execute<A extends CryptoAction>(
-		action: A,
-		args?: CryptoArgs,
-	): Promise<CryptoResults[A]>;
-	async function execute(
-		action: CryptoAction,
-		args: CryptoArgs = {},
-	): Promise<CryptoResults[CryptoAction]> {
-		await opaque.ready;
-		if (phase === "disposed") {
+	};
+}
+const invalidStep = () => new Error("Invalid pairing step.");
+
+export function createPairingCrypto(): PairingCrypto {
+	let state: CryptoState = { phase: "initial" };
+	function active() {
+		if (state.phase === "disposed") {
 			throw new DOMException("Pairing ended.", "AbortError");
 		}
-		switch (action) {
-			case "senderSetup": {
-				expect("initial");
-				phase = "setting-up";
-				context = string(args.context);
-				setup = opaque.server.createSetup();
-				const registration = opaque.client.startRegistration({
-					password: string(args.secret),
-				});
-				const response = opaque.server.createRegistrationResponse({
-					serverSetup: string(setup),
-					userIdentifier: string(context),
-					registrationRequest: registration.registrationRequest,
-				});
-				record = opaque.client.finishRegistration({
-					clientRegistrationState: registration.clientRegistrationState,
-					registrationResponse: response.registrationResponse,
-					password: string(args.secret),
-					identifiers: identifiers(),
-				}).registrationRecord;
-				phase = "sender-wait";
-				return null;
-			}
-			case "receiverStart": {
-				expect("initial");
-				secret = string(args.secret);
-				const result = opaque.client.startLogin({ password: string(secret) });
-				loginState = result.clientLoginState;
-				phase = "receiver-wait";
-				return encode(result.startLoginRequest);
-			}
-			case "senderResponse": {
-				expect("sender-wait");
-				phase = "sender-finish";
-				const result = opaque.server.startLogin({
-					serverSetup: string(setup),
-					userIdentifier: string(context),
-					registrationRecord: string(record),
-					startLoginRequest: string(decode(binary(args.message))),
-					identifiers: identifiers(),
-				});
-				loginState = result.serverLoginState;
-				setup = record = undefined;
-				return encode(result.loginResponse);
-			}
-			case "receiverFinish": {
-				expect("receiver-wait");
-				phase = "failed";
-				context = string(args.context);
-				const result = opaque.client.finishLogin({
-					clientLoginState: string(loginState),
-					loginResponse: string(decode(binary(args.message))),
-					password: string(secret),
-					identifiers: identifiers(),
-				});
-				loginState = secret = undefined;
-				if (!result) {
-					throw new Error("Pairing authentication failed.");
-				}
-				keys = await pairingKeys(result.sessionKey, string(context));
-				phase = "receiver-authenticated";
-				return encode(result.finishLoginRequest);
-			}
-			case "senderFinish": {
-				expect("sender-finish");
-				phase = "failed";
-				const result = opaque.server.finishLogin({
-					serverLoginState: string(loginState),
-					finishLoginRequest: string(decode(binary(args.message))),
-				});
-				loginState = undefined;
-				keys = await pairingKeys(result.sessionKey, string(context));
-				phase = "sender-authenticated";
-				return null;
-			}
-			case "verificationCode": {
-				if (
-					!["sender-authenticated", "receiver-authenticated"].includes(phase)
-				) {
-					throw new Error("Invalid pairing step.");
-				}
-				return requireValue(keys).verificationCode;
-			}
-			case "transfer": {
-				expect("sender-authenticated");
-				phase = "sender-acknowledgment";
-				return sealPairing(
-					requireValue(keys),
-					string(context),
-					"transfer",
-					args.value,
-				);
-			}
-			case "receive": {
-				expect("receiver-authenticated");
-				phase = "receiver-save";
-				return openPairing(
-					requireValue(keys),
-					string(context),
-					"transfer",
-					binary(args.message),
-				);
-			}
-			case "acknowledge": {
-				expect("receiver-save");
-				phase = "complete";
-				return sealPairing(
-					requireValue(keys),
-					string(context),
-					"acknowledgment",
-					{
-						v: 1,
-						saved: true,
-					},
-				);
-			}
-			case "verifyAcknowledgment": {
-				expect("sender-acknowledgment");
-				phase = "complete";
-				const value = document(
-					await openPairing(
-						requireValue(keys),
-						string(context),
-						"acknowledgment",
-						binary(args.message),
-					),
-				);
-				if (value.v !== 1 || value.saved !== true) {
-					throw new Error("Invalid pairing acknowledgment.");
-				}
-				return null;
-			}
-			default:
-				throw new Error("Invalid pairing action.");
-		}
 	}
-	execute.dispose = () => {
-		phase = "disposed";
-		context = setup = record = loginState = secret = keys = undefined;
+	return {
+		async senderSetup(args: { context: string; secret: string }) {
+			await opaque.ready;
+			active();
+			const current = state;
+
+			if (current.phase !== "initial") {
+				throw invalidStep();
+			}
+			state = { phase: "failed" };
+			const { context, secret } = args;
+			const setup = opaque.server.createSetup();
+			const registration = opaque.client.startRegistration({
+				password: secret,
+			});
+			const response = opaque.server.createRegistrationResponse({
+				serverSetup: setup,
+				userIdentifier: context,
+				registrationRequest: registration.registrationRequest,
+			});
+			const { registrationRecord: record } = opaque.client.finishRegistration({
+				clientRegistrationState: registration.clientRegistrationState,
+				registrationResponse: response.registrationResponse,
+				password: secret,
+				identifiers: identifiers(context),
+			});
+			state = { phase: "sender-wait", context, setup, record };
+			return null;
+		},
+		async receiverStart(args: { secret: string }) {
+			await opaque.ready;
+			active();
+			const current = state;
+
+			if (current.phase !== "initial") {
+				throw invalidStep();
+			}
+			const result = opaque.client.startLogin({ password: args.secret });
+			state = {
+				phase: "receiver-wait",
+				secret: args.secret,
+				loginState: result.clientLoginState,
+			};
+			return encode(result.startLoginRequest);
+		},
+		async senderResponse(args: { message: Uint8Array<ArrayBuffer> }) {
+			await opaque.ready;
+			active();
+			const current = state;
+
+			if (current.phase !== "sender-wait") {
+				throw invalidStep();
+			}
+			state = { phase: "failed" };
+			const result = opaque.server.startLogin({
+				serverSetup: current.setup,
+				userIdentifier: current.context,
+				registrationRecord: current.record,
+				startLoginRequest: string(decode(args.message)),
+				identifiers: identifiers(current.context),
+			});
+			state = {
+				phase: "sender-finish",
+				context: current.context,
+				loginState: result.serverLoginState,
+			};
+			return encode(result.loginResponse);
+		},
+		async receiverFinish(args: {
+			context: string;
+			message: Uint8Array<ArrayBuffer>;
+		}) {
+			await opaque.ready;
+			active();
+			const current = state;
+
+			if (current.phase !== "receiver-wait") {
+				throw invalidStep();
+			}
+			state = { phase: "failed" };
+			const result = opaque.client.finishLogin({
+				clientLoginState: current.loginState,
+				loginResponse: string(decode(args.message)),
+				password: current.secret,
+				identifiers: identifiers(args.context),
+			});
+			if (!result) {
+				throw new Error("Pairing authentication failed.");
+			}
+			const keys = await pairingKeys(result.sessionKey, args.context);
+			active();
+			state = {
+				phase: "receiver-authenticated",
+				context: args.context,
+				keys,
+			};
+			return encode(result.finishLoginRequest);
+		},
+		async senderFinish(args: { message: Uint8Array<ArrayBuffer> }) {
+			await opaque.ready;
+			active();
+			const current = state;
+
+			if (current.phase !== "sender-finish") {
+				throw invalidStep();
+			}
+			state = { phase: "failed" };
+			const result = opaque.server.finishLogin({
+				serverLoginState: current.loginState,
+				finishLoginRequest: string(decode(args.message)),
+			});
+			const keys = await pairingKeys(result.sessionKey, current.context);
+			active();
+			state = {
+				phase: "sender-authenticated",
+				context: current.context,
+				keys,
+			};
+			return null;
+		},
+		async verificationCode() {
+			await opaque.ready;
+			active();
+			const current = state;
+
+			if (
+				current.phase !== "sender-authenticated" &&
+				current.phase !== "receiver-authenticated"
+			) {
+				throw invalidStep();
+			}
+			return current.keys.verificationCode;
+		},
+		async transfer(args: { value: unknown }) {
+			await opaque.ready;
+			active();
+			const current = state;
+
+			if (current.phase !== "sender-authenticated") {
+				throw invalidStep();
+			}
+			state = { ...current, phase: "sender-acknowledgment" };
+			return sealPairing(current.keys, current.context, "transfer", args.value);
+		},
+		async receive(args: { message: Uint8Array<ArrayBuffer> }) {
+			await opaque.ready;
+			active();
+			const current = state;
+
+			if (current.phase !== "receiver-authenticated") {
+				throw invalidStep();
+			}
+			state = { ...current, phase: "receiver-save" };
+			return openPairing(
+				current.keys,
+				current.context,
+				"transfer",
+				args.message,
+			);
+		},
+		async acknowledge() {
+			await opaque.ready;
+			active();
+			const current = state;
+
+			if (current.phase !== "receiver-save") {
+				throw invalidStep();
+			}
+			state = { phase: "complete" };
+			return sealPairing(current.keys, current.context, "acknowledgment", {
+				v: 1,
+				saved: true,
+			});
+		},
+		async verifyAcknowledgment(args: { message: Uint8Array<ArrayBuffer> }) {
+			await opaque.ready;
+			active();
+			const current = state;
+
+			if (current.phase !== "sender-acknowledgment") {
+				throw invalidStep();
+			}
+			state = { phase: "complete" };
+			const value = document(
+				await openPairing(
+					current.keys,
+					current.context,
+					"acknowledgment",
+					binary(args.message),
+				),
+			);
+			if (value.v !== 1 || value.saved !== true) {
+				throw new Error("Invalid pairing acknowledgment.");
+			}
+			return null;
+		},
+		dispose() {
+			state = { phase: "disposed" };
+		},
 	};
-	return execute;
 }

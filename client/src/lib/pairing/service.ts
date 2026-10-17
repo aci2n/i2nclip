@@ -8,12 +8,7 @@ import {
 	number,
 	string,
 } from "../protocol/value.ts";
-import type {
-	CryptoAction,
-	CryptoArgs,
-	CryptoResults,
-	createPairingCrypto,
-} from "./crypto.ts";
+import type { PairingCrypto } from "./crypto.ts";
 export interface Room {
 	v: number;
 	id: string;
@@ -24,54 +19,88 @@ export interface Room {
 	message: Uint8Array<ArrayBuffer> | null;
 }
 
+export interface JoinedRoom extends Room {
+	capability: string;
+}
+export interface PairingRelay {
+	create(key: LoadedKey): Promise<JoinedRoom>;
+	join(id: string, message: Uint8Array<ArrayBuffer>): Promise<JoinedRoom>;
+	poll(room: JoinedRoom): Promise<Room>;
+	submit(
+		room: JoinedRoom,
+		step: number,
+		message: Uint8Array<ArrayBuffer>,
+	): Promise<Room>;
+	cancel(room: JoinedRoom): Promise<void>;
+}
+function joinedRoom(room: Room): JoinedRoom {
+	if (
+		typeof room.capability !== "string" ||
+		!/^[A-Za-z0-9_-]{43}$/.test(room.capability)
+	) {
+		throw new Error("Invalid pairing response.");
+	}
+	return { ...room, capability: room.capability };
+}
+
 const MAX_BODY = 16384;
 // Each pairing adapter executes one isolated, disposable PAKE attempt.
-export function pairingCrypto() {
+export function pairingCrypto(): PairingCrypto {
 	const controller = new AbortController();
 	const { signal } = controller;
 	let running = false;
-	let execute: ReturnType<typeof createPairingCrypto> | null = null;
-	return {
-		async call<A extends CryptoAction>(
-			action: A,
-			args: CryptoArgs = {},
-		): Promise<CryptoResults[A]> {
+	let execute: PairingCrypto | null = null;
+	async function call<T>(
+		operation: (executor: PairingCrypto) => Promise<T>,
+	): Promise<T> {
+		signal.throwIfAborted();
+		if (running) {
+			throw new Error("Pairing is busy.");
+		}
+		running = true;
+		let onAbort: () => void = () => {};
+		const stopped = new Promise<never>((_, reject) => {
+			onAbort = () => reject(signal.reason);
+			signal.addEventListener("abort", onAbort, { once: true });
+		});
+		const work = async () => {
+			const { createPairingCrypto } = await import("./crypto.ts");
 			signal.throwIfAborted();
-			if (running) {
-				throw new Error("Pairing is busy.");
-			}
-			running = true;
-			let onAbort: () => void = () => {};
-			const stopped = new Promise<never>((_, reject) => {
-				onAbort = () => reject(signal.reason);
-				signal.addEventListener("abort", onAbort, { once: true });
-			});
-			const work = async () => {
-				const { createPairingCrypto } = await import("./crypto.ts");
-				signal.throwIfAborted();
-				execute ||= createPairingCrypto();
-				const current = execute;
-				try {
-					return await current(action, args);
-				} finally {
-					// Crypto already in flight can finish after the caller is canceled.
-					if (signal.aborted) {
-						current.dispose();
-					}
-				}
-			};
+			execute ||= createPairingCrypto();
+			const current = execute;
 			try {
-				const value = await Promise.race([work(), stopped]);
-				signal.throwIfAborted();
-				return value;
-			} catch {
-				signal.throwIfAborted();
-				throw new Error("Pairing authentication failed. Create a new code.");
+				return await operation(current);
 			} finally {
-				signal.removeEventListener("abort", onAbort);
-				running = false;
+				// Crypto already in flight can finish after the caller is canceled.
+				if (signal.aborted) {
+					current.dispose();
+				}
 			}
-		},
+		};
+		try {
+			const value = await Promise.race([work(), stopped]);
+			signal.throwIfAborted();
+			return value;
+		} catch {
+			signal.throwIfAborted();
+			throw new Error("Pairing authentication failed. Create a new code.");
+		} finally {
+			signal.removeEventListener("abort", onAbort);
+			running = false;
+		}
+	}
+	return {
+		senderSetup: (args) => call((crypto) => crypto.senderSetup(args)),
+		receiverStart: (args) => call((crypto) => crypto.receiverStart(args)),
+		senderResponse: (args) => call((crypto) => crypto.senderResponse(args)),
+		receiverFinish: (args) => call((crypto) => crypto.receiverFinish(args)),
+		senderFinish: (args) => call((crypto) => crypto.senderFinish(args)),
+		verificationCode: () => call((crypto) => crypto.verificationCode()),
+		transfer: (args) => call((crypto) => crypto.transfer(args)),
+		receive: (args) => call((crypto) => crypto.receive(args)),
+		acknowledge: () => call((crypto) => crypto.acknowledge()),
+		verifyAcknowledgment: (args) =>
+			call((crypto) => crypto.verifyAcknowledgment(args)),
 		dispose() {
 			controller.abort(new DOMException("Pairing ended.", "AbortError"));
 			execute?.dispose();
@@ -116,7 +145,10 @@ export async function readPairingResponse(response: Response) {
 		throw new Error("Invalid pairing response.");
 	}
 }
-export function pairingRelay(serverUrl: string, signal: AbortSignal) {
+export function pairingRelay(
+	serverUrl: string,
+	signal: AbortSignal,
+): PairingRelay {
 	const origin = pairingOrigin(serverUrl);
 	async function request(
 		method: "DELETE",
@@ -221,26 +253,37 @@ export function pairingRelay(serverUrl: string, signal: AbortSignal) {
 		};
 	}
 	return {
-		origin,
-		create: (key: LoadedKey) =>
-			request("POST", "/api/pairings", { v: 1 }, null, key),
-		join: (id: string, message: Uint8Array<ArrayBuffer>) =>
-			request("POST", `/api/pairings/${id}/join`, { message }),
-		poll: (room: Room) =>
+		create: async (key: LoadedKey) =>
+			joinedRoom(await request("POST", "/api/pairings", { v: 1 }, null, key)),
+		join: async (id: string, message: Uint8Array<ArrayBuffer>) =>
+			joinedRoom(
+				await request("POST", `/api/pairings/${id}/join`, { message }),
+			),
+		poll: (room: JoinedRoom) =>
 			request(
 				"GET",
 				`/api/pairings/${room.id}/messages`,
 				undefined,
 				room.capability,
 			),
-		submit: (room: Room, step: number, message: Uint8Array<ArrayBuffer>) =>
+		submit: (
+			room: JoinedRoom,
+			step: number,
+			message: Uint8Array<ArrayBuffer>,
+		) =>
 			request(
 				"POST",
 				`/api/pairings/${room.id}/messages`,
 				{ step, message },
 				room.capability,
 			),
-		cancel: (room: Room) =>
-			request("DELETE", `/api/pairings/${room.id}`, undefined, room.capability),
+		cancel: async (room: JoinedRoom) => {
+			await request(
+				"DELETE",
+				`/api/pairings/${room.id}`,
+				undefined,
+				room.capability,
+			);
+		},
 	};
 }

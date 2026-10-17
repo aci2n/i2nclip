@@ -55,6 +55,64 @@ export interface Media {
 	metaHash: string;
 }
 
+// Each workflow depends on the capability it uses, not on the API module shape.
+export interface AuthenticatedRequest extends Credentials {
+	signal?: AbortSignal;
+}
+export interface ListRequest extends AuthenticatedRequest {
+	tags?: string[] | string;
+	after?: string | null;
+}
+export interface MediaRequest extends AuthenticatedRequest {
+	id: string;
+}
+export interface ContentRequest extends MediaRequest {
+	onProgress?: Progress;
+}
+export interface MetadataRequest extends MediaRequest {
+	metadata: Metadata;
+	thumb?: Uint8Array<ArrayBuffer> | null;
+	prevMetaHash: string;
+}
+export interface RegistrationRequest extends AuthenticatedRequest {
+	otc: string;
+}
+export interface MediaPage {
+	items: Media[];
+	next: string | null;
+}
+export interface Quota {
+	used_content_bytes: number;
+	max_content_bytes: number;
+	file_count: number;
+	max_files: number;
+}
+export interface TagCatalog {
+	tags: string[];
+	invalid: number;
+}
+export type MetadataResult =
+	| { conflict: true; item: Media }
+	| { conflict: false; metaHash: string };
+export interface MediaApi {
+	getContent(request: ContentRequest): Promise<Uint8Array<ArrayBuffer>>;
+	updateMetadata(request: MetadataRequest): Promise<MetadataResult>;
+	remove(request: MediaRequest): Promise<void>;
+}
+export interface LibraryApi extends MediaApi {
+	list(request: ListRequest): Promise<MediaPage>;
+}
+export interface IdentityApi {
+	registerKey(request: RegistrationRequest): Promise<void>;
+	isKeyRegistered(request: AuthenticatedRequest): Promise<boolean>;
+}
+export interface QuotaApi {
+	getQuota(request: AuthenticatedRequest): Promise<Quota>;
+}
+export interface TagApi {
+	getTags(request: AuthenticatedRequest): Promise<TagCatalog>;
+}
+
 // Browser HTTP calls.
 // HTTP requests contain signatures and ciphertext, never the private key.
 
@@ -129,7 +187,7 @@ export async function getTags({
 	serverUrl,
 	key,
 	signal,
-}: Credentials & { signal?: AbortSignal }) {
+}: AuthenticatedRequest): Promise<TagCatalog> {
 	const { tags } = await requestDocument({
 		serverUrl,
 		key,
@@ -162,7 +220,7 @@ export async function getQuota({
 	serverUrl,
 	key,
 	signal,
-}: Credentials & { signal?: AbortSignal }) {
+}: AuthenticatedRequest): Promise<Quota> {
 	const value = await requestDocument({
 		serverUrl,
 		key,
@@ -185,11 +243,7 @@ export async function list({
 	tags,
 	after,
 	signal,
-}: Credentials & {
-	tags?: string[] | string;
-	after?: string | null;
-	signal?: AbortSignal;
-}) {
+}: ListRequest): Promise<MediaPage> {
 	const tokens = tags ? await tagTokens(key, tags) : [];
 	const params = new URLSearchParams();
 	for (const token of tokens) {
@@ -224,7 +278,7 @@ export async function getContent({
 	id,
 	onProgress,
 	signal,
-}: Credentials & { id: string; onProgress?: Progress; signal?: AbortSignal }) {
+}: ContentRequest) {
 	const blob = await requestBytes({
 		serverUrl,
 		key,
@@ -248,13 +302,7 @@ export async function updateMetadata({
 	thumb,
 	prevMetaHash,
 	signal,
-}: Credentials & {
-	id: string;
-	metadata: Metadata;
-	thumb?: Uint8Array<ArrayBuffer> | null;
-	prevMetaHash: string;
-	signal?: AbortSignal;
-}) {
+}: MetadataRequest): Promise<MetadataResult> {
 	const tokens = await sealTags(key, metadata.tags ?? []);
 	const { meta } = await sealedMetadata(key, id, metadata, thumb);
 	const body = encodeMeta({
@@ -294,12 +342,7 @@ export async function updateMetadata({
 	};
 }
 
-export async function remove({
-	serverUrl,
-	key,
-	id,
-	signal,
-}: Credentials & { id: string; signal?: AbortSignal }) {
+export async function remove({ serverUrl, key, id, signal }: MediaRequest) {
 	await requestBytes({
 		serverUrl,
 		key,
@@ -316,7 +359,7 @@ export async function registerKey({
 	key,
 	otc,
 	signal,
-}: Credentials & { otc: string; signal?: AbortSignal }) {
+}: RegistrationRequest) {
 	const body = encode({ otc: String(otc).trim() });
 	const response = await signedFetch({
 		serverUrl,
@@ -337,7 +380,7 @@ export async function isKeyRegistered({
 	serverUrl,
 	key,
 	signal,
-}: Credentials & { signal?: AbortSignal }) {
+}: AuthenticatedRequest) {
 	const response = await signedFetch({
 		serverUrl,
 		key,
@@ -499,7 +542,7 @@ async function signedFetch({
 	body,
 	onUploadProgress,
 	signal,
-}: RequestOptions & { url?: URL; headers?: Record<string, string> }) {
+}: RequestOptions) {
 	const ts = Math.floor(Date.now() / 1000);
 	const nonce = freshNonce();
 	const origin = new URL(serverUrl).origin;

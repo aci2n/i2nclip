@@ -4,8 +4,7 @@ import { MAX_FILE_BYTES } from "../api.ts";
 import { errorMessage } from "../error.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { document, string } from "../protocol/value.ts";
-import type { SessionState } from "./session.ts";
-import type { Uploads } from "./uploads.ts";
+import type { SessionSnapshot } from "./session.ts";
 export interface CaptureEvent {
 	source: unknown;
 	origin: string;
@@ -24,6 +23,15 @@ export interface ReceiverBrowser {
 	postMessage(message: unknown, origin: string): unknown;
 }
 
+export interface CaptureSessionState extends SessionSnapshot {
+	status: "new" | "locked" | "unlocked";
+}
+export interface CaptureSession extends Readable<CaptureSessionState> {
+	readonly epoch: number;
+}
+export interface CaptureUploads extends Readable<{ uploading: boolean }> {
+	upload(files: File[], extra?: Metadata): Promise<boolean>;
+}
 interface Capture {
 	file: File;
 	extra: Metadata;
@@ -32,10 +40,8 @@ interface Capture {
 
 // This root-owned receiver exists only in the tab admitted by the Web Lock.
 export function createExtensionReceiver(
-	session: Readable<
-		Pick<SessionState, "status" | "unlocked" | "configured" | "busy" | "epoch">
-	> & { readonly epoch: number },
-	uploads: Readable<{ uploading: boolean }> & Pick<Uploads, "upload">,
+	session: CaptureSession,
+	uploads: CaptureUploads,
 	onupload: () => void,
 	browser: ReceiverBrowser = window,
 ) {

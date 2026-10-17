@@ -2,10 +2,17 @@ import type { Readable } from "svelte/store";
 import { get } from "svelte/store";
 import type { SessionState } from "./session.ts";
 
-type SessionSnapshot = Pick<
-	SessionState,
-	"serverUrl" | "publicKey" | "privateKey" | "epoch" | "configured"
->;
+export interface IdentitySnapshot {
+	serverUrl: string;
+	publicKey: string;
+	privateKey: SessionState["privateKey"];
+	epoch: number;
+	configured: boolean;
+}
+export interface OperationOptions {
+	signal?: AbortSignal;
+	onInvalidated?: () => void;
+}
 export interface SessionOperation {
 	signal: AbortSignal;
 	abort(reason?: unknown): void;
@@ -19,14 +26,16 @@ const fields = [
 	"epoch",
 	"configured",
 ] as const;
-const changed = (a: Readonly<SessionSnapshot>, b: Readonly<SessionSnapshot>) =>
-	fields.some((field) => a[field] !== b[field]);
+const changed = (
+	a: Readonly<IdentitySnapshot>,
+	b: Readonly<IdentitySnapshot>,
+) => fields.some((field) => a[field] !== b[field]);
 const stale = () =>
 	new DOMException("Library changed. Try again.", "AbortError");
 
 // Session-owned cancellation and identity comparison; workflows do not duplicate
 // these rules. The store is a render snapshot, never the authority for a commit.
-export function createSessionContext(state: Readable<SessionSnapshot>) {
+export function createSessionContext(state: Readable<IdentitySnapshot>) {
 	const operations = new Set<SessionOperation>();
 	return {
 		invalidate() {

@@ -1,11 +1,7 @@
 import { get, writable } from "svelte/store";
 import { errorMessage } from "../error.ts";
-import type {
-	CryptoAction,
-	CryptoArgs,
-	CryptoResults,
-} from "../pairing/crypto.ts";
-import type { Room } from "../pairing/service.ts";
+import type { PairingCrypto } from "../pairing/crypto.ts";
+import type { JoinedRoom, PairingRelay } from "../pairing/service.ts";
 import { pairingCrypto, pairingRelay } from "../pairing/service.ts";
 import { b64urlToBytes } from "../protocol/bytes.ts";
 import {
@@ -18,28 +14,28 @@ import {
 } from "../protocol/pairing.ts";
 import { validateIdentity } from "../protocol/recovery.ts";
 import { document } from "../protocol/value.ts";
-import { requireValue } from "../required.ts";
 import type { SessionOperation } from "./identity-context.ts";
-import type { Session } from "./session.ts";
-
-type Relay = Omit<ReturnType<typeof pairingRelay>, "origin" | "cancel"> & {
-	cancel(room: Room): Promise<unknown>;
-};
+import type { PairingSession } from "./session.ts";
 
 interface Task {
-	role: "sender" | "receiver";
 	server: string;
 	controller: AbortController;
 	deadline: number;
 	wallDeadline: number;
 	saved: boolean;
-	timer?: ReturnType<typeof setInterval>;
-	operation?: SessionOperation;
-	crypto?: ReturnType<typeof pairingCrypto>;
-	relay?: Relay;
-	approve?: (() => void) | null;
-	room?: Room;
-	context?: string;
+	timer: ReturnType<typeof setInterval>;
+	operation: SessionOperation;
+	crypto: PairingCrypto;
+	relay: PairingRelay;
+	approve: (() => void) | null;
+	// A room exists only after create/join returns, including after cancellation.
+	room: JoinedRoom | null;
+}
+export interface PairingServices {
+	crypto?: () => PairingCrypto;
+	relay?: (server: string, signal: AbortSignal) => PairingRelay;
+	now?: () => number;
+	pollMs?: number;
 }
 export interface PairingState {
 	active: boolean;
@@ -52,19 +48,10 @@ export interface PairingState {
 	error: boolean;
 }
 export type Pairing = ReturnType<typeof createPairing>;
-
 const canceled = () => new DOMException("Pairing canceled.", "AbortError");
 export function createPairing(
-	session: Pick<
-		Session,
-		"subscribe" | "operation" | "withIdentity" | "importPairing"
-	>,
-	services: {
-		crypto?: typeof pairingCrypto;
-		relay?: (server: string, signal: AbortSignal) => Relay;
-		now?: () => number;
-		pollMs?: number;
-	} = {},
+	session: PairingSession,
+	services: PairingServices = {},
 ) {
 	const cryptoFactory = services.crypto || pairingCrypto;
 	const relayFactory = services.relay || pairingRelay;
@@ -94,8 +81,8 @@ export function createPairing(
 	}
 	function cleanup(current: Task, remove: boolean) {
 		clearInterval(current.timer);
-		current.operation?.dispose();
-		current.crypto?.dispose();
+		current.operation.dispose();
+		current.crypto.dispose();
 		current.controller.abort(canceled());
 		current.approve?.();
 		current.approve = null;
@@ -139,21 +126,19 @@ export function createPairing(
 		});
 		check(current);
 	}
-	async function step(current: Task, expected: number) {
+	async function step(current: Task, ownedRoom: JoinedRoom, expected: number) {
 		while (true) {
 			check(current);
-			const room = await retry(current, () =>
-				requireValue(current.relay).poll(requireValue(current.room)),
-			);
+			const room = await retry(current, () => current.relay.poll(ownedRoom));
 			check(current);
-			if (
-				room.id !== requireValue(current.room).id ||
-				room.instance !== requireValue(current.room).instance
-			) {
+			if (room.id !== ownedRoom.id || room.instance !== ownedRoom.instance) {
 				throw new Error("Pairing session changed. Create a new code.");
 			}
 			if (room.step === expected) {
-				return requireValue(room.message);
+				if (!room.message) {
+					throw new Error("Invalid pairing response.");
+				}
+				return room.message;
 			}
 			if (room.step > expected) {
 				throw new Error("Invalid pairing step.");
@@ -179,18 +164,19 @@ export function createPairing(
 			return action();
 		}
 	}
-	async function call<A extends CryptoAction>(
+	async function call<T>(
 		current: Task,
-		action: A,
-		args?: CryptoArgs,
-	): Promise<CryptoResults[A]> {
+		operation: (crypto: PairingCrypto) => Promise<T>,
+	): Promise<T> {
 		check(current);
-		const result = await requireValue(current.crypto).call(action, args);
+		const result = await operation(current.crypto);
 		check(current);
 		return result;
 	}
 	async function verification(current: Task) {
-		const code = await call(current, "verificationCode");
+		const code = await call(current, async (crypto) =>
+			crypto.verificationCode(),
+		);
 		if (
 			typeof code !== "string" ||
 			!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(
@@ -203,25 +189,73 @@ export function createPairing(
 	}
 	async function submit(
 		current: Task,
+		ownedRoom: JoinedRoom,
 		number: number,
 		message: Uint8Array<ArrayBuffer>,
 	) {
 		check(current);
 		const result = await retry(current, () =>
-			requireValue(current.relay).submit(
-				requireValue(current.room),
-				number,
-				message,
-			),
+			current.relay.submit(ownedRoom, number, message),
 		);
 		check(current);
 		if (
-			result.id !== requireValue(current.room).id ||
-			result.instance !== requireValue(current.room).instance ||
+			result.id !== ownedRoom.id ||
+			result.instance !== ownedRoom.instance ||
 			result.step < number ||
 			result.step > Math.min(5, number + 1)
 		) {
 			throw new Error("Invalid pairing step.");
+		}
+	}
+	function startTask(server: string): Task {
+		const controller = new AbortController();
+		let operation: SessionOperation | null = null;
+		let crypto: PairingCrypto | null = null;
+		try {
+			operation = session.operation({
+				signal: controller.signal,
+				onInvalidated: () =>
+					stop("Library or server changed. Start pairing again."),
+			});
+			const origin = pairingOrigin(server);
+			const relay = relayFactory(origin, controller.signal);
+			crypto = cryptoFactory();
+			const current: Task = {
+				server: origin,
+				controller,
+				operation,
+				relay,
+				crypto,
+				deadline: now() + PAIRING_TTL_MS,
+				wallDeadline: Date.now() + PAIRING_TTL_MS,
+				saved: false,
+				room: null,
+				approve: null,
+				timer: setInterval(() => {
+					if (task !== current) {
+						return;
+					}
+					try {
+						check(current);
+						update({
+							remaining: Math.max(
+								0,
+								Math.ceil((current.deadline - now()) / 1000),
+							),
+						});
+					} catch (error) {
+						current.controller.abort(error);
+						current.crypto.dispose();
+						current.approve?.();
+					}
+				}, 250),
+			};
+			return current;
+		} catch (error) {
+			operation?.dispose();
+			crypto?.dispose();
+			controller.abort();
+			throw error;
 		}
 	}
 	async function run(
@@ -232,15 +266,6 @@ export function createPairing(
 		if (disposed || task || get(session).busy) {
 			return false;
 		}
-		const current: Task = {
-			role,
-			server: "",
-			controller: new AbortController(),
-			deadline: now() + PAIRING_TTL_MS,
-			wallDeadline: Date.now() + PAIRING_TTL_MS,
-			saved: false,
-		};
-		task = current;
 		update({
 			active: true,
 			approval: false,
@@ -251,33 +276,20 @@ export function createPairing(
 			status: "Preparing secure pairing…",
 			error: false,
 		});
+		let current: Task;
 		try {
-			current.operation = session.operation({
-				signal: current.controller.signal,
-				onInvalidated: () =>
-					stop("Library or server changed. Start pairing again."),
+			current = startTask(server);
+			task = current;
+		} catch (error) {
+			update({
+				active: false,
+				remaining: 0,
+				error: true,
+				status: errorMessage(error),
 			});
-			current.server = pairingOrigin(server);
-			current.relay = relayFactory(current.server, current.controller.signal);
-			current.crypto = cryptoFactory();
-			current.timer = setInterval(() => {
-				if (task !== current) {
-					return;
-				}
-				try {
-					check(current);
-					update({
-						remaining: Math.max(
-							0,
-							Math.ceil((current.deadline - now()) / 1000),
-						),
-					});
-				} catch (error) {
-					current.controller.abort(error);
-					requireValue(current.crypto).dispose();
-					current.approve?.();
-				}
-			}, 250);
+			return false;
+		}
+		try {
 			await operation(current);
 			check(current);
 			if (task === current) {
@@ -321,7 +333,7 @@ export function createPairing(
 			}
 		}
 	}
-	function attach(current: Task, room: Room, id: string) {
+	function attach(current: Task, room: JoinedRoom, id: string) {
 		if (
 			room.id !== id ||
 			typeof room.capability !== "string" ||
@@ -330,7 +342,7 @@ export function createPairing(
 			throw new Error("Invalid pairing response.");
 		}
 		current.room = room;
-		current.context = pairingContext(current.server, room);
+		const context = pairingContext(current.server, room);
 		current.deadline = Math.min(
 			current.deadline,
 			now() + room.remaining_secs * 1000,
@@ -340,6 +352,7 @@ export function createPairing(
 			Date.now() + room.remaining_secs * 1000,
 		);
 		check(current);
+		return context;
 	}
 	return {
 		subscribe: state.subscribe,
@@ -347,28 +360,34 @@ export function createPairing(
 			const value = get(session);
 			return run("sender", value.serverUrl, async (current) => {
 				const credentials = await session.withIdentity(
-					requireValue(current.operation),
+					current.operation,
 					(identity) => identity,
 				);
 				check(current);
-				const room = await requireValue(current.relay).create(credentials.key);
-				attach(current, room, room.id);
+				const room = await current.relay.create(credentials.key);
+				const context = attach(current, room, room.id);
 				const secret = pairingSecret();
-				await call(current, "senderSetup", {
-					secret,
-					context: requireValue(current.context),
-				});
+				await call(current, async (crypto) =>
+					crypto.senderSetup({
+						secret,
+						context: context,
+					}),
+				);
 				update({
 					code: formatPairingCode(room.id, secret),
 					status: "Enter this code on the new device. Keep it private.",
 				});
-				const response = await call(current, "senderResponse", {
-					message: await step(current, 1),
-				});
-				await submit(current, 2, response);
-				await call(current, "senderFinish", {
-					message: await step(current, 3),
-				});
+				const response = await call(current, async (crypto) =>
+					crypto.senderResponse({
+						message: await step(current, room, 1),
+					}),
+				);
+				await submit(current, room, 2, response);
+				await call(current, async (crypto) =>
+					crypto.senderFinish({
+						message: await step(current, room, 3),
+					}),
+				);
 				update({
 					approval: true,
 					code: "",
@@ -384,7 +403,7 @@ export function createPairing(
 					await wait(current);
 					// Keep checking the room while the user compares codes, so a
 					// receiver cancellation removes the pending approval too.
-					await step(current, 3);
+					await step(current, room, 3);
 				}
 				current.approve = null;
 				check(current);
@@ -394,23 +413,27 @@ export function createPairing(
 					status: "Sending library…",
 				});
 				await session.withIdentity(
-					requireValue(current.operation),
+					current.operation,
 					async ({ privateKey, publicKey }) => {
-						const packet = await call(current, "transfer", {
-							value: {
-								v: 1,
-								server_url: current.server,
-								private_key: privateKey,
-								public_key: b64urlToBytes(publicKey),
-							},
-						});
-						await submit(current, 4, packet);
+						const packet = await call(current, async (crypto) =>
+							crypto.transfer({
+								value: {
+									v: 1,
+									server_url: current.server,
+									private_key: privateKey,
+									public_key: b64urlToBytes(publicKey),
+								},
+							}),
+						);
+						await submit(current, room, 4, packet);
 					},
 				);
 				update({ status: "Waiting for the new device to save the library…" });
-				await call(current, "verifyAcknowledgment", {
-					message: await step(current, 5),
-				});
+				await call(current, async (crypto) =>
+					crypto.verifyAcknowledgment({
+						message: await step(current, room, 5),
+					}),
+				);
 			});
 		},
 		receive(code: string, server: string) {
@@ -420,24 +443,27 @@ export function createPairing(
 					throw new Error("A library is already configured.");
 				}
 				const { id, secret } = parsePairingCode(code);
-				const initial = await call(current, "receiverStart", { secret });
-				attach(
-					current,
-					await requireValue(current.relay).join(id, initial),
-					id,
+				const initial = await call(current, async (crypto) =>
+					crypto.receiverStart({ secret }),
 				);
-				const finish = await call(current, "receiverFinish", {
-					message: await step(current, 2),
-					context: requireValue(current.context),
-				});
-				await submit(current, 3, finish);
+				const room = await current.relay.join(id, initial);
+				const context = attach(current, room, id);
+				const finish = await call(current, async (crypto) =>
+					crypto.receiverFinish({
+						message: await step(current, room, 2),
+						context: context,
+					}),
+				);
+				await submit(current, room, 3, finish);
 				update({
 					verificationCode: await verification(current),
 					status: "Compare this code on your unlocked device before approving.",
 				});
-				const input = await call(current, "receive", {
-					message: await step(current, 4),
-				});
+				const input = await call(current, async (crypto) =>
+					crypto.receive({
+						message: await step(current, room, 4),
+					}),
+				);
 				const value = document(input);
 				if (
 					value?.v !== 1 ||
@@ -448,7 +474,7 @@ export function createPairing(
 				) {
 					throw new Error("Invalid paired identity.");
 				}
-				requireValue(current.operation).dispose();
+				current.operation.dispose();
 				update({
 					verificationCode: "",
 					status: "Saving your encrypted library…",
@@ -467,12 +493,14 @@ export function createPairing(
 				current.operation = savedOperation;
 				const acknowledge = async () => {
 					check(current);
-					await submit(current, 5, await call(current, "acknowledge"));
+					await submit(
+						current,
+						room,
+						5,
+						await call(current, async (crypto) => crypto.acknowledge()),
+					);
 				};
-				await session.withIdentity(
-					requireValue(current.operation),
-					acknowledge,
-				);
+				await session.withIdentity(current.operation, acknowledge);
 			});
 		},
 		approve() {

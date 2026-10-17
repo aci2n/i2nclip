@@ -8,45 +8,62 @@ import {
 } from "./protocol/password.ts";
 import type { Identity } from "./protocol/recovery.ts";
 import { bytes as binary, document } from "./protocol/value.ts";
-import { requireValue } from "./required.ts";
-export type LocalStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+export interface LocalStorage {
+	getItem(key: string): string | null;
+	setItem(key: string, value: string): void;
+	removeItem(key: string): void;
+}
 
+interface SavedIdentity {
+	v: 1;
+	iterations: number;
+	salt: Uint8Array<ArrayBuffer>;
+	encrypted: unknown;
+}
 const STORAGE_KEY = "i2nclip.identity";
 const PURPOSE = "i2nclip/local-identity/1";
 // One atomic storage record. The unwrapped key and identity exist only in memory.
 export function createPersistence(storage?: LocalStorage) {
 	const local = () => storage ?? globalThis.localStorage;
-	let record: Record<string, unknown> | undefined;
+	let record: SavedIdentity | null = null;
 	let key: CryptoKey | null = null;
 	let generation = 0;
-	function read() {
+	function loadRecord(): SavedIdentity | null {
 		const text = local().getItem(STORAGE_KEY);
 		if (!text) {
-			return false;
+			return null;
 		}
-		record = document(decode(b64ToBytes(text)));
+		const value = document(decode(b64ToBytes(text)));
 		if (
-			record.v !== 1 ||
-			record.iterations !== PBKDF2_ITERATIONS ||
-			!(record.salt instanceof Uint8Array) ||
-			record.salt.length !== 16
+			value.v !== 1 ||
+			value.iterations !== PBKDF2_ITERATIONS ||
+			!(value.salt instanceof Uint8Array) ||
+			value.salt.length !== 16
 		) {
 			throw new Error(
 				"Invalid saved identity. Reset this client or restore a recovery file.",
 			);
 		}
-		return true;
+		record = {
+			...value,
+			v: 1,
+			iterations: value.iterations,
+			salt: binary(value.salt),
+			encrypted: value.encrypted,
+		};
+		return record;
 	}
 	async function save(identity: Identity | null) {
-		if (!key) {
+		if (!key || !record) {
 			throw new Error("Unlock this client first.");
 		}
+		const previous = record;
 		const own = generation;
 		const encrypted = await sealBytes(key, encode(identity), PURPOSE);
 		if (own !== generation) {
 			throw new DOMException("Client locked.", "AbortError");
 		}
-		const next = { ...record, encrypted };
+		const next = { ...previous, encrypted };
 		local().setItem(STORAGE_KEY, bytesToB64(encode(next)));
 		record = next;
 	}
@@ -65,7 +82,7 @@ export function createPersistence(storage?: LocalStorage) {
 			throw new DOMException("Client locked.", "AbortError");
 		}
 		const next = {
-			v: 1,
+			v: 1 as const,
 			salt,
 			iterations: PBKDF2_ITERATIONS,
 			encrypted,
@@ -75,20 +92,15 @@ export function createPersistence(storage?: LocalStorage) {
 		key = nextKey;
 	}
 	async function unlock(password: string) {
-		if (!read()) {
+		const saved = loadRecord();
+		if (!saved) {
 			throw new Error("Create a master password first.");
 		}
 		const own = generation;
-		const nextKey = await wrappingKey(
-			password,
-			binary(requireValue(record).salt),
-			PBKDF2_ITERATIONS,
-		);
+		const nextKey = await wrappingKey(password, saved.salt, PBKDF2_ITERATIONS);
 		let identity: unknown;
 		try {
-			identity = decode(
-				await openBytes(nextKey, requireValue(record).encrypted, PURPOSE),
-			);
+			identity = decode(await openBytes(nextKey, saved.encrypted, PURPOSE));
 		} catch {
 			throw new Error("Wrong password or damaged saved identity.");
 		}
@@ -99,7 +111,7 @@ export function createPersistence(storage?: LocalStorage) {
 		return identity;
 	}
 	return {
-		read,
+		read: () => loadRecord() !== null,
 		initialize,
 		unlock,
 		save,
@@ -116,7 +128,7 @@ export function createPersistence(storage?: LocalStorage) {
 				throw new DOMException("Client locked.", "AbortError");
 			}
 			const next = {
-				v: 1,
+				v: 1 as const,
 				salt,
 				iterations: PBKDF2_ITERATIONS,
 				encrypted,
@@ -132,7 +144,7 @@ export function createPersistence(storage?: LocalStorage) {
 		reset() {
 			local().removeItem(STORAGE_KEY);
 			generation++;
-			record = undefined;
+			record = null;
 			key = null;
 		},
 	};

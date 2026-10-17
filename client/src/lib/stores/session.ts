@@ -1,6 +1,6 @@
 import type { Readable } from "svelte/store";
 import { get, writable } from "svelte/store";
-import type { Credentials } from "../api.ts";
+import type { Credentials, IdentityApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
 import { createPersistence } from "../persistence.ts";
@@ -15,10 +15,15 @@ import {
 	validateIdentity,
 } from "../protocol/recovery.ts";
 import { checkServer } from "../protocol/server.ts";
-import { requireValue } from "../required.ts";
-import type { SessionOperation } from "./identity-context.ts";
+import type { OperationOptions, SessionOperation } from "./identity-context.ts";
 import { createSessionContext } from "./identity-context.ts";
-export interface SessionState {
+export interface SessionSnapshot {
+	configured: boolean;
+	unlocked: boolean;
+	busy: boolean;
+	epoch: number;
+}
+export interface SessionState extends SessionSnapshot {
 	status: "new" | "locked" | "unlocked";
 	configured: boolean;
 	unlocked: boolean;
@@ -29,11 +34,29 @@ export interface SessionState {
 	busy: boolean;
 	error: string;
 }
+export interface IdentityCredentials extends Credentials {
+	privateKey: Identity["private_key"];
+	publicKey: string;
+}
+export interface PairedIdentity extends Identity {
+	public_key: Uint8Array;
+	signal: AbortSignal;
+	onInvalidated?: () => void;
+}
+export interface PairingSessionState extends SessionSnapshot {
+	serverUrl: string;
+	error: string;
+}
+export interface PairingSession extends Readable<PairingSessionState> {
+	operation(options?: OperationOptions): SessionOperation;
+	withIdentity<T>(
+		operation: SessionOperation,
+		work: (credentials: IdentityCredentials) => T | Promise<T>,
+	): Promise<T>;
+	importPairing(value: PairedIdentity): Promise<SessionOperation | false>;
+}
 export type Session = ReturnType<typeof createSession>;
-export interface SessionReader
-	extends Readable<
-		Pick<SessionState, "configured" | "unlocked" | "busy" | "epoch">
-	> {
+export interface SessionReader extends Readable<SessionSnapshot> {
 	readonly signal: AbortSignal;
 	readonly epoch: number;
 	credentials(): Credentials;
@@ -46,7 +69,7 @@ export function createSession({
 }: {
 	defaultServerUrl?: string;
 	persistence?: ReturnType<typeof createPersistence>;
-	http?: Pick<typeof api, "registerKey" | "isKeyRegistered">;
+	http?: IdentityApi;
 } = {}) {
 	let identity: Identity | null = null;
 	let key: LoadedKey | null = null;
@@ -143,6 +166,18 @@ export function createSession({
 		});
 		return epoch;
 	}
+	function currentIdentity() {
+		if (
+			!identity ||
+			!key ||
+			!get(state).unlocked ||
+			get(state).busy ||
+			disposed
+		) {
+			throw new Error("Unlock your library first.");
+		}
+		return { identity, key };
+	}
 	const session = {
 		subscribe: state.subscribe,
 		get signal() {
@@ -153,33 +188,22 @@ export function createSession({
 		},
 		operation: context.operation,
 		credentials() {
-			if (
-				!identity ||
-				!key ||
-				!get(state).unlocked ||
-				get(state).busy ||
-				disposed
-			) {
-				throw new Error("Unlock your library first.");
-			}
-			return { serverUrl: identity.server_url, key };
+			const current = currentIdentity();
+			return { serverUrl: current.identity.server_url, key: current.key };
 		},
 		async withIdentity<T>(
 			operation: SessionOperation,
-			work: (
-				credentials: Credentials & {
-					privateKey: Identity["private_key"];
-					publicKey: string;
-				},
-			) => T | Promise<T>,
+			work: (credentials: IdentityCredentials) => T | Promise<T>,
 		) {
 			if (!context.owns(operation)) {
 				throw new Error("Invalid session operation.");
 			}
 			operation.signal.throwIfAborted();
+			const current = currentIdentity();
 			const result = await work({
-				...session.credentials(),
-				privateKey: requireValue(identity).private_key,
+				serverUrl: current.identity.server_url,
+				key: current.key,
+				privateKey: current.identity.private_key,
 				publicKey: get(state).publicKey,
 			});
 			operation.signal.throwIfAborted();
@@ -264,13 +288,7 @@ export function createSession({
 				}
 				return apply(next, signal);
 			}),
-		async importPairing(
-			value: Identity & {
-				public_key: Uint8Array;
-				signal: AbortSignal;
-				onInvalidated?: () => void;
-			},
-		) {
+		async importPairing(value: PairedIdentity) {
 			const success = await action(async (signal) => {
 				if (!get(state).unlocked || identity) {
 					throw new Error(

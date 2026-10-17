@@ -50,3 +50,23 @@ Rust listener and isolated resources. Existing lifecycle, cancellation, stale
 result and URL disposal tests remain meaningful. Verification uses Node from
 client/.nvmrc, locked npm dependencies and the documented Rust/PostgreSQL/browser
 prerequisites; no developer-specific paths or preexisting artifacts are required.
+
+## Interface and lifecycle review
+
+After committing the compiler-clean migration, review the whole web/extension
+implementation and tests for type shortcuts. Replace ad hoc Pick/Omit dependency
+slices with named contracts owned by the subsystem that provides the capability.
+Keep interfaces small and concrete; do not add a generic dependency framework.
+Use optional properties only for optional inputs and absent data, not for resources
+that every running workflow requires. Represent pairing phases with their actual
+phase-specific data. Keep pre-room cancellation, late-room cleanup, durable-save
+acknowledgment, disposal during crypto, and session invalidation intact.
+
+Replace generic required-value assertions with local narrowing or explicit data
+flow. Persistence should own a validated record, and cached content should be
+passed directly to consumers rather than re-read through a nullable closure.
+Review component props, test doubles and deferred helpers too. Preserve all wire
+and persistence formats and user-visible behavior; no product or protocol changes.
+Acceptance remains strict checking, unit/build checks, the shared crypto vectors,
+and real Firefox/Chromium integration tests. Commit cohesive reviewed changes
+separately from the migration.

@@ -107,9 +107,10 @@ test("generic encrypted metadata updates rename downloads and preserve file cont
 		prevMetaHash: original.metaHash,
 	});
 	expect(conflict.conflict).toBe(true);
-	expect(assertPresent(assertPresent(conflict.item).metadata).name).toBe(
-		metadata.name,
-	);
+	if (!conflict.conflict) {
+		throw new Error("Expected metadata conflict");
+	}
+	expect(assertPresent(conflict.item.metadata).name).toBe(metadata.name);
 	const combined = {
 		...metadata,
 		name: "Final panorama.png",
