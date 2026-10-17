@@ -4,7 +4,7 @@ import { createExtensionReceiver } from "../stores/extension.ts";
 import { createLibrary } from "../stores/library.ts";
 import { createPairing } from "../stores/pairing.ts";
 import { createPreferences } from "../stores/preferences.ts";
-import { createSession } from "../stores/session.ts";
+import { createSession, libraryReady } from "../stores/session.ts";
 import { createTags } from "../stores/tags.ts";
 import { createUploads } from "../stores/uploads.ts";
 import Library from "./Library.svelte";
@@ -33,6 +33,27 @@ const extension = createExtensionReceiver(session, uploads, () => {
 	page = "library";
 	history.replaceState({}, "", "?page=library");
 });
+function dragFiles(event: DragEvent) {
+	if (!event.dataTransfer?.types.includes("Files")) {
+		return;
+	}
+	event.preventDefault();
+	event.dataTransfer.dropEffect =
+		libraryReady($session) && !$uploads.uploading ? "copy" : "none";
+}
+function dropFiles(event: DragEvent) {
+	if (!event.dataTransfer?.types.includes("Files")) {
+		return;
+	}
+	event.preventDefault();
+	const files = Array.from(event.dataTransfer.files);
+	if (!files.length || !libraryReady($session) || $uploads.uploading) {
+		return;
+	}
+	page = "library";
+	history.replaceState({}, "", "?page=library");
+	void uploads.upload(files);
+}
 function navigate(event: MouseEvent, name: "library" | "settings") {
 	if (
 		event.button !== 0 ||
@@ -61,6 +82,8 @@ onDestroy(() => {
 	session.dispose();
 });
 </script>
+
+<svelte:window ondragover={dragFiles} ondrop={dropFiles} />
 
 <main>
 	{#if $session.status !== "unlocked"}
