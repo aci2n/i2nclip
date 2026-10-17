@@ -116,25 +116,22 @@ export function captureName(
 		.replace(/\s+/g, " ")
 		.trim()
 		.replace(/[. ]+$/, "");
+	const extensions: Record<string, string | undefined> = {
+		"image/jpeg": "jpg",
+		"image/png": "png",
+		"image/gif": "gif",
+		"image/webp": "webp",
+		"image/avif": "avif",
+		"image/svg+xml": "svg",
+		"video/mp4": "mp4",
+		"video/webm": "webm",
+		"audio/mpeg": "mp3",
+		"audio/ogg": "ogg",
+		"audio/wav": "wav",
+		"audio/x-wav": "wav",
+	};
 	const extension =
-		(
-			{
-				"image/jpeg": "jpg",
-				"image/png": "png",
-				"image/gif": "gif",
-				"image/webp": "webp",
-				"image/avif": "avif",
-				"image/svg+xml": "svg",
-				"video/mp4": "mp4",
-				"video/webm": "webm",
-				"audio/mpeg": "mp3",
-				"audio/ogg": "ogg",
-				"audio/wav": "wav",
-				"audio/x-wav": "wav",
-			} as Record<string, string>
-		)[type] ||
-		originalName.match(/\.([a-z0-9]{1,8})$/i)?.[1] ||
-		"";
+		extensions[type] || originalName.match(/\.([a-z0-9]{1,8})$/i)?.[1] || "";
 	const suffix = extension ? `.${extension}` : "";
 	if (suffix && label.toLowerCase().endsWith(suffix.toLowerCase())) {
 		label = label.slice(0, -suffix.length);

@@ -3,7 +3,7 @@ interface Props {
 	busy: boolean;
 	error: string;
 	status: string;
-	onexport: (password: string) => unknown;
+	onexport: (password: string) => void;
 }
 let { busy, status, error, onexport }: Props = $props();
 let password = $state("");

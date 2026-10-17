@@ -52,7 +52,7 @@ export function encodeMetaPlain(metadata: Metadata, thumb?: Uint8Array | null) {
 export function decodeMetaPlain(bytes: Uint8Array) {
 	const value = document(decode(bytes));
 	if (
-		!value?.metadata ||
+		!value.metadata ||
 		typeof value.metadata !== "object" ||
 		Array.isArray(value.metadata) ||
 		value.metadata instanceof Uint8Array ||

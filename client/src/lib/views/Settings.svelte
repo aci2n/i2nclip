@@ -1,17 +1,4 @@
 <script lang="ts">
-import type { Pairing } from "../stores/pairing.ts";
-import type { createPreferences } from "../stores/preferences.ts";
-import type { Session } from "../stores/session.ts";
-import type { Uploads as UploadsStore } from "../stores/uploads.ts";
-
-type Preferences = ReturnType<typeof createPreferences>;
-interface Props {
-	session: Session;
-	pairing: Pairing;
-	uploads: UploadsStore;
-	preferences: Preferences;
-}
-
 import { onDestroy, untrack } from "svelte";
 import AboutDialog from "../components/AboutDialog.svelte";
 import PairingSend from "../components/PairingSend.svelte";
@@ -19,8 +6,19 @@ import PasswordSettings from "../components/PasswordSettings.svelte";
 import RecoveryExport from "../components/RecoveryExport.svelte";
 import UploadPreferences from "../components/UploadPreferences.svelte";
 import { fileSize } from "../media/format.ts";
+import type { Pairing } from "../stores/pairing.ts";
+import type { Preferences } from "../stores/preferences.ts";
 import { createQuota } from "../stores/quota.ts";
+import type { Session } from "../stores/session.ts";
+import type { Uploads as UploadsStore } from "../stores/uploads.ts";
 import Setup from "./Setup.svelte";
+
+interface Props {
+	session: Session;
+	pairing: Pairing;
+	uploads: UploadsStore;
+	preferences: Preferences;
+}
 
 let { session, pairing, uploads, preferences }: Props = $props();
 let about = $state(false);

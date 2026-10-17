@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get, writable } from "svelte/store";
+import type { MetadataResult } from "../src/lib/api.ts";
 import * as api from "../src/lib/api.ts";
 import { MAX_FILE_BYTES } from "../src/lib/api.ts";
 import { sendUpload } from "../src/lib/media/upload.ts";
@@ -223,7 +224,7 @@ test("text previews reuse verified content, bound decoding, save full content an
 test("canceled text preparation cannot publish text or clear a subsequent mutation", async (t) => {
 	const reading = deferred<ArrayBuffer>();
 	const entered = deferred();
-	const updating = deferred<Awaited<ReturnType<typeof api.updateMetadata>>>();
+	const updating = deferred<MetadataResult>();
 	const slice = Blob.prototype.slice;
 	t.mock.method(
 		Blob.prototype,

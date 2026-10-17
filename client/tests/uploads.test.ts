@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { Readable } from "svelte/store";
 import { get, writable } from "svelte/store";
+import type { SendOptions } from "../src/lib/media/upload.ts";
 import { createUploads } from "../src/lib/stores/uploads.ts";
 import { assertPresent } from "./assert.ts";
 import { deferred, testKey, tick } from "./helpers.ts";
@@ -42,7 +44,10 @@ function session() {
 }
 function fixture(
 	t: test.TestContext,
-	options: Partial<Parameters<typeof createUploads>[1]> = {},
+	options: {
+		send?: (options: SendOptions) => Promise<{ id: string }>;
+		preferences?: Readable<{ compressImages: boolean }>;
+	} = {},
 ) {
 	const owner = session();
 	let refreshes = 0;

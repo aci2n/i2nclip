@@ -1,11 +1,11 @@
 import { get, writable } from "svelte/store";
-import type { QuotaApi } from "../api.ts";
+import type { Quota, QuotaApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
 import type { SessionReader } from "./session.ts";
 
 const empty = (): {
-	value: Awaited<ReturnType<typeof api.getQuota>> | null;
+	value: Quota | null;
 	loading: boolean;
 	error: string;
 } => ({ value: null, loading: false, error: "" });

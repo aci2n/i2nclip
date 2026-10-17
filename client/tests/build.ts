@@ -55,14 +55,15 @@ test("extension build contains only the bridge and its configuration page", asyn
 		"options.html",
 		"options.js",
 	]);
-	const manifest = JSON.parse(
-		await readFile(join(dist, "extension/manifest.json"), "utf8"),
+	const manifest = document(
+		JSON.parse(await readFile(join(dist, "extension/manifest.json"), "utf8")),
 	);
 	assert.equal(manifest.manifest_version, 3);
-	assert.equal(manifest.options_ui.open_in_tab, false);
-	assert.deepEqual(manifest.background.scripts, ["background.js"]);
+	assert.equal(document(manifest.options_ui).open_in_tab, false);
+	assert.deepEqual(document(manifest.background).scripts, ["background.js"]);
 	assert(!manifest.content_scripts);
 	assert(!manifest.externally_connectable);
+	assert(Array.isArray(manifest.permissions));
 	assert(!manifest.permissions.includes("downloads"));
 });
 

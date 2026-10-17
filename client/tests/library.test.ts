@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get, writable } from "svelte/store";
-import type { LibraryApi } from "../src/lib/api.ts";
+import type {
+	ContentRequest,
+	LibraryApi,
+	ListRequest,
+	MediaPage,
+	MetadataResult,
+} from "../src/lib/api.ts";
 import * as api from "../src/lib/api.ts";
 import { createLibrary } from "../src/lib/stores/library.ts";
 import type { MediaOptions } from "../src/lib/stores/media-item.ts";
@@ -71,14 +77,14 @@ const item = (id: string) => ({
 	metadata: { name: id, tags: [], content_type: "application/octet-stream" },
 });
 test("stale searches cannot publish; pagination uses the submitted query and permits one request", async (t) => {
-	const requests: (Parameters<typeof api.list>[0] & {
-		done: ReturnType<typeof deferred<Awaited<ReturnType<typeof api.list>>>>;
+	const requests: (ListRequest & {
+		done: PromiseWithResolvers<MediaPage>;
 	})[] = [];
 	const f = fixture(t, {
 		http: {
 			...api,
 			list: (args) => {
-				const done = deferred<Awaited<ReturnType<typeof api.list>>>();
+				const done = deferred<MediaPage>();
 				requests.push({ ...args, done });
 				return done.promise;
 			},
@@ -108,7 +114,7 @@ test("stale searches cannot publish; pagination uses the submitted query and per
 	);
 });
 test("identity invalidation suppresses stale searches", async (t) => {
-	const result = deferred<Awaited<ReturnType<typeof api.list>>>();
+	const result = deferred<MediaPage>();
 	const f = fixture(t, { http: { ...api, list: () => result.promise } });
 	f.owner.configure();
 	f.owner.lock();
@@ -151,7 +157,7 @@ test("stale media downloads create no URLs or save dialogs; disposal revokes pre
 test("overlapping media mutations are rejected and conflicts load current metadata before retry", async (t) => {
 	const owner = session();
 	owner.configure();
-	const pending = deferred<Awaited<ReturnType<typeof api.updateMetadata>>>();
+	const pending = deferred<MetadataResult>();
 	let calls = 0;
 	const media = createMediaItem(mediaData(item("a")), owner, {
 		http: {
@@ -267,7 +273,7 @@ test("generic metadata updates rename files, preserve omitted fields and preview
 test("failed and stale metadata updates never publish an attempted filename", async (t) => {
 	const owner = session();
 	owner.configure();
-	const pending = deferred<Awaited<ReturnType<typeof api.updateMetadata>>>();
+	const pending = deferred<MetadataResult>();
 	let fail = true;
 	const media = createMediaItem(mediaData(item("Original.txt")), owner, {
 		http: {
@@ -353,13 +359,11 @@ test("failed and canceled deletions preserve active cards", async (t) => {
 	assert.equal(get(f.library).cards[0].message, "Delete unavailable");
 });
 test("loaded previews skip files, reuse downloads, and never reopen after close", async (t) => {
-	const requests: (Parameters<typeof api.list>[0] & {
-		done: ReturnType<typeof deferred<Awaited<ReturnType<typeof api.list>>>>;
+	const requests: (ListRequest & {
+		done: PromiseWithResolvers<MediaPage>;
 	})[] = [];
-	const downloads: (Parameters<typeof api.getContent>[0] & {
-		done: ReturnType<
-			typeof deferred<Awaited<ReturnType<typeof api.getContent>>>
-		>;
+	const downloads: (ContentRequest & {
+		done: PromiseWithResolvers<Uint8Array<ArrayBuffer>>;
 	})[] = [];
 	const created: Array<string> = [];
 	const revoked: Array<string> = [];
@@ -371,12 +375,12 @@ test("loaded previews skip files, reuse downloads, and never reopen after close"
 		http: {
 			...api,
 			list: (args) => {
-				const done = deferred<Awaited<ReturnType<typeof api.list>>>();
+				const done = deferred<MediaPage>();
 				requests.push({ ...args, done });
 				return done.promise;
 			},
 			getContent: (args) => {
-				const done = deferred<Awaited<ReturnType<typeof api.getContent>>>();
+				const done = deferred<Uint8Array<ArrayBuffer>>();
 				downloads.push({ ...args, done });
 				return done.promise;
 			},
@@ -453,10 +457,8 @@ test("loaded previews skip files, reuse downloads, and never reopen after close"
 	assert.deepEqual(revoked, created);
 });
 test("rapid preview changes abort old loads and ignore their progress, results, errors and cleanup", async (t) => {
-	const loads: (Parameters<typeof api.getContent>[0] & {
-		done: ReturnType<
-			typeof deferred<Awaited<ReturnType<typeof api.getContent>>>
-		>;
+	const loads: (ContentRequest & {
+		done: PromiseWithResolvers<Uint8Array<ArrayBuffer>>;
 	})[] = [];
 	const blobs: Array<Blob | MediaSource> = [];
 	const saved: Array<string> = [];
@@ -470,7 +472,7 @@ test("rapid preview changes abort old loads and ignore their progress, results, 
 			...api,
 			list: async () => ({ items, next: null }),
 			getContent: (args) => {
-				const done = deferred<Awaited<ReturnType<typeof api.getContent>>>();
+				const done = deferred<Uint8Array<ArrayBuffer>>();
 				loads.push({ ...args, done });
 				return done.promise;
 			},
@@ -555,7 +557,7 @@ test("rapid preview changes abort old loads and ignore their progress, results, 
 for (const ending of ["close", "search", "lock", "dispose"]) {
 	test(`${ending} cancels pending preview work without reporting an error or creating a URL`, async (t) => {
 		const pending = deferred<Uint8Array<ArrayBuffer>>();
-		let request: Parameters<typeof api.getContent>[0] | undefined;
+		let request: ContentRequest | undefined;
 		let urls = 0;
 		const f = fixture(t, {
 			http: {

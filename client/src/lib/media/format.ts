@@ -1,5 +1,5 @@
 import { isText } from "./text.ts";
-export const MEDIA_EXTENSIONS: Record<string, string> = {
+export const MEDIA_EXTENSIONS: Readonly<Record<string, string | undefined>> = {
 	"image/jpeg": "jpg",
 	"image/png": "png",
 	"image/gif": "gif",
@@ -53,14 +53,15 @@ export function downloadName(name: string, type: string) {
 	return base.includes(".") || !ext ? base : `${base}.${ext}`;
 }
 
+const FILE_TYPES: Readonly<Record<string, string | undefined>> = {
+	"image/jpeg": "JPEG",
+	"audio/mpeg": "MP3",
+	"application/octet-stream": "FILE",
+};
+
 export function fileType(type: string) {
 	return (
-		(
-			{
-				"image/jpeg": "JPEG",
-				"audio/mpeg": "MP3",
-				"application/octet-stream": "FILE",
-			} as Record<string, string>
-		)[type] || (type.split("/")[1]?.split(/[;+]/)[0] || "FILE").toUpperCase()
+		FILE_TYPES[type] ||
+		(type.split("/")[1]?.split(/[;+]/)[0] || "FILE").toUpperCase()
 	);
 }

@@ -2,7 +2,11 @@ import { b64urlToBytes, utf8 } from "./bytes.ts";
 import { decode, encode } from "./msgpack.ts";
 import { checkServer } from "./server.ts";
 import { bytes as binary, document } from "./value.ts";
-export type PairingKeys = Awaited<ReturnType<typeof pairingKeys>>;
+export interface PairingKeys {
+	readonly transfer: CryptoKey;
+	readonly acknowledgment: CryptoKey;
+	readonly verificationCode: string;
+}
 export type Direction = "transfer" | "acknowledgment";
 
 export const PAIRING_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -63,7 +67,7 @@ export function pairingOrigin(serverUrl: string) {
 export function pairingContext(origin: string, input: unknown) {
 	const room = document(input);
 	if (
-		room?.v !== 1 ||
+		room.v !== 1 ||
 		typeof room.instance !== "string" ||
 		!/^[A-Za-z0-9_-]{22}$/.test(room.instance) ||
 		typeof room.id !== "string" ||
@@ -76,7 +80,10 @@ export function pairingContext(origin: string, input: unknown) {
 }
 
 // The PAKE session key, not the short pairing secret, encrypts the transfer.
-export async function pairingKeys(sessionKey: string, context: string) {
+export async function pairingKeys(
+	sessionKey: string,
+	context: string,
+): Promise<PairingKeys> {
 	const raw = b64urlToBytes(sessionKey);
 	if (raw.length < 32) {
 		throw new Error("Invalid pairing key.");

@@ -4,7 +4,8 @@
 		"module": "NodeNext",
 		"moduleResolution": "NodeNext",
 		"lib": ["ES2022", "ES2024.Promise", "DOM", "DOM.Iterable"],
-		"types": ["node", "firefox-webext-browser"]
+		"types": ["node", "firefox-webext-browser"],
+		"resolveJsonModule": true
 	},
 	"include": [
 		"tests/**/*.ts",

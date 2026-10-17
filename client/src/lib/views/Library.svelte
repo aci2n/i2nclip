@@ -1,25 +1,23 @@
 <script lang="ts">
-import type { Library as LibraryStore } from "../stores/library.ts";
-import type { Session } from "../stores/session.ts";
-import type { createTags } from "../stores/tags.ts";
-import type { Uploads as UploadsStore } from "../stores/uploads.ts";
-
-type Tags = ReturnType<typeof createTags>;
-interface Props {
-	session: Session;
-	library: LibraryStore;
-	tags: Tags;
-	uploads: UploadsStore;
-	onsettings: (event: MouseEvent) => unknown;
-}
-
 import { onDestroy } from "svelte";
 import MediaCard from "../components/MediaCard.svelte";
 import MediaDialog from "../components/MediaDialog.svelte";
 import SearchForm from "../components/SearchForm.svelte";
 import Uploads from "../components/Uploads.svelte";
 import { canPreview } from "../media/format.ts";
+import type { Library as LibraryStore } from "../stores/library.ts";
+import type { Session } from "../stores/session.ts";
+import type { Tags } from "../stores/tags.ts";
+import type { Uploads as UploadsStore } from "../stores/uploads.ts";
 import { pickFiles, selectFiles } from "../ui/dom.ts";
+
+interface Props {
+	session: Session;
+	library: LibraryStore;
+	tags: Tags;
+	uploads: UploadsStore;
+	onsettings: (event: MouseEvent) => void;
+}
 
 let { session, library, tags, uploads, onsettings }: Props = $props();
 let filesInput = $state<HTMLInputElement>();

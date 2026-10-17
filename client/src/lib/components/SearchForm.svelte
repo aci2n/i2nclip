@@ -1,16 +1,16 @@
 <script lang="ts">
+import TagChip from "./TagChip.svelte";
+import TagInput from "./TagInput.svelte";
+
 interface Props {
 	draft: string;
 	query: string[];
 	suggestions?: string[];
-	onchange: (draft: string) => unknown;
-	onadd: (tag: string) => unknown;
-	onremove: (tag: string) => unknown;
-	onclear: () => unknown;
+	onchange: (draft: string) => void;
+	onadd: (tag: string) => void;
+	onremove: (tag: string) => void;
+	onclear: () => void;
 }
-
-import TagChip from "./TagChip.svelte";
-import TagInput from "./TagInput.svelte";
 
 let {
 	draft,

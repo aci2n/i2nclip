@@ -3,9 +3,9 @@ import type { PairingState } from "../stores/pairing.ts";
 
 interface Props {
 	state: PairingState;
-	onapprove?: () => unknown;
-	onreject: () => unknown;
-	oncancel: () => unknown;
+	onapprove?: () => void;
+	onreject: () => void;
+	oncancel: () => void;
 }
 let { state, onapprove, onreject, oncancel }: Props = $props();
 </script>

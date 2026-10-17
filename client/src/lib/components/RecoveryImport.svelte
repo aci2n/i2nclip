@@ -2,7 +2,7 @@
 interface Props {
 	busy: boolean;
 	error: string;
-	onrestore: (file: File, password: string) => unknown;
+	onrestore: (file: File, password: string) => void;
 }
 let { busy, error, onrestore }: Props = $props();
 let file = $state<File | null>(null);

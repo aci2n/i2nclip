@@ -3,7 +3,7 @@ interface Props {
 	text: string;
 	removeLabel: string;
 	disabled?: boolean;
-	onremove: () => unknown;
+	onremove: () => void;
 }
 let { text, removeLabel, disabled = false, onremove }: Props = $props();
 </script>

@@ -1,4 +1,9 @@
 <script lang="ts">
+import { tick } from "svelte";
+import { splitTags } from "../protocol/tags.ts";
+import TagChip from "./TagChip.svelte";
+import TagInput from "./TagInput.svelte";
+
 interface Props {
 	tags?: string[];
 	suggestions?: string[];
@@ -6,11 +11,6 @@ interface Props {
 	name: string;
 	onsave: (tags: string[]) => Promise<boolean>;
 }
-
-import { tick } from "svelte";
-import { splitTags } from "../protocol/tags.ts";
-import TagChip from "./TagChip.svelte";
-import TagInput from "./TagInput.svelte";
 
 let {
 	tags = [],

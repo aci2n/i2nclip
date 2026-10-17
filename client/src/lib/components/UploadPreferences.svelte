@@ -2,7 +2,7 @@
 interface Props {
 	compressImages: boolean;
 	error: string;
-	onchange: (value: boolean) => unknown;
+	onchange: (value: boolean) => void;
 }
 let { compressImages, error, onchange }: Props = $props();
 </script>

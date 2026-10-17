@@ -12,6 +12,8 @@ const empty = (): {
 } => ({ tags: [], loading: false, error: "", warning: "" });
 
 // Application owns the catalog for the unlocked identity, independently of pages.
+export type Tags = ReturnType<typeof createTags>;
+
 export function createTags(
 	session: SessionReader,
 	{ http = api }: { http?: TagApi } = {},

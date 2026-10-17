@@ -4,7 +4,7 @@ type Selection = boolean | { opener?: HTMLElement | null } | null;
 
 // Browser actions own modal lifecycle and file input handling.
 export function modal(node: HTMLDialogElement, selected: Selection) {
-	let opener: Element | null | undefined;
+	let opener: Element | null = null;
 	const update = (selected: Selection) => {
 		if (selected && !node.open) {
 			opener =
@@ -39,7 +39,7 @@ export function modal(node: HTMLDialogElement, selected: Selection) {
 
 export function selectFiles(
 	event: Event & { currentTarget: HTMLInputElement },
-	upload: (files: File[]) => unknown,
+	upload: (files: File[]) => void,
 ) {
 	const files = [...(event.currentTarget.files || [])];
 	event.currentTarget.value = "";

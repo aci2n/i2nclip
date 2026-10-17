@@ -1,15 +1,14 @@
 <script lang="ts">
 import type { PairingState } from "../stores/pairing.ts";
+import PairingProgress from "./PairingProgress.svelte";
 
 interface Props {
 	state: PairingState;
 	busy: boolean;
-	onreceive: (code: string) => unknown;
-	onreject: () => unknown;
-	oncancel: () => unknown;
+	onreceive: (code: string) => void;
+	onreject: () => void;
+	oncancel: () => void;
 }
-
-import PairingProgress from "./PairingProgress.svelte";
 
 let {
 	state: pairingState,

@@ -7,7 +7,7 @@ interface Props {
 	failures?: UploadState["failures"];
 	completed?: UploadState["completed"];
 	status: string;
-	ondismiss: () => unknown;
+	ondismiss: () => void;
 }
 let {
 	uploading,

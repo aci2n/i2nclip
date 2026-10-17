@@ -1,19 +1,18 @@
 <script lang="ts">
+import { canPreview, fileSize, fileType, uploadedAt } from "../media/format.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import type { MediaState } from "../stores/media-item.ts";
+import FilenameEditor from "./FilenameEditor.svelte";
+import TagEditor from "./TagEditor.svelte";
 
 interface Props {
 	media: MediaState;
 	suggestions?: string[];
-	onreveal: (opener: HTMLElement) => unknown;
-	ondownload: () => unknown;
-	onremove: () => unknown;
+	onreveal: (opener: HTMLElement) => void;
+	ondownload: () => void;
+	onremove: () => void;
 	onupdate: (patch: Metadata) => Promise<boolean>;
 }
-
-import { canPreview, fileSize, fileType, uploadedAt } from "../media/format.ts";
-import FilenameEditor from "./FilenameEditor.svelte";
-import TagEditor from "./TagEditor.svelte";
 
 let {
 	media,

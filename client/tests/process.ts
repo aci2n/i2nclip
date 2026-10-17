@@ -3,6 +3,7 @@ import { execFile, spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { document, string } from "../src/lib/protocol/value.ts";
 // Shared process ownership for real browser tests and the optional resource profile.
 
 export const root = path.resolve(
@@ -15,7 +16,7 @@ const metadata = await execute(
 	["metadata", "--format-version", "1", "--no-deps"],
 	{ cwd: root },
 );
-const target = JSON.parse(metadata.stdout).target_directory;
+const target = string(document(JSON.parse(metadata.stdout)).target_directory);
 const binary = (name: string, profile = "debug", example = false) =>
 	path.join(
 		target,

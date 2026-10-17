@@ -4,6 +4,7 @@ import * as opaque from "@serenity-kit/opaque";
 import type { Writable } from "svelte/store";
 import { get, writable } from "svelte/store";
 import type { Credentials } from "../src/lib/api.ts";
+import type { PairingCrypto } from "../src/lib/pairing/crypto.ts";
 import { createPairingCrypto } from "../src/lib/pairing/crypto.ts";
 import type { JoinedRoom, Room } from "../src/lib/pairing/service.ts";
 import { readPairingResponse } from "../src/lib/pairing/service.ts";
@@ -30,11 +31,14 @@ import {
 	string,
 } from "../src/lib/protocol/value.ts";
 import type { SessionOperation } from "../src/lib/stores/identity-context.ts";
+import type { PairingServices } from "../src/lib/stores/pairing.ts";
 import { createPairing } from "../src/lib/stores/pairing.ts";
-import type { Session, SessionState } from "../src/lib/stores/session.ts";
+import type {
+	PairedIdentity,
+	SessionState,
+} from "../src/lib/stores/session.ts";
 import { deferred, tick, workflowSession } from "./helpers.ts";
 
-type PairedIdentity = Parameters<Session["importPairing"]>[0];
 const sessionSnapshot: SessionState = {
 	status: "unlocked",
 	serverUrl: "https://clip.example",
@@ -122,8 +126,8 @@ test("pairing codes preserve all eight secret characters and normalize typing", 
 	assert.throws(() => pairingContext(origin, { ...room, v: 2 }), /Invalid/);
 });
 async function authenticate(
-	sender: ReturnType<typeof createPairingCrypto>,
-	receiver: ReturnType<typeof createPairingCrypto>,
+	sender: PairingCrypto,
+	receiver: PairingCrypto,
 	receiverContext = context,
 	secret = "W4TXN9RC",
 ) {
@@ -294,7 +298,7 @@ function fixture(
 		value: PairedIdentity,
 		state: Writable<SessionState>,
 	) => Promise<boolean>,
-	options: NonNullable<Parameters<typeof createPairing>[1]> & {
+	options: PairingServices & {
 		losePoll?: boolean;
 		rejectAck?: boolean;
 		loseSubmission?: number;

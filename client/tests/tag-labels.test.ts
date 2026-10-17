@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 import { getTags } from "../src/lib/api.ts";
 import {
@@ -18,9 +17,7 @@ import {
 import { bytes as binary, document } from "../src/lib/protocol/value.ts";
 import { documentResponse } from "./msgpack-response.ts";
 
-const vectors = JSON.parse(
-	readFileSync(new URL("./test-vectors.json", import.meta.url), "utf8"),
-);
+import vectors from "./test-vectors.json" with { type: "json" };
 
 test("tag labels share Rust vectors and bind ciphertext to the token", async () => {
 	const key = await loadKey(decode(hexToBytes(vectors.private_key_hex)));

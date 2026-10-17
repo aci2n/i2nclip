@@ -15,12 +15,12 @@ export interface ReceiverBrowser {
 	addEventListener(
 		type: "message",
 		listener: (event: CaptureEvent) => void,
-	): unknown;
+	): void;
 	removeEventListener(
 		type: "message",
 		listener: (event: CaptureEvent) => void,
-	): unknown;
-	postMessage(message: unknown, origin: string): unknown;
+	): void;
+	postMessage(message: unknown, origin: string): void;
 }
 
 export interface CaptureSessionState extends SessionSnapshot {

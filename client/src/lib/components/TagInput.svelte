@@ -1,4 +1,7 @@
 <script lang="ts">
+import { tick } from "svelte";
+import { tagSuggestions } from "../ui/tag-suggestions.ts";
+
 interface Props {
 	value?: string;
 	suggestions?: string[];
@@ -9,15 +12,12 @@ interface Props {
 	readonly?: boolean;
 	borderless?: boolean;
 	search?: boolean;
-	onchange: (value: string) => unknown;
-	oncommit: (tag: string) => unknown;
-	onemptybackspace?: () => unknown;
-	onescape?: () => unknown;
-	onready?: (input: HTMLInputElement) => unknown;
+	onchange: (value: string) => void;
+	oncommit: (tag: string) => void;
+	onemptybackspace?: () => void;
+	onescape?: () => void;
+	onready?: (input: HTMLInputElement) => void;
 }
-
-import { tick } from "svelte";
-import { tagSuggestions } from "../ui/tag-suggestions.ts";
 
 let {
 	value = "",

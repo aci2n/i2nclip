@@ -2,7 +2,7 @@
 interface Props {
 	busy: boolean;
 	error: string;
-	oncreate: (value: { otc: string }) => unknown;
+	oncreate: (value: { otc: string }) => void;
 }
 let { busy, error, oncreate }: Props = $props();
 let otc = $state("");

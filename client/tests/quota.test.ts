@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get, writable } from "svelte/store";
+import type { QuotaApi } from "../src/lib/api.ts";
 import { createQuota } from "../src/lib/stores/quota.ts";
 import { assertPresent } from "./assert.ts";
 import { deferred, testKey } from "./helpers.ts";
 
-function fixture(
-	t: test.TestContext,
-	http: NonNullable<Parameters<typeof createQuota>[1]>["http"],
-) {
+function fixture(t: test.TestContext, http: QuotaApi) {
 	const state = writable({
 		configured: true,
 		unlocked: true,
@@ -70,7 +68,7 @@ test("quota reads deduplicate and retry errors without persisting stale values",
 test("identity changes abort quota reads and late results cannot replace the new identity's usage", async (t) => {
 	const pending: {
 		signal?: AbortSignal;
-		result: ReturnType<typeof deferred<typeof usage>>;
+		result: PromiseWithResolvers<typeof usage>;
 	}[] = [];
 	const { session, quota } = fixture(t, {
 		getQuota: ({ signal }) => {

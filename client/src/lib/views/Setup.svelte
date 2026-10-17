@@ -1,4 +1,8 @@
 <script lang="ts">
+import { untrack } from "svelte";
+import CreateLibrary from "../components/CreateLibrary.svelte";
+import PairingReceive from "../components/PairingReceive.svelte";
+import RecoveryImport from "../components/RecoveryImport.svelte";
 import type { Pairing } from "../stores/pairing.ts";
 import type { Session } from "../stores/session.ts";
 
@@ -6,11 +10,6 @@ interface Props {
 	session: Session;
 	pairing: Pairing;
 }
-
-import { untrack } from "svelte";
-import CreateLibrary from "../components/CreateLibrary.svelte";
-import PairingReceive from "../components/PairingReceive.svelte";
-import RecoveryImport from "../components/RecoveryImport.svelte";
 
 let { session, pairing }: Props = $props();
 let mode = $state("create");

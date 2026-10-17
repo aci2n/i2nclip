@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
 	b64urlToBytes,
@@ -21,9 +20,7 @@ import {
 import { encodeMeta, encodeUpload } from "../src/lib/protocol/frame.ts";
 import { decode, encode } from "../src/lib/protocol/msgpack.ts";
 
-const vectors = JSON.parse(
-	readFileSync(new URL("./test-vectors.json", import.meta.url), "utf8"),
-);
+import vectors from "./test-vectors.json" with { type: "json" };
 
 test("library identity matches the rust vectors", async () => {
 	const key = await loadKey(decode(hexToBytes(vectors.private_key_hex)));

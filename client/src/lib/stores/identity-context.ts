@@ -43,13 +43,7 @@ export function createSessionContext(state: Readable<IdentitySnapshot>) {
 				operation.abort(stale());
 			}
 		},
-		operation({
-			signal,
-			onInvalidated,
-		}: {
-			signal?: AbortSignal;
-			onInvalidated?: () => void;
-		} = {}) {
+		operation({ signal, onInvalidated }: OperationOptions = {}) {
 			const expected = Object.freeze({ ...get(state) });
 			const controller = new AbortController();
 			const combined = signal

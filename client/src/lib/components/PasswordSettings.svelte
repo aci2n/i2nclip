@@ -3,7 +3,7 @@ interface Props {
 	busy: boolean;
 	error: string;
 	status: string;
-	onpassword: (current: string, password: string) => unknown;
+	onpassword: (current: string, password: string) => void;
 }
 let { busy, error, status, onpassword }: Props = $props();
 let current = $state("");

@@ -21,7 +21,7 @@ export interface LibraryState {
 export interface LibraryOptions {
 	http?: LibraryApi;
 	mediaOptions?: MediaOptions;
-	onChange?: () => unknown;
+	onChange?: () => void;
 	confirm?: (message: string) => boolean;
 }
 export type Library = ReturnType<typeof createLibrary>;

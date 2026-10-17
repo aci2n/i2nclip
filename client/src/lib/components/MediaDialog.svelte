@@ -1,20 +1,19 @@
 <script lang="ts">
+import { isText } from "../media/text.ts";
 import type { MediaState } from "../stores/media-item.ts";
+import { modal } from "../ui/dom.ts";
+import { previewSwipes } from "../ui/preview-swipes.ts";
 
 interface Props {
 	selected?: MediaState;
 	opener?: HTMLElement;
 	hasPrevious?: boolean;
 	hasNext?: boolean;
-	onprevious: () => unknown;
-	onnext: () => unknown;
-	onretry: () => unknown;
-	onclose: () => unknown;
+	onprevious: () => void;
+	onnext: () => void;
+	onretry: () => void;
+	onclose: () => void;
 }
-
-import { isText } from "../media/text.ts";
-import { modal } from "../ui/dom.ts";
-import { previewSwipes } from "../ui/preview-swipes.ts";
 
 let {
 	selected,

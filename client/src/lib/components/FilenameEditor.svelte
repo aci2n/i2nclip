@@ -1,11 +1,11 @@
 <script lang="ts">
+import { tick } from "svelte";
+
 interface Props {
 	name: string;
 	disabled?: boolean;
 	onsave: (name: string) => Promise<boolean>;
 }
-
-import { tick } from "svelte";
 
 let { name, disabled = false, onsave }: Props = $props();
 let editing = $state(false);

@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const vectors = JSON.parse(
-	readFileSync(new URL("./origin-vectors.json", import.meta.url), "utf8"),
-);
+import vectors from "./origin-vectors.json" with { type: "json" };
 
 test("server origin vectors match browser URL serialization", () => {
 	for (const { input, origin } of vectors.accepted) {

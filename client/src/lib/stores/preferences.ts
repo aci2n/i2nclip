@@ -8,6 +8,8 @@ export interface PreferenceStorage {
 }
 const KEY = "i2nclip.compress-images";
 
+export type Preferences = ReturnType<typeof createPreferences>;
+
 export function createPreferences(
 	storage: PreferenceStorage = globalThis.localStorage,
 ) {
