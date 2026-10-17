@@ -8,7 +8,7 @@ check-node:
 node_modules/.package-lock.json: package.json package-lock.json .nvmrc | check-node
 	npm ci
 
-build audit test check fix test-e2e test-profile test-build: node_modules/.package-lock.json
+build audit test check fix test-e2e test-profile test-build extension: node_modules/.package-lock.json
 
 build:
 	npm run build
@@ -29,4 +29,4 @@ test-e2e:
 	npx playwright install firefox chromium
 	npm run e2e
 test-profile:
-	node tests/profile-postgres.js
+	node tests/profile-postgres.ts

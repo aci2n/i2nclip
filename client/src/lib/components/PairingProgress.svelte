@@ -1,5 +1,13 @@
-<script>
-let { state, onapprove, onreject, oncancel } = $props();
+<script lang="ts">
+import type { PairingState } from "../stores/pairing.ts";
+
+interface Props {
+	state: PairingState;
+	onapprove?: () => unknown;
+	onreject: () => unknown;
+	oncancel: () => unknown;
+}
+let { state, onapprove, onreject, oncancel }: Props = $props();
 </script>
 {#if state.active}
 	<div class="stack">

@@ -1,6 +1,6 @@
-<script>
+<script lang="ts">
 import { onDestroy } from "svelte";
-import { createTabAdmission } from "./lib/stores/tab.js";
+import { createTabAdmission } from "./lib/stores/tab.ts";
 import Application from "./lib/views/Application.svelte";
 import "./app.css";
 

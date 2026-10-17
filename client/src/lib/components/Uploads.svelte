@@ -1,4 +1,14 @@
-<script>
+<script lang="ts">
+import type { UploadState } from "../stores/uploads.ts";
+
+interface Props {
+	uploading: boolean;
+	progress: UploadState["progress"];
+	failures?: UploadState["failures"];
+	completed?: UploadState["completed"];
+	status: string;
+	ondismiss: () => unknown;
+}
 let {
 	uploading,
 	progress,
@@ -6,7 +16,7 @@ let {
 	completed = [],
 	status,
 	ondismiss,
-} = $props();
+}: Props = $props();
 </script>
 {#if uploading || failures.length || completed.length || status}
 	<section aria-label="Uploads">

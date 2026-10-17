@@ -1,6 +1,23 @@
-<script>
+<script lang="ts">
+interface Props {
+	value?: string;
+	suggestions?: string[];
+	excluded?: string[];
+	label: string;
+	placeholder?: string;
+	disabled?: boolean;
+	readonly?: boolean;
+	borderless?: boolean;
+	search?: boolean;
+	onchange: (value: string) => unknown;
+	oncommit: (tag: string) => unknown;
+	onemptybackspace?: () => unknown;
+	onescape?: () => unknown;
+	onready?: (input: HTMLInputElement | undefined) => unknown;
+}
+
 import { tick } from "svelte";
-import { tagSuggestions } from "../ui/tag-suggestions.js";
+import { tagSuggestions } from "../ui/tag-suggestions.ts";
 
 let {
 	value = "",
@@ -17,9 +34,9 @@ let {
 	onemptybackspace,
 	onescape = () => {},
 	onready = () => {},
-} = $props();
-let input = $state();
-let list = $state();
+}: Props = $props();
+let input = $state<HTMLInputElement>();
+let list = $state<HTMLUListElement>();
 let open = $state(false);
 const matches = $derived(
 	open && !disabled && !readonly
@@ -29,7 +46,7 @@ const matches = $derived(
 $effect(() => {
 	onready(input);
 });
-function commit(tag) {
+function commit(tag: string) {
 	if (disabled || readonly) {
 		return;
 	}
@@ -41,14 +58,17 @@ function dismiss() {
 	input?.focus();
 	open = false;
 }
-function focusSuggestion(index) {
+function focusSuggestion(index: number) {
 	list?.querySelectorAll("button")[index]?.focus();
 }
 </script>
 <div
 	class="tag-input"
 	onfocusout={(event) => {
-		if (!event.currentTarget.contains(event.relatedTarget)) {
+		if (
+			!(event.relatedTarget instanceof Node) ||
+			!event.currentTarget.contains(event.relatedTarget)
+		) {
 			open = false;
 		}
 	}}

@@ -10,11 +10,11 @@
 	"scripts": {
 		"dev": "vite",
 		"build": "vite build",
-		"check": "biome check --error-on-warnings && svelte-check --fail-on-warnings",
-		"test": "node --test --test-timeout=60000 tests/*.test.js",
+		"check": "biome check --error-on-warnings && tsc -p tsconfig.node.json && tsc -p tsconfig.extension.json --noEmit && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+		"test": "node --test --test-timeout=60000 tests/*.test.ts",
 		"e2e": "cargo build --bin i2nclip --example test-server --example test-database && npm run build && playwright test",
-		"build:extension": "node extension/build.js",
-		"test:build": "npm run build && npm run build:extension && node --test tests/build.js",
+		"build:extension": "node extension/build.ts",
+		"test:build": "npm run build && npm run build:extension && node --test tests/build.ts",
 		"fix": "biome check --write --error-on-warnings"
 	},
 	"dependencies": {
@@ -26,7 +26,10 @@
 		"@biomejs/biome": "^2.5.15",
 		"@playwright/test": "1.56.1",
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
+		"@types/firefox-webext-browser": "^143.0.1",
+		"@types/node": "^22.20.5",
 		"svelte-check": "^4.3.0",
+		"typescript": "^6.0.3",
 		"vite": "^8.3.4"
 	}
 }

@@ -1,12 +1,12 @@
-<script>
+<script lang="ts">
 import { onDestroy } from "svelte";
-import { createExtensionReceiver } from "../stores/extension.js";
-import { createLibrary } from "../stores/library.js";
-import { createPairing } from "../stores/pairing.js";
-import { createPreferences } from "../stores/preferences.js";
-import { createSession } from "../stores/session.js";
-import { createTags } from "../stores/tags.js";
-import { createUploads } from "../stores/uploads.js";
+import { createExtensionReceiver } from "../stores/extension.ts";
+import { createLibrary } from "../stores/library.ts";
+import { createPairing } from "../stores/pairing.ts";
+import { createPreferences } from "../stores/preferences.ts";
+import { createSession } from "../stores/session.ts";
+import { createTags } from "../stores/tags.ts";
+import { createUploads } from "../stores/uploads.ts";
 import Library from "./Library.svelte";
 import Settings from "./Settings.svelte";
 import Unlock from "./Unlock.svelte";
@@ -33,7 +33,7 @@ const extension = createExtensionReceiver(session, uploads, () => {
 	page = "library";
 	history.replaceState({}, "", "?page=library");
 });
-function navigate(event, name) {
+function navigate(event: MouseEvent, name: "library" | "settings") {
 	if (
 		event.button !== 0 ||
 		event.metaKey ||

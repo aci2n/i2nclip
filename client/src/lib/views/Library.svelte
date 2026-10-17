@@ -1,27 +1,44 @@
-<script>
+<script lang="ts">
+import type { Library as LibraryStore } from "../stores/library.ts";
+import type { Session } from "../stores/session.ts";
+import type { createTags } from "../stores/tags.ts";
+import type { Uploads as UploadsStore } from "../stores/uploads.ts";
+
+type Tags = ReturnType<typeof createTags>;
+interface Props {
+	session: Session;
+	library: LibraryStore;
+	tags: Tags;
+	uploads: UploadsStore;
+	onsettings: (event: MouseEvent) => unknown;
+}
+
 import { onDestroy } from "svelte";
 import MediaCard from "../components/MediaCard.svelte";
 import MediaDialog from "../components/MediaDialog.svelte";
 import SearchForm from "../components/SearchForm.svelte";
 import Uploads from "../components/Uploads.svelte";
-import { canPreview } from "../media/format.js";
-import { pickFiles, selectFiles } from "../ui/dom.js";
+import { canPreview } from "../media/format.ts";
+import { pickFiles, selectFiles } from "../ui/dom.ts";
 
-let { session, library, tags, uploads, onsettings } = $props();
-let filesInput = $state();
+let { session, library, tags, uploads, onsettings }: Props = $props();
+let filesInput = $state<HTMLInputElement>();
 onDestroy(() => library.closePreview());
 const previewable = $derived(
 	$library.cards.filter(
 		(media) =>
 			!media.deleted &&
-			canPreview(media.metadata?.content_type, media.metadata?.name),
+			canPreview(
+				media.metadata?.content_type || "",
+				media.metadata?.name || "",
+			),
 	),
 );
 const previewIndex = $derived(
 	previewable.findIndex((media) => media.id === $library.selected?.id),
 );
 const previewMedia = $derived(previewable[previewIndex]);
-function movePreview(step) {
+function movePreview(step: number) {
 	const media = previewable[previewIndex + step];
 	if (media) {
 		library.reveal(media.id);
@@ -147,7 +164,7 @@ function movePreview(step) {
 	hasNext={previewIndex >= 0 && previewIndex < previewable.length - 1}
 	onprevious={() => movePreview(-1)}
 	onnext={() => movePreview(1)}
-	onretry={() => library.reveal($library.selected.id)}
+	onretry={() => $library.selected && library.reveal($library.selected.id)}
 	onclose={library.closePreview}
 />
 <style>

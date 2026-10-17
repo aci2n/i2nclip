@@ -1,7 +1,23 @@
-<script>
+<script lang="ts">
+import type { PairingState } from "../stores/pairing.ts";
+
+interface Props {
+	state: PairingState;
+	busy: boolean;
+	onreceive: (code: string) => unknown;
+	onreject: () => unknown;
+	oncancel: () => unknown;
+}
+
 import PairingProgress from "./PairingProgress.svelte";
 
-let { state: pairingState, busy, onreceive, onreject, oncancel } = $props();
+let {
+	state: pairingState,
+	busy,
+	onreceive,
+	onreject,
+	oncancel,
+}: Props = $props();
 let code = $state("");
 </script>
 <div class="stack">

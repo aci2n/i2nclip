@@ -7,7 +7,7 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["**", "!tests/test-vectors.json"]
+		"includes": ["**", "!tests/test-vectors.json", "!native"]
 	},
 	"formatter": {
 		"enabled": true

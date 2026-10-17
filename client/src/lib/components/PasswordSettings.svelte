@@ -1,10 +1,16 @@
-<script>
-let { busy, error, status, onpassword } = $props();
+<script lang="ts">
+interface Props {
+	busy: boolean;
+	error: string;
+	status: string;
+	onpassword: (current: string, password: string) => unknown;
+}
+let { busy, error, status, onpassword }: Props = $props();
 let current = $state("");
 let password = $state("");
 let confirmation = $state("");
 let localError = $state("");
-function submit(event) {
+function submit(event: SubmitEvent) {
 	event.preventDefault();
 	localError = "";
 	if (password !== confirmation) {

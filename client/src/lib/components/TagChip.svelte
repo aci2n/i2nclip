@@ -1,5 +1,11 @@
-<script>
-let { text, removeLabel, disabled = false, onremove } = $props();
+<script lang="ts">
+interface Props {
+	text: string;
+	removeLabel: string;
+	disabled?: boolean;
+	onremove: () => unknown;
+}
+let { text, removeLabel, disabled = false, onremove }: Props = $props();
 </script>
 
 <span class="chip">

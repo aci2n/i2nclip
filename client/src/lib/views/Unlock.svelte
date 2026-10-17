@@ -1,9 +1,14 @@
-<script>
-let { session } = $props();
+<script lang="ts">
+import type { Session } from "../stores/session.ts";
+
+interface Props {
+	session: Session;
+}
+let { session }: Props = $props();
 let password = $state("");
 let confirmation = $state("");
 let error = $state("");
-async function submit(event) {
+async function submit(event: SubmitEvent) {
 	event.preventDefault();
 	error = "";
 	if ($session.status === "new" && password !== confirmation) {

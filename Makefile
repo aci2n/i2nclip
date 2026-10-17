@@ -106,7 +106,7 @@ test-all:
 	$(MAKE) test-db
 	$(MAKE) test-e2e
 
-# Rust/JavaScript static analysis and all formatting checks.
+# Rust/TypeScript static analysis and all formatting checks.
 lint:
 	cargo clippy --all-targets --all-features -- -D warnings
 	$(MAKE) -C client check

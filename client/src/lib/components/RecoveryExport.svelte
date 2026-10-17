@@ -1,9 +1,15 @@
-<script>
-let { busy, status, error, onexport } = $props();
+<script lang="ts">
+interface Props {
+	busy: boolean;
+	error: string;
+	status: string;
+	onexport: (password: string) => unknown;
+}
+let { busy, status, error, onexport }: Props = $props();
 let password = $state("");
 let confirmation = $state("");
 let localError = $state("");
-function submit(event) {
+function submit(event: SubmitEvent) {
 	event.preventDefault();
 	localError = "";
 	if (password !== confirmation) {

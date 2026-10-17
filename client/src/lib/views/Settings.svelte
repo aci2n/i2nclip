@@ -1,15 +1,28 @@
-<script>
+<script lang="ts">
+import type { Pairing } from "../stores/pairing.ts";
+import type { createPreferences } from "../stores/preferences.ts";
+import type { Session } from "../stores/session.ts";
+import type { Uploads as UploadsStore } from "../stores/uploads.ts";
+
+type Preferences = ReturnType<typeof createPreferences>;
+interface Props {
+	session: Session;
+	pairing: Pairing;
+	uploads: UploadsStore;
+	preferences: Preferences;
+}
+
 import { onDestroy, untrack } from "svelte";
 import AboutDialog from "../components/AboutDialog.svelte";
 import PairingSend from "../components/PairingSend.svelte";
 import PasswordSettings from "../components/PasswordSettings.svelte";
 import RecoveryExport from "../components/RecoveryExport.svelte";
 import UploadPreferences from "../components/UploadPreferences.svelte";
-import { fileSize } from "../media/format.js";
-import { createQuota } from "../stores/quota.js";
+import { fileSize } from "../media/format.ts";
+import { createQuota } from "../stores/quota.ts";
 import Setup from "./Setup.svelte";
 
-let { session, pairing, uploads, preferences } = $props();
+let { session, pairing, uploads, preferences }: Props = $props();
 let about = $state(false);
 const quota = untrack(() => createQuota(session));
 onDestroy(quota.dispose);
@@ -28,7 +41,11 @@ $effect(() => {
 });
 let feedback = $state({ scope: "", text: "", error: false });
 const busy = $derived($session.busy || $pairing.active);
-async function action(scope, work, success) {
+async function action(
+	scope: string,
+	work: () => Promise<boolean>,
+	success: string,
+) {
 	feedback = { scope, text: "", error: false };
 	const done = await work();
 	feedback = { scope, text: done ? success : $session.error, error: !done };

@@ -1,8 +1,13 @@
-<script>
-import { repository, version } from "../../../package.json";
-import { modal } from "../ui/dom.js";
+<script lang="ts">
+interface Props {
+	open: boolean;
+	onclose: () => void;
+}
 
-let { open, onclose } = $props();
+import { repository, version } from "../../../package.json";
+import { modal } from "../ui/dom.ts";
+
+let { open, onclose }: Props = $props();
 </script>
 
 <dialog

@@ -1,5 +1,10 @@
-<script>
-let { compressImages, error, onchange } = $props();
+<script lang="ts">
+interface Props {
+	compressImages: boolean;
+	error: string;
+	onchange: (value: boolean) => unknown;
+}
+let { compressImages, error, onchange }: Props = $props();
 </script>
 <section class="panel stack">
 	<h2>Uploads</h2>

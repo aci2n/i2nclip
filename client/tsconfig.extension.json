@@ -1,0 +1,20 @@
+{
+	"extends": "./tsconfig.base.json",
+	"compilerOptions": {
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"types": ["firefox-webext-browser"],
+		"noEmit": false,
+		"outDir": "dist/extension",
+		"rootDir": "extension",
+		"sourceMap": false,
+		"noEmitOnError": true
+	},
+	"include": [
+		"extension/background.ts",
+		"extension/capture.ts",
+		"extension/bridge.ts",
+		"extension/options.ts"
+	]
+}

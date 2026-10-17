@@ -1,5 +1,17 @@
-<script>
-import { canPreview, fileSize, fileType, uploadedAt } from "../media/format.js";
+<script lang="ts">
+import type { Metadata } from "../protocol/meta-plain.ts";
+import type { MediaState } from "../stores/media-item.ts";
+
+interface Props {
+	media: MediaState;
+	suggestions?: string[];
+	onreveal: (opener: HTMLElement) => unknown;
+	ondownload: () => unknown;
+	onremove: () => unknown;
+	onupdate: (patch: Metadata) => Promise<boolean | undefined>;
+}
+
+import { canPreview, fileSize, fileType, uploadedAt } from "../media/format.ts";
 import FilenameEditor from "./FilenameEditor.svelte";
 import TagEditor from "./TagEditor.svelte";
 
@@ -10,14 +22,14 @@ let {
 	ondownload,
 	onremove,
 	onupdate,
-} = $props();
+}: Props = $props();
 const type = $derived(media.metadata?.content_type || "");
 const playable = $derived(/^(audio|video)\//.test(type));
 const image = $derived(type.startsWith("image/"));
 const name = $derived(media.metadata?.name || media.id);
 const source = $derived.by(() => {
 	try {
-		const url = new URL(media.metadata?.source_url);
+		const url = new URL(media.metadata?.source_url || "");
 		return ["http:", "https:"].includes(url.protocol) ? url.href : "";
 	} catch {
 		return "";
@@ -80,7 +92,7 @@ const summary = $derived(
 				<dt>Source</dt>
 				<dd>
 					<a href={source} title={source} target="_blank" rel="noreferrer">
-						{media.metadata.source_title || source}
+						{media.metadata?.source_title || source}
 					</a>
 				</dd>
 			{/if}

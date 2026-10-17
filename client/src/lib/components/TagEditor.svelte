@@ -1,16 +1,30 @@
-<script>
+<script lang="ts">
+interface Props {
+	tags?: string[];
+	suggestions?: string[];
+	disabled?: boolean;
+	name: string;
+	onsave: (tags: string[]) => Promise<boolean | undefined>;
+}
+
 import { tick } from "svelte";
-import { splitTags } from "../protocol/tags.js";
+import { splitTags } from "../protocol/tags.ts";
 import TagChip from "./TagChip.svelte";
 import TagInput from "./TagInput.svelte";
 
-let { tags = [], suggestions = [], disabled = false, name, onsave } = $props();
+let {
+	tags = [],
+	suggestions = [],
+	disabled = false,
+	name,
+	onsave,
+}: Props = $props();
 let editing = $state(false);
 let expanded = $state(false);
 let draft = $state("");
 let saving = $state(false);
-let input = $state();
-let button = $state();
+let input = $state<HTMLInputElement>();
+let button = $state<HTMLButtonElement>();
 const locked = $derived(disabled || saving);
 async function open() {
 	editing = true;
@@ -26,7 +40,7 @@ async function cancel() {
 	await tick();
 	button?.focus();
 }
-async function persist(next, clear = false) {
+async function persist(next: string[], clear = false) {
 	if (locked) {
 		return;
 	}

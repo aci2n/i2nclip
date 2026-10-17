@@ -1,7 +1,20 @@
-<script>
-import { isText } from "../media/text.js";
-import { modal } from "../ui/dom.js";
-import { previewSwipes } from "../ui/preview-swipes.js";
+<script lang="ts">
+import type { MediaState } from "../stores/media-item.ts";
+
+interface Props {
+	selected?: MediaState;
+	opener?: HTMLElement;
+	hasPrevious?: boolean;
+	hasNext?: boolean;
+	onprevious: () => unknown;
+	onnext: () => unknown;
+	onretry: () => unknown;
+	onclose: () => unknown;
+}
+
+import { isText } from "../media/text.ts";
+import { modal } from "../ui/dom.ts";
+import { previewSwipes } from "../ui/preview-swipes.ts";
 
 let {
 	selected,
@@ -12,13 +25,13 @@ let {
 	onnext,
 	onretry,
 	onclose,
-} = $props();
+}: Props = $props();
 const name = $derived(selected?.metadata?.name || selected?.id || "");
 const type = $derived(
 	selected?.metadata?.content_type || "application/octet-stream",
 );
 const text = $derived(isText(type, name) ? selected?.text : null);
-let player = $state();
+let player = $state<HTMLMediaElement>();
 $effect(() => {
 	const current = player;
 	return () => current?.pause();

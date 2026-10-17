@@ -1,7 +1,18 @@
-<script>
+<script lang="ts">
+import type { PairingState } from "../stores/pairing.ts";
+
+interface Props {
+	state: PairingState;
+	busy: boolean;
+	onsend: () => unknown;
+	onapprove: () => unknown;
+	onreject: () => unknown;
+	oncancel: () => unknown;
+}
+
 import PairingProgress from "./PairingProgress.svelte";
 
-let { state, busy, onsend, onapprove, onreject, oncancel } = $props();
+let { state, busy, onsend, onapprove, onreject, oncancel }: Props = $props();
 </script>
 <details class="panel">
 	<summary>Connect another device</summary>

@@ -1,4 +1,14 @@
-<script>
+<script lang="ts">
+interface Props {
+	draft: string;
+	query: string[];
+	suggestions?: string[];
+	onchange: (draft: string) => unknown;
+	onadd: (tag: string) => unknown;
+	onremove: (tag: string) => unknown;
+	onclear: () => unknown;
+}
+
 import TagChip from "./TagChip.svelte";
 import TagInput from "./TagInput.svelte";
 
@@ -10,8 +20,8 @@ let {
 	onadd,
 	onremove,
 	onclear,
-} = $props();
-let input = $state();
+}: Props = $props();
+let input = $state<HTMLInputElement>();
 </script>
 <div class="search">
 	<form
@@ -42,8 +52,9 @@ let input = $state();
 				{onchange}
 				oncommit={onadd}
 				onemptybackspace={() => {
-					if (query.length) {
-						onremove(query.at(-1));
+					const last = query.at(-1);
+					if (last !== undefined) {
+						onremove(last);
 					}
 				}}
 				onready={(node) => {

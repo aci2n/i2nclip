@@ -1,5 +1,10 @@
-<script>
-let { busy, error, oncreate } = $props();
+<script lang="ts">
+interface Props {
+	busy: boolean;
+	error: string;
+	oncreate: (value: { otc: string }) => unknown;
+}
+let { busy, error, oncreate }: Props = $props();
 let otc = $state("");
 </script>
 <form

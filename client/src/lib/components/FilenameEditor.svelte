@@ -1,12 +1,18 @@
-<script>
+<script lang="ts">
+interface Props {
+	name: string;
+	disabled?: boolean;
+	onsave: (name: string) => Promise<boolean | undefined>;
+}
+
 import { tick } from "svelte";
 
-let { name, disabled = false, onsave } = $props();
+let { name, disabled = false, onsave }: Props = $props();
 let editing = $state(false);
-let draft = $state(null);
+let draft = $state<string | null>(null);
 let saving = $state(false);
-let input = $state();
-let button = $state();
+let input = $state<HTMLInputElement>();
+let button = $state<HTMLButtonElement>();
 
 async function open() {
 	draft = name;
@@ -24,12 +30,12 @@ async function cancel() {
 	await tick();
 	button?.focus();
 }
-async function submit(event) {
+async function submit(event: SubmitEvent) {
 	event.preventDefault();
 	if (disabled || saving) {
 		return;
 	}
-	const submitted = draft.trim();
+	const submitted = (draft ?? "").trim();
 	saving = true;
 	try {
 		if (submitted === name || (await onsave(submitted))) {

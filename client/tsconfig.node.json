@@ -1,0 +1,15 @@
+{
+	"extends": "./tsconfig.base.json",
+	"compilerOptions": {
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"types": ["node", "firefox-webext-browser"]
+	},
+	"include": [
+		"tests/**/*.ts",
+		"e2e/**/*.ts",
+		"*.config.ts",
+		"extension/build.ts"
+	]
+}

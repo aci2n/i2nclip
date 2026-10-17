@@ -1,6 +1,11 @@
-<script>
-let { busy, error, onrestore } = $props();
-let file = $state(null);
+<script lang="ts">
+interface Props {
+	busy: boolean;
+	error: string;
+	onrestore: (file: File, password: string) => unknown;
+}
+let { busy, error, onrestore }: Props = $props();
+let file = $state<File | null>(null);
 let password = $state("");
 </script>
 <form
@@ -8,7 +13,7 @@ let password = $state("");
 	onsubmit={(event) => {
 		event.preventDefault();
 		if (file) {
-			onrestore(file, password);
+			file && onrestore(file, password);
 		}
 	}}
 >
@@ -19,7 +24,7 @@ let password = $state("");
 			accept=".msgpack,application/msgpack"
 			required
 			disabled={busy}
-			onchange={(event) => (file = event.currentTarget.files[0] || null)}
+			onchange={(event) => (file = event.currentTarget.files?.[0] || null)}
 		></label
 	>
 	<label class="field"
