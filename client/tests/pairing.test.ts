@@ -3,13 +3,11 @@ import test from "node:test";
 import * as opaque from "@serenity-kit/opaque";
 import type { Writable } from "svelte/store";
 import { get, writable } from "svelte/store";
-import type { Credentials } from "../src/lib/api.ts";
 import type { PairingCrypto } from "../src/lib/pairing/crypto.ts";
 import { createPairingCrypto } from "../src/lib/pairing/crypto.ts";
 import type { JoinedRoom, Room } from "../src/lib/pairing/service.ts";
 import { readPairingResponse } from "../src/lib/pairing/service.ts";
 import { bytesToB64url } from "../src/lib/protocol/bytes.ts";
-import { loadKey } from "../src/lib/protocol/crypto.ts";
 import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
 import { decode, encode } from "../src/lib/protocol/msgpack.ts";
 import {
@@ -24,20 +22,18 @@ import {
 	parsePairingCode,
 	sealPairing,
 } from "../src/lib/protocol/pairing.ts";
-import type { Identity } from "../src/lib/protocol/recovery.ts";
 import {
 	bytes as binary,
 	document,
 	string,
 } from "../src/lib/protocol/value.ts";
-import type { SessionOperation } from "../src/lib/stores/identity-context.ts";
 import type { PairingServices } from "../src/lib/stores/pairing.ts";
 import { createPairing } from "../src/lib/stores/pairing.ts";
 import type {
 	PairedIdentity,
 	SessionState,
 } from "../src/lib/stores/session.ts";
-import { deferred, tick, workflowSession } from "./helpers.ts";
+import { deferred, testKey, tick } from "./helpers.ts";
 
 const sessionSnapshot: SessionState = {
 	status: "unlocked",
@@ -358,44 +354,24 @@ function fixture(
 	});
 	const receiverState = writable<SessionState>({ ...sessionSnapshot });
 	const session = (state: Writable<SessionState>) => {
-		const workflow = workflowSession(state);
 		return {
-			...workflow,
-			async withIdentity<R>(
-				operation: SessionOperation,
-				action: (
-					identity: Credentials & {
-						privateKey: Identity["private_key"];
-						publicKey: string;
-					},
-				) => R | Promise<R>,
-			) {
-				operation.signal.throwIfAborted();
-				const expected = await workflow.withIdentity(
-					operation,
-					(identity) => identity,
-				);
-				const loaded = await loadKey(expected.privateKey);
-				if (expected.privateKey === "") {
+			subscribe: state.subscribe,
+			identity() {
+				const value = get(state);
+				if (!value.unlocked || !value.configured || value.privateKey === "") {
 					throw new Error("Missing identity");
 				}
-				return action({
-					serverUrl: expected.serverUrl,
-					privateKey: expected.privateKey,
-					key: loaded,
-					publicKey: loaded.registrationKey,
-				});
+				return {
+					serverUrl: value.serverUrl,
+					privateKey: value.privateKey,
+					publicKey: bytesToB64url(value.privateKey.public_key),
+					// The in-memory relay does not authenticate create requests.
+					key: testKey(),
+				};
 			},
 			async importPairing(value: PairedIdentity) {
 				if (receiverImport) {
-					const saved = await receiverImport(value, state);
-					return (
-						saved &&
-						workflow.operation({
-							signal: value.signal,
-							onInvalidated: value.onInvalidated,
-						})
-					);
+					return receiverImport(value, state);
 				}
 				value.signal.throwIfAborted();
 				state.set({
@@ -406,10 +382,7 @@ function fixture(
 					configured: true,
 					epoch: 1,
 				});
-				return workflow.operation({
-					signal: value.signal,
-					onInvalidated: value.onInvalidated,
-				});
+				return true;
 			},
 		};
 	};
@@ -549,17 +522,16 @@ test("cancellation during room creation removes a late room without publishing i
 	const entered = deferred();
 	let removed = 0;
 	const session = writable<SessionState>({ ...sessionSnapshot });
-	const workflow = workflowSession(session);
+	const testKeyDocument = (await generatePrivateKey()).privateKey;
 	const pairing = createPairing(
 		{
-			...workflow,
-			withIdentity: async (_operation, action) =>
-				action({
-					serverUrl: origin,
-					privateKey: (await generatePrivateKey()).privateKey,
-					publicKey: "",
-					key: await loadKey((await generatePrivateKey()).privateKey),
-				}),
+			subscribe: session.subscribe,
+			identity: () => ({
+				serverUrl: origin,
+				privateKey: testKeyDocument,
+				publicKey: "",
+				key: testKey(),
+			}),
 			importPairing: async () => false,
 		},
 		{
@@ -674,3 +646,61 @@ for (const step of [2, 3, 4, 5]) {
 		assert.deepEqual(get(f.receiverState).privateKey, key.privateKey);
 	});
 }
+
+test("session invalidation after saving prevents a late acknowledgment", async (t) => {
+	const entered = deferred();
+	const finish = deferred();
+	const f = fixture(t, undefined, {
+		crypto: () => {
+			const crypto = createPairingCrypto();
+			return {
+				...crypto,
+				async acknowledge() {
+					entered.resolve();
+					await finish.promise;
+					return crypto.acknowledge();
+				},
+			};
+		},
+	});
+	const key = await generatePrivateKey();
+	f.senderState.update((value) => ({ ...value, ...key }));
+	const sending = f.sender.send();
+	await until(() => Boolean(get(f.sender).code));
+	const receiving = f.receiver.receive(get(f.sender).code, origin);
+	await until(() => get(f.sender).approval);
+	f.sender.approve();
+	await entered.promise;
+	assert.deepEqual(get(f.receiverState).privateKey, key.privateKey);
+	f.receiverState.update((value) => ({
+		...value,
+		unlocked: false,
+		privateKey: "",
+		epoch: value.epoch + 1,
+	}));
+	assert.equal(get(f.receiver).active, false);
+	assert.match(get(f.receiver).status, /Library or server changed/);
+	finish.resolve();
+	assert.equal(await receiving, true);
+	assert.equal(f.transcript.length, 4);
+	assert.equal(get(f.receiver).verificationCode, "");
+	f.sender.cancel();
+	assert.equal(await sending, false);
+});
+
+test("failed receiver import does not acknowledge or report a connection", async (t) => {
+	const f = fixture(t, async () => false);
+	const key = await generatePrivateKey();
+	f.senderState.update((value) => ({ ...value, ...key }));
+	const sending = f.sender.send();
+	await until(() => Boolean(get(f.sender).code));
+	const receiving = f.receiver.receive(get(f.sender).code, origin);
+	await until(() => get(f.sender).approval);
+	f.sender.approve();
+	assert.equal(await receiving, false);
+	assert.equal(f.transcript.length, 4);
+	assert.equal(get(f.receiverState).configured, false);
+	assert.match(get(f.receiver).status, /Could not save/);
+	f.sender.cancel();
+	assert.equal(await sending, false);
+});

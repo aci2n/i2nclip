@@ -206,8 +206,6 @@ test("external password changes cancel sessions, clear keys and require independ
 	assert.equal(await first.initialize(password), true);
 	assert.equal(await first.create({ serverUrl, otc: "invite" }), true);
 	assert.equal(await second.unlock(password), true);
-	const operation = second.operation();
-	t.after(operation.dispose);
 	const signal = second.signal;
 	first.lock();
 	assert.equal(get(second).unlocked, true);
@@ -219,7 +217,6 @@ test("external password changes cancel sessions, clear keys and require independ
 	events.dispatchEvent(storageEvent(local));
 	assert.equal(get(second).status, "locked");
 	assert.equal(get(second).privateKey, "");
-	assert.equal(operation.signal.aborted, true);
 	assert.equal(signal.aborted, true);
 	assert.throws(() => second.credentials(), /Unlock/);
 	assert.equal(await second.unlock(password), false);
@@ -259,4 +256,35 @@ test("a concurrent record change prevents stale encrypted writes even before not
 	encrypted.resolve(new ArrayBuffer(32));
 	await rejected;
 	assert.equal(local.getItem("i2nclip.identity"), "another tab's record");
+});
+
+test("paired imports validate keys and expose identity only while ready", async (t) => {
+	const f = await fixture(t);
+	assert.throws(() => f.session.identity(), /Unlock/);
+	const { privateKey } = await generatePrivateKey();
+	const value = {
+		server_url: serverUrl,
+		private_key: privateKey,
+		public_key: privateKey.public_key,
+		signal: new AbortController().signal,
+	};
+	assert.equal(
+		await f.session.importPairing({ ...value, public_key: new Uint8Array(32) }),
+		false,
+	);
+	assert.equal(get(f.session).configured, false);
+	assert.equal(
+		await f.session.importPairing({ ...value, signal: AbortSignal.abort() }),
+		false,
+	);
+	assert.equal(get(f.session).configured, false);
+	const previousSignal = f.session.signal;
+	assert.equal(await f.session.importPairing(value), true);
+	assert.equal(previousSignal.aborted, true);
+	assert.deepEqual(f.session.identity().privateKey, privateKey);
+	assert.equal(await f.session.importPairing(value), false);
+	f.session.lock();
+	assert.throws(() => f.session.identity(), /Unlock/);
+	assert.equal(await f.session.unlock(password), true);
+	assert.deepEqual(f.session.identity().privateKey, privateKey);
 });

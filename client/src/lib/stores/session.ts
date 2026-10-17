@@ -14,8 +14,6 @@ import {
 	validateIdentity,
 } from "../protocol/recovery.ts";
 import { checkServer } from "../protocol/server.ts";
-import type { OperationOptions, SessionOperation } from "./identity-context.ts";
-import { createSessionContext } from "./identity-context.ts";
 export interface SessionSnapshot {
 	configured: boolean;
 	unlocked: boolean;
@@ -36,19 +34,14 @@ export interface IdentityCredentials extends Credentials {
 export interface PairedIdentity extends Identity {
 	public_key: Uint8Array;
 	signal: AbortSignal;
-	onInvalidated?: () => void;
 }
 export interface PairingSessionState extends SessionSnapshot {
 	serverUrl: string;
 	error: string;
 }
 export interface PairingSession extends Readable<PairingSessionState> {
-	operation(options?: OperationOptions): SessionOperation;
-	withIdentity<T>(
-		operation: SessionOperation,
-		work: (credentials: IdentityCredentials) => T | Promise<T>,
-	): Promise<T>;
-	importPairing(value: PairedIdentity): Promise<SessionOperation | false>;
+	identity(): IdentityCredentials;
+	importPairing(value: PairedIdentity): Promise<boolean>;
 }
 export type Session = ReturnType<typeof createSession>;
 // Invalidation aborts the previous signal before publishing the new epoch.
@@ -83,12 +76,10 @@ export function createSession({
 		busy: false,
 		error: "",
 	});
-	const context = createSessionContext(state);
 	function invalidate() {
 		epoch++;
 		controller.abort();
 		controller = new AbortController();
-		context.invalidate();
 	}
 	function publish(patch: {
 		status?: SessionState["status"];
@@ -130,8 +121,9 @@ export function createSession({
 		const own = epoch;
 		const signal = controller.signal;
 		try {
-			const changedEpoch = await work(signal);
-			if (changedEpoch !== epoch) {
+			// Applying an identity deliberately invalidates the old signal.
+			const committedEpoch = await work(signal);
+			if (committedEpoch !== epoch) {
 				signal.throwIfAborted();
 			}
 			return !disposed;
@@ -186,28 +178,18 @@ export function createSession({
 		get epoch() {
 			return epoch;
 		},
-		operation: context.operation,
 		credentials() {
 			const current = currentIdentity();
 			return { serverUrl: current.identity.server_url, key: current.key };
 		},
-		async withIdentity<T>(
-			operation: SessionOperation,
-			work: (credentials: IdentityCredentials) => T | Promise<T>,
-		) {
-			if (!context.owns(operation)) {
-				throw new Error("Invalid session operation.");
-			}
-			operation.signal.throwIfAborted();
+		identity(): IdentityCredentials {
 			const current = currentIdentity();
-			const result = await work({
+			return {
 				serverUrl: current.identity.server_url,
 				key: current.key,
 				privateKey: current.identity.private_key,
 				publicKey: current.key.registrationKey,
-			});
-			operation.signal.throwIfAborted();
-			return result;
+			};
 		},
 		initialize: (password: string) =>
 			action(async (signal) => {
@@ -275,7 +257,7 @@ export function createSession({
 				return apply(next, signal);
 			}),
 		async importPairing(value: PairedIdentity) {
-			const success = await action(async (signal) => {
+			return action(async (signal) => {
 				if (!get(state).unlocked || library) {
 					throw new Error(
 						"A library is already configured or the client is locked.",
@@ -288,12 +270,6 @@ export function createSession({
 				value.signal.throwIfAborted();
 				return apply(next, AbortSignal.any([signal, value.signal]));
 			});
-			return success
-				? context.operation({
-						signal: value.signal,
-						onInvalidated: value.onInvalidated,
-					})
-				: false;
 		},
 		changePassword: (current: string, password: string) =>
 			action(async (signal) => {

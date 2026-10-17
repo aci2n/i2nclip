@@ -1,15 +1,8 @@
-import type { Readable } from "svelte/store";
-import { get } from "svelte/store";
 import type { Media } from "../src/lib/api.ts";
 import { loadKey } from "../src/lib/protocol/crypto.ts";
 import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
 import { decode } from "../src/lib/protocol/msgpack.ts";
 import { bytes, document } from "../src/lib/protocol/value.ts";
-import type {
-	IdentitySnapshot,
-	SessionOperation,
-} from "../src/lib/stores/identity-context.ts";
-import { createSessionContext } from "../src/lib/stores/identity-context.ts";
 export function mediaData(value: Partial<Media> & { id: string }): Media {
 	return {
 		createdAt: 0,
@@ -41,22 +34,3 @@ export function deferred<T = void>() {
 	return Promise.withResolvers<T>();
 }
 export const tick = () => new Promise((resolve) => setImmediate(resolve));
-
-// Pairing workflow tests use an in-memory identity context.
-export function workflowSession<
-	T extends IdentitySnapshot,
-	S extends Readable<T>,
->(store: S) {
-	const context = createSessionContext(store);
-	return {
-		...store,
-		operation: context.operation,
-		async withIdentity<R>(
-			operation: SessionOperation,
-			action: (identity: T) => R | Promise<R>,
-		) {
-			operation.signal.throwIfAborted();
-			return action(get(store));
-		},
-	};
-}
