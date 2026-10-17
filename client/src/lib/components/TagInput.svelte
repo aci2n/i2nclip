@@ -13,7 +13,7 @@ interface Props {
 	oncommit: (tag: string) => unknown;
 	onemptybackspace?: () => unknown;
 	onescape?: () => unknown;
-	onready?: (input: HTMLInputElement | undefined) => unknown;
+	onready?: (input: HTMLInputElement) => unknown;
 }
 
 import { tick } from "svelte";
@@ -44,7 +44,9 @@ const matches = $derived(
 		: [],
 );
 $effect(() => {
-	onready(input);
+	if (input) {
+		onready(input);
+	}
 });
 function commit(tag: string) {
 	if (disabled || readonly) {

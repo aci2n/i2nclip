@@ -26,7 +26,7 @@ function fixture(
 		},
 		credentials: () => ({
 			serverUrl: "https://clip.example",
-			key: testKey,
+			key: testKey(),
 		}),
 		invalidate() {
 			controller.abort();

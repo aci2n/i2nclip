@@ -18,7 +18,7 @@ function fixture(t: test.TestContext, { busy = false } = {}) {
 			return get(state).epoch;
 		},
 		signal: new AbortController().signal,
-		credentials: () => ({ serverUrl: "https://clip.example", key: testKey }),
+		credentials: () => ({ serverUrl: "https://clip.example", key: testKey() }),
 	};
 	const calls: {
 		signal?: AbortSignal;

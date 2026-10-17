@@ -136,7 +136,7 @@ export async function upload({
 	if (bytes.length > MAX_FILE_BYTES) {
 		throw new Error("File is larger than 32 MB.");
 	}
-	const metadata: Metadata = {
+	const metadata = {
 		...extra,
 		name: cleanName(name),
 		content_type: sniffContentType(bytes, contentType || ""),
@@ -144,8 +144,8 @@ export async function upload({
 		tags: uniqueTags(tags),
 	};
 	metadata.tags = uniqueTags([
-		...(metadata.tags || []),
-		...automaticTags(metadata.name || "", metadata.content_type || ""),
+		...metadata.tags,
+		...automaticTags(metadata.name, metadata.content_type),
 	]);
 	if (image) {
 		metadata.image = image;

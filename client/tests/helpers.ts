@@ -5,10 +5,12 @@ import { loadKey } from "../src/lib/protocol/crypto.ts";
 import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
 import { decode } from "../src/lib/protocol/msgpack.ts";
 import { bytes, document } from "../src/lib/protocol/value.ts";
-import type { SessionOperation } from "../src/lib/stores/identity-context.ts";
+import type {
+	IdentitySnapshot,
+	SessionOperation,
+} from "../src/lib/stores/identity-context.ts";
 import { createSessionContext } from "../src/lib/stores/identity-context.ts";
-import type { SessionState } from "../src/lib/stores/session.ts";
-export function mediaData(value: Pick<Media, "id"> & Partial<Media>): Media {
+export function mediaData(value: Partial<Media> & { id: string }): Media {
 	return {
 		createdAt: 0,
 		bytes: 0,
@@ -26,25 +28,23 @@ export function requestDocument(options: RequestInit): Record<string, unknown> {
 	return document(decode(requestBody(options)));
 }
 
-export const testKey = await loadKey((await generatePrivateKey()).privateKey);
+// CryptoKey handles are immutable. Each fixture gets its own mutable byte view.
+const sharedKey = await loadKey((await generatePrivateKey()).privateKey);
+export function testKey() {
+	return Object.freeze({
+		...sharedKey,
+		publicKey: sharedKey.publicKey.slice(),
+	});
+}
 
 export function deferred<T = void>() {
-	let resolve!: (value: T | PromiseLike<T>) => void;
-	let reject!: (reason?: unknown) => void;
-	const promise = new Promise<T>((yes, no) => {
-		resolve = yes;
-		reject = no;
-	});
-	return { promise, resolve, reject };
+	return Promise.withResolvers<T>();
 }
 export const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 // Pairing workflow tests use an in-memory identity context.
 export function workflowSession<
-	T extends Pick<
-		SessionState,
-		"serverUrl" | "publicKey" | "privateKey" | "epoch" | "configured"
-	>,
+	T extends IdentitySnapshot,
 	S extends Readable<T>,
 >(store: S) {
 	const context = createSessionContext(store);

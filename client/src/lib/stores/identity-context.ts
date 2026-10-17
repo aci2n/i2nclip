@@ -1,11 +1,11 @@
 import type { Readable } from "svelte/store";
 import { get } from "svelte/store";
-import type { SessionState } from "./session.ts";
+import type { PrivateKeyDocument } from "../protocol/identity.ts";
 
 export interface IdentitySnapshot {
 	serverUrl: string;
 	publicKey: string;
-	privateKey: SessionState["privateKey"];
+	privateKey: PrivateKeyDocument | "";
 	epoch: number;
 	configured: boolean;
 }

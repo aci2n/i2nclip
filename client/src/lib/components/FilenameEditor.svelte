@@ -2,7 +2,7 @@
 interface Props {
 	name: string;
 	disabled?: boolean;
-	onsave: (name: string) => Promise<boolean | undefined>;
+	onsave: (name: string) => Promise<boolean>;
 }
 
 import { tick } from "svelte";

@@ -9,7 +9,13 @@ import { parsePrivateKey } from "./identity.ts";
 import { decode, encode } from "./msgpack.ts";
 import { normalizeTag, parseTagList } from "./tags.ts";
 import { bytes, document } from "./value.ts";
-export type LoadedKey = Awaited<ReturnType<typeof loadKey>>;
+export interface LoadedKey {
+	readonly privateCryptoKey: CryptoKey;
+	readonly encryptionKey: CryptoKey;
+	readonly tagKey: CryptoKey;
+	readonly publicKey: Uint8Array<ArrayBuffer>;
+	readonly registrationKey: string;
+}
 interface RequestContext {
 	origin: string;
 	ts: number;
@@ -47,7 +53,7 @@ export function metaAad(id: string) {
  * Returns the public key to register on the server, plus handles the
  * page can pass back into encrypt/sign without parsing again.
  */
-export async function loadKey(privateKey: unknown) {
+export async function loadKey(privateKey: unknown): Promise<LoadedKey> {
 	const parsed = parsePrivateKey(privateKey);
 	try {
 		const { privateCryptoKey } = await materialFromSeed(

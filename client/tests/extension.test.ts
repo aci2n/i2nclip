@@ -24,9 +24,11 @@ import type {
 } from "../extension/types.d.ts";
 import { MAX_FILE_BYTES as WEB_MAX_FILE_BYTES } from "../src/lib/api.ts";
 import type { Metadata } from "../src/lib/protocol/meta-plain.ts";
-import type { CaptureEvent } from "../src/lib/stores/extension.ts";
+import type {
+	CaptureEvent,
+	CaptureSessionState,
+} from "../src/lib/stores/extension.ts";
 import { createExtensionReceiver } from "../src/lib/stores/extension.ts";
-import type { SessionState } from "../src/lib/stores/session.ts";
 import { assertPresent } from "./assert.ts";
 import { deferred, tick } from "./helpers.ts";
 
@@ -84,14 +86,10 @@ test("background startup restores the menu without an install event", async () =
 });
 function app(
 	t: test.TestContext,
-	patch: Partial<
-		Pick<SessionState, "status" | "unlocked" | "configured" | "busy" | "epoch">
-	> = {},
+	patch: Partial<CaptureSessionState> = {},
 	result = Promise.resolve(true),
 ) {
-	const sessionState = writable<
-		Pick<SessionState, "status" | "unlocked" | "configured" | "busy" | "epoch">
-	>({
+	const sessionState = writable<CaptureSessionState>({
 		status: "unlocked",
 		unlocked: true,
 		configured: true,

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createPairingCrypto } from "../src/lib/pairing/crypto.ts";
 import { pairingCrypto, pairingRelay } from "../src/lib/pairing/service.ts";
 import { deferred, testKey, tick } from "./helpers.ts";
 import { documentResponse } from "./msgpack-response.ts";
@@ -58,35 +59,39 @@ test("pairing crypto adapter serializes calls, rejects disposal immediately and 
 			"Pairing authentication failed. Create a new code.",
 	);
 });
-test("disposing an adapter rejects while key derivation is still in flight", async (t) => {
-	const sender = pairingCrypto();
-	const receiver = pairingCrypto();
-	t.after(sender.dispose);
-	t.after(receiver.dispose);
-	const context = "context";
-	const secret = "W4TXN9RC";
-	await sender.senderSetup({ secret, context });
-	const first = await receiver.receiverStart({ secret });
-	const second = await sender.senderResponse({ message: first });
-	const entered = deferred();
-	const result = deferred<ArrayBuffer>();
-	t.mock.method(crypto.subtle, "deriveBits", () => {
-		entered.resolve();
-		return result.promise;
+for (const factory of [pairingCrypto, createPairingCrypto]) {
+	test(`${factory.name} stays disposed after key derivation finishes`, async (t) => {
+		const sender = factory();
+		const receiver = factory();
+		t.after(sender.dispose);
+		t.after(receiver.dispose);
+		const context = "context";
+		const secret = "W4TXN9RC";
+		await sender.senderSetup({ secret, context });
+		const first = await receiver.receiverStart({ secret });
+		const second = await sender.senderResponse({ message: first });
+		const entered = deferred();
+		const result = deferred<ArrayBuffer>();
+		t.after(() => result.resolve(new Uint8Array(5).buffer));
+		t.mock.method(crypto.subtle, "deriveBits", () => {
+			entered.resolve();
+			return result.promise;
+		});
+		const finishing = receiver.receiverFinish({
+			message: second,
+			context,
+		});
+		await entered.promise;
+		receiver.dispose();
+		const rejected = assert.rejects(finishing, { name: "AbortError" });
+		result.resolve(new Uint8Array(5).buffer);
+		await rejected;
+		await tick();
+		await assert.rejects(receiver.verificationCode(), {
+			name: "AbortError",
+		});
 	});
-	const finishing = receiver.receiverFinish({
-		message: second,
-		context,
-	});
-	await entered.promise;
-	receiver.dispose();
-	await assert.rejects(finishing, { name: "AbortError" });
-	result.resolve(new Uint8Array(5).buffer);
-	await tick();
-	await assert.rejects(receiver.verificationCode(), {
-		name: "AbortError",
-	});
-});
+}
 test("pairing relay accepts a newly created room with no message and cancellation has no document", async (t) => {
 	const snapshot = {
 		v: 1,
@@ -109,7 +114,7 @@ test("pairing relay accepts a newly created room with no message and cancellatio
 		"https://clip.example",
 		new AbortController().signal,
 	);
-	const room = await relay.create(testKey);
+	const room = await relay.create(testKey());
 	assert.deepEqual(room, snapshot);
 	assert.equal(await relay.cancel(room), undefined);
 });

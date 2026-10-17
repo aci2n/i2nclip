@@ -207,7 +207,7 @@ export function createLibrary(
 			void search(get(state).query);
 		}
 	});
-	function reveal(id: string, opener?: HTMLElement) {
+	async function reveal(id: string, opener?: HTMLElement) {
 		const row = cards.get(id);
 		if (
 			!row ||
@@ -243,9 +243,16 @@ export function createLibrary(
 		refresh: () => search(get(state).query),
 		reveal,
 		closePreview,
-		download: (id: string) => cards.get(id)?.media.download(),
+		async download(id: string) {
+			const row = cards.get(id);
+			return row ? row.media.download() : false;
+		},
 		async updateMetadata(id: string, patch: Metadata) {
-			const saved = await cards.get(id)?.media.updateMetadata(patch);
+			const row = cards.get(id);
+			if (!row) {
+				return false;
+			}
+			const saved = await row.media.updateMetadata(patch);
 			if (saved) {
 				void onChange();
 			}

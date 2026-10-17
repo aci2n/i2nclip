@@ -5,9 +5,8 @@ import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
 import { createPersistence } from "../persistence.ts";
 import { bytesToB64url } from "../protocol/bytes.ts";
-import type { LoadedKey } from "../protocol/crypto.ts";
 import { generatePrivateKey } from "../protocol/identity.ts";
-import type { Identity } from "../protocol/recovery.ts";
+import type { Identity, LoadedIdentity } from "../protocol/recovery.ts";
 import {
 	exportRecovery,
 	MAX_RECOVERY_BYTES,
@@ -25,13 +24,9 @@ export interface SessionSnapshot {
 }
 export interface SessionState extends SessionSnapshot {
 	status: "new" | "locked" | "unlocked";
-	configured: boolean;
-	unlocked: boolean;
 	serverUrl: string;
 	privateKey: Identity["private_key"] | "";
 	publicKey: string;
-	epoch: number;
-	busy: boolean;
 	error: string;
 }
 export interface IdentityCredentials extends Credentials {
@@ -71,8 +66,7 @@ export function createSession({
 	persistence?: ReturnType<typeof createPersistence>;
 	http?: IdentityApi;
 } = {}) {
-	let identity: Identity | null = null;
-	let key: LoadedKey | null = null;
+	let library: LoadedIdentity | null = null;
 	let controller = new AbortController();
 	let epoch = 0;
 	let disposed = false;
@@ -108,9 +102,9 @@ export function createSession({
 	function publish(patch: Partial<SessionState> = {}) {
 		state.update((v) => ({
 			...v,
-			configured: Boolean(identity),
-			serverUrl: identity?.server_url || defaultServerUrl,
-			privateKey: identity?.private_key || "",
+			configured: Boolean(library),
+			serverUrl: library?.identity.server_url || defaultServerUrl,
+			privateKey: library?.identity.private_key || "",
 			epoch,
 			...patch,
 		}));
@@ -118,7 +112,7 @@ export function createSession({
 	async function action(
 		work: (
 			signal: AbortSignal,
-		) => Promise<number | false | undefined> | number | false | undefined,
+		) => Promise<number | undefined> | number | undefined,
 	) {
 		if (disposed || get(state).busy) {
 			return false;
@@ -143,40 +137,27 @@ export function createSession({
 			}
 		}
 	}
-	async function apply(
-		value: {
-			identity: Identity;
-			key: LoadedKey;
-		} | null,
-		signal: AbortSignal,
-	) {
-		const next = value?.identity || null;
+	async function apply(value: LoadedIdentity | null, signal: AbortSignal) {
+		const next = value ? value.identity : null;
 		signal.throwIfAborted();
 		await persistence.save(next);
 		signal.throwIfAborted();
 		invalidate();
-		identity = next;
-		key = value?.key || null;
+		library = value;
 		publish({
 			status: "unlocked",
 			unlocked: true,
-			publicKey: key?.registrationKey || "",
+			publicKey: library?.key.registrationKey || "",
 			busy: false,
 			error: "",
 		});
 		return epoch;
 	}
 	function currentIdentity() {
-		if (
-			!identity ||
-			!key ||
-			!get(state).unlocked ||
-			get(state).busy ||
-			disposed
-		) {
+		if (!library || !get(state).unlocked || get(state).busy || disposed) {
 			throw new Error("Unlock your library first.");
 		}
-		return { identity, key };
+		return library;
 	}
 	const session = {
 		subscribe: state.subscribe,
@@ -220,19 +201,17 @@ export function createSession({
 				const value = await persistence.unlock(password);
 				const next = value ? await validateIdentity(value) : null;
 				signal.throwIfAborted();
-				identity = next?.identity || null;
-				key = next?.key || null;
+				library = next;
 				publish({
 					status: "unlocked",
 					unlocked: true,
-					publicKey: key?.registrationKey || "",
+					publicKey: library?.key.registrationKey || "",
 				});
 			}),
 		lock() {
 			invalidate();
 			persistence.lock();
-			identity = null;
-			key = null;
+			library = null;
 			publish({
 				status: "locked",
 				unlocked: false,
@@ -243,7 +222,7 @@ export function createSession({
 		},
 		create: ({ serverUrl, otc }: { serverUrl: string; otc: string }) =>
 			action(async (signal) => {
-				if (!get(state).unlocked || identity) {
+				if (!get(state).unlocked || library) {
 					throw new Error(
 						"Forget the current library before creating another.",
 					);
@@ -264,7 +243,7 @@ export function createSession({
 			}),
 		restore: (file: Blob, password: string) =>
 			action(async (signal) => {
-				if (!get(state).unlocked || identity) {
+				if (!get(state).unlocked || library) {
 					throw new Error(
 						"Forget the current library before restoring another.",
 					);
@@ -290,7 +269,7 @@ export function createSession({
 			}),
 		async importPairing(value: PairedIdentity) {
 			const success = await action(async (signal) => {
-				if (!get(state).unlocked || identity) {
+				if (!get(state).unlocked || library) {
 					throw new Error(
 						"A library is already configured or the client is locked.",
 					);
@@ -299,7 +278,7 @@ export function createSession({
 				if (next.key.registrationKey !== bytesToB64url(value.public_key)) {
 					throw new Error("Invalid paired identity.");
 				}
-				value.signal?.throwIfAborted();
+				value.signal.throwIfAborted();
 				return apply(next, AbortSignal.any([signal, value.signal]));
 			});
 			return success
@@ -322,8 +301,7 @@ export function createSession({
 			try {
 				persistence.reset();
 				invalidate();
-				identity = null;
-				key = null;
+				library = null;
 				publish({
 					status: "new",
 					unlocked: false,
@@ -339,10 +317,10 @@ export function createSession({
 		},
 		downloadRecovery: (password: string) =>
 			action(async (signal) => {
-				if (!identity || !key || !get(state).unlocked) {
+				if (!library || !get(state).unlocked) {
 					throw new Error("Unlock your library first.");
 				}
-				const bytes = await exportRecovery(identity, password);
+				const bytes = await exportRecovery(library.identity, password);
 				signal.throwIfAborted();
 				const url = URL.createObjectURL(
 					new Blob([bytes], { type: "application/msgpack" }),
@@ -363,8 +341,7 @@ export function createSession({
 			disposed = true;
 			invalidate();
 			persistence.lock();
-			identity = null;
-			key = null;
+			library = null;
 			publish({
 				status: "locked",
 				unlocked: false,

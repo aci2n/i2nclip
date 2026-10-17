@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get, writable } from "svelte/store";
+import type { LibraryApi } from "../src/lib/api.ts";
 import * as api from "../src/lib/api.ts";
 import { createLibrary } from "../src/lib/stores/library.ts";
+import type { MediaOptions } from "../src/lib/stores/media-item.ts";
 import { createMediaItem } from "../src/lib/stores/media-item.ts";
 import { assertPresent } from "./assert.ts";
 import { deferred, mediaData, testKey, tick } from "./helpers.ts";
@@ -25,7 +27,7 @@ function session() {
 		},
 		credentials: () => ({
 			serverUrl: "https://clip.example",
-			key: testKey,
+			key: testKey(),
 		}),
 		configure() {
 			state.update((v) => ({ ...v, configured: true }));
@@ -44,17 +46,18 @@ function session() {
 }
 function fixture(
 	t: test.TestContext,
-	options: Omit<NonNullable<Parameters<typeof createLibrary>[1]>, "http"> & {
-		http?: Partial<
-			NonNullable<NonNullable<Parameters<typeof createLibrary>[1]>["http"]>
-		>;
+	options: {
+		http?: Partial<LibraryApi>;
+		mediaOptions?: MediaOptions;
+		onChange?: () => unknown;
+		confirm?: (message: string) => boolean;
 	} = {},
 ) {
 	const owner = session();
 	const library = createLibrary(owner, {
 		confirm: () => true,
 		...options,
-		http: { ...api, ...api, ...options.http },
+		http: { ...api, ...options.http },
 	});
 	t.after(library.dispose);
 	return { owner, library };

@@ -4,7 +4,7 @@ interface Props {
 	suggestions?: string[];
 	disabled?: boolean;
 	name: string;
-	onsave: (tags: string[]) => Promise<boolean | undefined>;
+	onsave: (tags: string[]) => Promise<boolean>;
 }
 
 import { tick } from "svelte";

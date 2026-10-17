@@ -23,7 +23,7 @@ function session() {
 		},
 		credentials: () => ({
 			serverUrl: "https://clip.example",
-			key: testKey,
+			key: testKey(),
 		}),
 		configure() {
 			state.update((v) => ({ ...v, configured: true }));

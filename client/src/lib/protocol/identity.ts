@@ -1,5 +1,10 @@
 import { b64urlToBytes } from "./bytes.ts";
 import { document, string } from "./value.ts";
+export interface PrivateKeyDocument {
+	v: 1;
+	seed: Uint8Array<ArrayBuffer>;
+	public_key: Uint8Array<ArrayBuffer>;
+}
 // The private-key document owns its binary seed and public key.
 
 export function parsePrivateKey(input: unknown) {
@@ -21,7 +26,7 @@ export async function generatePrivateKey() {
 		"sign",
 	]);
 	const jwk = await crypto.subtle.exportKey("jwk", pair.privateKey);
-	const privateKey = {
+	const privateKey: PrivateKeyDocument = {
 		v: 1,
 		seed: b64urlToBytes(string(jwk.d)),
 		public_key: b64urlToBytes(string(jwk.x)),

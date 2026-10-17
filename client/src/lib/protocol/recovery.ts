@@ -1,13 +1,22 @@
+import type { LoadedKey } from "./crypto.ts";
 import { loadKey } from "./crypto.ts";
+import type { PrivateKeyDocument } from "./identity.ts";
 import { parsePrivateKey } from "./identity.ts";
 import { decode, encode } from "./msgpack.ts";
 import { passwordOpen, passwordSeal } from "./password.ts";
 import { checkServer } from "./server.ts";
 import { document, string } from "./value.ts";
-export type Identity = Awaited<ReturnType<typeof validateIdentity>>["identity"];
+export interface Identity {
+	server_url: string;
+	private_key: PrivateKeyDocument;
+}
+export interface LoadedIdentity {
+	identity: Identity;
+	key: LoadedKey;
+}
 
 export const MAX_RECOVERY_BYTES = 1024 * 1024;
-function identityDocument(input: unknown) {
+function identityDocument(input: unknown): Identity {
 	const identity = document(input);
 	if (!identity) {
 		throw new Error("Invalid library identity.");
@@ -19,7 +28,9 @@ function identityDocument(input: unknown) {
 		private_key: { v: 1, seed: parsed.seed, public_key: parsed.publicKey },
 	};
 }
-export async function validateIdentity(value: unknown) {
+export async function validateIdentity(
+	value: unknown,
+): Promise<LoadedIdentity> {
 	const identity = identityDocument(value);
 	return { identity, key: await loadKey(identity.private_key) };
 }

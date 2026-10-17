@@ -113,7 +113,7 @@ test("oversized local files are rejected before reading bytes", async () => {
 	await assert.rejects(
 		sendUpload({
 			file,
-			credentials: { serverUrl: "https://clip.example", key: testKey },
+			credentials: { serverUrl: "https://clip.example", key: testKey() },
 			signal: new AbortController().signal,
 		}),
 		/larger than 32 MB/,
@@ -125,7 +125,7 @@ test("media reuses full-content Blob URLs for preview and saving until disposal"
 		...writable({ configured: true, unlocked: true, busy: false, epoch: 0 }),
 		epoch: 0,
 		signal: controller.signal,
-		credentials: () => ({ serverUrl: "https://clip.example", key: testKey }),
+		credentials: () => ({ serverUrl: "https://clip.example", key: testKey() }),
 	};
 	const blobs = new Map();
 	const revoked: Array<string> = [];
@@ -176,7 +176,7 @@ test("text previews reuse verified content, bound decoding, save full content an
 		...writable({ configured: true, unlocked: true, busy: false, epoch: 0 }),
 		epoch: 0,
 		signal: new AbortController().signal,
-		credentials: () => ({ serverUrl: "https://clip.example", key: testKey }),
+		credentials: () => ({ serverUrl: "https://clip.example", key: testKey() }),
 	};
 	const content = new TextEncoder().encode(`${"a".repeat(256 * 1024)}tail`);
 	let reads = 0;
@@ -241,7 +241,7 @@ test("canceled text preparation cannot publish text or clear a subsequent mutati
 		...writable({ configured: true, unlocked: true, busy: false, epoch: 0 }),
 		epoch: 0,
 		signal: new AbortController().signal,
-		credentials: () => ({ serverUrl: "https://clip.example", key: testKey }),
+		credentials: () => ({ serverUrl: "https://clip.example", key: testKey() }),
 	};
 	const media = createMediaItem(
 		mediaData({

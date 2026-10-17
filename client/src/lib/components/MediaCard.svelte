@@ -8,7 +8,7 @@ interface Props {
 	onreveal: (opener: HTMLElement) => unknown;
 	ondownload: () => unknown;
 	onremove: () => unknown;
-	onupdate: (patch: Metadata) => Promise<boolean | undefined>;
+	onupdate: (patch: Metadata) => Promise<boolean>;
 }
 
 import { canPreview, fileSize, fileType, uploadedAt } from "../media/format.ts";
