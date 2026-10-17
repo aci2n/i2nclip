@@ -14,6 +14,9 @@ test("upload generates searchable ordinary tags with a compact disclosure", asyn
 	});
 	const card = page.getByRole("article");
 	await expect(card.locator(".tag-text")).toHaveCount(6);
+	await expect(
+		card.getByRole("button", { name: "Show all tags", exact: true }),
+	).toHaveText("+34 more");
 	await card
 		.getByRole("button", { name: "Show all tags", exact: true })
 		.click();

@@ -70,17 +70,41 @@ async function persist(next: string[], clear = false) {
 			onremove={() => persist(tags.filter((existing) => existing !== tag))}
 		/>
 	{/each}
-	{#if tags.length > 6}
-		<button
-			type="button"
-			class="disclosure"
-			aria-expanded={expanded}
-			onclick={() => (expanded = !expanded)}
-		>
-			<span aria-hidden="true">{expanded ? "▴" : "▾"}</span>
-			{expanded ? "Show fewer tags" : "Show all tags"}
-		</button>
-	{/if}
+	<span class="tag-actions">
+		{#if tags.length > 6}
+			<button
+				type="button"
+				class="disclosure"
+				aria-label={expanded ? "Show fewer tags" : "Show all tags"}
+				aria-expanded={expanded}
+				onclick={() => (expanded = !expanded)}
+			>
+				{expanded ? "Fewer tags" : `+${tags.length - 6} more`}
+			</button>
+		{/if}
+		{#if !editing}
+			<button
+				bind:this={button}
+				class="chip"
+				type="button"
+				aria-label={`Add tag to ${name}`}
+				disabled={locked}
+				onclick={open}
+			>
+				<svg
+					viewBox="0 0 24 24"
+					aria-hidden="true"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<path d="M12 5v14M5 12h14" />
+				</svg>
+			</button>
+		{/if}
+	</span>
 	{#if editing}
 		<form
 			class="tags"
@@ -148,27 +172,6 @@ async function persist(next: string[], clear = false) {
 				</button>
 			</div>
 		</form>
-	{:else}
-		<button
-			bind:this={button}
-			class="chip"
-			type="button"
-			aria-label={`Add tag to ${name}`}
-			disabled={locked}
-			onclick={open}
-		>
-			<svg
-				viewBox="0 0 24 24"
-				aria-hidden="true"
-				fill="none"
-				stroke="currentColor"
-				stroke-width="2"
-				stroke-linecap="round"
-				stroke-linejoin="round"
-			>
-				<path d="M12 5v14M5 12h14" />
-			</svg>
-		</button>
 	{/if}
 </fieldset>
 
@@ -185,15 +188,18 @@ async function persist(next: string[], clear = false) {
 	min-height: 2rem;
 	font-size: 0.85rem;
 }
+.tag-actions {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+}
 .disclosure {
 	min-height: 2rem;
 	padding: 0.125rem 0.375rem;
 	gap: 0.25rem;
 	background: transparent;
-	color: var(--accent);
+	color: var(--muted);
 	font-size: inherit;
-	text-decoration: underline;
-	text-underline-offset: 0.25rem;
 }
 .chip {
 	display: inline-flex;
@@ -243,7 +249,7 @@ async function persist(next: string[], clear = false) {
 		min-height: 3rem;
 		font-size: 1rem;
 	}
-	.tag-list > button,
+	.tag-actions button,
 	.entry button {
 		min-width: 3rem;
 	}

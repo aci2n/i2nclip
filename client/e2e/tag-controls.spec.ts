@@ -77,6 +77,9 @@ test("tag controls fit desktop search and keep consistent alignment when wrapped
 	const card = page.getByRole("article");
 	await expect(card).toHaveCount(1);
 	await matchingCardControls(card, false);
+	await expect(
+		card.getByRole("button", { name: "Show all tags", exact: true }),
+	).toHaveText(/^\+\d+ more$/);
 	const visibleTags = await card
 		.getByRole("button", { name: /^Search for tag / })
 		.count();
