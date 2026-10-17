@@ -7,12 +7,12 @@ from `extension/` to JavaScript in `dist/extension/`. Installation and configura
 
 ## Ownership
 
-`src/main.ts` mounts the app through a `data-app` element reference. The root acquires an origin-scoped Web Lock for tab admission before reading saved state or creating application stores. Restored pages reacquire admission and start a fresh locked session.
+`src/main.ts` mounts the app through a `data-app` element reference. Each tab unlocks independently. Saved identity changes cancel other sessions and require unlocking again; storage events and pageshow checks handle invalidation without cross-tab locks.
 
 `views/Application.svelte` owns one session, library, uploads, and pairing store. The library survives navigation between Library and Settings. Views subscribe to stores, control workflows, and pass ordinary state and callback props to isolated components. Components may hold temporary input/focus state; they never receive or import stores. HTML IDs are prohibited. Controls use nested labels and browser tests use accessible names.
 
 The application also owns the extension receiver store. It accepts files only
-after tab admission, delegates uploads to the root-owned uploads store, and holds at most one file
+in each tab, delegates uploads to the root-owned uploads store, and holds at most one file
 hidden in memory while locked, automatically submitting it after unlock. Session invalidation and root disposal discard that file.
 The extension sends a native File through a document-owned injected runtime
 listener and window.postMessage, with no base64 conversion.

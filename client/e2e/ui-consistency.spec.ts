@@ -52,7 +52,7 @@ async function consistentControls(page: Page, touch: boolean) {
 		}
 	}
 }
-test("setup, settings, unlock and tab admission share usable controls at every width", async ({
+test("setup, settings and independently locked tabs share usable controls at every width", async ({
 	page,
 	app,
 }) => {
@@ -125,24 +125,24 @@ test("setup, settings, unlock and tab admission share usable controls at every w
 		await consistentControls(page, width < 500);
 		await shot(page, `unlock-controls-${width}`);
 	}
-	const blocked = await page.context().newPage();
+	const other = await page.context().newPage();
 	try {
-		await blocked.goto(app.origin);
+		await other.goto(app.origin);
 		await expect(
-			blocked.getByRole("button", { name: "Retry", exact: true }),
+			other.getByRole("button", { name: "Unlock", exact: true }),
 		).toBeVisible();
 		for (const width of [1100, 320, 360]) {
-			await blocked.setViewportSize({ width, height: 800 });
-			await consistentControls(blocked, width < 500);
-			const panel = await blocked.getByRole("main").boundingBox();
+			await other.setViewportSize({ width, height: 800 });
+			await consistentControls(other, width < 500);
+			const panel = await other.locator("main > section").boundingBox();
 			expect(assertPresent(panel).x).toBeGreaterThanOrEqual(15);
 			expect(
 				assertPresent(panel).x + assertPresent(panel).width,
 			).toBeLessThanOrEqual(width - 15);
-			await shot(blocked, `admission-controls-${width}`);
+			await shot(other, `other-tab-unlock-controls-${width}`);
 		}
 	} finally {
-		await blocked.close();
+		await other.close();
 	}
 });
 test("mixed media, inline filename editing and preview icons stay consistent across themes and widths", async ({

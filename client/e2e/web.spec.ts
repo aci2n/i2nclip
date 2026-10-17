@@ -190,30 +190,68 @@ test("encrypted singleton recovery, password change, reload, and forget", async 
 		await context.close();
 	}
 });
-test("a second tab is rejected and retry succeeds after owner closure", async ({
+test("tabs unlock independently and saved identity changes invalidate other sessions", async ({
 	page,
 	app,
 }) => {
 	await createLibrary(page, app);
 	const second = await page.context().newPage();
-	await second.goto(app.origin);
-	await expect(second.getByRole("alert")).toContainText(
-		"already open in another tab",
-	);
-	await expect(second.getByRole("navigation")).toHaveCount(0);
-	await page.reload();
-	await master(page);
-	await expect(
-		page.getByRole("heading", { name: "Your library", exact: true }),
-	).toBeVisible();
-	await page.close();
-	await second.getByRole("button", { name: "Retry", exact: true }).click();
-	await master(second);
-	await second.getByRole("link", { name: "Settings", exact: true }).click();
-	await expect(
-		second.getByRole("heading", { name: "Your library", exact: true }),
-	).toBeVisible();
-	await second.close();
+	try {
+		await second.goto(`${app.origin}/?page=settings`);
+		await expect(
+			second.getByRole("button", { name: "Unlock", exact: true }),
+		).toBeVisible();
+		await master(second);
+		await expect(
+			second.getByRole("heading", { name: "Your library", exact: true }),
+		).toBeVisible();
+		await page.getByRole("button", { name: "Lock", exact: true }).click();
+		await expect(
+			second.getByRole("heading", { name: "Your library", exact: true }),
+		).toBeVisible();
+		await master(page);
+		await page.getByText("Change master password", { exact: true }).click();
+		await page
+			.getByLabel("Current master password", { exact: true })
+			.fill(PASSWORD);
+		await page
+			.getByLabel("New master password", { exact: true })
+			.fill("changed-password");
+		await page
+			.getByLabel("Confirm new master password", { exact: true })
+			.fill("changed-password");
+		await page
+			.getByRole("button", { name: "Change password", exact: true })
+			.click();
+		await expect(
+			second.getByRole("button", { name: "Unlock", exact: true }),
+		).toBeVisible();
+		await shot(second, "other-tab-password-changed");
+		await second.getByLabel("Master password", { exact: true }).fill(PASSWORD);
+		await second.getByRole("button", { name: "Unlock", exact: true }).click();
+		await expect(second.getByRole("alert")).toContainText("Wrong password");
+		await second
+			.getByLabel("Master password", { exact: true })
+			.fill("changed-password");
+		await second.getByRole("button", { name: "Unlock", exact: true }).click();
+		await second.getByText("Forget this library", { exact: true }).click();
+		second.once("dialog", (dialog) => dialog.accept());
+		await second
+			.getByRole("button", { name: "Forget library", exact: true })
+			.click();
+		await expect(
+			page.getByRole("button", { name: "Unlock", exact: true }),
+		).toBeVisible();
+		await page
+			.getByLabel("Master password", { exact: true })
+			.fill("changed-password");
+		await page.getByRole("button", { name: "Unlock", exact: true }).click();
+		await expect(
+			page.getByRole("button", { name: "Create library", exact: true }),
+		).toBeVisible();
+	} finally {
+		await second.close();
+	}
 });
 test("upload failures survive navigation and files can be selected again", async ({
 	page,

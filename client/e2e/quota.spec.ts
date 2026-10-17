@@ -5,9 +5,9 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 	app,
 	context,
 }) => {
-	await createLibrary(page, app);
+	await createLibrary(page, app, 10 * 1024 ** 3);
 	const usage = page.getByLabel("Library usage");
-	await expect(usage).toContainText("Storage: 0 B of 512.0 MB");
+	await expect(usage).toContainText("Storage: 0 B of 10.0 GB");
 	await expect(usage).toContainText("Files: 0 of 10,000");
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.getByLabel("Upload", { exact: true }).setInputFiles({
@@ -17,7 +17,7 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 	});
 	await expect(page.getByRole("article")).toHaveCount(1);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
-	await expect(usage).toContainText("Storage: 1.0 MB of 512.0 MB");
+	await expect(usage).toContainText("Storage: 1.0 MB of 10.0 GB");
 	await expect(usage).toContainText("Files: 1 of 10,000");
 	await shot(page, "quota-desktop");
 	for (const width of [320, 360]) {
@@ -45,7 +45,7 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 		.click();
 	await expect(page.getByRole("article")).toHaveClass(/deleted/);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
-	await expect(usage).toContainText("Storage: 0 B of 512.0 MB");
+	await expect(usage).toContainText("Storage: 0 B of 10.0 GB");
 	await expect(usage).toContainText("Files: 0 of 10,000");
 	expect(await page.locator("[id]").count()).toBe(0);
 });

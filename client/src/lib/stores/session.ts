@@ -159,6 +159,23 @@ export function createSession({
 		}
 		return library;
 	}
+	const stopWatching = persistence.onExternalChange(() => {
+		if (disposed) {
+			return;
+		}
+		invalidate();
+		persistence.lock();
+		library = null;
+		let status: SessionState["status"] = "locked";
+		let error =
+			"Saved identity changed in another tab. Unlock this client again.";
+		try {
+			status = persistence.read() ? "locked" : "new";
+		} catch (failure) {
+			error = errorMessage(failure);
+		}
+		publish({ status, unlocked: false, publicKey: "", busy: false, error });
+	});
 	const session = {
 		subscribe: state.subscribe,
 		get signal() {
@@ -339,6 +356,7 @@ export function createSession({
 				return;
 			}
 			disposed = true;
+			stopWatching();
 			invalidate();
 			persistence.lock();
 			library = null;

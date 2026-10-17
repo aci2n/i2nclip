@@ -1,10 +1,12 @@
 # Client session ownership
 
-The web app admits one tab per origin with a lifetime Web Lock before reading
-saved state or creating application stores. Other tabs show a retry screen.
-Pagehide disposes workflows before releasing admission; restored pages reacquire
-admission and start fresh locked sessions.
-
+Each web tab owns an independent session and unlocks separately. A change to the
+saved identity or master password invalidates other tabs, clears their loaded
+keys, and cancels pending work. Those tabs must unlock again. Local Lock affects
+only its own tab. Persistence listens for identity storage changes and rechecks
+on pageshow; listeners are removed when the session ends. Stale async writes are
+rejected by comparing the current record before writing. There are no cross-tab
+locks or shared unlocked keys.
 The root application view owns session, library, uploads, and pairing stores
 across navigation. Views subscribe and pass plain values and callbacks to
 components. Components own only presentation state and have no store access.

@@ -25,7 +25,14 @@ export function fileSize(bytes?: number) {
 	if (bytes < 1024 * 1024) {
 		return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KB`;
 	}
-	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	const units = ["MB", "GB", "TB", "PB", "EB"];
+	let size = bytes / (1024 * 1024);
+	let unit = 0;
+	while (size >= 1024 && unit < units.length - 1) {
+		size /= 1024;
+		unit++;
+	}
+	return `${size.toFixed(1)} ${units[unit]}`;
 }
 
 export function uploadedAt(seconds: number) {

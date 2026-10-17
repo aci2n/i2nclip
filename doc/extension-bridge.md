@@ -46,8 +46,7 @@ name at 255 characters, and choose a MIME-appropriate extension when known.
 ## Tab and upload lifecycle
 
 Reuse a matching app tab, or open an inactive regular tab when absent. Match the
-configured origin and path exactly, then probe for the receiver admitted by the
-app's Web Lock. Existing loading/blocked tabs do not cause duplicate creation.
+configured origin and path exactly, then probe for an app receiver. Existing loading tabs do not cause duplicate creation.
 Discovery has a 15-second deadline; individual probe replies have a 500 ms
 timeout and file receipt has a 5-second timeout.
 
@@ -76,7 +75,7 @@ cloning. The handler checks the extension sender and current origin/path, then
 forwards the File through a correlated same-origin `window.postMessage` request.
 No base64 conversion or compatibility protocol is used.
 
-The application-root receiver exists only after tab admission. It checks message
+The application-root receiver exists in each app tab. It checks message
 source/origin, correlation shape, File type, and file.size before acceptance,
 and delegates to the root-owned uploads store. Components receive ordinary props
 and callbacks. Accepted receipt is distinct from upload completion.

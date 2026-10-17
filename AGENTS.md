@@ -35,7 +35,7 @@
 - Search uses cancellation plus stale-result checks. Pagination belongs to the submitted search and allows only one request at a time.
 - Identity or server changes invalidate pending library operations. Upload batches run sequentially and individual failures do not stop the batch. Upload state exists only in memory.
 - A failed file must not stop the rest of a batch. Retain only failure messages, let users select failed files again through Upload, clear messages on identity/server changes, and ignore progress from completed or superseded uploads.
-- Use one lifetime Web Lock solely for tab admission, before reading localStorage or creating application stores. Reject overlapping session and media-item mutations with local busy state.
+- Allow independent tabs; saved identity changes invalidate other sessions through storage events and pageshow checks. Do not add cross-tab locks. Reject overlapping session and media-item mutations with local busy state.
 - Media items own decrypted bytes and object URLs. Abort requests and revoke URLs on disposal; stale downloads must not create URLs or open save dialogs.
 - Check local file size before reading bytes. Cap content downloads while streaming; do not trust Content-Length alone.
 - Preserve the encryption protocol when reorganizing code. Rust and JavaScript share `client/tests/test-vectors.json`; content uses fixed purpose AAD, metadata includes the sealed-content hash in its AAD, and downloads verify that hash before decryption.

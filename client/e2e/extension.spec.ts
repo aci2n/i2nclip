@@ -156,14 +156,16 @@ test("app receives captures through its public event interface and uploads after
 	await master(page);
 	await expect(page.getByRole("article")).toHaveCount(2);
 
-	// The rejected second tab has no receiver and cannot accept a file.
+	// Each tab has its own receiver and unlock state.
 	const other = await context.newPage();
 	try {
 		await other.goto(app.origin);
-		await expect(other.getByText(/already open in another tab/)).toBeVisible();
+		await expect(
+			other.getByRole("button", { name: "Unlock", exact: true }),
+		).toBeVisible();
 		expect(await receiveCapture(other, { type: "probe" }, 50)).toMatchObject({
-			ok: false,
-			unavailable: true,
+			ok: true,
+			needsUnlock: true,
 		});
 	} finally {
 		await other.close();

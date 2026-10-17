@@ -24,9 +24,7 @@ const password = "master-password";
 const serverUrl = "https://clip.example";
 async function fixture(
 	t: test.TestContext,
-	http: Partial<
-		NonNullable<NonNullable<Parameters<typeof createSession>[0]>["http"]>
-	> = {},
+	http: Partial<api.IdentityApi> = {},
 ) {
 	const local = storage();
 	const persistence = createPersistence(local);
@@ -176,4 +174,83 @@ test("an unlocked session reuses its crypto context and replaces it after lockin
 	assert.equal(next.key.registrationKey, first.key.registrationKey);
 	assert.equal(await f.session.forget(), true);
 	assert.throws(() => f.session.credentials(), /Unlock/);
+});
+
+function storageEvent(
+	local: ReturnType<typeof storage>,
+	key: string | null = "i2nclip.identity",
+) {
+	return Object.assign(new Event("storage"), { storageArea: local, key });
+}
+
+test("external password changes cancel sessions, clear keys and require independent unlock", async (t) => {
+	const local = storage();
+	const events = new EventTarget();
+	const first = createSession({
+		persistence: createPersistence(local),
+		http: { ...api, registerKey: async () => {} },
+	});
+	const second = createSession({
+		persistence: createPersistence(local, events),
+	});
+	t.after(first.dispose);
+	t.after(second.dispose);
+	assert.equal(await first.initialize(password), true);
+	assert.equal(await first.create({ serverUrl, otc: "invite" }), true);
+	assert.equal(await second.unlock(password), true);
+	const operation = second.operation();
+	t.after(operation.dispose);
+	const signal = second.signal;
+	first.lock();
+	assert.equal(get(second).unlocked, true);
+	assert.equal(await first.unlock(password), true);
+	assert.equal(await first.changePassword(password, "changed-password"), true);
+	events.dispatchEvent(storageEvent(local, "unrelated"));
+	events.dispatchEvent(storageEvent(storage()));
+	assert.equal(get(second).unlocked, true);
+	events.dispatchEvent(storageEvent(local));
+	assert.equal(get(second).status, "locked");
+	assert.equal(get(second).privateKey, "");
+	assert.equal(operation.signal.aborted, true);
+	assert.equal(signal.aborted, true);
+	assert.throws(() => second.credentials(), /Unlock/);
+	assert.equal(await second.unlock(password), false);
+	assert.equal(await second.unlock("changed-password"), true);
+	assert.equal(await first.forget(), true);
+	// pageshow catches changes missed while a tab was suspended.
+	events.dispatchEvent(new Event("pageshow"));
+	assert.equal(get(second).status, "locked");
+	assert.equal(await second.unlock("changed-password"), true);
+	assert.equal(get(second).configured, false);
+	assert.equal(first.reset(), true);
+	events.dispatchEvent(storageEvent(local, null));
+	assert.equal(get(second).status, "new");
+	assert.equal(get(second).unlocked, false);
+	second.dispose();
+	const afterDisposal = get(second);
+	local.setItem("i2nclip.identity", "damaged");
+	events.dispatchEvent(storageEvent(local));
+	events.dispatchEvent(new Event("pageshow"));
+	assert.equal(get(second), afterDisposal);
+});
+
+test("a concurrent record change prevents stale encrypted writes even before notification", async (t) => {
+	const local = storage();
+	const persistence = createPersistence(local);
+	await persistence.initialize(password);
+	t.after(persistence.lock);
+	const entered = deferred();
+	const encrypted = deferred<ArrayBuffer>();
+	t.after(() => encrypted.resolve(new ArrayBuffer(32)));
+	t.mock.method(crypto.subtle, "encrypt", () => {
+		entered.resolve();
+		return encrypted.promise;
+	});
+	const saving = persistence.save(null);
+	await entered.promise;
+	local.setItem("i2nclip.identity", "another tab's record");
+	const rejected = assert.rejects(saving, /changed in another tab/);
+	encrypted.resolve(new ArrayBuffer(32));
+	await rejected;
+	assert.equal(local.getItem("i2nclip.identity"), "another tab's record");
 });

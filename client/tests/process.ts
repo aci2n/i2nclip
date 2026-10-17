@@ -44,10 +44,18 @@ export async function database(
 	);
 	return stdout.trim();
 }
-export async function issueOtc(data: string, profile = "debug") {
+export async function issueOtc(
+	data: string,
+	profile = "debug",
+	maxBytes?: number,
+) {
 	const { stdout } = await execute(
 		binary("i2nclip", profile),
-		["otc", "issue"],
+		[
+			"otc",
+			"issue",
+			...(maxBytes === undefined ? [] : ["--max-bytes", String(maxBytes)]),
+		],
 		{ env: fixtureEnvironment(data) },
 	);
 	return stdout.trim();
