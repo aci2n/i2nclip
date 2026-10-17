@@ -7,7 +7,7 @@ import type { Metadata } from "../protocol/meta-plain.ts";
 import { normalizeTag } from "../protocol/tags.ts";
 import type { MediaItem, MediaOptions, MediaState } from "./media-item.ts";
 import { createMediaItem } from "./media-item.ts";
-import type { SessionReader } from "./session.ts";
+import type { LibraryContext } from "./session.ts";
 export interface LibraryState {
 	cards: MediaState[];
 	query: string[];
@@ -27,7 +27,7 @@ export interface LibraryOptions {
 export type Library = ReturnType<typeof createLibrary>;
 
 export function createLibrary(
-	session: SessionReader,
+	context: LibraryContext,
 	{
 		http = api,
 		mediaOptions = {},
@@ -52,7 +52,7 @@ export function createLibrary(
 	let disposed = false;
 	let searchController: AbortController | undefined;
 	let previewController: AbortController | null = null;
-	let lastEpoch = session.epoch;
+
 	function publishCards() {
 		state.update((v) => ({
 			...v,
@@ -71,7 +71,7 @@ export function createLibrary(
 		if (cards.has(item.id)) {
 			return;
 		}
-		const media = createMediaItem(item, session, { http, ...mediaOptions });
+		const media = createMediaItem(item, context, { http, ...mediaOptions });
 		const row = { media, value: get(media), unsubscribe: () => {} };
 		cards.set(item.id, row);
 		row.unsubscribe = media.subscribe((value) => {
@@ -103,7 +103,7 @@ export function createLibrary(
 		query = get(state).query,
 		{ more = false, clearDraft = false } = {},
 	) {
-		if (disposed || !session.ready) {
+		if (disposed || context.signal.aborted) {
 			return false;
 		}
 		const previous = get(state);
@@ -132,7 +132,7 @@ export function createLibrary(
 		}
 		searchController?.abort();
 		searchController = new AbortController();
-		const signal = AbortSignal.any([searchController.signal, session.signal]);
+		const signal = AbortSignal.any([searchController.signal, context.signal]);
 		if (!more) {
 			closePreview();
 			clearCards();
@@ -149,7 +149,7 @@ export function createLibrary(
 		}));
 		try {
 			const page = await http.list({
-				...session.credentials(),
+				...context,
 				tags: submitted,
 				after: more ? previous.next : null,
 				signal,
@@ -177,21 +177,8 @@ export function createLibrary(
 			}
 		}
 	}
-	const unsubscribe = session.subscribe((value) => {
-		if (value.epoch !== lastEpoch) {
-			lastEpoch = value.epoch;
-			reset();
-		}
-		if (
-			session.ready &&
-			!get(state).loading &&
-			!cards.size &&
-			get(state).empty === null &&
-			!get(state).status
-		) {
-			void search(get(state).query);
-		}
-	});
+	void search();
+
 	async function reveal(id: string, opener?: HTMLElement) {
 		const row = cards.get(id);
 		if (
@@ -264,7 +251,6 @@ export function createLibrary(
 		},
 		dispose() {
 			disposed = true;
-			unsubscribe();
 			reset();
 		},
 	};

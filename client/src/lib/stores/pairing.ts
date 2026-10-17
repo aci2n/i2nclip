@@ -240,18 +240,13 @@ export function createPairing(
 		}
 	}
 	function watchSession(current: Task) {
-		const expected = get(session);
-		current.stopWatching = session.subscribe((value) => {
-			if (
-				value.epoch !== expected.epoch ||
-				value.serverUrl !== expected.serverUrl ||
-				value.configured !== expected.configured ||
-				value.unlocked !== expected.unlocked
-			) {
-				stop("Library or server changed. Start pairing again.");
-			}
-		});
+		const signal = get(session).signal;
+		const abort = () => stop("Library or server changed. Start pairing again.");
+		signal.throwIfAborted();
+		signal.addEventListener("abort", abort, { once: true });
+		current.stopWatching = () => signal.removeEventListener("abort", abort);
 	}
+
 	async function run(
 		role: "sender" | "receiver",
 		server: string,

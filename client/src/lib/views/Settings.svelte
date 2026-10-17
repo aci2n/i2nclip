@@ -1,5 +1,4 @@
 <script lang="ts">
-import { onDestroy, untrack } from "svelte";
 import AboutDialog from "../components/AboutDialog.svelte";
 import PairingSend from "../components/PairingSend.svelte";
 import PasswordSettings from "../components/PasswordSettings.svelte";
@@ -10,31 +9,29 @@ import type { Pairing } from "../stores/pairing.ts";
 import type { Preferences } from "../stores/preferences.ts";
 import { createQuota } from "../stores/quota.ts";
 import type { Session } from "../stores/session.ts";
-import type { Uploads as UploadsStore } from "../stores/uploads.ts";
+import type { Workspace } from "../stores/workspace.ts";
 import Setup from "./Setup.svelte";
 
 interface Props {
 	session: Session;
 	pairing: Pairing;
-	uploads: UploadsStore;
+	workspace: Workspace | null;
 	preferences: Preferences;
 }
 
-let { session, pairing, uploads, preferences }: Props = $props();
+let { session, pairing, workspace, preferences }: Props = $props();
 let about = $state(false);
-const quota = untrack(() => createQuota(session));
-onDestroy(quota.dispose);
-const quotaContext = $derived(
-	$session.configured &&
-		$session.unlocked &&
-		!$session.busy &&
-		!$uploads.uploading
-		? $session.epoch
-		: null,
-);
+const uploads = $derived(workspace?.uploads);
+let quota = $state<ReturnType<typeof createQuota> | null>(null);
 $effect(() => {
-	if (quotaContext !== null) {
-		quota.refresh();
+	const context = $session.context;
+	const current = context ? createQuota(context) : null;
+	quota = current;
+	return () => current?.dispose();
+});
+$effect(() => {
+	if (quota && !$session.busy && !$uploads?.uploading) {
+		void quota.refresh();
 	}
 });
 let feedback = $state({ scope: "", text: "", error: false });
@@ -57,21 +54,27 @@ async function action(
 			<h2>Your library</h2>
 			<p class="address">{$session.serverUrl}</p>
 			<section class="usage" aria-label="Library usage">
-				{#if $quota.loading}
+				{#if $quota?.loading}
 					<p role="status">Loading usage…</p>
-				{:else if $quota.error}
-					<p role="alert" class="error">Unable to load usage: {$quota.error}</p>
-					<button type="button" class="secondary" onclick={quota.refresh}>
+				{:else if $quota?.error}
+					<p role="alert" class="error">
+						Unable to load usage: {$quota?.error}
+					</p>
+					<button
+						type="button"
+						class="secondary"
+						onclick={() => quota?.refresh()}
+					>
 						Retry
 					</button>
-				{:else if $quota.value}
+				{:else if $quota?.value}
 					<p>
-						Storage: {fileSize($quota.value.used_content_bytes)} of
-						{fileSize($quota.value.max_content_bytes)}
+						Storage: {fileSize($quota?.value.used_content_bytes)} of
+						{fileSize($quota?.value.max_content_bytes)}
 					</p>
 					<p>
-						Files: {$quota.value.file_count.toLocaleString()} of
-						{$quota.value.max_files.toLocaleString()}
+						Files: {$quota?.value.file_count.toLocaleString()} of
+						{$quota?.value.max_files.toLocaleString()}
 					</p>
 				{/if}
 			</section>

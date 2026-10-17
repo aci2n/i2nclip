@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { get, writable } from "svelte/store";
+import { get } from "svelte/store";
 import type {
 	ContentRequest,
 	LibraryApi,
@@ -16,44 +16,15 @@ import { assertPresent } from "./assert.ts";
 import { deferred, mediaData, testKey, tick } from "./helpers.ts";
 
 function session() {
-	const state = writable({
-		configured: false,
-		unlocked: true,
-		busy: false,
-		epoch: 0,
-	});
-	let controller = new AbortController();
+	const controller = new AbortController();
 	return {
-		...state,
-		get epoch() {
-			return get(state).epoch;
-		},
-		get signal() {
-			return controller.signal;
-		},
-		get ready() {
-			const value = get(state);
-			return value.unlocked && value.configured && !value.busy;
-		},
-		credentials: () => ({
-			serverUrl: "https://clip.example",
-			key: testKey(),
-		}),
-		configure() {
-			state.update((v) => ({ ...v, configured: true }));
-		},
-		lock() {
-			controller.abort();
-			controller = new AbortController();
-			state.update((v) => ({
-				...v,
-				configured: false,
-				unlocked: false,
-				epoch: v.epoch + 1,
-			}));
-		},
+		serverUrl: "https://clip.example",
+		key: testKey(),
+		signal: controller.signal,
+		end: () => controller.abort(),
 	};
 }
+
 function fixture(
 	t: test.TestContext,
 	options: {
@@ -70,6 +41,7 @@ function fixture(
 		http: { ...api, ...options.http },
 	});
 	t.after(library.dispose);
+	owner.signal.addEventListener("abort", library.dispose, { once: true });
 	return { owner, library };
 }
 const item = (id: string) => ({
@@ -94,7 +66,7 @@ test("stale searches cannot publish; pagination uses the submitted query and per
 			},
 		},
 	});
-	f.owner.configure();
+
 	const searching = f.library.search(["new"]);
 	assert.equal(assertPresent(requests[0].signal).aborted, true);
 	requests[1].done.resolve({ items: [item("new")], next: "cursor" });
@@ -120,15 +92,15 @@ test("stale searches cannot publish; pagination uses the submitted query and per
 test("identity invalidation suppresses stale searches", async (t) => {
 	const result = deferred<MediaPage>();
 	const f = fixture(t, { http: { ...api, list: () => result.promise } });
-	f.owner.configure();
-	f.owner.lock();
+
+	f.owner.end();
 	result.resolve({ items: [item("late")], next: null });
 	await tick();
 	assert.deepEqual(get(f.library).cards, []);
 });
 test("stale media downloads create no URLs or save dialogs; disposal revokes previews", async (t) => {
 	const owner = session();
-	owner.configure();
+
 	const pending = deferred<Uint8Array<ArrayBuffer>>();
 	const created: Array<string> = [];
 	const revoked: Array<string> = [];
@@ -151,7 +123,7 @@ test("stale media downloads create no URLs or save dialogs; disposal revokes pre
 	);
 	t.after(media.dispose);
 	const downloading = media.download();
-	owner.lock();
+	owner.end();
 	pending.resolve(new Uint8Array([1, 2]));
 	assert.equal(await downloading, false);
 	assert.deepEqual(created, ["blob:0"]);
@@ -160,7 +132,7 @@ test("stale media downloads create no URLs or save dialogs; disposal revokes pre
 });
 test("overlapping media mutations are rejected and conflicts load current metadata before retry", async (t) => {
 	const owner = session();
-	owner.configure();
+
 	const pending = deferred<MetadataResult>();
 	let calls = 0;
 	const media = createMediaItem(mediaData(item("a")), owner, {
@@ -236,7 +208,7 @@ test("generic metadata updates rename files, preserve omitted fields and preview
 			download: async (url, name) => downloaded.push({ url, name }),
 		},
 	});
-	f.owner.configure();
+
 	await tick();
 	assert.equal(
 		await f.library.updateMetadata("a", { name: "Renamed.txt" }),
@@ -276,7 +248,7 @@ test("generic metadata updates rename files, preserve omitted fields and preview
 });
 test("failed and stale metadata updates never publish an attempted filename", async (t) => {
 	const owner = session();
-	owner.configure();
+
 	const pending = deferred<MetadataResult>();
 	let fail = true;
 	const media = createMediaItem(mediaData(item("Original.txt")), owner, {
@@ -296,7 +268,7 @@ test("failed and stale metadata updates never publish an attempted filename", as
 	fail = false;
 	const updating = media.updateMetadata({ name: "Stale.txt" });
 	assert.equal(await media.updateMetadata({ name: "Overlapping.txt" }), false);
-	owner.lock();
+	owner.end();
 	pending.resolve({ conflict: false as const, metaHash: "new" });
 	assert.equal(await updating, false);
 	assert.equal(assertPresent(get(media).metadata).name, "Original.txt");
@@ -323,7 +295,7 @@ test("deleted cards retain their position and pagination, release URLs, and disa
 			},
 		},
 	});
-	f.owner.configure();
+
 	await tick();
 	assert.equal(await f.library.remove("a"), true);
 	assert.equal(get(f.library).cards.length, 1);
@@ -353,7 +325,7 @@ test("failed and canceled deletions preserve active cards", async (t) => {
 			},
 		},
 	});
-	f.owner.configure();
+
 	await tick();
 	assert.equal(await f.library.remove("a"), false);
 	assert.equal(deletes, 0);
@@ -408,7 +380,7 @@ test("loaded previews skip files, reuse downloads, and never reopen after close"
 			request.done.resolve(new Uint8Array([1]));
 		}
 	});
-	f.owner.configure();
+
 	requests[0].done.resolve({ items: [], next: null });
 	await tick();
 	const searching = f.library.search(["submitted"]);
@@ -497,7 +469,7 @@ test("rapid preview changes abort old loads and ignore their progress, results, 
 			load.done.resolve(new Uint8Array([1]));
 		}
 	});
-	f.owner.configure();
+
 	await tick();
 	const card = (id: string) =>
 		get(f.library).cards.find((value) => value.id === id);
@@ -591,7 +563,7 @@ for (const ending of ["close", "search", "lock", "dispose"]) {
 			},
 		});
 		t.after(() => pending.resolve(new Uint8Array([1])));
-		f.owner.configure();
+
 		await tick();
 		const opening = f.library.reveal("a");
 		if (ending === "close") {
@@ -601,7 +573,7 @@ for (const ending of ["close", "search", "lock", "dispose"]) {
 			await f.library.search(["new"]);
 		}
 		if (ending === "lock") {
-			f.owner.lock();
+			f.owner.end();
 		}
 		if (ending === "dispose") {
 			f.library.dispose();
@@ -631,7 +603,7 @@ test("chip search preserves multiword tags, deduplicates, clears, and rejects in
 			},
 		},
 	});
-	f.owner.configure();
+
 	await tick();
 	f.library.editDraft("summer holiday");
 	await f.library.addTag("summer holiday");
@@ -652,7 +624,7 @@ test("chip search preserves multiword tags, deduplicates, clears, and rejects in
 	await f.library.clearSearch();
 	assert.deepEqual(get(f.library).query, []);
 	assert.equal(get(f.library).searchDraft, "");
-	f.owner.lock();
+	f.owner.end();
 	assert.deepEqual(get(f.library).query, []);
 });
 test("search admission preserves drafts and rejects excess tags before replacing results", async (t) => {
@@ -673,10 +645,8 @@ test("search admission preserves drafts and rejects excess tags before replacing
 		},
 	});
 	f.library.editDraft("Café");
-	assert.equal(await f.library.addTag("Café"), false);
-	assert.equal(get(f.library).searchDraft, "Café");
-	assert.equal(calls.length, 0);
-	f.owner.configure();
+	assert.equal(calls.length, 1);
+
 	await tick();
 	const tags = Array.from({ length: 63 }, (_, i) => `tag${i}`);
 	await f.library.search([...tags, " Café ", "CAFE\u0301"]);
@@ -692,8 +662,7 @@ test("search admission preserves drafts and rejects excess tags before replacing
 	assert.deepEqual(get(f.library).query, [...tags, "Café"]);
 	assert.equal(calls.length, count);
 	assert.match(get(f.library).status, /maximum 64/);
-	f.owner.update((v) => ({ ...v, busy: true }));
+	f.owner.end();
 	assert.equal(await f.library.clearSearch(), false);
-	assert.equal(get(f.library).searchDraft, "overflow");
 	assert.equal(calls.length, count);
 });

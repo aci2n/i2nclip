@@ -1,43 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { get, writable } from "svelte/store";
+import { get } from "svelte/store";
 import type { QuotaApi } from "../src/lib/api.ts";
 import { createQuota } from "../src/lib/stores/quota.ts";
 import { assertPresent } from "./assert.ts";
 import { deferred, testKey } from "./helpers.ts";
 
 function fixture(t: test.TestContext, http: QuotaApi) {
-	const state = writable({
-		configured: true,
-		unlocked: true,
-		busy: false,
-		epoch: 0,
-	});
-	let controller = new AbortController();
+	const controller = new AbortController();
 	const session = {
-		...state,
-		get epoch() {
-			return get(state).epoch;
-		},
-		get signal() {
-			return controller.signal;
-		},
-		get ready() {
-			const value = get(state);
-			return value.unlocked && value.configured && !value.busy;
-		},
-		credentials: () => ({
-			serverUrl: "https://clip.example",
-			key: testKey(),
-		}),
-		invalidate() {
-			controller.abort();
-			controller = new AbortController();
-			state.update((value) => ({ ...value, epoch: value.epoch + 1 }));
-		},
+		serverUrl: "https://clip.example",
+		key: testKey(),
+		signal: controller.signal,
+		invalidate: () => controller.abort(),
 	};
 	const quota = createQuota(session, { http });
 	t.after(quota.dispose);
+	session.signal.addEventListener("abort", quota.dispose, { once: true });
 	return { session, quota };
 }
 const usage = {
@@ -85,15 +64,11 @@ test("identity changes abort quota reads and late results cannot replace the new
 	session.invalidate();
 	assert.equal(assertPresent(pending[0].signal).aborted, true);
 	assert.equal(get(quota).value, null);
-	const current = quota.refresh();
-	pending[1].result.resolve(usage);
-	assert.equal(await current, true);
+	const next = fixture(t, { getQuota: async () => usage });
+	assert.equal(await next.quota.refresh(), true);
 	pending[0].result.resolve({ ...usage, file_count: 999 });
 	assert.equal(await old, false);
-	assert.deepEqual(get(quota).value, usage);
-	session.invalidate();
-	session.update((value) => ({ ...value, unlocked: false }));
-	assert.equal(get(quota).value, null);
+	assert.deepEqual(get(next.quota).value, usage);
 	assert.equal(await quota.refresh(), false);
 });
 test("leaving Settings aborts its quota request and ignores a late error", async (t) => {

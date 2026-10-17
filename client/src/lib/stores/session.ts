@@ -3,7 +3,11 @@ import { get, writable } from "svelte/store";
 import type { Credentials, IdentityApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
-import { createPersistence } from "../persistence.ts";
+import {
+	createPersistence,
+	IDENTITY_STORAGE_KEY,
+	type SavedIdentity,
+} from "../persistence.ts";
 import { bytesToB64url } from "../protocol/bytes.ts";
 import { generatePrivateKey } from "../protocol/identity.ts";
 import type { Identity, LoadedIdentity } from "../protocol/recovery.ts";
@@ -14,17 +18,21 @@ import {
 	validateIdentity,
 } from "../protocol/recovery.ts";
 import { checkServer } from "../protocol/server.ts";
+
+// A library consumer never observes changing credentials.
+export interface LibraryContext extends Credentials {
+	readonly signal: AbortSignal;
+}
 export interface SessionSnapshot {
 	configured: boolean;
 	unlocked: boolean;
 	busy: boolean;
-	epoch: number;
+	signal: AbortSignal;
 }
 export interface SessionState extends SessionSnapshot {
 	status: "new" | "locked" | "unlocked";
 	serverUrl: string;
-	privateKey: Identity["private_key"] | "";
-	publicKey: string;
+	context: LibraryContext | null;
 	error: string;
 }
 export interface IdentityCredentials extends Credentials {
@@ -35,208 +43,261 @@ export interface PairedIdentity extends Identity {
 	public_key: Uint8Array;
 	signal: AbortSignal;
 }
-export interface PairingSessionState extends SessionSnapshot {
-	serverUrl: string;
-	error: string;
-}
-export interface PairingSession extends Readable<PairingSessionState> {
+export interface PairingSession extends Readable<SessionState> {
 	identity(): IdentityCredentials;
 	importPairing(value: PairedIdentity): Promise<boolean>;
 }
 export type Session = ReturnType<typeof createSession>;
-// Invalidation aborts the previous signal before publishing the new epoch.
-export interface SessionReader extends Readable<SessionSnapshot> {
-	readonly ready: boolean;
-	readonly signal: AbortSignal;
-	readonly epoch: number;
-	credentials(): Credentials;
-}
 
 export function createSession({
 	persistence = createPersistence(),
 	http = api,
 	defaultServerUrl = globalThis.location?.origin || "http://localhost:8080",
+	events = typeof window === "undefined" ? undefined : window,
 }: {
-	defaultServerUrl?: string;
 	persistence?: ReturnType<typeof createPersistence>;
 	http?: IdentityApi;
+	defaultServerUrl?: string;
+	events?: EventTarget;
 } = {}) {
+	let saved: SavedIdentity | null = null;
+	let key: CryptoKey | null = null;
 	let library: LoadedIdentity | null = null;
-	let controller = new AbortController();
-	let epoch = 0;
+	let lifetime = new AbortController();
+	let command: AbortController | null = null;
 	let disposed = false;
 	const state = writable<SessionState>({
 		status: "new",
 		configured: false,
 		unlocked: false,
-		serverUrl: defaultServerUrl,
-		privateKey: "",
-		publicKey: "",
-		epoch,
 		busy: false,
+		signal: lifetime.signal,
+		serverUrl: defaultServerUrl,
+		context: null,
 		error: "",
 	});
-	function invalidate() {
-		epoch++;
-		controller.abort();
-		controller = new AbortController();
+	function publish(patch: Partial<SessionState>) {
+		state.update((value) => ({ ...value, ...patch }));
 	}
-	function publish(patch: {
-		status?: SessionState["status"];
-		busy?: boolean;
-		error?: string;
-	}) {
-		state.update((value) => ({
-			...value,
-			...patch,
-			unlocked: (patch.status ?? value.status) === "unlocked",
-			configured: Boolean(library),
-			serverUrl: library?.identity.server_url || defaultServerUrl,
-			privateKey: library?.identity.private_key || "",
-			publicKey: library?.key.registrationKey || "",
-			epoch,
-		}));
+	function endLifetime() {
+		lifetime.abort();
+		lifetime = new AbortController();
+		key = null;
+		library = null;
 	}
-	function savedState(error = ""): { status: "new" | "locked"; error: string } {
+	function install(
+		next: SavedIdentity,
+		wrapping: CryptoKey,
+		identity: LoadedIdentity | null,
+	) {
+		if (saved?.text !== next.text) {
+			endLifetime();
+		}
+		saved = next;
+		key = wrapping;
+		library = identity;
+		const context = identity
+			? Object.freeze({
+					serverUrl: identity.identity.server_url,
+					key: identity.key,
+					signal: lifetime.signal,
+				})
+			: null;
+		publish({
+			status: "unlocked",
+			unlocked: true,
+			configured: Boolean(identity),
+			context,
+			signal: lifetime.signal,
+			serverUrl: context?.serverUrl || defaultServerUrl,
+			error: "",
+		});
+	}
+	function readSaved(error = "") {
 		try {
-			return { status: persistence.read() ? "locked" : "new", error };
+			saved = persistence.read();
+			publish({
+				status: saved ? "locked" : "new",
+				unlocked: false,
+				configured: false,
+				context: null,
+				signal: lifetime.signal,
+				serverUrl: defaultServerUrl,
+				busy: false,
+				error,
+			});
 		} catch (failure) {
-			return { status: "locked", error: errorMessage(failure) };
+			saved = null;
+			publish({
+				status: "locked",
+				unlocked: false,
+				configured: false,
+				context: null,
+				signal: lifetime.signal,
+				busy: false,
+				error: errorMessage(failure),
+			});
 		}
 	}
-	function clear(status: "new" | "locked", error = "") {
-		invalidate();
-		library = null;
-		publish({ status, busy: false, error });
+	function externalChange() {
+		try {
+			if (
+				persistence.text() === saved?.text ||
+				(persistence.text() === null && saved === null)
+			) {
+				return;
+			}
+		} catch {}
+		command?.abort();
+		endLifetime();
+		readSaved(
+			"Saved identity changed in another tab. Unlock this client again.",
+		);
 	}
-	async function action(
-		work: (
-			signal: AbortSignal,
-		) => Promise<number | undefined> | number | undefined,
-	) {
-		if (disposed || get(state).busy) {
+	function storageChanged(event: Event) {
+		if (
+			!("key" in event) ||
+			(event.key !== null && event.key !== IDENTITY_STORAGE_KEY)
+		) {
+			return;
+		}
+		try {
+			if (
+				"storageArea" in event &&
+				!persistence.ownsStorage(event.storageArea)
+			) {
+				return;
+			}
+		} catch {}
+		externalChange();
+	}
+	readSaved();
+	events?.addEventListener("storage", storageChanged);
+	async function action(work: (signal: AbortSignal) => Promise<void>) {
+		if (disposed || command) {
 			return false;
 		}
-		state.update((v) => ({ ...v, busy: true, error: "" }));
-		const own = epoch;
-		const signal = controller.signal;
+		const own = new AbortController();
+		command = own;
+		publish({ busy: true, error: "" });
 		try {
-			// Applying an identity deliberately invalidates the old signal.
-			const committedEpoch = await work(signal);
-			if (committedEpoch !== epoch) {
-				signal.throwIfAborted();
-			}
-			return !disposed;
+			await work(own.signal);
+			own.signal.throwIfAborted();
+			return true;
 		} catch (error) {
-			if (!disposed && own === epoch) {
+			if (!own.signal.aborted) {
 				publish({ error: errorMessage(error) });
 			}
 			return false;
 		} finally {
-			if (!disposed && own === epoch) {
-				publish({ busy: false });
+			if (command === own) {
+				command = null;
+				if (!disposed) {
+					publish({ busy: false });
+				}
 			}
 		}
 	}
-	async function apply(value: LoadedIdentity | null, signal: AbortSignal) {
-		const next = value ? value.identity : null;
+	async function open(
+		saved: SavedIdentity,
+		wrapping: CryptoKey,
+		signal: AbortSignal,
+	) {
+		const value = await persistence.open(saved, wrapping, signal);
+		const identity = value ? await validateIdentity(value) : null;
 		signal.throwIfAborted();
-		await persistence.save(next);
-		signal.throwIfAborted();
-		invalidate();
-		library = value;
-		publish({
-			status: "unlocked",
-			busy: false,
-			error: "",
-		});
-		return epoch;
+		persistence.unchanged(saved.text);
+		return identity;
 	}
-	function currentIdentity() {
-		if (!library || !session.ready) {
-			throw new Error("Unlock your library first.");
+	function unlocked() {
+		if (!saved || !key) {
+			throw new Error("Unlock this client first.");
 		}
-		return library;
+		return { saved, key };
 	}
-	publish(savedState());
-	const stopWatching = persistence.onExternalChange(() => {
-		persistence.lock();
-		const { status, error } = savedState(
-			"Saved identity changed in another tab. Unlock this client again.",
+	async function apply(identity: LoadedIdentity | null, signal: AbortSignal) {
+		const current = unlocked();
+		const next = await persistence.save(
+			current.saved,
+			current.key,
+			identity?.identity ?? null,
+			signal,
 		);
-		clear(status, error);
-	});
+		signal.throwIfAborted();
+		install(next, current.key, identity);
+	}
+	function requireSetup() {
+		unlocked();
+		if (library) {
+			throw new Error(
+				"Forget the current library before creating or restoring another.",
+			);
+		}
+	}
 	const session = {
 		subscribe: state.subscribe,
-		get ready(): boolean {
-			const value = get(state);
-			return !disposed && value.unlocked && value.configured && !value.busy;
-		},
-		get signal() {
-			return controller.signal;
-		},
-		get epoch() {
-			return epoch;
-		},
-		credentials() {
-			const current = currentIdentity();
-			return { serverUrl: current.identity.server_url, key: current.key };
+		get ready() {
+			return !disposed && Boolean(get(state).context) && !get(state).busy;
 		},
 		identity(): IdentityCredentials {
-			const current = currentIdentity();
+			if (!library || disposed) {
+				throw new Error("Unlock your library first.");
+			}
 			return {
-				serverUrl: current.identity.server_url,
-				key: current.key,
-				privateKey: current.identity.private_key,
-				publicKey: current.key.registrationKey,
+				serverUrl: library.identity.server_url,
+				key: library.key,
+				privateKey: library.identity.private_key,
+				publicKey: library.key.registrationKey,
 			};
 		},
 		initialize: (password: string) =>
 			action(async (signal) => {
-				await persistence.initialize(password);
-				signal.throwIfAborted();
-				publish({ status: "unlocked" });
+				if (persistence.text() !== null) {
+					throw new Error("A master password is already configured.");
+				}
+				const next = await persistence.protect(null, password, null, signal);
+				install(next.saved, next.key, null);
 			}),
 		unlock: (password: string) =>
 			action(async (signal) => {
-				const value = await persistence.unlock(password);
-				const next = value ? await validateIdentity(value) : null;
-				signal.throwIfAborted();
-				library = next;
-				publish({ status: "unlocked" });
+				const current = persistence.read();
+				if (!current) {
+					throw new Error("Create a master password first.");
+				}
+				const wrapping = await persistence.passwordKey(
+					current,
+					password,
+					signal,
+				);
+				const identity = await open(current, wrapping, signal);
+				install(current, wrapping, identity);
 			}),
 		lock() {
-			persistence.lock();
-			clear("locked");
+			command?.abort();
+			endLifetime();
+			readSaved();
 		},
 		create: ({ serverUrl, otc }: { serverUrl: string; otc: string }) =>
 			action(async (signal) => {
-				if (!get(state).unlocked || library) {
-					throw new Error(
-						"Forget the current library before creating another.",
-					);
-				}
+				requireSetup();
 				checkServer(serverUrl);
 				const { privateKey } = await generatePrivateKey();
 				const next = await validateIdentity({
 					server_url: serverUrl,
 					private_key: privateKey,
 				});
+				signal.throwIfAborted();
 				await http.registerKey({
 					serverUrl: next.identity.server_url,
 					key: next.key,
 					otc,
 					signal,
 				});
-				return apply(next, signal);
+				await apply(next, signal);
 			}),
 		restore: (file: Blob, password: string) =>
 			action(async (signal) => {
-				if (!get(state).unlocked || library) {
-					throw new Error(
-						"Forget the current library before restoring another.",
-					);
-				}
+				requireSetup();
 				if (file.size > MAX_RECOVERY_BYTES) {
 					throw new Error("Recovery file is too large.");
 				}
@@ -254,36 +315,43 @@ export function createSession({
 				) {
 					throw new Error("This identity is not registered on the server.");
 				}
-				return apply(next, signal);
+				await apply(next, signal);
 			}),
-		async importPairing(value: PairedIdentity) {
-			return action(async (signal) => {
-				if (!get(state).unlocked || library) {
-					throw new Error(
-						"A library is already configured or the client is locked.",
-					);
-				}
+		importPairing: (value: PairedIdentity) =>
+			action(async (signal) => {
+				requireSetup();
 				const next = await validateIdentity(value);
 				if (next.key.registrationKey !== bytesToB64url(value.public_key)) {
 					throw new Error("Invalid paired identity.");
 				}
-				value.signal.throwIfAborted();
-				return apply(next, AbortSignal.any([signal, value.signal]));
-			});
-		},
+				await apply(next, AbortSignal.any([signal, value.signal]));
+			}),
 		changePassword: (current: string, password: string) =>
 			action(async (signal) => {
-				await persistence.changePassword(current, password);
-				signal.throwIfAborted();
+				const before = unlocked();
+				const currentKey = await persistence.passwordKey(
+					before.saved,
+					current,
+					signal,
+				);
+				const identity = await open(before.saved, currentKey, signal);
+				const next = await persistence.protect(
+					before.saved.text,
+					password,
+					identity?.identity ?? null,
+					signal,
+				);
+				install(next.saved, next.key, identity);
 			}),
 		forget: () => action((signal) => apply(null, signal)),
 		reset() {
-			if (disposed) {
+			if (disposed || command) {
 				return false;
 			}
 			try {
-				persistence.reset();
-				clear("new");
+				persistence.reset(persistence.text());
+				endLifetime();
+				readSaved();
 				return true;
 			} catch (error) {
 				publish({ error: errorMessage(error) });
@@ -292,10 +360,11 @@ export function createSession({
 		},
 		downloadRecovery: (password: string) =>
 			action(async (signal) => {
-				if (!library || !get(state).unlocked) {
-					throw new Error("Unlock your library first.");
-				}
-				const bytes = await exportRecovery(library.identity, password);
+				const current = session.identity();
+				const bytes = await exportRecovery(
+					{ server_url: current.serverUrl, private_key: current.privateKey },
+					password,
+				);
 				signal.throwIfAborted();
 				const url = URL.createObjectURL(
 					new Blob([bytes], { type: "application/msgpack" }),
@@ -314,8 +383,17 @@ export function createSession({
 				return;
 			}
 			disposed = true;
-			stopWatching();
-			session.lock();
+			command?.abort();
+			events?.removeEventListener("storage", storageChanged);
+			endLifetime();
+			publish({
+				status: "locked",
+				unlocked: false,
+				configured: false,
+				context: null,
+				signal: lifetime.signal,
+				busy: false,
+			});
 		},
 	};
 	return session;

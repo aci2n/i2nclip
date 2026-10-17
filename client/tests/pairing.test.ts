@@ -30,18 +30,23 @@ import {
 import type { PairingServices } from "../src/lib/stores/pairing.ts";
 import { createPairing } from "../src/lib/stores/pairing.ts";
 import type {
+	SessionState as ActualSessionState,
 	PairedIdentity,
-	SessionState,
 } from "../src/lib/stores/session.ts";
 import { deferred, testKey, tick } from "./helpers.ts";
 
+type SessionState = ActualSessionState & {
+	privateKey: PairedIdentity["private_key"] | "";
+	publicKey: string;
+};
 const sessionSnapshot: SessionState = {
 	status: "unlocked",
 	serverUrl: "https://clip.example",
 	configured: false,
 	unlocked: true,
 	busy: false,
-	epoch: 0,
+	signal: new AbortController().signal,
+	context: null,
 	privateKey: "",
 	publicKey: "",
 	error: "",
@@ -350,9 +355,13 @@ function fixture(
 	const crypto = createPairingCrypto;
 	const senderState = writable<SessionState>({
 		...sessionSnapshot,
+		signal: new AbortController().signal,
 		configured: true,
 	});
-	const receiverState = writable<SessionState>({ ...sessionSnapshot });
+	const receiverState = writable<SessionState>({
+		...sessionSnapshot,
+		signal: new AbortController().signal,
+	});
 	const session = (state: Writable<SessionState>) => {
 		return {
 			subscribe: state.subscribe,
@@ -380,7 +389,7 @@ function fixture(
 					privateKey: value.private_key,
 					publicKey: bytesToB64url(value.public_key),
 					configured: true,
-					epoch: 1,
+					signal: new AbortController().signal,
 				});
 				return true;
 			},
@@ -428,7 +437,7 @@ test("pairing requires explicit approval and reports success only after durable 
 			...value,
 			privateKey: value.private_key,
 			configured: true,
-			epoch: 1,
+			signal: new AbortController().signal,
 		});
 		return true;
 	});
@@ -506,10 +515,7 @@ test("identity changes cancel authenticated pairing before any identity transfer
 	await until(() => Boolean(get(f.sender).code));
 	const receiving = f.receiver.receive(get(f.sender).code, origin);
 	await until(() => get(f.sender).approval);
-	f.senderState.update((value) => ({
-		...value,
-		epoch: 2,
-	}));
+	get(f.senderState).signal.dispatchEvent(new Event("abort"));
 	assert.equal(await sending, false);
 	f.receiver.cancel();
 	assert.equal(await receiving, false);
@@ -521,7 +527,10 @@ test("cancellation during room creation removes a late room without publishing i
 	const create = deferred<JoinedRoom>();
 	const entered = deferred();
 	let removed = 0;
-	const session = writable<SessionState>({ ...sessionSnapshot });
+	const session = writable<SessionState>({
+		...sessionSnapshot,
+		signal: new AbortController().signal,
+	});
 	const testKeyDocument = (await generatePrivateKey()).privateKey;
 	const pairing = createPairing(
 		{
@@ -672,12 +681,7 @@ test("session invalidation after saving prevents a late acknowledgment", async (
 	f.sender.approve();
 	await entered.promise;
 	assert.deepEqual(get(f.receiverState).privateKey, key.privateKey);
-	f.receiverState.update((value) => ({
-		...value,
-		unlocked: false,
-		privateKey: "",
-		epoch: value.epoch + 1,
-	}));
+	get(f.receiverState).signal.dispatchEvent(new Event("abort"));
 	assert.equal(get(f.receiver).active, false);
 	assert.match(get(f.receiver).status, /Library or server changed/);
 	finish.resolve();

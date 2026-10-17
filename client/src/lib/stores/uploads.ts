@@ -4,7 +4,7 @@ import { errorMessage } from "../error.ts";
 import type { SendOptions } from "../media/upload.ts";
 import { sendUpload } from "../media/upload.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
-import type { SessionReader } from "./session.ts";
+import type { LibraryContext } from "./session.ts";
 export interface UploadState {
 	uploading: boolean;
 	progress: {
@@ -29,7 +29,7 @@ const empty = (): UploadState => ({
 
 // Application owns this store so batches survive navigation between views.
 export function createUploads(
-	session: SessionReader,
+	context: LibraryContext,
 	{
 		send = sendUpload,
 		onComplete,
@@ -42,24 +42,18 @@ export function createUploads(
 ) {
 	const state = writable(empty());
 	const controller = new AbortController();
-	let epoch = session.epoch;
-	const unsubscribe = session.subscribe((value) => {
-		if (epoch !== value.epoch) {
-			epoch = value.epoch;
-			state.set(empty());
-		}
-	});
+
 	async function upload(files: File[], extra: Metadata = {}) {
 		if (
 			controller.signal.aborted ||
 			get(state).uploading ||
 			!files.length ||
-			!session.ready
+			context.signal.aborted
 		) {
 			return false;
 		}
-		const signal = AbortSignal.any([controller.signal, session.signal]);
-		const credentials = session.credentials();
+		const signal = AbortSignal.any([controller.signal, context.signal]);
+		const credentials = context;
 		const compressImages = preferences ? get(preferences).compressImages : true;
 		state.update((v) => ({
 			...v,
@@ -145,7 +139,6 @@ export function createUploads(
 			})),
 		dispose() {
 			controller.abort();
-			unsubscribe();
 			state.set(empty());
 		},
 	};

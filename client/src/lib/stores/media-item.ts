@@ -12,7 +12,7 @@ import {
 } from "../media/text.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { uniqueTags } from "../protocol/tags.ts";
-import type { SessionReader } from "./session.ts";
+import type { LibraryContext } from "./session.ts";
 export interface MediaState extends api.Media {
 	busy: boolean;
 	deleted: boolean;
@@ -37,7 +37,7 @@ export type MediaItem = ReturnType<typeof createMediaItem>;
 
 export function createMediaItem(
 	initial: api.Media,
-	session: SessionReader,
+	context: LibraryContext,
 	{ http = api, urls = URL, download = saveDownload }: MediaOptions = {},
 ) {
 	const state = writable<MediaState>({
@@ -53,7 +53,7 @@ export function createMediaItem(
 		progress: null,
 	});
 	const controller = new AbortController();
-	const signal = AbortSignal.any([controller.signal, session.signal]);
+	const signal = AbortSignal.any([controller.signal, context.signal]);
 	const ownedUrls = new Set<string>();
 	let content: Blob | null = null;
 	let activeLoad: AbortSignal | null = null;
@@ -141,7 +141,7 @@ export function createMediaItem(
 			let blob = content;
 			if (!blob) {
 				const bytes = await http.getContent({
-					...session.credentials(),
+					...context,
 					id: initial.id,
 					signal: request,
 					onProgress: (progress) => {
@@ -230,7 +230,7 @@ export function createMediaItem(
 					metadata.tags = uniqueTags(patch.tags);
 				}
 				const result = await http.updateMetadata({
-					...session.credentials(),
+					...context,
 					id: value.id,
 					metadata,
 					thumb: value.thumb,
@@ -252,7 +252,7 @@ export function createMediaItem(
 		remove: () =>
 			mutate(async () => {
 				await http.remove({
-					...session.credentials(),
+					...context,
 					id: initial.id,
 					signal,
 				});

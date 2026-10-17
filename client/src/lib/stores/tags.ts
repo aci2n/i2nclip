@@ -1,8 +1,8 @@
-import { get, writable } from "svelte/store";
+import { writable } from "svelte/store";
 import type { TagApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
-import type { SessionReader } from "./session.ts";
+import type { LibraryContext } from "./session.ts";
 
 const empty = (): {
 	tags: string[];
@@ -15,30 +15,22 @@ const empty = (): {
 export type Tags = ReturnType<typeof createTags>;
 
 export function createTags(
-	session: SessionReader,
+	context: LibraryContext,
 	{ http = api }: { http?: TagApi } = {},
 ) {
 	const state = writable(empty());
 	let controller: AbortController | undefined;
 	let disposed = false;
-	let epoch = session.epoch;
-	let refreshNeeded = true;
 	async function refresh() {
-		const value = get(session);
-		if (disposed || !value.unlocked || !value.configured) {
+		if (disposed || context.signal.aborted) {
 			return false;
 		}
-		if (value.busy) {
-			refreshNeeded = true;
-			return false;
-		}
-		refreshNeeded = false;
 		controller?.abort();
 		controller = new AbortController();
-		const signal = AbortSignal.any([controller.signal, session.signal]);
+		const signal = AbortSignal.any([controller.signal, context.signal]);
 		state.update((v) => ({ ...v, loading: true, error: "" }));
 		try {
-			const result = await http.getTags({ ...session.credentials(), signal });
+			const result = await http.getTags({ ...context, signal });
 			if (signal.aborted) {
 				return false;
 			}
@@ -60,23 +52,13 @@ export function createTags(
 			return false;
 		}
 	}
-	const unsubscribe = session.subscribe((value) => {
-		if (value.epoch !== epoch) {
-			epoch = value.epoch;
-			state.set(empty());
-			refreshNeeded = true;
-		}
-		if (refreshNeeded && session.ready) {
-			void refresh();
-		}
-	});
+	void refresh();
 	return {
 		subscribe: state.subscribe,
 		refresh,
 		dispose() {
 			disposed = true;
 			controller?.abort();
-			unsubscribe();
 			state.set(empty());
 		},
 	};

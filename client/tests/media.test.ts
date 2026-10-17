@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { get, writable } from "svelte/store";
+import { get } from "svelte/store";
 import type { MetadataResult } from "../src/lib/api.ts";
 import * as api from "../src/lib/api.ts";
 import { MAX_FILE_BYTES } from "../src/lib/api.ts";
@@ -123,11 +123,9 @@ test("oversized local files are rejected before reading bytes", async () => {
 test("media reuses full-content Blob URLs for preview and saving until disposal", async (t) => {
 	const controller = new AbortController();
 	const session = {
-		...writable({ configured: true, unlocked: true, busy: false, epoch: 0 }),
-		ready: true,
-		epoch: 0,
 		signal: controller.signal,
-		credentials: () => ({ serverUrl: "https://clip.example", key: testKey() }),
+		serverUrl: "https://clip.example",
+		key: testKey(),
 	};
 	const blobs = new Map();
 	const revoked: Array<string> = [];
@@ -179,11 +177,9 @@ test("media reuses full-content Blob URLs for preview and saving until disposal"
 });
 test("text previews reuse verified content, bound decoding, save full content and clear on disposal", async (t) => {
 	const session = {
-		...writable({ configured: true, unlocked: true, busy: false, epoch: 0 }),
-		ready: true,
-		epoch: 0,
 		signal: new AbortController().signal,
-		credentials: () => ({ serverUrl: "https://clip.example", key: testKey() }),
+		serverUrl: "https://clip.example",
+		key: testKey(),
 	};
 	const content = new TextEncoder().encode(`${"a".repeat(256 * 1024)}tail`);
 	let reads = 0;
@@ -245,11 +241,9 @@ test("canceled text preparation cannot publish text or clear a subsequent mutati
 		},
 	);
 	const owner = {
-		...writable({ configured: true, unlocked: true, busy: false, epoch: 0 }),
-		ready: true,
-		epoch: 0,
 		signal: new AbortController().signal,
-		credentials: () => ({ serverUrl: "https://clip.example", key: testKey() }),
+		serverUrl: "https://clip.example",
+		key: testKey(),
 	};
 	const media = createMediaItem(
 		mediaData({

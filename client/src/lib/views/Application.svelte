@@ -1,27 +1,29 @@
 <script lang="ts">
-import { onDestroy } from "svelte";
+import { onDestroy, untrack } from "svelte";
+import { get } from "svelte/store";
 import { createExtensionReceiver } from "../stores/extension.ts";
-import { createLibrary } from "../stores/library.ts";
 import { createPairing } from "../stores/pairing.ts";
 import { createPreferences } from "../stores/preferences.ts";
 import { createSession } from "../stores/session.ts";
-import { createTags } from "../stores/tags.ts";
-import { createUploads } from "../stores/uploads.ts";
+import { createWorkspace, type Workspace } from "../stores/workspace.ts";
 import Library from "./Library.svelte";
 import Settings from "./Settings.svelte";
 import Unlock from "./Unlock.svelte";
 
 const session = createSession();
-const tags = createTags(session);
-const library = createLibrary(session, { onChange: tags.refresh });
 const preferences = createPreferences();
-const uploads = createUploads(session, {
-	onComplete: () => {
-		void tags.refresh();
-		return library.refresh();
-	},
-	preferences,
-});
+let workspace = $state<Workspace | null>(null);
+const stopSession = session.subscribe((value) =>
+	untrack(() => {
+		if (workspace?.context === value.context) {
+			return;
+		}
+		workspace?.dispose();
+		workspace = value.context
+			? createWorkspace(value.context, preferences)
+			: null;
+	}),
+);
 const pairing = createPairing(session);
 function pageAtLocation() {
 	return new URLSearchParams(location.search).get("page") === "settings"
@@ -29,17 +31,23 @@ function pageAtLocation() {
 		: "library";
 }
 let page = $state(pageAtLocation());
-const extension = createExtensionReceiver(session, uploads, () => {
-	page = "library";
-	history.replaceState({}, "", "?page=library");
-});
+const extension = createExtensionReceiver(
+	session,
+	() => workspace?.uploads ?? null,
+	() => {
+		page = "library";
+		history.replaceState({}, "", "?page=library");
+	},
+);
 function dragFiles(event: DragEvent) {
 	if (!event.dataTransfer?.types.includes("Files")) {
 		return;
 	}
 	event.preventDefault();
 	event.dataTransfer.dropEffect =
-		session.ready && !$uploads.uploading ? "copy" : "none";
+		session.ready && workspace && !get(workspace.uploads).uploading
+			? "copy"
+			: "none";
 }
 function dropFiles(event: DragEvent) {
 	if (!event.dataTransfer?.types.includes("Files")) {
@@ -47,12 +55,17 @@ function dropFiles(event: DragEvent) {
 	}
 	event.preventDefault();
 	const files = Array.from(event.dataTransfer.files);
-	if (!files.length || !session.ready || $uploads.uploading) {
+	if (
+		!files.length ||
+		!session.ready ||
+		!workspace ||
+		get(workspace.uploads).uploading
+	) {
 		return;
 	}
 	page = "library";
 	history.replaceState({}, "", "?page=library");
-	void uploads.upload(files);
+	void workspace.uploads.upload(files);
 }
 function navigate(event: MouseEvent, name: "library" | "settings") {
 	if (
@@ -76,9 +89,8 @@ onDestroy(() => {
 	window.removeEventListener("popstate", popstate);
 	extension.dispose();
 	pairing.dispose();
-	uploads.dispose();
-	library.dispose();
-	tags.dispose();
+	stopSession();
+	workspace?.dispose();
 	session.dispose();
 });
 </script>
@@ -132,15 +144,27 @@ onDestroy(() => {
 			</button>
 		</header>
 		{#if page === "settings"}
-			<Settings {session} {pairing} {uploads} {preferences} />
-		{:else}
+			<Settings {session} {pairing} {workspace} {preferences} />
+		{:else if workspace}
 			<Library
 				{session}
-				{library}
-				{tags}
-				{uploads}
+				library={workspace.library}
+				tags={workspace.tags}
+				uploads={workspace.uploads}
 				onsettings={(event) => navigate(event, "settings")}
 			/>
+		{:else}
+			<section class="panel empty stack">
+				<h2>Your library starts here</h2>
+				<p>
+					<a
+						href="?page=settings"
+						onclick={(event) => navigate(event, "settings")}
+						>Create or restore your library</a
+					>
+					to start saving encrypted media.
+				</p>
+			</section>
 		{/if}
 	{/if}
 </main>

@@ -94,14 +94,11 @@ function app(
 		unlocked: true,
 		configured: true,
 		busy: false,
-		epoch: 0,
+		signal: new AbortController().signal,
 		...patch,
 	});
 	const session = {
 		subscribe: sessionState.subscribe,
-		get epoch() {
-			return get(sessionState).epoch;
-		},
 	};
 	const uploads: File[][] = [];
 	const extra: (Metadata | undefined)[] = [];
@@ -134,7 +131,7 @@ function app(
 	let navigations = 0;
 	const receiver = createExtensionReceiver(
 		session,
-		batches,
+		() => batches,
 		() => navigations++,
 		browser,
 	);
@@ -243,7 +240,7 @@ test("failed unlock keeps the capture and invalidation or disposal discards it",
 		assertPresent(assertPresent(fixture.receive(file)).error),
 		/pending/,
 	);
-	fixture.sessionState.update((value) => ({ ...value, epoch: 1 }));
+	get(fixture.sessionState).signal.dispatchEvent(new Event("abort"));
 	fixture.sessionState.update((value) => ({
 		...value,
 		status: "unlocked",

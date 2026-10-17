@@ -8,44 +8,15 @@ import { assertPresent } from "./assert.ts";
 import { deferred, testKey, tick } from "./helpers.ts";
 
 function session() {
-	const state = writable({
-		configured: false,
-		unlocked: true,
-		busy: false,
-		epoch: 0,
-	});
-	let controller = new AbortController();
+	const controller = new AbortController();
 	return {
-		...state,
-		get epoch() {
-			return get(state).epoch;
-		},
-		get signal() {
-			return controller.signal;
-		},
-		get ready() {
-			const value = get(state);
-			return value.unlocked && value.configured && !value.busy;
-		},
-		credentials: () => ({
-			serverUrl: "https://clip.example",
-			key: testKey(),
-		}),
-		configure() {
-			state.update((v) => ({ ...v, configured: true }));
-		},
-		lock() {
-			controller.abort();
-			controller = new AbortController();
-			state.update((v) => ({
-				...v,
-				configured: false,
-				unlocked: false,
-				epoch: v.epoch + 1,
-			}));
-		},
+		serverUrl: "https://clip.example",
+		key: testKey(),
+		signal: controller.signal,
+		end: () => controller.abort(),
 	};
 }
+
 function fixture(
 	t: test.TestContext,
 	options: {
@@ -62,6 +33,7 @@ function fixture(
 		...options,
 	});
 	t.after(uploads.dispose);
+	owner.signal.addEventListener("abort", uploads.dispose, { once: true });
 	return { owner, uploads, refreshes: () => refreshes };
 }
 test("uploads run sequentially, continue after failures, and report failures for manual resubmission", async (t) => {
@@ -84,7 +56,7 @@ test("uploads run sequentially, continue after failures, and report failures for
 			return { id: file.name };
 		},
 	});
-	f.owner.configure();
+
 	await tick();
 	const files = ["first", "bad", "last"].map((name) => new File([], name));
 	const uploading = f.uploads.upload(files);
@@ -109,7 +81,7 @@ test("uploads run sequentially, continue after failures, and report failures for
 	assert.deepEqual(get(f.uploads).failures, []);
 });
 test("identity changes and disposal abort uploads and suppress late completion and progress", async (t) => {
-	for (const end of ["lock", "dispose"]) {
+	for (const end of ["context", "dispose"]) {
 		const pending = deferred<{
 			id: string;
 		}>();
@@ -122,10 +94,10 @@ test("identity changes and disposal abort uploads and suppress late completion a
 				return pending.promise;
 			},
 		});
-		f.owner.configure();
+
 		const uploading = f.uploads.upload([new File([], "pending")]);
-		if (end === "lock") {
-			f.owner.lock();
+		if (end === "context") {
+			f.owner.end();
 		} else {
 			f.uploads.dispose();
 		}
@@ -154,7 +126,7 @@ test("a batch snapshots compression preferences and the next batch sees changes"
 			return { id: String(seen.length) };
 		},
 	});
-	f.owner.configure();
+
 	await f.uploads.upload([new File([], "first"), new File([], "second")]);
 	await f.uploads.upload([new File([], "third")]);
 	assert.deepEqual(seen, [true, true, false]);

@@ -26,9 +26,7 @@ export interface ReceiverBrowser {
 export interface CaptureSessionState extends SessionSnapshot {
 	status: "new" | "locked" | "unlocked";
 }
-export interface CaptureSession extends Readable<CaptureSessionState> {
-	readonly epoch: number;
-}
+export interface CaptureSession extends Readable<CaptureSessionState> {}
 export interface CaptureUploads extends Readable<{ uploading: boolean }> {
 	upload(files: File[], extra?: Metadata): Promise<boolean>;
 }
@@ -41,19 +39,20 @@ interface Capture {
 // Each app tab owns its receiver and at most one pending capture.
 export function createExtensionReceiver(
 	session: CaptureSession,
-	uploads: CaptureUploads,
+	getUploads: () => CaptureUploads | null,
 	onupload: () => void,
 	browser: ReceiverBrowser = window,
 ) {
 	let pending: Capture | null = null;
-	let epoch = session.epoch;
+
 	let disposed = false;
 	function rejection() {
 		const value = get(session);
+		const uploads = getUploads();
 		if (value.status === "new" || (value.unlocked && !value.configured)) {
 			return "Set up your uploads in i2nclip, then retry.";
 		}
-		if (value.busy || get(uploads).uploading) {
+		if (value.busy || (uploads ? get(uploads).uploading : false)) {
 			return "i2nclip is busy. Wait for the current operation, then retry.";
 		}
 		return "";
@@ -78,23 +77,34 @@ export function createExtensionReceiver(
 	}
 	function upload(capture: Capture) {
 		pending = null;
-		const own = epoch;
+		const signal = get(session).signal;
+		const uploads = getUploads();
+		if (!uploads) {
+			complete(capture, false, true);
+			return;
+		}
 		onupload();
 		void uploads.upload([capture.file], capture.extra).then((ok) => {
 			if (!disposed) {
-				complete(capture, ok, own !== session.epoch);
+				complete(capture, ok, signal.aborted);
 			}
 		});
 	}
+	let lifetime: AbortSignal | null = null;
 	const unsubscribeSession = session.subscribe((value) => {
-		if (value.epoch !== epoch || (value.unlocked && !value.configured)) {
+		if (value.signal !== lifetime) {
+			lifetime?.removeEventListener("abort", discard);
+			lifetime = value.signal;
+			lifetime.addEventListener("abort", discard, { once: true });
+		}
+		if (value.unlocked && !value.configured) {
 			discard();
 		}
-		epoch = value.epoch;
 		if (pending && value.unlocked && !rejection()) {
 			upload(pending);
 		}
 	});
+
 	function receive(event: CaptureEvent) {
 		const message =
 			event.data && typeof event.data === "object"
@@ -169,6 +179,7 @@ export function createExtensionReceiver(
 			disposed = true;
 			browser.removeEventListener("message", receive);
 			unsubscribeSession();
+			lifetime?.removeEventListener("abort", discard);
 			discard();
 		},
 	};
