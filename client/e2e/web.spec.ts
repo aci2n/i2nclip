@@ -190,7 +190,7 @@ test("encrypted singleton recovery, password change, reload, and forget", async 
 		await context.close();
 	}
 });
-test("tabs unlock independently and saved identity changes invalidate other sessions", async ({
+test("tabs inherit access, reconnect after password changes, and forget together", async ({
 	page,
 	app,
 }) => {
@@ -199,17 +199,11 @@ test("tabs unlock independently and saved identity changes invalidate other sess
 	try {
 		await second.goto(`${app.origin}/?page=settings`);
 		await expect(
+			second.getByRole("heading", { name: "Your library", exact: true }),
+		).toBeVisible();
+		await expect(
 			second.getByRole("button", { name: "Unlock", exact: true }),
-		).toBeVisible();
-		await master(second);
-		await expect(
-			second.getByRole("heading", { name: "Your library", exact: true }),
-		).toBeVisible();
-		await page.getByRole("button", { name: "Lock", exact: true }).click();
-		await expect(
-			second.getByRole("heading", { name: "Your library", exact: true }),
-		).toBeVisible();
-		await master(page);
+		).toHaveCount(0);
 		await page.getByText("Change master password", { exact: true }).click();
 		await page
 			.getByLabel("Current master password", { exact: true })
@@ -224,21 +218,27 @@ test("tabs unlock independently and saved identity changes invalidate other sess
 			.getByRole("button", { name: "Change password", exact: true })
 			.click();
 		await expect(
-			second.getByRole("button", { name: "Unlock", exact: true }),
+			page.getByRole("status").filter({ hasText: "Master password changed." }),
 		).toBeVisible();
-		await shot(second, "other-tab-password-changed");
-		await second.getByLabel("Master password", { exact: true }).fill(PASSWORD);
-		await second.getByRole("button", { name: "Unlock", exact: true }).click();
-		await expect(second.getByRole("alert")).toContainText("Wrong password");
-		await second
-			.getByLabel("Master password", { exact: true })
-			.fill("changed-password");
-		await second.getByRole("button", { name: "Unlock", exact: true }).click();
+		await expect(
+			second.getByRole("heading", { name: "Your library", exact: true }),
+		).toBeVisible();
+		// The inherited wrapping key must support identity mutations after donor closure.
+		await page.goto("about:blank");
 		await second.getByText("Forget this library", { exact: true }).click();
 		second.once("dialog", (dialog) => dialog.accept());
 		await second
 			.getByRole("button", { name: "Forget library", exact: true })
 			.click();
+		await expect(
+			second.getByRole("button", { name: "Create library", exact: true }),
+		).toBeVisible();
+		await page.goto(`${app.origin}/?page=settings`);
+		await expect(
+			page.getByRole("button", { name: "Create library", exact: true }),
+		).toBeVisible();
+		await second.close();
+		await page.reload();
 		await expect(
 			page.getByRole("button", { name: "Unlock", exact: true }),
 		).toBeVisible();
@@ -250,7 +250,9 @@ test("tabs unlock independently and saved identity changes invalidate other sess
 			page.getByRole("button", { name: "Create library", exact: true }),
 		).toBeVisible();
 	} finally {
-		await second.close();
+		if (!second.isClosed()) {
+			await second.close();
+		}
 	}
 });
 test("upload failures survive navigation and files can be selected again", async ({

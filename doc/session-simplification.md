@@ -1,5 +1,8 @@
 # Simplify session and persistence
 
+Historical specification. Session lifetime and unlock behavior are superseded by
+[shared sessions](shared-session.md); current ownership is described in [session](session.md).
+
 ## Goal and scope
 
 Reduce duplication and coordination in session.ts and persistence.ts while keeping

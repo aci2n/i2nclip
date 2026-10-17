@@ -50,6 +50,7 @@ const sessionSnapshot: SessionState = {
 	privateKey: "",
 	publicKey: "",
 	error: "",
+	checking: false,
 };
 const room = {
 	v: 1,

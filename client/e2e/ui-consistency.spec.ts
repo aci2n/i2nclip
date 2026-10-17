@@ -119,7 +119,10 @@ test("setup, settings and independently locked tabs share usable controls at eve
 		await shot(page, `about-controls-${width}`, { fullPage: false });
 		await dialog.getByRole("button", { name: "Close", exact: true }).click();
 	}
-	await page.getByRole("button", { name: "Lock", exact: true }).click();
+	await page.reload();
+	await expect(
+		page.getByRole("button", { name: "Unlock", exact: true }),
+	).toBeVisible();
 	for (const width of [1100, 320, 360]) {
 		await page.setViewportSize({ width, height: 800 });
 		await consistentControls(page, width < 500);

@@ -18,6 +18,10 @@ import {
 	validateIdentity,
 } from "../protocol/recovery.ts";
 import { checkServer } from "../protocol/server.ts";
+import {
+	createSessionSharing,
+	type SessionChannel,
+} from "../session-sharing.ts";
 
 // A library consumer never observes changing credentials.
 export interface LibraryContext extends Credentials {
@@ -34,6 +38,7 @@ export interface SessionState extends SessionSnapshot {
 	serverUrl: string;
 	context: LibraryContext | null;
 	error: string;
+	checking: boolean;
 }
 export interface IdentityCredentials extends Credentials {
 	privateKey: Identity["private_key"];
@@ -54,11 +59,13 @@ export function createSession({
 	http = api,
 	defaultServerUrl = globalThis.location?.origin || "http://localhost:8080",
 	events = typeof window === "undefined" ? undefined : window,
+	channel,
 }: {
 	persistence?: ReturnType<typeof createPersistence>;
 	http?: IdentityApi;
 	defaultServerUrl?: string;
 	events?: EventTarget;
+	channel?: () => SessionChannel | null;
 } = {}) {
 	let saved: SavedIdentity | null = null;
 	let key: CryptoKey | null = null;
@@ -75,10 +82,42 @@ export function createSession({
 		serverUrl: defaultServerUrl,
 		context: null,
 		error: "",
+		checking: false,
 	});
 	function publish(patch: Partial<SessionState>) {
 		state.update((value) => ({ ...value, ...patch }));
 	}
+	const sharing = createSessionSharing({
+		channel,
+		checking: (value) => {
+			if (!disposed) {
+				publish({ checking: value });
+			}
+		},
+		lockedRecord: () => (!key && !command ? (saved?.text ?? null) : null),
+		current: () => {
+			if (!saved || !key || command || disposed) {
+				return null;
+			}
+			try {
+				persistence.unchanged(saved.text);
+				return { record: saved.text, key };
+			} catch {
+				externalChange();
+				return null;
+			}
+		},
+		accept: async (grant, signal) => {
+			const current = saved;
+			if (key || command || !current || current.text !== grant.record) {
+				return;
+			}
+			const identity = await open(current, grant.key, signal);
+			signal.throwIfAborted();
+			sharing.cancel();
+			install(current, grant.key, identity);
+		},
+	});
 	function endLifetime() {
 		lifetime.abort();
 		lifetime = new AbortController();
@@ -149,10 +188,10 @@ export function createSession({
 			}
 		} catch {}
 		command?.abort();
+		command = null;
 		endLifetime();
-		readSaved(
-			"Saved identity changed in another tab. Unlock this client again.",
-		);
+		readSaved();
+		requestAccess();
 	}
 	function storageChanged(event: Event) {
 		if (
@@ -173,16 +212,24 @@ export function createSession({
 	}
 	readSaved();
 	events?.addEventListener("storage", storageChanged);
+	requestAccess();
+	function requestAccess() {
+		sharing.request(saved?.text ?? null);
+	}
 	async function action(work: (signal: AbortSignal) => Promise<void>) {
 		if (disposed || command) {
 			return false;
 		}
+		sharing.cancel();
 		const own = new AbortController();
 		command = own;
 		publish({ busy: true, error: "" });
 		try {
 			await work(own.signal);
 			own.signal.throwIfAborted();
+			if (saved && key) {
+				sharing.announce(saved.text);
+			}
 			return true;
 		} catch (error) {
 			if (!own.signal.aborted) {
@@ -272,11 +319,7 @@ export function createSession({
 				const identity = await open(current, wrapping, signal);
 				install(current, wrapping, identity);
 			}),
-		lock() {
-			command?.abort();
-			endLifetime();
-			readSaved();
-		},
+
 		create: ({ serverUrl, otc }: { serverUrl: string; otc: string }) =>
 			action(async (signal) => {
 				requireSetup();
@@ -349,6 +392,7 @@ export function createSession({
 				return false;
 			}
 			try {
+				sharing.cancel();
 				persistence.reset(persistence.text());
 				endLifetime();
 				readSaved();
@@ -385,6 +429,7 @@ export function createSession({
 			disposed = true;
 			command?.abort();
 			events?.removeEventListener("storage", storageChanged);
+			sharing.dispose();
 			endLifetime();
 			publish({
 				status: "locked",

@@ -1,5 +1,8 @@
 # Remove redundant application guards
 
+Historical specification. Session lifetime and unlock behavior are superseded by
+[shared sessions](shared-session.md); current ownership is described in [session](session.md).
+
 ## Goal and scope
 
 Audit the web app and extension for checks that repeat caller or lifetime

@@ -95,7 +95,10 @@ test("app receives captures through its public event interface and uploads after
 			sourceTitle: "A portrait from the mountain trail",
 		},
 	};
-	await page.getByRole("button", { name: "Lock", exact: true }).click();
+	await page.reload();
+	await expect(
+		page.getByRole("button", { name: "Unlock", exact: true }),
+	).toBeVisible();
 	const deliver = () => receiveCapture(page, request);
 	expect(await deliver()).toEqual({ ok: true, needsUnlock: true });
 	await expect(page.getByText(image.name, { exact: true })).toHaveCount(0);
@@ -149,23 +152,26 @@ test("app receives captures through its public event interface and uploads after
 	await expect(page.getByRole("searchbox")).toBeVisible();
 	await expect(page.getByRole("article")).toHaveCount(2);
 
-	await page.getByRole("button", { name: "Lock", exact: true }).click();
+	await page.reload();
+	await expect(
+		page.getByRole("button", { name: "Unlock", exact: true }),
+	).toBeVisible();
 	expect(await deliver()).toEqual({ ok: true, needsUnlock: true });
 	// Reload discards a hidden capture rather than uploading it after unlock.
 	await page.reload();
 	await master(page);
 	await expect(page.getByRole("article")).toHaveCount(2);
 
-	// Each tab has its own receiver and unlock state.
+	// Each tab owns its receiver and inherits unlocked access.
 	const other = await context.newPage();
 	try {
 		await other.goto(app.origin);
 		await expect(
-			other.getByRole("button", { name: "Unlock", exact: true }),
+			other.getByRole("navigation", { name: "Main navigation" }),
 		).toBeVisible();
 		expect(await receiveCapture(other, { type: "probe" }, 50)).toMatchObject({
 			ok: true,
-			needsUnlock: true,
+			needsUnlock: false,
 		});
 	} finally {
 		await other.close();

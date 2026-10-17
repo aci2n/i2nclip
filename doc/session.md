@@ -1,23 +1,36 @@
 # Client session ownership
 
-Each web tab owns an independent session and unlocks separately. A change to the
-saved identity or master password invalidates other tabs, clears their loaded
-keys, and cancels pending work. Those tabs must unlock again. Local Lock affects
-only its own tab. Persistence listens for identity storage changes; its listener is removed when
-the session ends. Stale async writes are
-rejected by comparing the current record before writing. There are no cross-tab
-locks or shared unlocked keys.
-The root application view owns session, library, uploads, and pairing stores
-across navigation. Views subscribe and pass plain values and callbacks to
-components. Components own only presentation state and have no store access.
+Tabs share unlocked access through an in-memory BroadcastChannel. A tab requests
+access for its exact encrypted saved record; an unlocked tab supplies the
+non-extractable wrapping CryptoKey. The recipient decrypts and validates its own
+saved record, rechecks storage, then installs access through the same path as
+password unlock. No password or plaintext identity is broadcast or newly persisted.
+Recipients can become donors. Closing all app tabs ends live access. There is no
+Lock action, timer, polling, leader election, or cross-tab mutation lock.
+
+Session owns one saved-record lifetime and a separate local command lifetime.
+Storage events invalidate old access on password/identity changes and Reset.
+Every committed record change ends old work in the writer too. The writer installs
+new access and announces availability; other tabs can reconnect automatically.
+Late grants cannot restore old access. A missing or failed channel uses password
+unlock. See [shared-session specification](shared-session.md).
+
+The root application owns a workspace for the fixed LibraryContext (server URL,
+loaded key and lifetime signal). It contains library, tags and uploads stores,
+survives page navigation, and is synchronously disposed when its context ends.
+These stores never subscribe to session changes or compare epochs. Settings owns
+quota for the fixed context. Root-owned pairing and extension capture use the
+record lifetime; pending captures survive unlocking the same record, not replacement.
+Views subscribe to stores and pass ordinary props and callbacks to components.
 
 ## Identity and persistence
 
-The session owns the decrypted identity, loaded signing/encryption/tag keys, and
-cancellation generation. Its persistence helper owns the master-password wrapping
-key. Locking, forgetting, replacement, resetting, and disposal invalidate work and
-release key references. Session mutations reject overlap. API calls receive the
-loaded crypto context rather than importing keys for every request.
+Session privately owns the wrapping key, decrypted identity and loaded keys.
+Persistence has no secret cache or cancellation generation: it reads, decrypts,
+encrypts and conditionally writes snapshots under the caller's signal. Commands
+reject overlap. Their own successful commit ends the old workspace without
+canceling their success result; external changes and disposal cancel commands.
+Async work still checks cancellation before publication or resource creation.
 
 One atomic base64-wrapped MessagePack localStorage record holds the encrypted identity/server and password
 derivation material. Failed writes preserve the previous record and identity.
@@ -113,8 +126,9 @@ and searches again, retaining input focus. Session changes clear both chips and 
 The root-owned catalog aborts superseded requests, decrypts labels, verifies their
 HMAC tokens, skips damaged entries and clears decrypted state on session changes.
 Mutations refresh it independently of search. Failures and retry appear beside
-search. Refresh requests made during a busy session coalesce into one read when
-the session becomes available. There is no polling or persistent cache. The reusable tag input owns only
+search. The catalog starts loading when its workspace is created; refreshes supersede
+older reads. Session commands do not pause reads; committing a changed record
+disposes the old catalog. There is no polling or persistent cache. The reusable tag input owns only
 suggestion visibility, keyboard navigation and DOM focus.
 
 Upload is separate from search. Its compact summary keeps progress and failures

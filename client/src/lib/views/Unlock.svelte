@@ -33,42 +33,50 @@ async function submit(event: SubmitEvent) {
 	<p>
 		Your master password protects your saved library identity on this device.
 	</p>
-	<form class="stack" onsubmit={submit}>
-		<label class="field"
-			>Master password<input
-				type="password"
-				required
-				minlength="8"
-				autocomplete={$session.status === "new"
-					? "new-password"
-					: "current-password"}
-				bind:value={password}
-				disabled={$session.busy}
-			></label
-		>
-		{#if $session.status === "new"}
+	<p>
+		Open tabs share unlocked access. Close all app tabs to end access on this
+		device.
+	</p>
+	{#if $session.checking}
+		<p role="status">Checking open tabs…</p>
+	{:else}
+		<form class="stack" onsubmit={submit}>
 			<label class="field"
-				>Confirm master password<input
+				>Master password<input
 					type="password"
 					required
 					minlength="8"
-					autocomplete="new-password"
-					bind:value={confirmation}
+					autocomplete={$session.status === "new"
+						? "new-password"
+						: "current-password"}
+					bind:value={password}
 					disabled={$session.busy}
 				></label
 			>
-		{/if}
-		<button type="submit" disabled={$session.busy}>
-			{$session.busy
-				? "Working…"
-				: $session.status === "new"
-					? "Create master password"
-					: "Unlock"}
-		</button>
-		{#if error || $session.error}
-			<p class="error" role="alert">{error || $session.error}</p>
-		{/if}
-	</form>
+			{#if $session.status === "new"}
+				<label class="field"
+					>Confirm master password<input
+						type="password"
+						required
+						minlength="8"
+						autocomplete="new-password"
+						bind:value={confirmation}
+						disabled={$session.busy}
+					></label
+				>
+			{/if}
+			<button type="submit" disabled={$session.busy}>
+				{$session.busy
+					? "Working…"
+					: $session.status === "new"
+						? "Create master password"
+						: "Unlock"}
+			</button>
+			{#if error || $session.error}
+				<p class="error" role="alert">{error || $session.error}</p>
+			{/if}
+		</form>
+	{/if}
 	{#if $session.status === "locked"}
 		<details>
 			<summary>Reset this client</summary>

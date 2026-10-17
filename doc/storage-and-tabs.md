@@ -1,5 +1,8 @@
 # Storage units and multiple tabs
 
+Historical specification. Session lifetime and unlock behavior are superseded by
+[shared sessions](shared-session.md); current ownership is described in [session](session.md).
+
 ## Goal and scope
 
 Allow the web app to run in multiple tabs and display large storage quantities in
