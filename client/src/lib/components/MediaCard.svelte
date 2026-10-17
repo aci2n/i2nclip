@@ -112,6 +112,14 @@ const summary = $derived(
 	</details>
 	<output class="feedback" class:error={media.error}>{media.message}</output>
 	<div class="bar actions">
+		{#if !media.deleted}
+			<a
+				href={`?page=media&id=${media.id}`}
+				target="_blank"
+				rel="noopener noreferrer"
+				>Open in new tab</a
+			>
+		{/if}
 		<button
 			type="button"
 			class="secondary"
@@ -226,9 +234,14 @@ dd {
 	margin: 0 0 0.5rem;
 	overflow-wrap: anywhere;
 }
-.actions button {
+.actions button,
+.actions a {
 	font-size: 0.85rem;
 	padding: 0.25rem 0.5rem;
+}
+.actions a {
+	display: inline-flex;
+	align-items: center;
 }
 .actions {
 	flex-wrap: wrap;
@@ -240,7 +253,8 @@ output {
 	margin: 0;
 }
 @media (max-width: 32rem), (pointer: coarse) {
-	.actions button {
+	.actions button,
+	.actions a {
 		min-height: 3rem;
 		padding: 0.5rem 0.75rem;
 		font-size: 1rem;

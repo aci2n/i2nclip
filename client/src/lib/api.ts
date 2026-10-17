@@ -99,6 +99,9 @@ export interface MediaApi {
 	updateMetadata(request: MetadataRequest): Promise<MetadataResult>;
 	remove(request: MediaRequest): Promise<void>;
 }
+export interface ViewerApi extends Pick<MediaApi, "getContent"> {
+	getMedia(request: MediaRequest): Promise<Media>;
+}
 export interface LibraryApi extends MediaApi {
 	list(request: ListRequest): Promise<MediaPage>;
 }
@@ -270,6 +273,30 @@ export async function list({
 		items.push(await openMeta(key, item));
 	}
 	return { items, next: page.next ? string(page.next) : null };
+}
+
+export async function getMedia({
+	serverUrl,
+	key,
+	id,
+	signal,
+}: MediaRequest): Promise<Media> {
+	if (!/^[0-9a-f]{64}$/.test(id)) {
+		throw new Error("Invalid media link.");
+	}
+	const response = await requestDocument({
+		serverUrl,
+		key,
+		method: "GET",
+		path: `/api/media/${id}/meta`,
+		body: new Uint8Array(),
+		signal,
+	});
+	const item = await openMeta(key, response);
+	if (item.id !== id) {
+		throw new Error("Invalid media response.");
+	}
+	return item;
 }
 
 export async function getContent({
@@ -515,7 +542,7 @@ async function readBody(
 			}
 			chunks.push(value);
 			if (onProgress && total) {
-				onProgress(Math.min(100, Math.round((received / total) * 100)));
+				onProgress(Math.min(99, Math.round((received / total) * 100)));
 			}
 		}
 	} catch (error) {
@@ -525,6 +552,8 @@ async function readBody(
 		signal?.removeEventListener("abort", abort);
 		reader.releaseLock();
 	}
+	onProgress?.(100);
+	signal?.throwIfAborted();
 	const out = new Uint8Array(received);
 	let offset = 0;
 	for (const chunk of chunks) {

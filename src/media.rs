@@ -10,7 +10,7 @@ use axum::{
     extract::{Path as UrlPath, State},
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, put},
+    routing::get,
     Router,
 };
 use serde::Serialize;
@@ -31,7 +31,7 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/api/tags", get(tags))
         .route("/api/media", get(list).post(upload))
         .route("/api/media/{id}", get(download).delete(remove))
-        .route("/api/media/{id}/meta", put(update_metadata))
+        .route("/api/media/{id}/meta", get(metadata).put(update_metadata))
 }
 
 const META_BODY_DEADLINE: Duration = Duration::from_secs(30);
@@ -164,6 +164,21 @@ async fn download(
     match state.db.content(owner, &id).await {
         Ok(content) => content_response(content, permit),
         Err(err) => fail(err),
+    }
+}
+
+async fn metadata(
+    State(state): State<AppState>,
+    UrlPath(id): UrlPath<String>,
+    media: SignedRequest,
+) -> Response {
+    let owner = match media.empty().await {
+        Ok(owner) => owner,
+        Err(response) => return *response,
+    };
+    match state.db.metadata(owner, &id).await {
+        Ok(item) => document_response(StatusCode::OK, item_document(item)),
+        Err(error) => fail(error),
     }
 }
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
 	getContent,
+	getMedia,
 	getQuota,
 	isKeyRegistered,
 	list,
@@ -577,4 +578,63 @@ test("registration signs the otc-only body with the unregistered key", async (t)
 		}),
 		{ name: "AbortError" },
 	);
+});
+
+test("direct metadata reads use signed empty GETs, decrypt summaries, and reject mismatched IDs", async (t) => {
+	const { privateKey } = await generatePrivateKey();
+	const key = await loadKey(privateKey);
+	const id = "a".repeat(64);
+	const controller = new AbortController();
+	let responseId = id;
+	let damaged = false;
+	let calls = 0;
+	t.mock.method(
+		globalThis,
+		"fetch",
+		async (url: string | URL | Request, options: RequestInit = {}) => {
+			calls++;
+			assert.equal(String(url), `https://clip.example/api/media/${id}/meta`);
+			assert.equal(options.method, "GET");
+			assert.equal(options.body, undefined);
+			assert.equal(options.signal, controller.signal);
+			assert(new Headers(options.headers).get("authorization"));
+			const meta = await encrypt(
+				key,
+				metaAad(responseId),
+				encodeMetaPlain(
+					{ name: "Portrait.png", content_type: "image/png" },
+					new Uint8Array([1, 2]),
+				),
+			);
+			if (damaged) {
+				meta[meta.length - 1] ^= 1;
+			}
+			return documentResponse({
+				id: responseId,
+				created_at: 1,
+				bytes: 42,
+				meta,
+			});
+		},
+	);
+	const request = {
+		id,
+		key,
+		serverUrl: "https://clip.example",
+		signal: controller.signal,
+	};
+	const media = await getMedia(request);
+	assert.equal(media.metadata?.name, "Portrait.png");
+	assert.deepEqual(media.thumb, new Uint8Array([1, 2]));
+	damaged = true;
+	assert.equal((await getMedia(request)).metadata, null);
+	damaged = false;
+	responseId = "b".repeat(64);
+	await assert.rejects(getMedia(request), /Invalid media response/);
+	const before = calls;
+	await assert.rejects(
+		getMedia({ ...request, id: "bad" }),
+		/Invalid media link/,
+	);
+	assert.equal(calls, before);
 });

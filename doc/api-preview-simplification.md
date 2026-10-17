@@ -1,5 +1,8 @@
 # API and preview simplification
 
+Historical specification. The single-item metadata read is now required by
+[private media deeplinks](deeplinks.md); current endpoint contracts are in [protocol](protocol.md).
+
 ## Goal and scope
 
 Remove unused standalone metadata reads, returned search tokens, and preview-driven

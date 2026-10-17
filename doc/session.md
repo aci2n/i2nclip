@@ -82,6 +82,17 @@ remain independently owned by media items. Navigation works during loading, and
 card/dialog always share progress. Unknown progress displays “Loading…”. Players pause
 on navigation or close; focus returns to the opening control when available.
 
+## Direct media links
+
+Fresh `?page=media&id=<content hash>` tabs reuse session sharing but do not create
+the browsing workspace or request lists/tags. A viewer store reads one encrypted
+metadata summary, owns one media-item store, and releases it on navigation or
+context changes. Explicit downloads reuse its verified/decrypted content. Native
+players start on user action. Text remains escaped and bounded; other files offer
+Download. The app URL stays stable. Setup can complete inline without losing the
+target. Navigating to Library lazily creates the workspace, which then retains its
+ordinary root-owned lifetime. See [deeplinks](deeplinks.md).
+
 ## Settings and pairing
 
 Settings owns its quota store and disposes it on navigation. Reads are deduplicated,

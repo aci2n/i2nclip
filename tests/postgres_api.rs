@@ -1761,19 +1761,82 @@ async fn authentication_rechecks_timestamp_after_nonce_insert_wait() {
 }
 
 #[tokio::test]
-async fn metadata_route_supports_only_updates() {
+async fn direct_metadata_reads_are_signed_private_and_do_not_return_content() {
     let owner = new_identity();
-    let (_dir, app) = app(&[&owner]).await;
-    let id = "a".repeat(64);
-    for (method, path) in [
-        ("GET", format!("/api/media/{id}/meta")),
-        ("PUT", format!("/api/media/{id}")),
-    ] {
-        assert_eq!(
-            call(&app, &owner, method, &path, vec![]).await.0,
-            StatusCode::METHOD_NOT_ALLOWED
-        );
-    }
+    let other = new_identity();
+    let stranger = new_identity();
+    let (_dir, app) = app(&[&owner, &other]).await;
+    let content =
+        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"file bytes").unwrap();
+    let hash = crypto::body_hash(&content);
+    let id = hash.as_str();
+    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
+    let body = client_crypto::encode_upload(&meta, &content, b"\x90");
+    assert_eq!(
+        call(&app, &owner, "POST", "/api/media", body).await.0,
+        StatusCode::CREATED
+    );
+    let path = format!("/api/media/{id}/meta");
+    let (status, body) = call(&app, &owner, "GET", &path, vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let document = client_crypto::document_json(&body);
+    assert_eq!(document["id"], id);
+    assert_eq!(document["meta"], serde_json::json!(meta));
+    assert_eq!(document["bytes"], content.len());
+    assert!(document["created_at"].is_number());
+    assert_eq!(document.as_object().unwrap().len(), 4);
+    assert_eq!(
+        call(&app, &other, "GET", &path, vec![]).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(&app, &stranger, "GET", &path, vec![]).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let unsigned = app
+        .clone()
+        .oneshot(Request::builder().uri(&path).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(unsigned.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        call(&app, &owner, "GET", &path, vec![1]).await.0,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+    assert_eq!(
+        call(&app, &owner, "GET", "/api/media/bad/meta", vec![])
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "GET",
+            &format!("/api/media/{}/meta", "a".repeat(64)),
+            vec![]
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(&app, &owner, "PUT", &format!("/api/media/{id}"), vec![])
+            .await
+            .0,
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+    assert_eq!(
+        call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(&app, &owner, "GET", &path, vec![]).await.0,
+        StatusCode::NOT_FOUND
+    );
 }
 
 #[tokio::test]

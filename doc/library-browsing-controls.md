@@ -17,7 +17,9 @@ keyboard-accessible button with a search-specific accessible name; removal remai
 a separate button. Search chips retain their existing presentation. Expansion is
 a compact muted text action: “+N more” for the number of tags hidden beyond
 the first six, and “Fewer tags” when expanded. It has no underline, arrow or
-filled background, and stays grouped beside the add button when not editing. Existing mobile touch sizes and wrapping remain supported.
+filled background, and stays grouped to the right of the add button when not
+editing, in both visual and keyboard order. Existing mobile touch sizes and
+wrapping remain supported.
 
 ## Persistence, lifecycle and failures
 

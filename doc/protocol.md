@@ -38,10 +38,11 @@ containers retain their native formats.
 | `GET /api/media` | Signed; client sends no body | `200`, `{"media":[…],"next":null}` or a cursor |
 | `POST /api/media` | Signed POST frame | `201`, one media object |
 | `GET /api/media/{id}` | Signed; client sends no body | `200`, encrypted content bytes |
+| `GET /api/media/{id}/meta` | Signed empty GET | `200`, one encrypted media summary without content |
 | `PUT /api/media/{id}/meta` | Signed metadata frame | `200`, one media object |
 | `DELETE /api/media/{id}` | Signed; client sends no body | `204` |
 
-Metadata updates are available only at `/api/media/{id}/meta`. GET on that path and PUT on `/api/media/{id}` return `405`.
+Metadata reads and updates use `/api/media/{id}/meta`. Reads are owner-scoped and uncached, return the same media object as list entries, and do not fetch content bytes. PUT on `/api/media/{id}` returns `405`.
 
 Metadata updates are generic: filenames, tags, and other metadata travel in the
 same encrypted frame. The server cannot read or patch plaintext fields. The

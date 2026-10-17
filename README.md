@@ -12,6 +12,8 @@ To connect another device, open **Connect another device** in Settings on the un
 
 Each browser profile saves one password-protected library identity in localStorage. Unlock once while using the app: other tabs inherit access from an unlocked tab through an in-memory channel. Closing all app tabs ends access; the next visit requires the master password. Password or saved-identity changes cancel active work in every tab, and tabs reconnect automatically when current unlocked access is available. **Forget library** removes the local identity while keeping the master password; resetting a locked client removes all its saved state. Neither action deletes server files.
 
+Each file has an **Open in new tab** link at `?page=media&id=<content hash>`. Bookmark or copy that app URL to open the file directly on a device connected to the same library. The viewer inherits unlocked access from another tab or asks for your master password. Images, audio and video use native browser elements; text is shown safely as text, and other files offer Download. The URL contains no keys and grants no access by itself. See [private media deeplinks](doc/deeplinks.md).
+
 The server allows one active upload and two active content downloads per library
 key, alongside global limits of four uploads and sixteen downloads per server
 instance. Further transfers wait; devices sharing a key share its permits.

@@ -407,6 +407,25 @@ impl Database {
         Ok((items, next))
     }
 
+    /// Read one authorized summary without fetching encrypted content bytes.
+    pub(crate) async fn metadata(&self, owner: [u8; 32], id: &str) -> Result<Item, Error> {
+        let id = frame::parse_id(id)?;
+        let row = sqlx::query(
+            "SELECT id, meta, content_bytes AS bytes, created_at FROM files WHERE owner = $1 AND id = $2",
+        )
+        .bind(owner.as_slice())
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(Error::NotFound)?;
+        Ok(Item {
+            id: row.try_get("id")?,
+            meta: row.try_get("meta")?,
+            bytes: row.try_get("bytes")?,
+            created_at: row.try_get("created_at")?,
+        })
+    }
+
     /// Fetch authorized content into owned bytes and release the connection.
     pub(crate) async fn content(&self, owner: [u8; 32], id: &str) -> Result<Vec<u8>, Error> {
         let id = frame::parse_id(id)?;

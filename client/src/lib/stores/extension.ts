@@ -78,12 +78,12 @@ export function createExtensionReceiver(
 	function upload(capture: Capture) {
 		pending = null;
 		const signal = get(session).signal;
+		onupload();
 		const uploads = getUploads();
 		if (!uploads) {
 			complete(capture, false, true);
 			return;
 		}
-		onupload();
 		void uploads.upload([capture.file], capture.extra).then((ok) => {
 			if (!disposed) {
 				complete(capture, ok, signal.aborted);

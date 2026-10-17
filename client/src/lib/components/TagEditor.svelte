@@ -71,17 +71,6 @@ async function persist(next: string[], clear = false) {
 		/>
 	{/each}
 	<span class="tag-actions">
-		{#if tags.length > 6}
-			<button
-				type="button"
-				class="disclosure"
-				aria-label={expanded ? "Show fewer tags" : "Show all tags"}
-				aria-expanded={expanded}
-				onclick={() => (expanded = !expanded)}
-			>
-				{expanded ? "Fewer tags" : `+${tags.length - 6} more`}
-			</button>
-		{/if}
 		{#if !editing}
 			<button
 				bind:this={button}
@@ -102,6 +91,17 @@ async function persist(next: string[], clear = false) {
 				>
 					<path d="M12 5v14M5 12h14" />
 				</svg>
+			</button>
+		{/if}
+		{#if tags.length > 6}
+			<button
+				type="button"
+				class="disclosure"
+				aria-label={expanded ? "Show fewer tags" : "Show all tags"}
+				aria-expanded={expanded}
+				onclick={() => (expanded = !expanded)}
+			>
+				{expanded ? "Fewer tags" : `+${tags.length - 6} more`}
 			</button>
 		{/if}
 	</span>

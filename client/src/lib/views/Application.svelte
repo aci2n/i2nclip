@@ -7,35 +7,43 @@ import { createPreferences } from "../stores/preferences.ts";
 import { createSession } from "../stores/session.ts";
 import { createWorkspace, type Workspace } from "../stores/workspace.ts";
 import Library from "./Library.svelte";
+import Media from "./Media.svelte";
 import Settings from "./Settings.svelte";
+import Setup from "./Setup.svelte";
 import Unlock from "./Unlock.svelte";
 
 const session = createSession();
 const preferences = createPreferences();
 let workspace = $state<Workspace | null>(null);
+function pageAtLocation() {
+	const params = new URLSearchParams(location.search);
+	const name = params.get("page");
+	return {
+		page:
+			name === "media" ? "media" : name === "settings" ? "settings" : "library",
+		id: params.get("id") || "",
+	};
+}
+let route = $state(pageAtLocation());
+function syncWorkspace(context = get(session).context) {
+	if (workspace && workspace.context !== context) {
+		workspace.dispose();
+		workspace = null;
+	}
+	if (context && route.page !== "media" && !workspace) {
+		workspace = createWorkspace(context, preferences);
+	}
+}
 const stopSession = session.subscribe((value) =>
-	untrack(() => {
-		if (workspace?.context === value.context) {
-			return;
-		}
-		workspace?.dispose();
-		workspace = value.context
-			? createWorkspace(value.context, preferences)
-			: null;
-	}),
+	untrack(() => syncWorkspace(value.context)),
 );
 const pairing = createPairing(session);
-function pageAtLocation() {
-	return new URLSearchParams(location.search).get("page") === "settings"
-		? "settings"
-		: "library";
-}
-let page = $state(pageAtLocation());
 const extension = createExtensionReceiver(
 	session,
 	() => workspace?.uploads ?? null,
 	() => {
-		page = "library";
+		route = { page: "library", id: "" };
+		syncWorkspace();
 		history.replaceState({}, "", "?page=library");
 	},
 );
@@ -63,7 +71,8 @@ function dropFiles(event: DragEvent) {
 	) {
 		return;
 	}
-	page = "library";
+	route = { page: "library", id: "" };
+	syncWorkspace();
 	history.replaceState({}, "", "?page=library");
 	void workspace.uploads.upload(files);
 }
@@ -78,11 +87,13 @@ function navigate(event: MouseEvent, name: "library" | "settings") {
 		return;
 	}
 	event.preventDefault();
-	page = name;
+	route = { page: name, id: "" };
+	syncWorkspace();
 	history.pushState({}, "", `?page=${name}`);
 }
 const popstate = () => {
-	page = pageAtLocation();
+	route = pageAtLocation();
+	syncWorkspace();
 };
 window.addEventListener("popstate", popstate);
 onDestroy(() => {
@@ -97,9 +108,27 @@ onDestroy(() => {
 
 <svelte:window ondragover={dragFiles} ondrop={dropFiles} />
 
-<main>
-	{#if $session.status !== "unlocked"}
+<main class:media={route.page === "media" && Boolean($session.context)}>
+	{#if route.page === "media" && !/^[0-9a-f]{64}$/.test(route.id)}
+		<section class="panel stack">
+			<p class="error" role="alert">Invalid media link.</p>
+			<a href="?page=library" onclick={(event) => navigate(event, "library")}
+				>Library</a
+			>
+		</section>
+	{:else if $session.status !== "unlocked"}
 		<Unlock {session} />
+	{:else if route.page === "media"}
+		{#if $session.context}
+			<Media
+				id={route.id}
+				context={$session.context}
+				onlibrary={(event) => navigate(event, "library")}
+			/>
+		{:else}
+			<p>Connect the library that contains this file to open it.</p>
+			<Setup {session} {pairing} />
+		{/if}
 	{:else}
 		<header>
 			<a
@@ -111,19 +140,19 @@ onDestroy(() => {
 			<nav aria-label="Main navigation">
 				<a
 					href="?page=library"
-					aria-current={page === "library" ? "page" : undefined}
+					aria-current={route.page === "library" ? "page" : undefined}
 					onclick={(event) => navigate(event, "library")}
 					>Library</a
 				>
 				<a
 					href="?page=settings"
-					aria-current={page === "settings" ? "page" : undefined}
+					aria-current={route.page === "settings" ? "page" : undefined}
 					onclick={(event) => navigate(event, "settings")}
 					>Settings</a
 				>
 			</nav>
 		</header>
-		{#if page === "settings"}
+		{#if route.page === "settings"}
 			<Settings {session} {pairing} {workspace} {preferences} />
 		{:else if workspace}
 			<Library
@@ -153,6 +182,10 @@ main {
 	max-width: 76rem;
 	padding: 1.5rem;
 	margin: auto;
+}
+main.media {
+	max-width: none;
+	padding: 1rem;
 }
 header {
 	display: grid;
