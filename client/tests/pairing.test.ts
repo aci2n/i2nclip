@@ -39,13 +39,12 @@ type SessionState = ActualSessionState & {
 	privateKey: PairedIdentity["private_key"] | "";
 	publicKey: string;
 };
-const sessionSnapshot: SessionState = {
+const sessionSnapshot: Omit<SessionState, "signal"> = {
 	status: "unlocked",
 	serverUrl: "https://clip.example",
 	configured: false,
 	unlocked: true,
 	busy: false,
-	signal: new AbortController().signal,
 	context: null,
 	privateKey: "",
 	publicKey: "",
@@ -354,15 +353,22 @@ function fixture(
 		},
 	});
 	const crypto = createPairingCrypto;
+	const senderLifetime = new AbortController();
+	let receiverLifetime = new AbortController();
 	const senderState = writable<SessionState>({
 		...sessionSnapshot,
-		signal: new AbortController().signal,
+		signal: senderLifetime.signal,
 		configured: true,
 	});
 	const receiverState = writable<SessionState>({
 		...sessionSnapshot,
-		signal: new AbortController().signal,
+		signal: receiverLifetime.signal,
 	});
+	function replaceReceiverLifetime(state: Writable<SessionState>) {
+		receiverLifetime.abort();
+		receiverLifetime = new AbortController();
+		state.update((value) => ({ ...value, signal: receiverLifetime.signal }));
+	}
 	const session = (state: Writable<SessionState>) => {
 		return {
 			subscribe: state.subscribe,
@@ -381,7 +387,11 @@ function fixture(
 			},
 			async importPairing(value: PairedIdentity) {
 				if (receiverImport) {
-					return receiverImport(value, state);
+					const saved = await receiverImport(value, state);
+					if (saved) {
+						replaceReceiverLifetime(state);
+					}
+					return saved;
 				}
 				value.signal.throwIfAborted();
 				state.set({
@@ -390,8 +400,8 @@ function fixture(
 					privateKey: value.private_key,
 					publicKey: bytesToB64url(value.public_key),
 					configured: true,
-					signal: new AbortController().signal,
 				});
+				replaceReceiverLifetime(state);
 				return true;
 			},
 		};
@@ -411,12 +421,16 @@ function fixture(
 	t.after(() => {
 		sender.dispose();
 		receiver.dispose();
+		senderLifetime.abort();
+		receiverLifetime.abort();
 	});
 	return {
 		sender,
 		receiver,
 		senderState,
 		receiverState,
+		invalidateSender: () => senderLifetime.abort(),
+		invalidateReceiver: () => receiverLifetime.abort(),
 		transcript,
 		removed: () => removed,
 	};
@@ -516,7 +530,7 @@ test("identity changes cancel authenticated pairing before any identity transfer
 	await until(() => Boolean(get(f.sender).code));
 	const receiving = f.receiver.receive(get(f.sender).code, origin);
 	await until(() => get(f.sender).approval);
-	get(f.senderState).signal.dispatchEvent(new Event("abort"));
+	f.invalidateSender();
 	assert.equal(await sending, false);
 	f.receiver.cancel();
 	assert.equal(await receiving, false);
@@ -682,7 +696,7 @@ test("session invalidation after saving prevents a late acknowledgment", async (
 	f.sender.approve();
 	await entered.promise;
 	assert.deepEqual(get(f.receiverState).privateKey, key.privateKey);
-	get(f.receiverState).signal.dispatchEvent(new Event("abort"));
+	f.invalidateReceiver();
 	assert.equal(get(f.receiver).active, false);
 	assert.match(get(f.receiver).status, /Library or server changed/);
 	finish.resolve();

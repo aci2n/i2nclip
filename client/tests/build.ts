@@ -35,9 +35,15 @@ test("web build contains only its entry page and bundled assets", async () => {
 			(name) =>
 				name === "index.html" ||
 				name === "favicon.ico" ||
-				/^assets\/[^/]+\.(js|css)$/.test(name),
+				/^assets\/[^/]+\.(js|css)(\.map)?$/.test(name),
 		),
 	);
+	for (const name of names.filter((name) => name.endsWith(".map"))) {
+		assert(
+			names.includes(name.slice(0, -4)),
+			`Source map has no generated asset: ${name}`,
+		);
+	}
 	const html = await readFile(join(dist, "web/index.html"), "utf8");
 	for (const [, asset] of html.matchAll(/(?:src|href)="\/([^" ]+)"/g)) {
 		assert(names.includes(asset), `Missing web asset: ${asset}`);

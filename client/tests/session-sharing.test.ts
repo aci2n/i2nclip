@@ -320,3 +320,38 @@ test("a grant completing after a local password command cannot override that com
 	await tick();
 	assert.equal(get(peer.session).context, context);
 });
+
+test("waiting tabs retry automatically after a donor password command fails", async (t) => {
+	const f = await configured(t);
+	const entered = deferred();
+	const release = deferred();
+	t.after(() => release.resolve());
+	const derive = crypto.subtle.deriveKey.bind(crypto.subtle);
+	let first = true;
+	t.mock.method(
+		crypto.subtle,
+		"deriveKey",
+		async (...args: Parameters<typeof crypto.subtle.deriveKey>) => {
+			if (first) {
+				first = false;
+				entered.resolve();
+				await release.promise;
+			}
+			return derive(...args);
+		},
+	);
+	const changing = f.first.session.changePassword(
+		"wrong-password",
+		"changed-password",
+	);
+	await entered.promise;
+	const peer = f.tab();
+	assert.equal(get(peer.session).configured, false);
+	release.resolve();
+	assert.equal(await changing, false);
+	await waitState(t, peer.session, (state) => state.configured);
+	assert.deepEqual(
+		peer.session.identity().privateKey,
+		f.first.session.identity().privateKey,
+	);
+});

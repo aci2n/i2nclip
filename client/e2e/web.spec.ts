@@ -214,6 +214,11 @@ test("tabs inherit access, reconnect after password changes, and forget together
 		await page
 			.getByLabel("Confirm new master password", { exact: true })
 			.fill("changed-password");
+		const reconnected = second.waitForResponse(
+			(response) =>
+				response.url().endsWith("/api/quota") &&
+				response.request().method() === "GET",
+		);
 		await page
 			.getByRole("button", { name: "Change password", exact: true })
 			.click();
@@ -223,6 +228,7 @@ test("tabs inherit access, reconnect after password changes, and forget together
 		await expect(
 			second.getByRole("heading", { name: "Your library", exact: true }),
 		).toBeVisible();
+		await reconnected;
 		// The inherited wrapping key must support identity mutations after donor closure.
 		await page.goto("about:blank");
 		await second.getByText("Forget this library", { exact: true }).click();

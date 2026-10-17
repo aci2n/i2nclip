@@ -152,38 +152,32 @@ export function createSession({
 			error: "",
 		});
 	}
-	function readSaved(error = "") {
+	function readSaved() {
+		let error = "";
+		let status: SessionState["status"];
 		try {
 			saved = persistence.read();
-			publish({
-				status: saved ? "locked" : "new",
-				unlocked: false,
-				configured: false,
-				context: null,
-				signal: lifetime.signal,
-				serverUrl: defaultServerUrl,
-				busy: false,
-				error,
-			});
+			status = saved ? "locked" : "new";
 		} catch (failure) {
 			saved = null;
-			publish({
-				status: "locked",
-				unlocked: false,
-				configured: false,
-				context: null,
-				signal: lifetime.signal,
-				busy: false,
-				error: errorMessage(failure),
-			});
+			status = "locked";
+			error = errorMessage(failure);
 		}
+		publish({
+			status,
+			unlocked: false,
+			configured: false,
+			context: null,
+			signal: lifetime.signal,
+			serverUrl: defaultServerUrl,
+			busy: false,
+			error,
+		});
 	}
+
 	function externalChange() {
 		try {
-			if (
-				persistence.text() === saved?.text ||
-				(persistence.text() === null && saved === null)
-			) {
+			if (persistence.text() === (saved?.text ?? null)) {
 				return;
 			}
 		} catch {}
@@ -227,9 +221,6 @@ export function createSession({
 		try {
 			await work(own.signal);
 			own.signal.throwIfAborted();
-			if (saved && key) {
-				sharing.announce(saved.text);
-			}
 			return true;
 		} catch (error) {
 			if (!own.signal.aborted) {
@@ -241,6 +232,9 @@ export function createSession({
 				command = null;
 				if (!disposed) {
 					publish({ busy: false });
+					if (saved && key) {
+						sharing.announce(saved.text);
+					}
 				}
 			}
 		}

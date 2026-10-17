@@ -52,7 +52,7 @@ async function consistentControls(page: Page, touch: boolean) {
 		}
 	}
 }
-test("setup, settings and independently locked tabs share usable controls at every width", async ({
+test("setup, settings and password entry share usable controls at every width", async ({
 	page,
 	app,
 }) => {

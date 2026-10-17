@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
-import { get, writable } from "svelte/store";
+import { writable } from "svelte/store";
 import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
 import { installBridge } from "../extension/bridge.ts";
 import type { ContextBrowser } from "../extension/capture.ts";
@@ -89,12 +89,13 @@ function app(
 	patch: Partial<CaptureSessionState> = {},
 	result = Promise.resolve(true),
 ) {
+	let lifetime = new AbortController();
 	const sessionState = writable<CaptureSessionState>({
 		status: "unlocked",
 		unlocked: true,
 		configured: true,
 		busy: false,
-		signal: new AbortController().signal,
+		signal: lifetime.signal,
 		...patch,
 	});
 	const session = {
@@ -135,7 +136,10 @@ function app(
 		() => navigations++,
 		browser,
 	);
-	t.after(() => receiver.dispose());
+	t.after(() => {
+		receiver.dispose();
+		lifetime.abort();
+	});
 	const receive = (
 		data: Record<string, unknown>,
 		origin = browser.location.origin,
@@ -150,6 +154,11 @@ function app(
 	};
 	return {
 		sessionState,
+		invalidate() {
+			lifetime.abort();
+			lifetime = new AbortController();
+			sessionState.update((value) => ({ ...value, signal: lifetime.signal }));
+		},
 		batches,
 		receiver,
 		receive,
@@ -240,7 +249,7 @@ test("failed unlock keeps the capture and invalidation or disposal discards it",
 		assertPresent(assertPresent(fixture.receive(file)).error),
 		/pending/,
 	);
-	get(fixture.sessionState).signal.dispatchEvent(new Event("abort"));
+	fixture.invalidate();
 	fixture.sessionState.update((value) => ({
 		...value,
 		status: "unlocked",

@@ -60,3 +60,18 @@ search/preview cancellation and URL cleanup. Tests isolate all mutable resources
 Build warning-free before cohesive commits; run make test-all with documented
 prerequisites. Inspect actual Firefox screenshots of unlock/header in both themes
 and narrow widths. Update current ownership docs to replace independent unlock.
+
+Build verification must accept Vite’s already configured source maps and require
+each map to have its associated generated asset; build settings remain unchanged.
+
+## Implementation and verification
+
+Grant replies pause during local identity commands so a record write and context
+installation cannot be observed halfway through. Command completion, including
+failure, announces availability so waiting tabs can request again.
+
+Verification: `make test-all` passes 147 client tests, strict TypeScript/Svelte and
+lint/format checks, web/extension artifact checks, Rust/PostgreSQL suites, and all
+72 real Firefox/Chromium tests. Firefox screenshots were inspected for unlock and
+header changes, mixed landscape/portrait/panorama media, audio, ordinary files,
+long names, errors, both themes, and 320/360 px widths.
