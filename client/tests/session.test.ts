@@ -31,11 +31,13 @@ async function fixture(
 	const session = createSession({ persistence, http: { ...api, ...http } });
 	t.after(session.dispose);
 	assert.equal(await session.initialize(password), true);
+	assert.equal(session.ready, false);
 	return { local, persistence, session };
 }
 test("one encrypted identity survives reload, password changes, and forgetting without plaintext secrets", async (t) => {
 	const f = await fixture(t, { registerKey: async () => {} });
 	assert.equal(await f.session.create({ serverUrl, otc: "invite" }), true);
+	assert.equal(f.session.ready, true);
 	const privateKey = get(f.session).privateKey;
 	assert.notEqual(privateKey, "");
 	if (privateKey === "") {
@@ -52,6 +54,7 @@ test("one encrypted identity survives reload, password changes, and forgetting w
 		assert(!saved.includes(secret));
 	}
 	f.session.dispose();
+	assert.equal(f.session.ready, false);
 	assert.equal(get(f.session).privateKey, "");
 	assert.equal(get(f.session).unlocked, false);
 	const restored = createSession({ persistence: createPersistence(f.local) });
@@ -60,12 +63,17 @@ test("one encrypted identity survives reload, password changes, and forgetting w
 	assert.equal(await restored.unlock("wrong-password"), false);
 	assert.equal(await restored.unlock(password), true);
 	assert.deepEqual(get(restored).privateKey, privateKey);
-	assert.equal(await restored.changePassword(password, "new-password"), true);
+	const changing = restored.changePassword(password, "new-password");
+	assert.equal(restored.ready, false);
+	assert.equal(await changing, true);
+	assert.equal(restored.ready, true);
 	restored.lock();
+	assert.equal(restored.ready, false);
 	assert.equal(get(restored).privateKey, "");
 	assert.equal(await restored.unlock(password), false);
 	assert.equal(await restored.unlock("new-password"), true);
 	assert.equal(await restored.forget(), true);
+	assert.equal(restored.ready, false);
 	assert.equal(get(restored).configured, false);
 	restored.lock();
 	assert.equal(await restored.unlock("new-password"), true);

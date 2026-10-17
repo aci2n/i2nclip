@@ -79,3 +79,14 @@ Verification: make test passes client checks with zero errors/warnings and all
 client/Rust tests; make test-build passes web and unpacked-extension checks. All
 64 Firefox/Chromium integration tests pass. The final receiver admission cleanup
 also passes the extension handoff integration test in both browsers (2 checks).
+
+## Readiness ownership follow-up
+
+Replace the standalone libraryReady(snapshot) predicate with a readonly
+session.ready getter. Session owns the derived value: unlocked, configured,
+not busy and not disposed. Add no mutable state or persistence. Update all stores,
+application event handlers and test doubles to consume the session contract.
+Keep cancellation, local busy guards and lifecycle behavior unchanged. Remove the
+old export. Verify readiness during registration, lock/unlock, forget and disposal,
+run client checks/tests and web/extension builds, and exercise library uploads and
+drag/drop in Firefox and Chromium. No protocol, schema or UI changes.

@@ -3,7 +3,6 @@ import type { TagApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
 import type { SessionReader } from "./session.ts";
-import { libraryReady } from "./session.ts";
 
 const empty = (): {
 	tags: string[];
@@ -67,7 +66,7 @@ export function createTags(
 			state.set(empty());
 			refreshNeeded = true;
 		}
-		if (refreshNeeded && libraryReady(value)) {
+		if (refreshNeeded && session.ready) {
 			void refresh();
 		}
 	});

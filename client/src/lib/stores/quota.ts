@@ -3,7 +3,6 @@ import type { Quota, QuotaApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
 import type { SessionReader } from "./session.ts";
-import { libraryReady } from "./session.ts";
 
 const empty = (): {
 	value: Quota | null;
@@ -27,8 +26,7 @@ export function createQuota(
 		}
 	});
 	async function refresh() {
-		const value = get(session);
-		if (disposed || get(state).loading || !libraryReady(value)) {
+		if (disposed || get(state).loading || !session.ready) {
 			return false;
 		}
 		controller = new AbortController();

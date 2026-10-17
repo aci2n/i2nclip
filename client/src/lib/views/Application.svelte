@@ -4,7 +4,7 @@ import { createExtensionReceiver } from "../stores/extension.ts";
 import { createLibrary } from "../stores/library.ts";
 import { createPairing } from "../stores/pairing.ts";
 import { createPreferences } from "../stores/preferences.ts";
-import { createSession, libraryReady } from "../stores/session.ts";
+import { createSession } from "../stores/session.ts";
 import { createTags } from "../stores/tags.ts";
 import { createUploads } from "../stores/uploads.ts";
 import Library from "./Library.svelte";
@@ -39,7 +39,7 @@ function dragFiles(event: DragEvent) {
 	}
 	event.preventDefault();
 	event.dataTransfer.dropEffect =
-		libraryReady($session) && !$uploads.uploading ? "copy" : "none";
+		session.ready && !$uploads.uploading ? "copy" : "none";
 }
 function dropFiles(event: DragEvent) {
 	if (!event.dataTransfer?.types.includes("Files")) {
@@ -47,7 +47,7 @@ function dropFiles(event: DragEvent) {
 	}
 	event.preventDefault();
 	const files = Array.from(event.dataTransfer.files);
-	if (!files.length || !libraryReady($session) || $uploads.uploading) {
+	if (!files.length || !session.ready || $uploads.uploading) {
 		return;
 	}
 	page = "library";

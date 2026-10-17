@@ -22,9 +22,6 @@ export interface SessionSnapshot {
 	busy: boolean;
 	epoch: number;
 }
-export function libraryReady(value: SessionSnapshot) {
-	return value.unlocked && value.configured && !value.busy;
-}
 export interface SessionState extends SessionSnapshot {
 	status: "new" | "locked" | "unlocked";
 	serverUrl: string;
@@ -56,6 +53,7 @@ export interface PairingSession extends Readable<PairingSessionState> {
 export type Session = ReturnType<typeof createSession>;
 // Invalidation aborts the previous signal before publishing the new epoch.
 export interface SessionReader extends Readable<SessionSnapshot> {
+	readonly ready: boolean;
 	readonly signal: AbortSignal;
 	readonly epoch: number;
 	credentials(): Credentials;
@@ -163,7 +161,7 @@ export function createSession({
 		return epoch;
 	}
 	function currentIdentity() {
-		if (!library || !get(state).unlocked || get(state).busy || disposed) {
+		if (!library || !session.ready) {
 			throw new Error("Unlock your library first.");
 		}
 		return library;
@@ -178,6 +176,10 @@ export function createSession({
 	});
 	const session = {
 		subscribe: state.subscribe,
+		get ready(): boolean {
+			const value = get(state);
+			return !disposed && value.unlocked && value.configured && !value.busy;
+		},
 		get signal() {
 			return controller.signal;
 		},

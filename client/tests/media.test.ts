@@ -124,6 +124,7 @@ test("media reuses full-content Blob URLs for preview and saving until disposal"
 	const controller = new AbortController();
 	const session = {
 		...writable({ configured: true, unlocked: true, busy: false, epoch: 0 }),
+		ready: true,
 		epoch: 0,
 		signal: controller.signal,
 		credentials: () => ({ serverUrl: "https://clip.example", key: testKey() }),
@@ -179,6 +180,7 @@ test("media reuses full-content Blob URLs for preview and saving until disposal"
 test("text previews reuse verified content, bound decoding, save full content and clear on disposal", async (t) => {
 	const session = {
 		...writable({ configured: true, unlocked: true, busy: false, epoch: 0 }),
+		ready: true,
 		epoch: 0,
 		signal: new AbortController().signal,
 		credentials: () => ({ serverUrl: "https://clip.example", key: testKey() }),
@@ -244,6 +246,7 @@ test("canceled text preparation cannot publish text or clear a subsequent mutati
 	);
 	const owner = {
 		...writable({ configured: true, unlocked: true, busy: false, epoch: 0 }),
+		ready: true,
 		epoch: 0,
 		signal: new AbortController().signal,
 		credentials: () => ({ serverUrl: "https://clip.example", key: testKey() }),

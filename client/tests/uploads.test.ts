@@ -23,6 +23,10 @@ function session() {
 		get signal() {
 			return controller.signal;
 		},
+		get ready() {
+			const value = get(state);
+			return value.unlocked && value.configured && !value.busy;
+		},
 		credentials: () => ({
 			serverUrl: "https://clip.example",
 			key: testKey(),

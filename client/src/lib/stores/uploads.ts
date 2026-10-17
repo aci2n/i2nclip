@@ -5,7 +5,6 @@ import type { SendOptions } from "../media/upload.ts";
 import { sendUpload } from "../media/upload.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import type { SessionReader } from "./session.ts";
-import { libraryReady } from "./session.ts";
 export interface UploadState {
 	uploading: boolean;
 	progress: {
@@ -55,7 +54,7 @@ export function createUploads(
 			controller.signal.aborted ||
 			get(state).uploading ||
 			!files.length ||
-			!libraryReady(get(session))
+			!session.ready
 		) {
 			return false;
 		}

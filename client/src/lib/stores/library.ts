@@ -8,7 +8,6 @@ import { normalizeTag } from "../protocol/tags.ts";
 import type { MediaItem, MediaOptions, MediaState } from "./media-item.ts";
 import { createMediaItem } from "./media-item.ts";
 import type { SessionReader } from "./session.ts";
-import { libraryReady } from "./session.ts";
 export interface LibraryState {
 	cards: MediaState[];
 	query: string[];
@@ -104,7 +103,7 @@ export function createLibrary(
 		query = get(state).query,
 		{ more = false, clearDraft = false } = {},
 	) {
-		if (disposed || !libraryReady(get(session))) {
+		if (disposed || !session.ready) {
 			return false;
 		}
 		const previous = get(state);
@@ -184,7 +183,7 @@ export function createLibrary(
 			reset();
 		}
 		if (
-			libraryReady(value) &&
+			session.ready &&
 			!get(state).loading &&
 			!cards.size &&
 			get(state).empty === null &&
