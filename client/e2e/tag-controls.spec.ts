@@ -74,6 +74,7 @@ test("tag controls fit desktop search and keep consistent alignment when wrapped
 				540,
 			),
 		);
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	const card = page.getByRole("article");
 	await expect(card).toHaveCount(1);
 	await matchingCardControls(card, false);

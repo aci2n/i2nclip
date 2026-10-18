@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { deferred } from "../tests/helpers.ts";
 import { createLibrary, expect, master, test } from "./fixtures.ts";
 
 async function drop(page: Page, target: string, names: string[]) {
@@ -36,6 +37,13 @@ test("file drops upload batches from Settings and outside main", async ({
 		drop: true,
 	});
 	await expect(page).toHaveURL(/#\/library/);
+	await expect(
+		page.getByRole("region", { name: "Review uploads" }),
+	).toBeVisible();
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
+	await expect(
+		page.getByRole("button", { name: "Open first.txt", exact: true }),
+	).toBeVisible();
 	await expect(page.getByRole("article")).toHaveCount(2);
 	await expect(
 		page.getByRole("button", { name: "Upload", exact: true }),
@@ -44,6 +52,10 @@ test("file drops upload batches from Settings and outside main", async ({
 		drag: true,
 		drop: true,
 	});
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
+	await expect(
+		page.getByRole("button", { name: "Open third.txt", exact: true }),
+	).toBeVisible();
 	await expect(page.getByRole("article")).toHaveCount(3);
 	for (const name of ["first.txt", "second.txt", "third.txt"]) {
 		await expect(
@@ -88,27 +100,87 @@ test("file drops are suppressed before setup and while locked; text drags are un
 
 test("a second drop cannot overlap an upload batch", async ({ page, app }) => {
 	await createLibrary(page, app);
-	await page.evaluate(() => {
-		for (const name of ["accepted.txt", "busy.txt"]) {
-			const dataTransfer = new DataTransfer();
-			dataTransfer.items.add(new File([name], name, { type: "text/plain" }));
-			document.body.dispatchEvent(
-				new DragEvent("drop", {
-					bubbles: true,
-					cancelable: true,
-					dataTransfer,
-				}),
-			);
+	const held = deferred();
+	const started = deferred();
+	await page.route("**/api/media", async (route) => {
+		if (route.request().method() === "POST") {
+			started.resolve();
+			await held.promise;
 		}
+		await route.continue().catch(() => {});
 	});
+	try {
+		await drop(page, "html", ["accepted.txt"]);
+		await page
+			.getByRole("button", { name: "Start upload", exact: true })
+			.click();
+		await started.promise;
+		await drop(page, "html", ["busy.txt"]);
+		await expect(
+			page.getByRole("region", { name: "Review uploads" }),
+		).toHaveCount(0);
+		held.resolve();
+		await expect(
+			page.getByRole("button", { name: "Open accepted.txt", exact: true }),
+		).toBeVisible();
+		await expect(page.getByRole("article")).toHaveCount(1);
+	} finally {
+		held.resolve();
+		await page.unrouteAll({ behavior: "wait" });
+	}
+});
+
+test("drops append to review and cancel discards the whole pending batch", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	await drop(page, "html", ["same.txt"]);
+	await drop(page, "html", ["same.txt", "other.txt"]);
+	const review = page.getByRole("region", { name: "Review uploads" });
+	await expect(review.getByRole("article")).toHaveCount(3);
 	await expect(
-		page.getByRole("button", { name: "Upload", exact: true }),
-	).toBeEnabled();
-	await expect(page.getByRole("article")).toHaveCount(1);
+		page.getByRole("button", { name: "Open same.txt", exact: true }),
+	).toHaveCount(0);
+	await review
+		.getByRole("button", { name: "Remove other.txt", exact: true })
+		.click();
+	await expect(review.getByRole("article")).toHaveCount(2);
+	await review.getByRole("button", { name: "Cancel", exact: true }).click();
+	await expect(review).toHaveCount(0);
+	await expect(page.getByRole("article")).toHaveCount(0);
+});
+
+test("pasted files enter review while text-field paste stays local", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	const paste = async (target: string) =>
+		page.locator(target).evaluate((element) => {
+			const clipboardData = new DataTransfer();
+			clipboardData.items.add(
+				new File(["pasted text"], "pasted.txt", { type: "text/plain" }),
+			);
+			const event = new ClipboardEvent("paste", {
+				clipboardData,
+				bubbles: true,
+				cancelable: true,
+			});
+			element.dispatchEvent(event);
+			return event.defaultPrevented;
+		});
+	expect(await paste("input[type=search]")).toBe(false);
 	await expect(
-		page
-			.getByRole("article")
-			.getByText("accepted.txt", { exact: true })
-			.first(),
+		page.getByRole("region", { name: "Review uploads" }),
+	).toHaveCount(0);
+	expect(await paste("body")).toBe(true);
+	await expect(
+		page.getByRole("region", { name: "Review uploads" }),
+	).toContainText("pasted.txt");
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
+	await expect(
+		page.getByRole("button", { name: "Open pasted.txt", exact: true }),
 	).toBeVisible();
 });

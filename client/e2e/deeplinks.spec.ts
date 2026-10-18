@@ -27,9 +27,7 @@ test("private links inherit access and show native media, escaped text and expli
 	app,
 }) => {
 	await createLibrary(page, app);
-	await page
-		.getByRole("checkbox", { name: "Compress images to WebP" })
-		.uncheck();
+	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	const files = [
 		await imageFixture(page, "Landscape.png", 960, 540),
 		await imageFixture(page, "Portrait.png", 480, 800),
@@ -55,6 +53,7 @@ test("private links inherit access and show native media, escaped text and expli
 	];
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.getByLabel("Upload", { exact: true }).setInputFiles(files);
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(files.length);
 	const first = await linkFor(page, files[0].name);
 	const card = page.getByRole("article").filter({ hasText: files[0].name });
@@ -192,14 +191,13 @@ test("direct links preserve the target through password unlock, navigation, relo
 	browser,
 }) => {
 	await createLibrary(page, app);
-	await page
-		.getByRole("checkbox", { name: "Compress images to WebP" })
-		.uncheck();
+	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	const backup = await recovery(page);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page
 		.getByLabel("Upload", { exact: true })
 		.setInputFiles(await imageFixture(page, "Target.png", 640, 960));
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(1);
 	const { href } = await linkFor(page, "Target.png");
 	const url = `${app.origin}/${href}`;
@@ -268,13 +266,12 @@ test("invalid, missing and failed file links offer local errors and retry", asyn
 	app,
 }) => {
 	await createLibrary(page, app);
-	await page
-		.getByRole("checkbox", { name: "Compress images to WebP" })
-		.uncheck();
+	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page
 		.getByLabel("Upload", { exact: true })
 		.setInputFiles(await imageFixture(page, "Retry.png", 960, 540));
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(1);
 	const { href } = await linkFor(page, "Retry.png");
 	const viewer = await page.context().newPage();
@@ -321,13 +318,12 @@ test("forgetting the identity cancels a loading viewer and ignores its late cont
 	app,
 }) => {
 	await createLibrary(page, app);
-	await page
-		.getByRole("checkbox", { name: "Compress images to WebP" })
-		.uncheck();
+	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page
 		.getByLabel("Upload", { exact: true })
 		.setInputFiles(await imageFixture(page, "Pending.png", 800, 600));
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(1);
 	const { href } = await linkFor(page, "Pending.png");
 	const viewer = await page.context().newPage();

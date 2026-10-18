@@ -16,6 +16,7 @@ test("tag suggestions save immediately, retain failed drafts and disappear after
 			buffer: Buffer.from(name),
 		})),
 	);
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(2);
 	const alpha = page.getByRole("article").filter({ hasText: "Alpha.txt" });
 	const beta = page.getByRole("article").filter({ hasText: "Beta.txt" });
@@ -100,6 +101,7 @@ test("a corrupt catalog label leaves valid suggestions usable and offers retry",
 		mimeType: "text/plain",
 		buffer: Buffer.from("Useful note"),
 	});
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(
 		page.getByText("Some tag suggestions are unavailable.", { exact: true }),
 	).toBeVisible();

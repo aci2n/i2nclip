@@ -12,6 +12,7 @@ test("upload generates searchable ordinary tags with a compact disclosure", asyn
 		mimeType: "text/plain",
 		buffer: Buffer.from("Useful text"),
 	});
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	const card = page.getByRole("article");
 	await expect(card.locator(".tag-text")).toHaveCount(6);
 	await expect(

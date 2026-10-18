@@ -57,15 +57,14 @@ test("generic encrypted metadata updates rename downloads and preserve file cont
 	app,
 }) => {
 	await createLibrary(page, app);
-	await page
-		.getByRole("checkbox", { name: "Compress images to WebP" })
-		.uncheck();
+	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	const manifest = await recovery(page);
 	const { identity, key } = await openRecovery(manifest, PASSWORD);
 	const credentials = { serverUrl: identity.server_url, key };
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const image = await imageFixture(page, "Original panorama.png", 1920, 320);
 	await page.getByLabel("Upload", { exact: true }).setInputFiles(image);
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(1);
 	const original = (await list(credentials)).items[0];
 	const metadata = { ...original.metadata, name: "Renamed panorama.png" };

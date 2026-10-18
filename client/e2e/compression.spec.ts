@@ -14,12 +14,13 @@ test("default compression updates saved format and device preference preserves o
 }) => {
 	await createLibrary(page, app);
 	const setting = page.getByRole("checkbox", {
-		name: "Compress images to WebP",
+		name: "Convert image",
 	});
 	await expect(setting).toBeChecked();
 	const image = await imageFixture(page, "Landscape.png", 1920, 1080);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.getByLabel("Upload", { exact: true }).setInputFiles(image);
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	const card = page.getByRole("article");
 	await expect(
 		card.getByRole("button", { name: "Open Landscape.webp", exact: true }),
@@ -47,6 +48,7 @@ test("default compression updates saved format and device preference preserves o
 	await expect(setting).not.toBeChecked();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.getByLabel("Upload", { exact: true }).setInputFiles(image);
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	const original = page.getByRole("article").filter({
 		has: page.getByRole("button", {
 			name: "Open Landscape.png",
@@ -100,6 +102,7 @@ test("BMP uploads convert to a smaller WebP without resizing", async ({
 		mimeType: "image/bmp",
 		buffer: bmp,
 	});
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	const card = page.getByRole("article");
 	await expect(
 		card.getByRole("button", { name: "Open Gradient.webp", exact: true }),
@@ -115,4 +118,86 @@ test("BMP uploads convert to a smaller WebP without resizing", async ({
 	expect(bytes.subarray(0, 4).toString()).toBe("RIFF");
 	expect(bytes.subarray(8, 12).toString()).toBe("WEBP");
 	expect(bytes.length).toBeLessThan(bmp.length);
+});
+
+test("per-file formats and bounds stay independent across navigation and default changes", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	await page.getByLabel("Output format", { exact: true }).selectOption("jpeg");
+	await page.getByLabel("Quality (0–100)", { exact: true }).fill("72");
+	await page.getByLabel("Maximum width (px)", { exact: true }).fill("800");
+	await page.getByRole("heading", { name: "Images", exact: true }).click();
+	const images = [
+		await imageFixture(page, "Landscape for PNG.png", 1920, 1080),
+		await imageFixture(page, "Portrait for JPEG.png", 1080, 1920),
+	];
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	await page.getByLabel("Upload", { exact: true }).setInputFiles(images);
+	const review = page.getByRole("region", { name: "Review uploads" });
+	const first = review.getByRole("article").nth(0);
+	const second = review.getByRole("article").nth(1);
+	await first.getByText("Upload options", { exact: true }).click();
+	await first.getByLabel("Output format", { exact: true }).selectOption("png");
+	await expect(
+		first.getByLabel("Quality (0–100)", { exact: true }),
+	).toHaveCount(0);
+	await first.getByLabel("Maximum width (px)", { exact: true }).fill("400");
+	await second.getByText("Upload options", { exact: true }).click();
+	await expect(second.getByLabel("Output format", { exact: true })).toHaveValue(
+		"jpeg",
+	);
+	await expect(
+		second.getByLabel("Maximum width (px)", { exact: true }),
+	).toHaveValue("800");
+	for (const width of [1100, 320, 360]) {
+		await page.setViewportSize({ width, height: 800 });
+		for (const colorScheme of ["light", "dark"] as const) {
+			await page.emulateMedia({ colorScheme });
+			expect(
+				await page.evaluate(
+					() => document.documentElement.scrollWidth <= innerWidth,
+				),
+			).toBe(true);
+			await shot(page, `upload-options-${width}-${colorScheme}`);
+		}
+	}
+	await page.getByRole("link", { name: "Settings", exact: true }).click();
+	await page.getByLabel("Maximum width (px)", { exact: true }).fill("600");
+	await page.getByRole("heading", { name: "Images", exact: true }).click();
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	await second.getByText("Upload options", { exact: true }).click();
+	await expect(
+		second.getByLabel("Maximum width (px)", { exact: true }),
+	).toHaveValue("800");
+	await second
+		.getByRole("button", { name: "Use defaults", exact: true })
+		.click();
+	await expect(
+		second.getByLabel("Maximum width (px)", { exact: true }),
+	).toHaveValue("600");
+	await first.getByText("Upload options", { exact: true }).click();
+	await expect(first.getByLabel("Output format", { exact: true })).toHaveValue(
+		"png",
+	);
+	await expect(
+		first.getByLabel("Maximum width (px)", { exact: true }),
+	).toHaveValue("400");
+	await review
+		.getByRole("button", { name: "Start upload", exact: true })
+		.click();
+	await expect(review).toHaveCount(0);
+	for (const [name, type, dimensions] of [
+		["Landscape for PNG.png", "image/png", "400 × 225"],
+		["Portrait for JPEG.jpg", "image/jpeg", "600 × 1066"],
+	]) {
+		const card = page.getByRole("article").filter({
+			has: page.getByRole("button", { name: `Open ${name}`, exact: true }),
+		});
+		await expect(card).toBeVisible();
+		await card.getByText("File details", { exact: true }).click();
+		await expect(card.getByText(type, { exact: true })).toBeVisible();
+		await expect(card.getByText(dimensions, { exact: true })).toBeVisible();
+	}
 });

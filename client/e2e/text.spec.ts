@@ -19,6 +19,7 @@ test("text and code previews escape markup, handle empty content and label bound
 		{ name: "empty.txt", mimeType: "text/plain", buffer: Buffer.alloc(0) },
 		{ name: "large.log", mimeType: "text/plain", buffer: large },
 	]);
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(3);
 	await page
 		.getByRole("button", { name: "Open source.rs", exact: true })

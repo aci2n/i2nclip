@@ -23,6 +23,7 @@ test("mobile tags wrap with usable touch controls and retain failed drafts", asy
 		mimeType: "text/plain",
 		buffer: Buffer.from("A readable note on a narrow screen."),
 	});
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	const card = page.getByRole("article");
 	await expect(card).toBeVisible();
 	await card
@@ -171,6 +172,7 @@ test("touch gestures browse loaded previews and close media without hijacking ot
 			buffer: Buffer.from("A scrolling note.\n".repeat(200)),
 		},
 	]);
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(5);
 	const openers = page
 		.getByRole("article")

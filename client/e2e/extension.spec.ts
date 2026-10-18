@@ -76,9 +76,7 @@ test("app receives captures through its public event interface and uploads after
 	context,
 }) => {
 	await createLibrary(page, app);
-	await page
-		.getByRole("checkbox", { name: "Compress images to WebP" })
-		.uncheck();
+	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	const image = await imageFixture(
 		page,
 		`${"Long portrait filename ".repeat(7)}.png`,

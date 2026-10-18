@@ -102,7 +102,7 @@ test("setup, settings and password entry share usable controls at every width", 
 			expect(
 				assertPresent(
 					await page
-						.getByRole("checkbox", { name: "Compress images to WebP" })
+						.getByRole("checkbox", { name: "Convert image" })
 						.locator("..")
 						.boundingBox(),
 				).height,
@@ -153,9 +153,7 @@ test("mixed media, inline filename editing and preview icons stay consistent acr
 	app,
 }) => {
 	await createLibrary(page, app);
-	await page
-		.getByRole("checkbox", { name: "Compress images to WebP" })
-		.uncheck();
+	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.route("**/api/tags", (route) =>
 		route.fulfill({
@@ -180,6 +178,7 @@ test("mixed media, inline filename editing and preview icons stay consistent acr
 			buffer: Buffer.from("An ordinary document"),
 		},
 	]);
+	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(6);
 	await expect(page.getByRole("alert")).toContainText(
 		"Tag suggestions unavailable",

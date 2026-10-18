@@ -42,6 +42,7 @@ function encoder(
 					canvas: this,
 					fillStyle: "",
 					fillRect(x: number, y: number, w: number, h: number) {
+						assert.equal(this.fillStyle, "#fff");
 						assert.deepEqual([x, y, w, h], [0, 0, width, height]);
 						filled = true;
 					},
@@ -65,7 +66,7 @@ function encoder(
 
 // Browser-only globals are scoped to each test and restored after it finishes.
 function browser(t: test.TestContext) {
-	for (const key of ["createImageBitmap", "OffscreenCanvas"]) {
+	for (const key of ["createImageBitmap", "OffscreenCanvas", "document"]) {
 		const previous = Object.getOwnPropertyDescriptor(globalThis, key);
 		Object.defineProperty(globalThis, key, {
 			configurable: true,
@@ -216,4 +217,78 @@ test("disabled conversion never decodes", async (t) => {
 		}),
 		file,
 	);
+});
+
+test("cancellation during decoding closes the late bitmap and never falls back", async (t) => {
+	browser(t);
+	const waiting = deferred<ImageBitmap>();
+	t.mock.method(globalThis, "createImageBitmap", () => waiting.promise);
+	const controller = new AbortController();
+	const notices: string[] = [];
+	const pending = compressImage(
+		new File(["image"], "photo.png", { type: "image/png" }),
+		controller.signal,
+		defaultUploadOptions().image,
+		(message) => notices.push(message),
+	);
+	controller.abort();
+	let closed = false;
+	waiting.resolve({
+		close() {
+			closed = true;
+		},
+	} as ImageBitmap);
+	await assert.rejects(pending, { name: "AbortError" });
+	assert.equal(closed, true);
+	assert.deepEqual(notices, []);
+});
+
+test("HTML canvas fallback applies dimensions and requested encoding", async (t) => {
+	browser(t);
+	Object.defineProperty(globalThis, "OffscreenCanvas", {
+		configurable: true,
+		value: undefined,
+	});
+	t.mock.method(globalThis, "createImageBitmap", async () => ({
+		width: 640,
+		height: 480,
+		close() {},
+	}));
+	Object.defineProperty(globalThis, "document", {
+		configurable: true,
+		value: {
+			createElement(tag: string) {
+				assert.equal(tag, "canvas");
+				return {
+					width: 0,
+					height: 0,
+					getContext() {
+						return {
+							canvas: this,
+							drawImage(_bitmap: unknown, ...args: number[]) {
+								assert.deepEqual(args, [0, 0, 320, 240]);
+							},
+						};
+					},
+					toBlob(
+						callback: (blob: Blob) => void,
+						type: string,
+						quality: number,
+					) {
+						assert.equal(this.width, 320);
+						assert.equal(this.height, 240);
+						assert.equal(type, "image/webp");
+						assert.equal(quality, 0.4);
+						callback(new Blob(["x"], { type }));
+					},
+				};
+			},
+		},
+	});
+	const result = await compressImage(
+		new File(["original"], "photo.png", { type: "image/png" }),
+		new AbortController().signal,
+		{ ...defaultUploadOptions().image, maxWidth: 320, quality: 40 },
+	);
+	assert.equal(result.name, "photo.webp");
 });
