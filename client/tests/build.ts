@@ -91,6 +91,7 @@ test("emitted extension modules resolve JavaScript imports and keep injected fun
 	}
 	let listeners = 0;
 	runInNewContext(`(${install.toString()})()`, {
+		crypto,
 		browser: {
 			runtime: {
 				onMessage: {

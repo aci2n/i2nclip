@@ -6,6 +6,7 @@ import type { SendOptions } from "../src/lib/media/upload.ts";
 import { createUploads } from "../src/lib/stores/uploads.ts";
 import { assertPresent } from "./assert.ts";
 import { deferred, testKey, tick } from "./helpers.ts";
+import { captureLogs } from "./log-capture.ts";
 
 function session() {
 	const controller = new AbortController();
@@ -37,6 +38,7 @@ function fixture(
 	return { owner, uploads, refreshes: () => refreshes };
 }
 test("uploads run sequentially, continue after failures, and report failures for manual resubmission", async (t) => {
+	const logs = captureLogs(t);
 	const active = deferred();
 	const entered = deferred();
 	const seen: Array<string> = [];
@@ -79,8 +81,33 @@ test("uploads run sequentially, continue after failures, and report failures for
 	assert.equal(f.refreshes(), 2);
 	assert.deepEqual(seen, ["first", "bad", "last", "bad"]);
 	assert.deepEqual(get(f.uploads).failures, []);
+	const failed = logs.find(
+		(entry) => entry.event === "[i2nclip] uploads.file-failed",
+	);
+	assert.equal(failed?.level, "warn");
+	assert.equal(failed?.fields.index, 2);
+	assert(
+		logs.some(
+			(entry) =>
+				entry.event === "[i2nclip] uploads.file-completed" &&
+				entry.fields.index === 3 &&
+				entry.fields.operation === failed?.fields.operation,
+		),
+	);
+	const batches = logs.filter(
+		(entry) => entry.event === "[i2nclip] uploads.completed",
+	);
+	assert.deepEqual(
+		batches.map((entry) => entry.fields.failures),
+		[1, 0],
+	);
+	assert(!JSON.stringify(logs).includes("network failed"));
+	for (const name of ["first", "bad", "last"]) {
+		assert(!JSON.stringify(logs).includes(`"${name}"`));
+	}
 });
 test("identity changes and disposal abort uploads and suppress late completion and progress", async (t) => {
+	const logs = captureLogs(t);
 	for (const end of ["context", "dispose"]) {
 		const pending = deferred<{
 			id: string;
@@ -113,6 +140,11 @@ test("identity changes and disposal abort uploads and suppress late completion a
 			status: "",
 		});
 		assert.equal(f.refreshes(), 0);
+		assert(
+			!logs.some((entry) => entry.event === "[i2nclip] uploads.file-completed"),
+		);
+		assert(!logs.some((entry) => entry.level === "error"));
+		assert(logs.some((entry) => entry.event === "[i2nclip] uploads.cancelled"));
 	}
 });
 test("a batch snapshots compression preferences and the next batch sees changes", async (t) => {

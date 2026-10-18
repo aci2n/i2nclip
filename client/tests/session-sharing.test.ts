@@ -12,6 +12,7 @@ import {
 	type SessionState,
 } from "../src/lib/stores/session.ts";
 import { deferred, tick } from "./helpers.ts";
+import { captureLogs } from "./log-capture.ts";
 
 const password = "master-password";
 function waitState(
@@ -117,6 +118,7 @@ async function configured(t: test.TestContext) {
 	return { ...f, first };
 }
 test("inherited access includes management operations and recipients become donors", async (t) => {
+	const logs = captureLogs(t);
 	const f = await configured(t);
 	const second = f.tab();
 	await waitState(t, second.session, (s) => s.configured);
@@ -134,6 +136,23 @@ test("inherited access includes management operations and recipients become dono
 	assert.equal(await third.session.forget(), true);
 	await waitState(t, second.session, (s) => s.unlocked && !s.configured);
 	assert.equal(get(second.session).context, null);
+	for (const event of ["requested", "grant-sent", "grant-received"]) {
+		assert(
+			logs.some(
+				(entry) => entry.event === `[i2nclip] session-sharing.${event}`,
+			),
+		);
+	}
+	assert(
+		logs.some(
+			(entry) => entry.event === "[i2nclip] session.shared-unlock-completed",
+		),
+	);
+	const output = JSON.stringify(logs);
+	assert(!output.includes(password));
+	for (const record of f.values.values()) {
+		assert(!output.includes(record));
+	}
 });
 test("closing all donors leaves only ciphertext and requires a fresh password", async (t) => {
 	const f = await configured(t);

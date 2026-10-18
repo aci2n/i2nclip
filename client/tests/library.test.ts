@@ -14,6 +14,7 @@ import type { MediaOptions } from "../src/lib/stores/media-item.ts";
 import { createMediaItem } from "../src/lib/stores/media-item.ts";
 import { assertPresent } from "./assert.ts";
 import { deferred, mediaData, testKey, tick } from "./helpers.ts";
+import { captureLogs } from "./log-capture.ts";
 
 function session() {
 	const controller = new AbortController();
@@ -53,6 +54,7 @@ const item = (id: string) => ({
 	metadata: { name: id, tags: [], content_type: "application/octet-stream" },
 });
 test("stale searches cannot publish; pagination uses the submitted query and permits one request", async (t) => {
+	const logs = captureLogs(t);
 	const requests: (ListRequest & {
 		done: PromiseWithResolvers<MediaPage>;
 	})[] = [];
@@ -88,6 +90,27 @@ test("stale searches cannot publish; pagination uses the submitted query and per
 		get(f.library).cards.map((v) => v.id),
 		["new", "second"],
 	);
+	const stale = logs.find(
+		(entry) => entry.event === "[i2nclip] library.search-stale",
+	);
+	assert.equal(stale?.fields.operation, 1);
+	assert.equal(stale?.level, "debug");
+	assert(
+		!logs.some(
+			(entry) =>
+				entry.event === "[i2nclip] library.search-completed" &&
+				entry.fields.operation === 1,
+		),
+	);
+	assert(
+		logs.some(
+			(entry) =>
+				entry.event === "[i2nclip] library.search-completed" &&
+				entry.fields.operation === 3,
+		),
+	);
+	assert(!JSON.stringify(logs).includes("cursor"));
+	assert(!JSON.stringify(logs).includes('"new"'));
 });
 test("identity invalidation suppresses stale searches", async (t) => {
 	const result = deferred<MediaPage>();

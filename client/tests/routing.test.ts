@@ -3,6 +3,7 @@ import test from "node:test";
 import { get } from "svelte/store";
 import { parseRoute, routeHref } from "../src/lib/routes.ts";
 import { createRouting } from "../src/lib/stores/routing.ts";
+import { captureLogs } from "./log-capture.ts";
 
 test("hash routes format links and preserve malformed media targets for local validation", () => {
 	for (const hash of [
@@ -101,6 +102,7 @@ test("programmatic navigation publishes synchronously and distinguishes push fro
 });
 
 test("native hash navigation reads current location and ignores duplicate or queued stale events", (t) => {
+	const logs = captureLogs(t);
 	const f = fixture(t);
 	f.change("#/media/bad");
 	f.notify();
@@ -128,6 +130,15 @@ test("native hash navigation reads current location and ignores duplicate or que
 	assert.equal(f.writes.length, 0);
 	f.notify();
 	assert.equal(f.seen.length, 5);
+	const changes = logs.filter(
+		(entry) => entry.event === "[i2nclip] routing.changed",
+	);
+	assert.equal(changes.length, 4);
+	assert(changes.every((entry) => entry.level === "debug"));
+	const output = JSON.stringify(logs);
+	for (const target of ["bad", "another", "#/media"]) {
+		assert(!output.includes(target));
+	}
 });
 
 test("an empty hash is Library and repeated navigation does not add history", (t) => {

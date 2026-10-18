@@ -31,6 +31,7 @@ import type {
 import { createExtensionReceiver } from "../src/lib/stores/extension.ts";
 import { assertPresent } from "./assert.ts";
 import { deferred, tick } from "./helpers.ts";
+import { captureLogs } from "./log-capture.ts";
 
 test("background startup restores the menu without an install event", async () => {
 	const source = await readFile(
@@ -207,6 +208,7 @@ test("bridge uploads through the root upload store and rejects overlapping work"
 	assert.equal(fixture.uploads.length, 1);
 });
 test("locked receipt uploads exactly once when unlock finishes its busy transition", (t) => {
+	const logs = captureLogs(t);
 	const fixture = app(t, {
 		status: "locked",
 		unlocked: false,
@@ -235,6 +237,19 @@ test("locked receipt uploads exactly once when unlock finishes its busy transiti
 	fixture.batches.set({ uploading: false });
 	fixture.sessionState.update((value) => ({ ...value }));
 	assert.equal(fixture.uploads.length, 1);
+	const pending = logs.find(
+		(entry) => entry.event === "[i2nclip] extension-receiver.pending-unlock",
+	);
+	const resumed = logs.find(
+		(entry) => entry.event === "[i2nclip] extension-receiver.pending-resumed",
+	);
+	assert(pending);
+	assert.equal(pending.fields.operation, resumed?.fields.operation);
+	assert.equal(pending.fields.instance, resumed?.fields.instance);
+	const output = JSON.stringify(logs);
+	assert(!output.includes(file.extra.sourceUrl));
+	assert(!output.includes(file.extra.sourceTitle));
+	assert(!output.includes(file.file.name));
 });
 test("failed unlock keeps the capture and invalidation or disposal discards it", (t) => {
 	const fixture = app(t, {

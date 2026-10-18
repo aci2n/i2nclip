@@ -34,6 +34,7 @@ import type {
 	PairedIdentity,
 } from "../src/lib/stores/session.ts";
 import { deferred, testKey, tick } from "./helpers.ts";
+import { captureLogs } from "./log-capture.ts";
 
 type SessionState = ActualSessionState & {
 	privateKey: PairedIdentity["private_key"] | "";
@@ -443,6 +444,7 @@ async function until(predicate: () => boolean) {
 	}
 }
 test("pairing requires explicit approval and reports success only after durable save", async (t) => {
+	const logs = captureLogs(t);
 	const saving = deferred();
 	const f = fixture(t, async (value, state) => {
 		await saving.promise;
@@ -463,7 +465,8 @@ test("pairing requires explicit approval and reports success only after durable 
 	assert.equal(get(f.sender).verificationCode, "");
 	f.sender.approve();
 	assert.equal(f.transcript.length, 0);
-	const receiving = f.receiver.receive(get(f.sender).code, origin);
+	const code = get(f.sender).code;
+	const receiving = f.receiver.receive(code, origin);
 	await until(() => get(f.sender).approval);
 	await until(() => Boolean(get(f.receiver).verificationCode));
 	const verification = get(f.sender).verificationCode;
@@ -491,6 +494,29 @@ test("pairing requires explicit approval and reports success only after durable 
 				!Buffer.from(message).includes(verification.replace("-", "")),
 		),
 	);
+	assert.equal(
+		logs.filter(
+			(entry) =>
+				entry.event === "[i2nclip] pairing.completed" && entry.level === "info",
+		).length,
+		2,
+	);
+	assert(
+		logs.some((entry) => entry.event === "[i2nclip] pairing.approval-waiting"),
+	);
+	assert(
+		logs.some((entry) => entry.event === "[i2nclip] pairing.identity-saved"),
+	);
+	const output = JSON.stringify(logs);
+	for (const secret of [
+		code,
+		verification,
+		origin,
+		JSON.stringify(key.privateKey),
+		"new-password",
+	]) {
+		assert(!output.includes(secret), "pairing logs exposed private data");
+	}
 });
 for (const role of ["sender", "receiver"] as const) {
 	test(`${role} rejects verification without transferring or retaining a code`, async (t) => {
@@ -635,6 +661,7 @@ test("canceling during receiver save prevents acknowledgment and stale completio
 	assert.equal(await sending, false);
 });
 test("lost acknowledgment preserves the saved library without claiming sender success", async (t) => {
+	const logs = captureLogs(t);
 	const f = fixture(t, undefined, { rejectAck: true });
 	const key = await generatePrivateKey();
 	f.senderState.update((value) => ({ ...value, ...key }));
@@ -653,9 +680,23 @@ test("lost acknowledgment preserves the saved library without claiming sender su
 	f.sender.cancel();
 	assert.equal(await sending, false);
 	assert.notEqual(get(f.sender).status, "New device connected.");
+	const failure = logs.find(
+		(entry) => entry.event === "[i2nclip] pairing.confirmation-failed",
+	);
+	assert.equal(failure?.level, "warn");
+	assert.equal(failure?.fields.saved, true);
+	assert(!logs.some((entry) => entry.event === "[i2nclip] pairing.completed"));
+	assert(
+		logs.some(
+			(entry) =>
+				entry.event === "[i2nclip] pairing.cancelled" &&
+				entry.level === "debug",
+		),
+	);
 });
 for (const step of [2, 3, 4, 5]) {
 	test(`lost response at step ${step} retries the same message without another authentication attempt`, async (t) => {
+		const logs = captureLogs(t);
 		const f = fixture(t, undefined, { loseSubmission: step, losePoll: true });
 		const key = await generatePrivateKey();
 		f.senderState.update((value) => ({ ...value, ...key }));
@@ -667,6 +708,12 @@ for (const step of [2, 3, 4, 5]) {
 		assert.equal(await receiving, true);
 		assert.equal(await sending, true);
 		assert.equal(f.transcript.length, 5);
+		assert(
+			logs.some(
+				(entry) =>
+					entry.event === "[i2nclip] pairing.retry" && entry.level === "debug",
+			),
+		);
 		assert.deepEqual(get(f.receiverState).privateKey, key.privateKey);
 	});
 }
