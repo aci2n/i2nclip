@@ -1528,22 +1528,30 @@ mod tests {
 
         for (meta_size, content_size) in [(41_i32, 42_i32), (65537, 42), (42, 41), (42, 536870977)]
         {
+            // PostgreSQL's hex error rendering would itself exceed the 1 GiB
+            // allocation limit for this boundary; escape output keeps it bounded.
+            let mut tx = db.pool.begin().await.unwrap();
+            sqlx::query("SET LOCAL bytea_output = 'escape'")
+                .execute(&mut *tx)
+                .await
+                .unwrap();
             let error = sqlx::query(
                 r#"
                                 INSERT INTO files (id, owner, meta, content, created_at)
-                                VALUES ($1, $2, repeat('x', $3)::bytea, repeat('x', $4)::bytea, 100)
+                                VALUES ($1, $2, convert_to(repeat('x', $3), 'UTF8'), convert_to(repeat('x', $4), 'UTF8'), 100)
                                 "#,
             )
             .bind("a".repeat(64))
             .bind(&[1_u8; 32][..])
             .bind(meta_size)
             .bind(content_size)
-            .execute(&db.pool)
+            .execute(&mut *tx)
             .await
             .unwrap_err();
             assert_eq!(
                 error.as_database_error().unwrap().code().as_deref(),
-                Some("23514")
+                Some("23514"),
+                "{error}"
             );
         }
         let content = crate::reference_crypto::sealed_fixture(1, 100_000);
@@ -1844,7 +1852,7 @@ mod tests {
             .await
             .unwrap();
         let release = async {
-            wait_for_locks(&db, "%SELECT public_key FROM key_quotas%", 1).await;
+            wait_for_locks(&db, "%FROM key_quotas%FOR UPDATE%", 1).await;
             blocker.commit().await.unwrap();
         };
         let (result, ()) = tokio::join!(db.add([1; 32], &body), release);
@@ -1861,7 +1869,7 @@ mod tests {
         let upload_db = db.clone();
         let upload_body = body.clone();
         let upload = tokio::spawn(async move { upload_db.add([1; 32], &upload_body).await });
-        wait_for_locks(&db, "%SELECT public_key FROM key_quotas%", 1).await;
+        wait_for_locks(&db, "%FROM key_quotas%FOR UPDATE%", 1).await;
         upload.abort();
         assert!(upload.await.unwrap_err().is_cancelled());
         blocker.commit().await.unwrap();
