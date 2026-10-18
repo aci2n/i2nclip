@@ -1,7 +1,6 @@
 <script lang="ts">
 import MediaViewer from "../components/MediaViewer.svelte";
 import { createMediaViewer } from "../stores/media-viewer.ts";
-import { routeHref } from "../stores/routing.ts";
 import type { LibraryContext } from "../stores/session.ts";
 
 interface Props {
@@ -20,7 +19,6 @@ $effect(() => {
 {#if $viewer}
 	<MediaViewer
 		value={$viewer}
-		libraryHref={routeHref({ page: "library" })}
 		{onlibrary}
 		onretry={() => {
 			void viewer?.retry();

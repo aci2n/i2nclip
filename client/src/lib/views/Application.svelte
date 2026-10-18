@@ -1,7 +1,7 @@
 <script lang="ts">
 import { onDestroy } from "svelte";
+import { routeHref } from "../routes.ts";
 import { createApplication } from "../stores/application.ts";
-import { routeHref } from "../stores/routing.ts";
 import Library from "./Library.svelte";
 import Media from "./Media.svelte";
 import Settings from "./Settings.svelte";

@@ -1,13 +1,13 @@
 <script lang="ts">
 import { canPreview, fileSize, fileType, uploadedAt } from "../media/format.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
+import { routeHref } from "../routes.ts";
 import type { MediaState } from "../stores/media-item.ts";
 import FilenameEditor from "./FilenameEditor.svelte";
 import TagEditor from "./TagEditor.svelte";
 
 interface Props {
 	media: MediaState;
-	href: string;
 	suggestions?: string[];
 	onsearch: (tag: string) => void;
 	onreveal: (opener: HTMLElement) => void;
@@ -18,7 +18,6 @@ interface Props {
 
 let {
 	media,
-	href,
 	suggestions = [],
 	onsearch,
 	onreveal,
@@ -119,7 +118,7 @@ const summary = $derived(
 			<a
 				class="button secondary"
 				aria-label={`Link to ${name}`}
-				{href}
+				href={routeHref({ page: "media", id: media.id })}
 				target="_blank"
 				rel="noopener noreferrer"
 				>Link</a

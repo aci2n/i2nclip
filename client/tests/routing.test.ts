@@ -1,11 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
-import {
-	createRouting,
-	parseRoute,
-	routeHref,
-} from "../src/lib/stores/routing.ts";
+import { parseRoute, routeHref } from "../src/lib/routes.ts";
+import { createRouting } from "../src/lib/stores/routing.ts";
 
 test("routes preserve query links and invalid media targets", () => {
 	for (const search of ["", "?page=unknown", "?id=unused"]) {

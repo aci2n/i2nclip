@@ -28,7 +28,8 @@ workspace creation and file uploads from drops or extension handoff. Application
 is the root view: it renders state and translates mouse/drag events into store
 calls. The routing store owns query URLs, history updates and its popstate
 listener. Ordinary navigation pushes history; accepted drops and captures replace
-the current entry with Library. Components receive plain link URLs from views.
+the current entry with Library. Pure route parsing and link formatting live outside stores in lib/routes.ts;
+views and components use these helpers without importing routing state.
 
 ## Identity and persistence
 

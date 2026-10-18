@@ -39,3 +39,14 @@ and disposal. Verify lazy/preserved/replaced workspace and root cleanup, plus
 upload survival across navigation. Run client tests/checks, warning-free client
 build, and Firefox/Chromium navigation, deeplink, file-drop and extension tests.
 Browser fixtures must own isolated resources and clean up on failure.
+
+## Shared route helpers
+
+Move the Route type and pure query parser/formatter to lib/routes.ts. The routing
+store retains browser state, history and listener ownership. Views and components
+may import the pure helpers; component store imports remain type-only. MediaCard
+and MediaViewer build their own links with routeHref instead of receiving href
+props used only for this indirection. Remove those props and their view bindings.
+No URL, persistence, lifecycle, cancellation, error or rendering behavior changes.
+Existing routing tests must import the pure helpers directly; run them, the client
+checker and the production build. No new dependencies or compatibility exports.

@@ -1,15 +1,15 @@
 <script lang="ts">
+import { routeHref } from "../routes.ts";
 import type { ViewerState } from "../stores/media-viewer.ts";
 import MediaContent from "./MediaContent.svelte";
 
 interface Props {
 	value: ViewerState;
-	libraryHref: string;
 	onretry: () => void;
 	ondownload: () => void;
 	onlibrary: (event: MouseEvent) => void;
 }
-let { value, libraryHref, onretry, ondownload, onlibrary }: Props = $props();
+let { value, onretry, ondownload, onlibrary }: Props = $props();
 const media = $derived(value.media);
 const name = $derived(media?.metadata?.name || media?.id || "Open file");
 const error = $derived(value.error || (media?.error ? media.message : ""));
@@ -18,7 +18,7 @@ const ready = $derived(!value.loading && !error && Boolean(media?.url));
 
 <section class="viewer" aria-label="File viewer">
 	<header>
-		<a href={libraryHref} onclick={onlibrary}>Library</a>
+		<a href={routeHref({ page: "library" })} onclick={onlibrary}>Library</a>
 		<h1>{name}</h1>
 		<button
 			type="button"

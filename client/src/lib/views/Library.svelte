@@ -5,8 +5,8 @@ import MediaDialog from "../components/MediaDialog.svelte";
 import SearchForm from "../components/SearchForm.svelte";
 import Uploads from "../components/Uploads.svelte";
 import { canPreview } from "../media/format.ts";
+import { routeHref } from "../routes.ts";
 import type { Library as LibraryStore } from "../stores/library.ts";
-import { routeHref } from "../stores/routing.ts";
 import type { Session } from "../stores/session.ts";
 import type { Tags } from "../stores/tags.ts";
 import type { Uploads as UploadsStore } from "../stores/uploads.ts";
@@ -147,7 +147,6 @@ function movePreview(step: number) {
 		{#each $library.cards as media (media.id)}
 			<MediaCard
 				{media}
-				href={routeHref({ page: "media", id: media.id })}
 				suggestions={$tags.tags}
 				onsearch={library.addTag}
 				onreveal={(opener) => library.reveal(media.id, opener)}
