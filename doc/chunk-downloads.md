@@ -62,4 +62,4 @@ client/unit/type, Rust/database, lint/format, build, and relevant browser checks
 No HTTP Range/multipart/conditional response handling, automatic retries,
 resumability, parallel fetching, upload streaming, temporary files, new timeout
 policy, or application-managed cache. Browser memory remains proportional to file
-size. Unrelated upload-options work in the original checkout is excluded.
+size. Unrelated upload work in the original checkout is excluded.

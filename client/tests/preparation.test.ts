@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { BufferTarget, Conversion, type ConversionOptions } from "mediabunny";
-import { convertMedia } from "../src/lib/media/convert.ts";
-import { defaultUploadOptions } from "../src/lib/media/options.ts";
+import { prepareFile } from "../src/lib/media/prepare.ts";
 import { sendUpload } from "../src/lib/media/upload.ts";
 import { testKey } from "./helpers.ts";
 import { documentResponse } from "./msgpack-response.ts";
@@ -53,18 +50,18 @@ for (const outputSize of [100, 500, null]) {
 		});
 		file.arrayBuffer = async () =>
 			assert.fail("must not read the oversized original");
-		const converting = convertMedia({
+		const preparing = prepareFile({
 			file,
 			signal: new AbortController().signal,
-			options: defaultUploadOptions(),
+			compressImages: true,
 			maxFilePlaintextBytes: 200,
 		});
 		if (outputSize === 100) {
-			const result = await converting;
+			const result = await preparing;
 			assert.equal(result.name, "source.webp");
 			assert.equal(result.size, 100);
 		} else {
-			await assert.rejects(converting, /larger than 200 bytes/);
+			await assert.rejects(preparing, /larger than 200 bytes/);
 		}
 		assert.equal(decoded(), 1);
 	});
@@ -75,79 +72,23 @@ test("disabled and ineligible uploads reject before decoding or reading bytes", 
 	for (const [type, enabled, limit] of [
 		["image/png", false, 200],
 		["application/octet-stream", true, 200],
+		["video/mp4", true, 200],
 		["image/png", true, 0],
 	] as const) {
 		const file = new File([new Uint8Array(1000)], "file", { type });
 		file.arrayBuffer = async () => assert.fail("must not read");
-		const options = defaultUploadOptions();
-		options.image.enabled = enabled;
+
 		await assert.rejects(
-			convertMedia({
+			prepareFile({
 				file,
 				signal: new AbortController().signal,
-				options,
+				compressImages: enabled,
 				maxFilePlaintextBytes: limit,
 			}),
 			limit === 0 ? /disabled/ : /larger than/,
 		);
 	}
 	assert.equal(decoded(), 0);
-});
-
-test("oversized video reaches the encoder and only smaller permitted output is returned", async (t) => {
-	const bytes = await readFile(
-		new URL("../e2e/fixtures/clip.webm", import.meta.url),
-	);
-	let size = 100;
-	let attempts = 0;
-	t.mock.method(Conversion, "init", async ({ output }: ConversionOptions) => {
-		attempts++;
-		let state = "idle";
-		return {
-			isValid: true,
-			discardedTracks: [],
-			get state() {
-				return state;
-			},
-			onProgress: undefined,
-			async execute() {
-				assert(output.target instanceof BufferTarget);
-				output.target.buffer = new ArrayBuffer(size);
-				output.state = "finalized";
-				state = "done";
-			},
-			async cancel() {
-				await output.cancel();
-			},
-		} as unknown as Conversion;
-	});
-	const options = defaultUploadOptions();
-	options.video.enabled = true;
-	options.video.format = "webm";
-	options.video.codec = "vp8";
-	const source = new File([bytes], "source.webm", { type: "video/webm" });
-	assert.equal(
-		(
-			await convertMedia({
-				file: source,
-				options,
-				signal: new AbortController().signal,
-				maxFilePlaintextBytes: 200,
-			})
-		).size,
-		100,
-	);
-	size = 500;
-	await assert.rejects(
-		convertMedia({
-			file: source,
-			options,
-			signal: new AbortController().signal,
-			maxFilePlaintextBytes: 200,
-		}),
-		/larger than 200 bytes/,
-	);
-	assert.equal(attempts, 2);
 });
 
 test("upload preparation publishes the accepted converted name", async (t) => {
@@ -165,4 +106,23 @@ test("upload preparation publishes the accepted converted name", async (t) => {
 	});
 	assert.deepEqual(names, ["source.webp"]);
 	assert.equal(result.metadata.name, "source.webp");
+});
+
+test("videos and disabled images preserve their original file without decoding", async (t) => {
+	const decoded = imageEncoder(t, 100);
+	for (const [type, compressImages] of [
+		["video/mp4", true],
+		["image/png", false],
+	] as const) {
+		const file = new File(["original"], "source", { type });
+		assert.equal(
+			await prepareFile({
+				file,
+				compressImages,
+				signal: new AbortController().signal,
+			}),
+			file,
+		);
+	}
+	assert.equal(decoded(), 0);
 });

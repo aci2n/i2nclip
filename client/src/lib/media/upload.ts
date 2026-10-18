@@ -1,16 +1,14 @@
 import type { Credentials, Progress } from "../api.ts";
 import { upload } from "../api.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
-import { convertMedia } from "./convert.ts";
-import { defaultUploadOptions, type UploadOptions } from "./options.ts";
+import { prepareFile } from "./prepare.ts";
 import { thumbnail } from "./thumbnail.ts";
 export interface SendOptions {
 	file: File;
 	maxFilePlaintextBytes?: number;
 	credentials: Credentials;
-	options?: UploadOptions;
+	compressImages?: boolean;
 	onNotice?: (message: string) => void;
-	onConversionProgress?: Progress;
 	onPrepared?: (name: string) => void;
 	tags?: string;
 	extra?: Metadata;
@@ -22,22 +20,20 @@ export async function sendUpload({
 	file,
 	maxFilePlaintextBytes,
 	credentials,
-	options = defaultUploadOptions(),
+	compressImages = true,
 	onNotice,
-	onConversionProgress,
 	onPrepared,
 	tags = "",
 	extra = {},
 	onProgress,
 	signal,
 }: SendOptions) {
-	file = await convertMedia({
+	file = await prepareFile({
 		file,
-		options,
+		compressImages,
 		signal,
 		maxFilePlaintextBytes,
 		onNotice,
-		onProgress: onConversionProgress,
 	});
 	onPrepared?.(file.name);
 	signal.throwIfAborted();

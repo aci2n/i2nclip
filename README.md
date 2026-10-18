@@ -20,19 +20,13 @@ instance. Further transfers wait; devices sharing a key share its permits.
 
 Uploads run sequentially and continue after individual failures. Failures show status messages; select failed files again through Upload to try again. Upload status survives navigation but is not saved across reloads. After an uncertain upload response, check the library before retrying to avoid duplicate copies.
 
-Select, paste, or drop files to review them in the Library, then choose **Start upload**.
-Each JPEG, PNG, or BMP file has **Upload options** for WebP/JPEG/PNG output, quality,
-and maximum dimensions. Defaults in Settings apply to newly selected files and
-extension captures. Conversion preserves aspect ratio, never enlarges images, and
-uses the original unless output is smaller. Defaults are WebP at quality 85 without
-resizing; turn off **Convert image** to preserve originals. Defaults stay on this
-device. Pending files and their options survive navigation but not reloads.
-Video conversion is optional and defaults off. Enable **Convert video** in
-Settings or per-file options to choose MP4/WebM, video codec, quality preset,
-maximum dimensions and frame rate. Browser codec support is checked during upload;
-unsupported conversions, track loss or larger output keep the original with a
-notice. See [upload options](doc/upload-options.md) and
-[video conversion](doc/video-conversion.md).
+Select, paste, or drop files to upload immediately. Settings has one device-local
+**Compress images to WebP** checkbox, enabled by default. JPEG, PNG and BMP files
+compress at quality 85 without resizing; only smaller WebP output replaces the
+original. Unsupported or failed compression keeps the original with a notice.
+Other formats, including videos, upload unchanged. Eligible oversized images may
+compress first; the selected output must fit the file limit. Upload progress and
+completion show the actual saved filename.
 
 Search by adding tag chips with Enter or choosing a local suggestion. All selected tags must match. Remove a chip to update results, or use **Clear search** to restore all files. **Upload** opens the file picker independently of the search. Progress
 appears below the toolbar; completed filenames expand from the summary, while

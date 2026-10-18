@@ -88,9 +88,9 @@ async function action(
 		</details>
 	{/if}
 	<UploadPreferences
-		options={$preferences.options}
+		compressImages={$preferences.compressImages}
 		error={$preferences.error}
-		onchange={preferences.setOptions}
+		onchange={preferences.setCompression}
 	/>
 	{#if $session.configured}
 		<RecoveryExport

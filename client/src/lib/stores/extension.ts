@@ -3,7 +3,7 @@ import { get } from "svelte/store";
 import { checkFileSize } from "../api.ts";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
-import { canConvertImage, canConvertVideo } from "../media/options.ts";
+import { canCompressImage } from "../media/image.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { document, string } from "../protocol/value.ts";
 import type { SessionSnapshot } from "./session.ts";
@@ -29,8 +29,7 @@ export interface CaptureSessionState extends SessionSnapshot {
 	status: "new" | "locked" | "unlocked";
 }
 export interface CaptureSession extends Readable<CaptureSessionState> {}
-export interface CaptureUploads
-	extends Readable<{ uploading: boolean; pending: readonly unknown[] }> {
+export interface CaptureUploads extends Readable<{ uploading: boolean }> {
 	upload(files: File[], extra?: Metadata): Promise<boolean>;
 	checkFile(file: File): void;
 }
@@ -59,10 +58,7 @@ export function createExtensionReceiver(
 		if (value.status === "new" || (value.unlocked && !value.configured)) {
 			return "Set up your uploads in i2nclip, then retry.";
 		}
-		if (
-			value.busy ||
-			(uploads ? get(uploads).uploading || get(uploads).pending.length : false)
-		) {
+		if (value.busy || (uploads ? get(uploads).uploading : false)) {
 			return "i2nclip is busy. Wait for the current operation, then retry.";
 		}
 		return "";
@@ -153,7 +149,7 @@ export function createExtensionReceiver(
 				const uploads = getUploads();
 				if (uploads) {
 					uploads.checkFile(file);
-				} else if (!canConvertImage(file) && !canConvertVideo(file)) {
+				} else if (!canCompressImage(file)) {
 					checkFileSize(file.size);
 				}
 				const { sourceUrl, sourceTitle, ...extra } = document(

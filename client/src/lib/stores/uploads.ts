@@ -3,25 +3,12 @@ import { get, writable } from "svelte/store";
 import { DEFAULT_MAX_FILE_PLAINTEXT_BYTES } from "../api.ts";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
-import { checkSourceSize } from "../media/convert.ts";
-import {
-	copyUploadOptions,
-	defaultUploadOptions,
-	type UploadOptions,
-	validUploadOptions,
-} from "../media/options.ts";
+import { checkSourceSize } from "../media/prepare.ts";
 import type { SendOptions } from "../media/upload.ts";
 import { sendUpload } from "../media/upload.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import type { LibraryContext } from "./session.ts";
-export interface PendingUpload {
-	key: number;
-	file: File;
-	options: UploadOptions;
-}
-
 export interface UploadState {
-	pending: PendingUpload[];
 	notices: { name: string; message: string }[];
 	uploading: boolean;
 	progress: {
@@ -29,7 +16,7 @@ export interface UploadState {
 		index: number;
 		total: number;
 		percent: number;
-		phase: "preparing" | "converting" | "uploading";
+		phase: "preparing" | "uploading";
 	} | null;
 	failures: { name: string; error: string }[];
 	completed: { id: string; name: string }[];
@@ -39,7 +26,6 @@ export type Uploads = ReturnType<typeof createUploads>;
 
 const empty = (): UploadState => ({
 	uploading: false,
-	pending: [],
 	notices: [],
 	progress: null,
 	failures: [],
@@ -59,73 +45,31 @@ export function createUploads(
 		getMaxFilePlaintextBytes?: () => number;
 		send?: (options: SendOptions) => Promise<{ id: string }>;
 		onComplete: () => unknown;
-		preferences?: Readable<{ options: UploadOptions }>;
+		preferences?: Readable<{ compressImages: boolean }>;
 	},
 ) {
 	const log = createLog("uploads");
 	const state = writable(empty());
 	const controller = new AbortController();
 
-	let nextKey = 0;
-	let activeEntries: { file: File; options: UploadOptions }[] = [];
-	const defaults = () =>
-		copyUploadOptions(
-			preferences ? get(preferences).options : defaultUploadOptions(),
-		);
-	const available = () =>
-		!controller.signal.aborted &&
-		!context.signal.aborted &&
-		!get(state).uploading;
-	function stage(files: File[]) {
-		if (!available()) {
-			return;
-		}
-		state.update((v) => ({
-			...v,
-			pending: [
-				...v.pending,
-				...files.map((file) => ({ key: nextKey++, file, options: defaults() })),
-			],
-		}));
-	}
-	function editOptions(key: number, options: UploadOptions) {
-		if (!available() || !validUploadOptions(options)) {
-			return;
-		}
-		state.update((v) => ({
-			...v,
-			pending: v.pending.map((entry) =>
-				entry.key === key
-					? { ...entry, options: copyUploadOptions(options) }
-					: entry,
-			),
-		}));
-	}
+	let activeFiles: File[] = [];
+	const compression = () =>
+		preferences ? get(preferences).compressImages : true;
 	function upload(files: File[], extra: Metadata = {}) {
-		if (!available() || get(state).pending.length || !files.length) {
+		if (
+			controller.signal.aborted ||
+			context.signal.aborted ||
+			get(state).uploading ||
+			!files.length
+		) {
 			return Promise.resolve(false);
 		}
-		return run(
-			files.map((file) => ({ file, options: defaults() })),
-			extra,
-		);
+		return run([...files], extra);
 	}
-	function start() {
-		if (!available() || !get(state).pending.length) {
-			return Promise.resolve(false);
-		}
-		const entries = get(state).pending.map(({ file, options }) => ({
-			file,
-			options: copyUploadOptions(options),
-		}));
-		return run(entries);
-	}
-	async function run(
-		entries: { file: File; options: UploadOptions }[],
-		extra: Metadata = {},
-	) {
-		activeEntries = entries;
-		const total = entries.length;
+	async function run(files: File[], extra: Metadata = {}) {
+		activeFiles = files;
+		const compressImages = compression();
+		const total = files.length;
 		const operation = log.operation();
 		const started = performance.now();
 		log.info("started", { operation, count: total });
@@ -134,19 +78,17 @@ export function createUploads(
 		state.update((v) => ({
 			...v,
 			uploading: true,
-			pending: [],
 			notices: [],
 			status: "",
 			failures: [],
 			completed: [],
 		}));
 		const failed: UploadState["failures"] = [];
-		for (let index = 0; entries.length; index++) {
-			const entry = entries.shift();
-			if (!entry) {
+		for (let index = 0; files.length; index++) {
+			const file = files.shift();
+			if (!file) {
 				break;
 			}
-			const { file, options } = entry;
 			if (signal.aborted) {
 				break;
 			}
@@ -163,13 +105,8 @@ export function createUploads(
 			log.debug("file-started", { operation, index: index + 1 });
 			let finished = false;
 			let preparedName = file.name;
-			function report(phase: "converting" | "uploading", percent: number) {
-				if (
-					finished ||
-					signal.aborted ||
-					!Number.isFinite(percent) ||
-					(phase === "converting" && get(state).progress?.phase === "uploading")
-				) {
+			function report(percent: number) {
+				if (finished || signal.aborted || !Number.isFinite(percent)) {
 					return;
 				}
 				state.update((v) => ({
@@ -179,7 +116,7 @@ export function createUploads(
 						index: index + 1,
 						total,
 						percent: Math.max(0, Math.min(100, Math.round(percent))),
-						phase,
+						phase: "uploading",
 					},
 				}));
 			}
@@ -187,7 +124,7 @@ export function createUploads(
 				const item = await send({
 					file,
 					maxFilePlaintextBytes: getMaxFilePlaintextBytes(),
-					options,
+					compressImages,
 					onPrepared: (name) => {
 						if (!finished && !signal.aborted) {
 							preparedName = name;
@@ -208,8 +145,7 @@ export function createUploads(
 					extra,
 					credentials,
 					signal,
-					onConversionProgress: (percent) => report("converting", percent),
-					onProgress: (percent) => report("uploading", percent),
+					onProgress: report,
 				});
 				if (!signal.aborted) {
 					log.debug("file-completed", { operation, index: index + 1 });
@@ -232,7 +168,7 @@ export function createUploads(
 			}
 		}
 		if (signal.aborted) {
-			entries.length = 0;
+			files.length = 0;
 			log.debug("cancelled", { operation });
 			return false;
 		}
@@ -258,26 +194,9 @@ export function createUploads(
 	return {
 		subscribe: state.subscribe,
 		upload,
-		stage,
-		start,
-		editOptions,
-		useDefaults: (key: number) => editOptions(key, defaults()),
-		remove: (key: number) => {
-			if (available()) {
-				state.update((v) => ({
-					...v,
-					pending: v.pending.filter((entry) => entry.key !== key),
-				}));
-			}
-		},
-		cancel: () => {
-			if (available()) {
-				state.update((v) => ({ ...v, pending: [] }));
-			}
-		},
 		getMaxFilePlaintextBytes,
 		checkFile: (file: File) =>
-			checkSourceSize(file, defaults(), getMaxFilePlaintextBytes()),
+			checkSourceSize(file, compression(), getMaxFilePlaintextBytes()),
 		dismissCompleted: () =>
 			state.update((v) => ({
 				...v,
@@ -288,7 +207,7 @@ export function createUploads(
 		dispose() {
 			log.debug("disposed");
 			controller.abort();
-			activeEntries.length = 0;
+			activeFiles.length = 0;
 			state.set(empty());
 		},
 	};

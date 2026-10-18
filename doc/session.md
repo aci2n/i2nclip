@@ -130,29 +130,25 @@ disposal ends the attempt. See [pairing](pairing.md) for protocol details.
 
 ## Upload compression
 
-A root-owned preferences store saves device-local image/video conversion defaults
-separately from identity and excludes them from recovery and pairing. Web uploads
-stage files for inline per-file review before Start upload. Pending files and their
-copied options belong to the workspace and survive navigation; session disposal
-clears them. Extension captures upload immediately using defaults, unless a web
-batch awaits review.
+A root-owned preferences store saves the device-local `compressImages` boolean
+under `i2nclip.compress-images`, separately from identity and excluded from recovery
+and pairing. It defaults to true. Selection, paste, drop and extension handoff start
+uploads immediately, snapshotting the preference for the sequential batch.
 
-JPEG/PNG/BMP inputs can convert to WebP, JPEG or PNG before encryption, with optional
-maximum dimensions and quality for lossy formats. Defaults are WebP at quality 85
-without resizing. Conversion preserves aspect ratio and never upscales; JPEG uses
-a white background. Only smaller output replaces the original. Failed,
-unsupported or larger conversions retain the original with a per-file notice.
-Existing WebP, GIF, SVG and non-images are unchanged. Original input size is inspected before decoding; eligible oversized inputs may
-encode first, and selected output must fit the current file quota; bitmaps close even on cancellation. See
-[upload options](upload-options.md) for lifecycle and acceptance requirements.
+JPEG/PNG/BMP inputs compress to WebP at quality 85 before encryption without
+resizing. Only smaller output replaces the original; unsupported, failed or larger
+output keeps the original with a notice. Other formats, including videos, remain
+unchanged. Source eligibility and selected-output size checks belong to preparation;
+image encoding, transport and store workflows remain separate. Eligible oversized
+images may compress first, but selected output must fit the current file quota
+before its bytes are read for upload. Disabled/ineligible oversized inputs reject
+before decoding. Extension handoff shares the same policy.
 
-Video conversion uses Mediabunny and native browser codecs, checked
-only at upload time. It defaults off and supports MP4/H.264/H.265/AV1 and
-WebM/VP8/VP9/AV1, quality presets, dimension bounds and a frame-rate cap. Displayed
-aspect ratio/orientation and audio/video tracks are retained. Unsupported,
-track-dropping or non-smaller output uses the original with a notice. Conversion
-and transfer have separate progress phases and show the accepted output filename; session disposal cancels conversion
-and releases its input/output. See [video conversion](video-conversion.md).
+The store shows preparing/uploading phases and actual selected filenames, ignores
+late or invalid progress, and clamps percentages. Root-owned work survives navigation;
+session disposal cancels it and clears queued files. Processed files are removed
+from the owned queue; bitmaps close even on cancellation. Individual failures do
+not stop the batch. See [upload simplification](upload-simplification.md).
 
 ## Text previews
 
@@ -184,5 +180,5 @@ Upload is separate from search. Its compact summary keeps progress and failures
 visible; successful filenames live in a disclosure and completion can be dismissed.
 
 Settings sections are native disclosures; only the library/setup section opens
-by default. Media conversion and size policy share one preparation interface.
+by default. Image compression and size policy share one preparation interface.
 See [upload refinements](upload-polish.md).

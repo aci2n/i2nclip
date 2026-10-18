@@ -4,7 +4,6 @@ import { get } from "svelte/store";
 import type { MetadataResult } from "../src/lib/api.ts";
 import * as api from "../src/lib/api.ts";
 import { DEFAULT_MAX_FILE_PLAINTEXT_BYTES } from "../src/lib/api.ts";
-import { defaultUploadOptions } from "../src/lib/media/options.ts";
 import { sendUpload } from "../src/lib/media/upload.ts";
 import {
 	bodyHash,
@@ -315,16 +314,7 @@ test("a configured larger limit reaches the read for files above 32 MiB", async 
 	await assert.rejects(
 		sendUpload({
 			file,
-			options: {
-				...defaultUploadOptions(),
-				image: {
-					enabled: false,
-					format: "webp",
-					quality: 85,
-					maxWidth: null,
-					maxHeight: null,
-				},
-			},
+			compressImages: false,
 			maxFilePlaintextBytes: 64 * 1024 * 1024,
 			credentials: { serverUrl: "https://clip.example", key: testKey() },
 			signal: new AbortController().signal,
@@ -342,16 +332,7 @@ test("prepared bytes are rechecked before encryption or a network upload", async
 	await assert.rejects(
 		sendUpload({
 			file,
-			options: {
-				...defaultUploadOptions(),
-				image: {
-					enabled: false,
-					format: "webp",
-					quality: 85,
-					maxWidth: null,
-					maxHeight: null,
-				},
-			},
+			compressImages: false,
 			maxFilePlaintextBytes: 2,
 			credentials: { serverUrl: "https://clip.example", key: testKey() },
 			signal: new AbortController().signal,

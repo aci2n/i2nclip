@@ -1,29 +1,26 @@
 <script lang="ts">
-import type { UploadOptions } from "../media/options.ts";
-import ImageOptions from "./ImageOptions.svelte";
-import VideoOptions from "./VideoOptions.svelte";
-
 interface Props {
-	options: UploadOptions;
+	compressImages: boolean;
 	error: string;
-	onchange: (value: UploadOptions) => void;
+	onchange: (value: boolean) => void;
 }
-let { options, error, onchange }: Props = $props();
+let { compressImages, error, onchange }: Props = $props();
 </script>
 <details class="panel">
-	<summary>Upload options</summary>
+	<summary>Uploads</summary>
 	<div class="stack content">
-		<p>Defaults for newly selected files, saved only on this device.</p>
-		<h3>Images</h3>
-		<ImageOptions
-			value={options.image}
-			onchange={(image) => onchange({ ...options, image })}
-		/>
-		<h3>Videos</h3>
-		<VideoOptions
-			value={options.video}
-			onchange={(video) => onchange({ ...options, video })}
-		/>
+		<label>
+			<input
+				type="checkbox"
+				checked={compressImages}
+				onchange={(event) => onchange(event.currentTarget.checked)}
+			>
+			Compress images to WebP
+		</label>
+		<p>
+			Replaces JPEG, PNG, and BMP originals when WebP is smaller. Keeps their
+			dimensions. This setting applies only to this device.
+		</p>
 		{#if error}
 			<p class="error" role="alert">{error}</p>
 		{/if}
@@ -32,5 +29,19 @@ let { options, error, onchange }: Props = $props();
 <style>
 .content {
 	margin-top: 1rem;
+}
+label {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+input {
+	width: auto;
+	flex: none;
+}
+@media (max-width: 32rem), (pointer: coarse) {
+	label {
+		min-height: 3rem;
+	}
 }
 </style>

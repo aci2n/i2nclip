@@ -23,8 +23,7 @@ import type {
 	CaptureTab,
 } from "../extension/types.d.ts";
 import { DEFAULT_MAX_FILE_PLAINTEXT_BYTES as WEB_MAX_FILE_BYTES } from "../src/lib/api.ts";
-import { checkSourceSize } from "../src/lib/media/convert.ts";
-import { defaultUploadOptions } from "../src/lib/media/options.ts";
+import { checkSourceSize } from "../src/lib/media/prepare.ts";
 import type { Metadata } from "../src/lib/protocol/meta-plain.ts";
 import type {
 	CaptureEvent,
@@ -108,22 +107,17 @@ function app(
 	const uploads: File[][] = [];
 	const extra: (Metadata | undefined)[] = [];
 	const batches = Object.assign(
-		writable<{ uploading: boolean; pending: readonly unknown[] }>({
+		writable<{ uploading: boolean }>({
 			uploading: false,
-			pending: [],
 		}),
 		{
 			getMaxFilePlaintextBytes,
 			checkFile: (file: File) =>
-				checkSourceSize(
-					file,
-					defaultUploadOptions(),
-					getMaxFilePlaintextBytes(),
-				),
+				checkSourceSize(file, true, getMaxFilePlaintextBytes()),
 			upload: (files: File[], context?: Metadata) => {
 				uploads.push(files);
 				extra.push(context);
-				batches.set({ uploading: true, pending: [] });
+				batches.set({ uploading: true });
 				return result;
 			},
 		},
@@ -250,7 +244,7 @@ test("locked receipt uploads exactly once when unlock finishes its busy transiti
 		source_url: file.extra.sourceUrl,
 		source_title: file.extra.sourceTitle,
 	});
-	fixture.batches.set({ uploading: false, pending: [] });
+	fixture.batches.set({ uploading: false });
 	fixture.sessionState.update((value) => ({ ...value }));
 	assert.equal(fixture.uploads.length, 1);
 	const pending = logs.find(
@@ -898,17 +892,6 @@ test("cancelled captures release bridge listeners without notifications", async 
 	bridge.emit("complete", { ok: false, cancelled: true });
 	assert.equal(bridge.listeners.size, 0);
 	assert.equal(bridge.reported.length, 0);
-});
-
-test("extension captures wait for the user to finish a pending web review", (t) => {
-	const fixture = app(t);
-	fixture.batches.set({ uploading: false, pending: [{ file: file.file }] });
-	assert.equal(fixture.receive(file)?.ok, false);
-	assert.match(fixture.receive(file)?.error ?? "", /busy/);
-	assert.equal(fixture.uploads.length, 0);
-	fixture.batches.set({ uploading: false, pending: [] });
-	assert.equal(fixture.receive(file)?.ok, true);
-	assert.equal(fixture.uploads.length, 1);
 });
 
 test("eligible oversized image handoff reaches shared upload preparation without reading", (t) => {
