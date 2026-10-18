@@ -33,7 +33,11 @@ pub use crate::{db::DEFAULT_REGISTRATION_TTL_SECS, error::Error};
 /// Fixed listen address. Publish a host port onto 8080 instead of configuring this.
 pub const LISTEN: &str = "0.0.0.0:8080";
 
-pub(crate) const MAX_PLAIN: usize = 32 * 1024 * 1024;
+/// Default plaintext bytes per file; independent of the total encrypted storage quota.
+pub const DEFAULT_MAX_FILE_PLAINTEXT_BYTES: i64 = 32 * 1024 * 1024;
+/// Supported plaintext ceiling for the buffered transfer protocol (512 MiB).
+pub const MAX_FILE_PLAINTEXT_BYTES: i64 = 512 * 1024 * 1024;
+pub(crate) const MAX_PLAIN: usize = MAX_FILE_PLAINTEXT_BYTES as usize;
 pub(crate) const MAX_CONTENT: usize = MAX_PLAIN + 64;
 pub(crate) const MAX_META: usize = 64 * 1024;
 pub(crate) const MAX_TAGS: usize = 64;
@@ -78,6 +82,7 @@ impl AppState {
 pub struct StorageLimits {
     pub max_content_bytes: i64,
     pub max_files: i64,
+    pub max_file_plaintext_bytes: i64,
 }
 
 impl Default for StorageLimits {
@@ -85,6 +90,7 @@ impl Default for StorageLimits {
         Self {
             max_content_bytes: 512 * 1024 * 1024,
             max_files: 10_000,
+            max_file_plaintext_bytes: DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
         }
     }
 }
@@ -95,6 +101,11 @@ impl StorageLimits {
             return Err(Error::BadRequest(
                 "storage limits must be nonnegative integers".into(),
             ));
+        }
+        if !(0..=MAX_FILE_PLAINTEXT_BYTES).contains(&self.max_file_plaintext_bytes) {
+            return Err(Error::BadRequest(format!(
+                "max_file_plaintext_bytes must be between 0 and {MAX_FILE_PLAINTEXT_BYTES}"
+            )));
         }
         Ok(())
     }

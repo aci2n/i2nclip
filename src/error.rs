@@ -23,6 +23,8 @@ pub enum Error {
     Conflict,
     #[error("Library storage limit reached.")]
     StorageLimit,
+    #[error("File exceeds the library maximum plaintext file size.")]
+    FileSizeLimit,
     /// 400. The String is a safe explanation, not an echo of the request body.
     #[error("{0}")]
     BadRequest(String),

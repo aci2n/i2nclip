@@ -22,7 +22,7 @@ use crate::{
     frame,
     permits::TransferPermit,
     routes::{document_response, empty, fail},
-    AppState, Error, MAX_BODY, MAX_META_BODY,
+    AppState, Error, MAX_BODY, MAX_META_BODY, MAX_PLAIN,
 };
 
 pub(crate) fn router() -> Router<AppState> {
@@ -124,14 +124,19 @@ async fn list(State(state): State<AppState>, media: SignedRequest) -> Response {
 }
 
 async fn upload(State(state): State<AppState>, media: SignedRequest) -> Response {
-    if let Err(response) = media.check_size(MAX_BODY) {
+    let quota = match state.db.quota(media.owner()).await {
+        Ok(quota) => quota,
+        Err(error) => return fail(error),
+    };
+    let max_body = MAX_BODY - MAX_PLAIN + quota.max_file_plaintext_bytes as usize;
+    if let Err(response) = media.check_size(max_body) {
         return *response;
     }
     let permit = match state.permits.upload(media.owner()).await {
         Ok(permit) => permit,
         Err(error) => return fail(error),
     };
-    let (owner, body) = match media.read(MAX_BODY, UPLOAD_BODY_DEADLINE).await {
+    let (owner, body) = match media.read(max_body, UPLOAD_BODY_DEADLINE).await {
         Ok(body) => body,
         Err(response) => return *response,
     };

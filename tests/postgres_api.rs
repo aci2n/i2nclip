@@ -430,7 +430,12 @@ async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
     );
     // The server checks ciphertext framing, not the authentication tag.
     let meta = client_crypto::sealed_fixture(0, 65_536);
-    let content = client_crypto::sealed_fixture(0, 33_554_496);
+    let content = client_crypto::encrypt(
+        &owner.seed,
+        &client_crypto::content_aad(),
+        &vec![0; 33_554_432],
+    )
+    .unwrap();
     let hash = crypto::body_hash(&content);
     let id = hash.as_str();
     let tags = b"\x90".to_vec();
@@ -1895,6 +1900,8 @@ async fn quota_cli_invitation_and_http_upload_failures_work_together() {
             "0",
             "--max-files",
             "0",
+            "--max-file-plaintext-bytes",
+            "33554432",
         ],
     )
     .await;
@@ -1935,6 +1942,8 @@ async fn quota_cli_invitation_and_http_upload_failures_work_together() {
             "85",
             "--max-files",
             "2",
+            "--max-file-plaintext-bytes",
+            "33554432",
         ],
     )
     .await;
@@ -1953,6 +1962,8 @@ async fn quota_cli_invitation_and_http_upload_failures_work_together() {
             "0",
             "--max-files",
             "0",
+            "--max-file-plaintext-bytes",
+            "33554432",
         ],
     )
     .await;
@@ -1968,6 +1979,8 @@ async fn quota_cli_invitation_and_http_upload_failures_work_together() {
             "0",
             "--max-files",
             "0",
+            "--max-file-plaintext-bytes",
+            "33554432",
         ],
     )
     .await;
@@ -1975,12 +1988,65 @@ async fn quota_cli_invitation_and_http_upload_failures_work_together() {
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("public_key"));
     let default_code = cli(&dir.0, &["otc", "issue"]).await;
     assert!(default_code.status.success());
-    let defaults: (i64, i64) =
-        sqlx::query_as("SELECT max_content_bytes, max_files FROM registration_codes")
-            .fetch_one(&dir.1)
-            .await
-            .unwrap();
-    assert_eq!(defaults, (536_870_912, 10_000));
+    let defaults: (i64, i64, i64) = sqlx::query_as(
+        "SELECT max_content_bytes, max_files, max_file_plaintext_bytes FROM registration_codes",
+    )
+    .fetch_one(&dir.1)
+    .await
+    .unwrap();
+    assert_eq!(defaults, (536_870_912, 10_000, 33_554_432));
+}
+
+#[tokio::test]
+async fn per_file_quota_accepts_larger_files_and_preserves_downloads_after_reduction() {
+    let owner = new_identity();
+    let (dir, app) = app(&[&owner]).await;
+    let plain = vec![7; 33_554_433];
+    let content =
+        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), &plain).unwrap();
+    let id = crypto::body_hash(&content);
+    let body =
+        client_crypto::encode_upload(&client_crypto::sealed_fixture(1, 42), &content, b"\x90");
+    let (status, error) = call(&app, &owner, "POST", "/api/media", body.clone()).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        client_crypto::document_json(&error)["error"],
+        "File exceeds the library maximum plaintext file size."
+    );
+    i2nclip::set_key_limits(
+        &dir.0,
+        &owner.registration_key(),
+        i2nclip::StorageLimits {
+            max_file_plaintext_bytes: plain.len() as i64,
+            ..i2nclip::StorageLimits::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        call(&app, &owner, "POST", "/api/media", body).await.0,
+        StatusCode::CREATED
+    );
+    i2nclip::set_key_limits(
+        &dir.0,
+        &owner.registration_key(),
+        i2nclip::StorageLimits {
+            max_file_plaintext_bytes: 0,
+            ..i2nclip::StorageLimits::default()
+        },
+    )
+    .await
+    .unwrap();
+    let (status, downloaded) = call(&app, &owner, "GET", &format!("/api/media/{id}"), vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(downloaded, content);
+    let (status, quota) = call(&app, &owner, "GET", "/api/quota", vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        client_crypto::document_json(&quota)["max_file_plaintext_bytes"],
+        0
+    );
+    assert_eq!(client_crypto::document_json(&quota)["file_count"], 1);
 }
 
 #[tokio::test]
@@ -1993,6 +2059,7 @@ async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
         &dir.0,
         &other.registration_key(),
         i2nclip::StorageLimits {
+            max_file_plaintext_bytes: i2nclip::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
             max_content_bytes: 123,
             max_files: 2,
         },
@@ -2004,7 +2071,7 @@ async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
     assert_eq!(
         client_crypto::document_json(&bytes),
         serde_json::json!({
-            "max_content_bytes": 536870912, "max_files": 10000, "used_content_bytes": 0, "file_count": 0,
+            "max_content_bytes": 536870912, "max_files": 10000, "max_file_plaintext_bytes": 33554432, "used_content_bytes": 0, "file_count": 0,
         })
     );
     let content = client_crypto::sealed_fixture(1, 42);
@@ -2019,7 +2086,7 @@ async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
     assert_eq!(
         client_crypto::document_json(&bytes),
         serde_json::json!({
-            "max_content_bytes": 123, "max_files": 2, "used_content_bytes": 0, "file_count": 0,
+            "max_content_bytes": 123, "max_files": 2, "max_file_plaintext_bytes": 33554432, "used_content_bytes": 0, "file_count": 0,
         })
     );
     assert_eq!(

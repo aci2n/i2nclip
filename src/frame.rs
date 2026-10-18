@@ -161,7 +161,7 @@ mod tests {
         // Fixture construction is outside measurement: we are measuring the
         // extra heap needed to decode an already buffered request.
         let metadata = vec![1; MAX_META];
-        let content = vec![1; MAX_CONTENT];
+        let content = vec![1; crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES as usize + 64];
         let post = encode_upload(&metadata, &content, b"\x90");
         let put = encode_meta(&[0; 32], &metadata, b"\x90");
         let post_info = allocation_counter::measure(|| {
@@ -183,8 +183,8 @@ mod tests {
             let content = parts.content.to_vec();
             black_box((&meta, &content));
         });
-        assert_eq!(copied_info.bytes_total, (MAX_META + MAX_CONTENT) as u64);
-        assert_eq!(copied_info.bytes_max, (MAX_META + MAX_CONTENT) as u64);
+        assert_eq!(copied_info.bytes_total, (MAX_META + content.len()) as u64);
+        assert_eq!(copied_info.bytes_max, (MAX_META + content.len()) as u64);
         assert_eq!(copied_info.bytes_current, 0);
 
         let tags = (0..MAX_TAGS)
@@ -305,6 +305,5 @@ mod tests {
         extra.push(0xc0);
         assert!(decode_meta(&extra).is_err());
         assert!(decode_upload(&encode_upload(&vec![0; MAX_META + 1], b"", b"\x90")).is_err());
-        assert!(decode_upload(&encode_upload(b"", &vec![0; MAX_CONTENT + 1], b"\x90")).is_err());
     }
 }

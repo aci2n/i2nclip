@@ -48,6 +48,7 @@ pub(crate) struct Item {
 pub(crate) struct Quota {
     pub max_content_bytes: i64,
     pub max_files: i64,
+    pub max_file_plaintext_bytes: i64,
     pub used_content_bytes: i64,
     pub file_count: i64,
 }
@@ -160,14 +161,15 @@ impl Database {
         let expires = i64::try_from(crypto::now_secs().saturating_add(ttl)).unwrap_or(i64::MAX);
         sqlx::query(
             r#"
-            INSERT INTO registration_codes (code_hash, expires_at, max_content_bytes, max_files)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO registration_codes (code_hash, expires_at, max_content_bytes, max_files, max_file_plaintext_bytes)
+            VALUES ($1, $2, $3, $4, $5)
             "#,
         )
         .bind(hash.as_slice())
         .bind(expires)
         .bind(limits.max_content_bytes)
         .bind(limits.max_files)
+        .bind(limits.max_file_plaintext_bytes)
         .execute(&self.pool)
         .await?;
         Ok(code)
@@ -181,7 +183,7 @@ impl Database {
             r#"
             DELETE FROM registration_codes
             WHERE code_hash = $1 AND expires_at > $2
-            RETURNING max_content_bytes, max_files
+            RETURNING max_content_bytes, max_files, max_file_plaintext_bytes
             "#,
         )
         .bind(hash.as_slice())
@@ -202,11 +204,12 @@ impl Database {
         .execute(&mut *tx)
         .await?;
         sqlx::query(
-            "INSERT INTO key_quotas (public_key, max_content_bytes, max_files) VALUES ($1, $2, $3) ON CONFLICT (public_key) DO NOTHING",
+            "INSERT INTO key_quotas (public_key, max_content_bytes, max_files, max_file_plaintext_bytes) VALUES ($1, $2, $3, $4) ON CONFLICT (public_key) DO NOTHING",
         )
         .bind(public.as_slice())
         .bind(limits.try_get::<i64, _>("max_content_bytes")?)
         .bind(limits.try_get::<i64, _>("max_files")?)
+        .bind(limits.try_get::<i64, _>("max_file_plaintext_bytes")?)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
@@ -221,11 +224,12 @@ impl Database {
     ) -> Result<(), Error> {
         limits.validate()?;
         let result = sqlx::query(
-            "UPDATE key_quotas SET max_content_bytes = $2, max_files = $3 WHERE public_key = $1",
+            "UPDATE key_quotas SET max_content_bytes = $2, max_files = $3, max_file_plaintext_bytes = $4 WHERE public_key = $1",
         )
         .bind(public.as_slice())
         .bind(limits.max_content_bytes)
         .bind(limits.max_files)
+        .bind(limits.max_file_plaintext_bytes)
         .execute(&self.pool)
         .await
         .map_err(|error| match &error {
@@ -248,11 +252,12 @@ impl Database {
     /// Read only the signed owner's quota; never scan media for usage.
     pub(crate) async fn quota(&self, owner: [u8; 32]) -> Result<Quota, Error> {
         let row = sqlx::query(
-            "SELECT max_content_bytes, max_files, used_content_bytes, file_count FROM key_quotas WHERE public_key = $1",
+            "SELECT max_content_bytes, max_files, max_file_plaintext_bytes, used_content_bytes, file_count FROM key_quotas WHERE public_key = $1",
         ).bind(owner.as_slice()).fetch_optional(&self.pool).await?.ok_or(Error::NotFound)?;
         Ok(Quota {
             max_content_bytes: row.try_get("max_content_bytes")?,
             max_files: row.try_get("max_files")?,
+            max_file_plaintext_bytes: row.try_get("max_file_plaintext_bytes")?,
             used_content_bytes: row.try_get("used_content_bytes")?,
             file_count: row.try_get("file_count")?,
         })
@@ -262,16 +267,19 @@ impl Database {
     pub(crate) async fn add(&self, owner: [u8; 32], body: &[u8]) -> Result<Item, Error> {
         let parts = frame::decode_upload(body)?;
         crypto::check_blob(parts.meta, MAX_META)?;
-        crypto::check_blob(parts.content, MAX_CONTENT)?;
+        let sealed = crypto::check_blob(parts.content, MAX_CONTENT)?;
+        let plaintext_bytes = sealed.ct.len() - 16;
         let id = crypto::body_hash_async(parts.content).await;
         let created_at = crypto::now_secs() as i64;
         let mut tx = self.pool.begin().await?;
         // All media mutations lock the quota before touching file rows.
-        sqlx::query("SELECT public_key FROM key_quotas WHERE public_key = $1 FOR UPDATE")
-            .bind(owner.as_slice())
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(Error::Unauthorized)?;
+        let max_file_plaintext_bytes: i64 = sqlx::query_scalar(
+            "SELECT max_file_plaintext_bytes FROM key_quotas WHERE public_key = $1 FOR UPDATE",
+        )
+        .bind(owner.as_slice())
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(Error::Unauthorized)?;
         // Keep the existing duplicate response even when the library is full.
         let duplicate: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM files WHERE id = $1)")
@@ -280,6 +288,9 @@ impl Database {
                 .await?;
         if duplicate {
             return Err(Error::Conflict);
+        }
+        if max_file_plaintext_bytes == 0 || plaintext_bytes as i64 > max_file_plaintext_bytes {
+            return Err(Error::FileSizeLimit);
         }
         // Reserve in this transaction. Subtract before comparison so values near
         // BIGINT's maximum cannot overflow. Failed insertion rolls this back.
@@ -950,7 +961,7 @@ mod tests {
                 .fetch_one(&db.pool)
                 .await
                 .unwrap();
-        assert_eq!(applied, 1);
+        assert_eq!(applied, 2);
         // Reinitialization must skip 001, rather than recreate a schema object.
         sqlx::query("DROP TRIGGER files_immutable_content ON files")
             .execute(&db.pool)
@@ -971,6 +982,144 @@ mod tests {
         .await
         .unwrap();
         assert!(!recreated);
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn per_file_migration_preserves_baseline_data_and_defaults() {
+        use std::borrow::Cow;
+
+        let (db, admin, name) = empty_fixture().await;
+        let mut baseline = sqlx::migrate!("./sql");
+        baseline.migrations = Cow::Owned(baseline.iter().take(1).cloned().collect());
+        baseline.run(&db.pool).await.unwrap();
+        sqlx::query("INSERT INTO registered_keys (public_key) VALUES ($1)")
+            .bind([1_u8; 32].as_slice())
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO key_quotas (public_key, max_content_bytes, max_files, used_content_bytes, file_count) VALUES ($1, 123, 4, 42, 1)")
+            .bind([1_u8; 32].as_slice()).execute(&db.pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO files (id, owner, meta, content, created_at) VALUES ($1, $2, $3, $3, 100)",
+        )
+        .bind("a".repeat(64))
+        .bind([1_u8; 32].as_slice())
+        .bind(sealed_blob(1))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO registration_codes (code_hash, expires_at) VALUES ($1, $2)")
+            .bind(crypto::body_hash_bytes(b"old-code").as_slice())
+            .bind(crypto::now_secs() as i64 + 3600)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        db.initialize().await.unwrap();
+        let quota = db.quota([1; 32]).await.unwrap();
+        assert_eq!(
+            (
+                quota.max_content_bytes,
+                quota.max_files,
+                quota.max_file_plaintext_bytes
+            ),
+            (123, 4, 33_554_432)
+        );
+        assert_usage(&db, [1; 32], (42, 1)).await;
+        assert_eq!(
+            db.content([1; 32], &"a".repeat(64)).await.unwrap(),
+            sealed_blob(1)
+        );
+        db.consume_code("old-code", &[2; 32]).await.unwrap();
+        assert_eq!(
+            db.quota([2; 32]).await.unwrap().max_file_plaintext_bytes,
+            33_554_432
+        );
+        db.set_limits(
+            &[1; 32],
+            StorageLimits {
+                max_content_bytes: 123,
+                max_files: 4,
+                max_file_plaintext_bytes: 1,
+            },
+        )
+        .await
+        .unwrap();
+        db.initialize().await.unwrap();
+        assert_eq!(db.quota([1; 32]).await.unwrap().max_file_plaintext_bytes, 1);
+        for limit in [-1_i64, 536_870_913] {
+            assert!(
+                sqlx::query("UPDATE key_quotas SET max_file_plaintext_bytes = $1")
+                    .bind(limit)
+                    .execute(&db.pool)
+                    .await
+                    .is_err()
+            );
+            assert!(sqlx::query("INSERT INTO registration_codes (code_hash, expires_at, max_file_plaintext_bytes) VALUES ($1, 0, $2)")
+                .bind([0_u8; 32].as_slice()).bind(limit).execute(&db.pool).await.is_err());
+        }
+        // Ensure the whole migration set is still recorded exactly once.
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM _sqlx_migrations WHERE success")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap(),
+            2
+        );
+        dispose(db, admin, name).await;
+    }
+
+    #[tokio::test]
+    async fn per_file_limits_recheck_locked_quota_and_preserve_existing_files() {
+        let (db, admin, name) = fixture().await;
+        let upload = |value, size| {
+            let content = crate::reference_crypto::encrypt(
+                &[1; 32],
+                &crate::reference_crypto::content_aad(),
+                &vec![value; size],
+            )
+            .unwrap();
+            crate::reference_crypto::encode_upload(&sealed_blob(1), &content, b"\x90")
+        };
+        let limits = StorageLimits {
+            max_file_plaintext_bytes: 8,
+            ..StorageLimits::default()
+        };
+        db.set_limits(&[1; 32], limits).await.unwrap();
+        let first = upload(1, 8);
+        let saved = db.add([1; 32], &first).await.unwrap();
+        assert!(matches!(
+            db.add([1; 32], &upload(2, 9)).await,
+            Err(Error::FileSizeLimit)
+        ));
+        assert_usage(&db, [1; 32], (saved.bytes, 1)).await;
+
+        // The upload must observe a quota reduction committed after it began.
+        let mut blocker = db.pool.begin().await.unwrap();
+        sqlx::query("UPDATE key_quotas SET max_file_plaintext_bytes = 0 WHERE public_key = $1")
+            .bind([1_u8; 32].as_slice())
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        let pending = upload(2, 8);
+        let release = async {
+            wait_for_locks(&db, "%FROM key_quotas%FOR UPDATE%", 1).await;
+            blocker.commit().await.unwrap();
+        };
+        let (result, ()) = tokio::join!(db.add([1; 32], &pending), release);
+        assert!(matches!(result, Err(Error::FileSizeLimit)));
+        assert!(matches!(
+            db.add([1; 32], &upload(3, 0)).await,
+            Err(Error::FileSizeLimit)
+        ));
+        assert!(matches!(
+            db.add([1; 32], &first).await,
+            Err(Error::Conflict)
+        ));
+        assert_usage(&db, [1; 32], (saved.bytes, 1)).await;
+        assert!(!db.content([1; 32], &saved.id).await.unwrap().is_empty());
+        db.remove([1; 32], &saved.id).await.unwrap();
+        assert_usage(&db, [1; 32], (0, 0)).await;
         dispose(db, admin, name).await;
     }
 
@@ -1377,7 +1526,8 @@ mod tests {
             .fetch_one(&db.pool).await.unwrap();
         assert_eq!(storage, "e");
 
-        for (meta_size, content_size) in [(41_i32, 42_i32), (65537, 42), (42, 41), (42, 33554497)] {
+        for (meta_size, content_size) in [(41_i32, 42_i32), (65537, 42), (42, 41), (42, 536870977)]
+        {
             let error = sqlx::query(
                 r#"
                                 INSERT INTO files (id, owner, meta, content, created_at)
@@ -1427,6 +1577,7 @@ mod tests {
         db.set_limits(
             &[1; 32],
             StorageLimits {
+                max_file_plaintext_bytes: crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
                 max_content_bytes: 42,
                 max_files: 1,
             },
@@ -1518,6 +1669,7 @@ mod tests {
         let second =
             crate::reference_crypto::encode_upload(&sealed_blob(2), &sealed_blob(2), b"\x90");
         let limits = StorageLimits {
+            max_file_plaintext_bytes: crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
             max_content_bytes: 42,
             max_files: 1,
         };
@@ -1533,10 +1685,12 @@ mod tests {
         // Exercise each limit independently, including limits near BIGINT max.
         for limits in [
             StorageLimits {
+                max_file_plaintext_bytes: crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
                 max_content_bytes: 57,
                 max_files: i64::MAX,
             },
             StorageLimits {
+                max_file_plaintext_bytes: crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
                 max_content_bytes: i64::MAX,
                 max_files: 1,
             },
@@ -1551,10 +1705,12 @@ mod tests {
         // Reductions below usage fail, while metadata at the limit can change.
         for limits in [
             StorageLimits {
+                max_file_plaintext_bytes: crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
                 max_content_bytes: 28,
                 max_files: 1,
             },
             StorageLimits {
+                max_file_plaintext_bytes: crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
                 max_content_bytes: 42,
                 max_files: 0,
             },
@@ -1580,10 +1736,12 @@ mod tests {
         assert_usage(&db, owner, (0, 0)).await;
         for limits in [
             StorageLimits {
+                max_file_plaintext_bytes: crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
                 max_content_bytes: 0,
                 max_files: 10,
             },
             StorageLimits {
+                max_file_plaintext_bytes: crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
                 max_content_bytes: 100,
                 max_files: 0,
             },
@@ -1639,10 +1797,12 @@ mod tests {
     async fn storage_limits_serialize_uploads_and_observe_committed_limit_changes() {
         for limits in [
             StorageLimits {
+                max_file_plaintext_bytes: crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
                 max_content_bytes: 42,
                 max_files: 100,
             },
             StorageLimits {
+                max_file_plaintext_bytes: crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
                 max_content_bytes: 1000,
                 max_files: 1,
             },
@@ -1659,7 +1819,7 @@ mod tests {
                 .await
                 .unwrap();
             let release = async {
-                wait_for_locks(&db, "%SELECT public_key FROM key_quotas%", 2).await;
+                wait_for_locks(&db, "%FROM key_quotas%FOR UPDATE%", 2).await;
                 blocker.commit().await.unwrap();
             };
             let (a, b, ()) = tokio::time::timeout(Duration::from_secs(10), async {
@@ -1800,6 +1960,7 @@ mod tests {
         db.set_limits(
             &[1; 32],
             StorageLimits {
+                max_file_plaintext_bytes: crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
                 max_content_bytes: 42,
                 max_files: 1,
             },
@@ -1817,7 +1978,7 @@ mod tests {
             .await
             .unwrap();
         let release = async {
-            wait_for_locks(&db, "%SELECT public_key FROM key_quotas%", 2).await;
+            wait_for_locks(&db, "%FROM key_quotas%FOR UPDATE%", 2).await;
             blocker.commit().await.unwrap();
         };
         let (upload, deletion, ()) = tokio::time::timeout(Duration::from_secs(10), async {
@@ -1842,41 +2003,42 @@ mod tests {
     async fn invitations_transfer_limits_only_to_new_keys() {
         let (db, admin, name) = fixture().await;
         let custom = StorageLimits {
+            max_file_plaintext_bytes: 99,
             max_content_bytes: 123,
             max_files: 4,
         };
         let code = db.issue_code(3600, custom).await.unwrap();
         db.consume_code(&code, &[2; 32]).await.unwrap();
-        let current: (i64, i64) = sqlx::query_as(
-            "SELECT max_content_bytes, max_files FROM key_quotas WHERE public_key = $1",
+        let current: (i64, i64, i64) = sqlx::query_as(
+            "SELECT max_content_bytes, max_files, max_file_plaintext_bytes FROM key_quotas WHERE public_key = $1",
         )
         .bind([2_u8; 32].as_slice())
         .fetch_one(&db.pool)
         .await
         .unwrap();
-        assert_eq!(current, (123, 4));
+        assert_eq!(current, (123, 4, 99));
         let code = db.issue_code(3600, StorageLimits::default()).await.unwrap();
         db.consume_code(&code, &[2; 32]).await.unwrap();
-        let current: (i64, i64) = sqlx::query_as(
-            "SELECT max_content_bytes, max_files FROM key_quotas WHERE public_key = $1",
+        let current: (i64, i64, i64) = sqlx::query_as(
+            "SELECT max_content_bytes, max_files, max_file_plaintext_bytes FROM key_quotas WHERE public_key = $1",
         )
         .bind([2_u8; 32].as_slice())
         .fetch_one(&db.pool)
         .await
         .unwrap();
-        assert_eq!(current, (123, 4));
+        assert_eq!(current, (123, 4, 99));
         assert!(matches!(
             db.consume_code(&code, &[3; 32]).await,
             Err(Error::RegistrationFailed)
         ));
-        let defaults: (i64, i64) = sqlx::query_as(
-            "SELECT max_content_bytes, max_files FROM key_quotas WHERE public_key = $1",
+        let defaults: (i64, i64, i64) = sqlx::query_as(
+            "SELECT max_content_bytes, max_files, max_file_plaintext_bytes FROM key_quotas WHERE public_key = $1",
         )
         .bind([1_u8; 32].as_slice())
         .fetch_one(&db.pool)
         .await
         .unwrap();
-        assert_eq!(defaults, (536_870_912, 10_000));
+        assert_eq!(defaults, (536_870_912, 10_000, 33_554_432));
         dispose(db, admin, name).await;
     }
 
@@ -1889,6 +2051,7 @@ mod tests {
         db.set_limits(
             &[1; 32],
             StorageLimits {
+                max_file_plaintext_bytes: crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
                 max_content_bytes: 42,
                 max_files: 1,
             },
@@ -1922,6 +2085,7 @@ mod tests {
         db.set_limits(
             &[1; 32],
             StorageLimits {
+                max_file_plaintext_bytes: crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
                 max_content_bytes: 42,
                 max_files: 1,
             },
