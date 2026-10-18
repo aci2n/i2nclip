@@ -1,80 +1,30 @@
 <script lang="ts">
-import { onDestroy, untrack } from "svelte";
-import { get } from "svelte/store";
-import { createExtensionReceiver } from "../stores/extension.ts";
-import { createPairing } from "../stores/pairing.ts";
-import { createPreferences } from "../stores/preferences.ts";
-import { createSession } from "../stores/session.ts";
-import { createWorkspace, type Workspace } from "../stores/workspace.ts";
+import { onDestroy } from "svelte";
+import { createApplication } from "../stores/application.ts";
+import { routeHref } from "../stores/routing.ts";
 import Library from "./Library.svelte";
 import Media from "./Media.svelte";
 import Settings from "./Settings.svelte";
 import Setup from "./Setup.svelte";
 import Unlock from "./Unlock.svelte";
 
-const session = createSession();
-const preferences = createPreferences();
-let workspace = $state.raw<Workspace | null>(null);
-function pageAtLocation() {
-	const params = new URLSearchParams(location.search);
-	const name = params.get("page");
-	return {
-		page:
-			name === "media" ? "media" : name === "settings" ? "settings" : "library",
-		id: params.get("id") || "",
-	};
-}
-let route = $state(pageAtLocation());
-function syncWorkspace(context = get(session).context) {
-	if (workspace && workspace.context !== context) {
-		workspace.dispose();
-		workspace = null;
-	}
-	if (context && route.page !== "media" && !workspace) {
-		workspace = createWorkspace(context, preferences);
-	}
-}
-const stopSession = session.subscribe((value) =>
-	untrack(() => syncWorkspace(value.context)),
-);
-const pairing = createPairing(session);
-const extension = createExtensionReceiver(
-	session,
-	() => workspace?.uploads ?? null,
-	() => {
-		route = { page: "library", id: "" };
-		syncWorkspace();
-		history.replaceState({}, "", "?page=library");
-	},
-);
+const application = createApplication();
+const { session, preferences, pairing, routing } = application;
+const workspace = $derived($application.workspace);
+onDestroy(application.dispose);
 function dragFiles(event: DragEvent) {
 	if (!event.dataTransfer?.types.includes("Files")) {
 		return;
 	}
 	event.preventDefault();
-	event.dataTransfer.dropEffect =
-		session.ready && workspace && !get(workspace.uploads).uploading
-			? "copy"
-			: "none";
+	event.dataTransfer.dropEffect = application.canDropFiles() ? "copy" : "none";
 }
 function dropFiles(event: DragEvent) {
 	if (!event.dataTransfer?.types.includes("Files")) {
 		return;
 	}
 	event.preventDefault();
-	const files = Array.from(event.dataTransfer.files);
-	if (
-		!files.length ||
-		!session.ready ||
-		!workspace ||
-		get(workspace.uploads).uploading
-	) {
-		return;
-	}
-	route = { page: "library", id: "" };
-	syncWorkspace();
-	history.replaceState({}, "", "?page=library");
-	void workspace.uploads.upload(files);
+	application.dropFiles(Array.from(event.dataTransfer.files));
 }
 function navigate(event: MouseEvent, name: "library" | "settings") {
 	if (
@@ -87,41 +37,28 @@ function navigate(event: MouseEvent, name: "library" | "settings") {
 		return;
 	}
 	event.preventDefault();
-	route = { page: name, id: "" };
-	syncWorkspace();
-	history.pushState({}, "", `?page=${name}`);
+	routing.navigate({ page: name });
 }
-const popstate = () => {
-	route = pageAtLocation();
-	syncWorkspace();
-};
-window.addEventListener("popstate", popstate);
-onDestroy(() => {
-	window.removeEventListener("popstate", popstate);
-	extension.dispose();
-	pairing.dispose();
-	stopSession();
-	workspace?.dispose();
-	session.dispose();
-});
 </script>
 
 <svelte:window ondragover={dragFiles} ondrop={dropFiles} />
 
-<main class:media={route.page === "media" && Boolean($session.context)}>
-	{#if route.page === "media" && !/^[0-9a-f]{64}$/.test(route.id)}
+<main class:media={$routing.page === "media" && Boolean($session.context)}>
+	{#if $routing.page === "media" && !/^[0-9a-f]{64}$/.test($routing.id)}
 		<section class="panel stack">
 			<p class="error" role="alert">Invalid media link.</p>
-			<a href="?page=library" onclick={(event) => navigate(event, "library")}
+			<a
+				href={routeHref({ page: "library" })}
+				onclick={(event) => navigate(event, "library")}
 				>Library</a
 			>
 		</section>
 	{:else if $session.status !== "unlocked"}
 		<Unlock {session} />
-	{:else if route.page === "media"}
+	{:else if $routing.page === "media"}
 		{#if $session.context}
 			<Media
-				id={route.id}
+				id={$routing.id}
 				context={$session.context}
 				onlibrary={(event) => navigate(event, "library")}
 			/>
@@ -133,26 +70,26 @@ onDestroy(() => {
 		<header>
 			<a
 				class="brand"
-				href="?page=library"
+				href={routeHref({ page: "library" })}
 				onclick={(event) => navigate(event, "library")}
 				>i2nclip</a
 			>
 			<nav aria-label="Main navigation">
 				<a
-					href="?page=library"
-					aria-current={route.page === "library" ? "page" : undefined}
+					href={routeHref({ page: "library" })}
+					aria-current={$routing.page === "library" ? "page" : undefined}
 					onclick={(event) => navigate(event, "library")}
 					>Library</a
 				>
 				<a
-					href="?page=settings"
-					aria-current={route.page === "settings" ? "page" : undefined}
+					href={routeHref({ page: "settings" })}
+					aria-current={$routing.page === "settings" ? "page" : undefined}
 					onclick={(event) => navigate(event, "settings")}
 					>Settings</a
 				>
 			</nav>
 		</header>
-		{#if route.page === "settings"}
+		{#if $routing.page === "settings"}
 			<Settings {session} {pairing} {workspace} {preferences} />
 		{:else if workspace}
 			<Library
@@ -167,7 +104,7 @@ onDestroy(() => {
 				<h2>Your library starts here</h2>
 				<p>
 					<a
-						href="?page=settings"
+						href={routeHref({ page: "settings" })}
 						onclick={(event) => navigate(event, "settings")}
 						>Create or restore your library</a
 					>

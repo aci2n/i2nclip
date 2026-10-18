@@ -7,6 +7,7 @@ import TagEditor from "./TagEditor.svelte";
 
 interface Props {
 	media: MediaState;
+	href: string;
 	suggestions?: string[];
 	onsearch: (tag: string) => void;
 	onreveal: (opener: HTMLElement) => void;
@@ -17,6 +18,7 @@ interface Props {
 
 let {
 	media,
+	href,
 	suggestions = [],
 	onsearch,
 	onreveal,
@@ -117,7 +119,7 @@ const summary = $derived(
 			<a
 				class="button secondary"
 				aria-label={`Link to ${name}`}
-				href={`?page=media&id=${media.id}`}
+				{href}
 				target="_blank"
 				rel="noopener noreferrer"
 				>Link</a
