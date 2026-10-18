@@ -33,14 +33,11 @@ pub use crate::{db::DEFAULT_REGISTRATION_TTL_SECS, error::Error};
 /// Fixed listen address. Publish a host port onto 8080 instead of configuring this.
 pub const LISTEN: &str = "0.0.0.0:8080";
 
-/// Default plaintext bytes per file; independent of the total encrypted storage quota.
-pub const DEFAULT_MAX_FILE_PLAINTEXT_BYTES: i64 = 32 * 1024 * 1024;
-/// Supported plaintext ceiling for the buffered transfer protocol (512 MiB).
-pub const MAX_FILE_PLAINTEXT_BYTES: i64 = 512 * 1024 * 1024;
-pub(crate) const MAX_PLAIN: usize = MAX_FILE_PLAINTEXT_BYTES as usize;
-/// Fixed encrypted chunk size exposed by the content chunk API.
-pub(crate) const DOWNLOAD_CHUNK_BYTES: usize = 4 * 1024 * 1024;
-pub(crate) const MAX_CONTENT: usize = MAX_PLAIN + 64;
+/// Plaintext bytes independently authenticated by each content chunk.
+pub const CHUNK_PLAINTEXT_BYTES: i64 = 4 * 1024 * 1024;
+pub(crate) const MAX_CHUNK_BYTES: usize = CHUNK_PLAINTEXT_BYTES as usize + 16;
+pub(crate) const MAX_DESCRIPTOR: usize = 1024;
+pub(crate) const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 pub(crate) const MAX_META: usize = 64 * 1024;
 pub(crate) const MAX_TAGS: usize = 64;
 pub(crate) const MAX_TAG_LABEL: usize = 1024;
@@ -48,7 +45,7 @@ pub(crate) const MAX_TAG_LABEL: usize = 1024;
 pub(crate) const MAX_TAG_DATA: usize = 96 * 1024;
 /// One page of the library list. The next page starts after the last row.
 pub(crate) const PAGE: usize = 24;
-pub(crate) const MAX_BODY: usize = 64 + MAX_META + MAX_CONTENT + MAX_TAG_DATA;
+pub(crate) const MAX_CREATE_BODY: usize = 192 * 1024;
 pub(crate) const MAX_META_BODY: usize = 96 + MAX_META + MAX_TAG_DATA;
 /// `POST /api/register-key` accepts a small MessagePack map only.
 pub(crate) const MAX_REGISTER_BODY: usize = 4096;
@@ -84,7 +81,6 @@ impl AppState {
 pub struct StorageLimits {
     pub max_content_bytes: i64,
     pub max_files: i64,
-    pub max_file_plaintext_bytes: i64,
 }
 
 impl Default for StorageLimits {
@@ -92,22 +88,18 @@ impl Default for StorageLimits {
         Self {
             max_content_bytes: 512 * 1024 * 1024,
             max_files: 10_000,
-            max_file_plaintext_bytes: DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
         }
     }
 }
 
 impl StorageLimits {
     fn validate(self) -> Result<(), Error> {
-        if self.max_content_bytes < 0 || self.max_files < 0 {
+        if !(0..=MAX_SAFE_INTEGER).contains(&self.max_content_bytes)
+            || !(0..=MAX_SAFE_INTEGER).contains(&self.max_files)
+        {
             return Err(Error::BadRequest(
-                "storage limits must be nonnegative integers".into(),
+                "storage limits must be nonnegative safe integers".into(),
             ));
-        }
-        if !(0..=MAX_FILE_PLAINTEXT_BYTES).contains(&self.max_file_plaintext_bytes) {
-            return Err(Error::BadRequest(format!(
-                "max_file_plaintext_bytes must be between 0 and {MAX_FILE_PLAINTEXT_BYTES}"
-            )));
         }
         Ok(())
     }

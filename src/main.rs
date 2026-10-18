@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use i2nclip::{StorageLimits, DEFAULT_REGISTRATION_TTL_SECS, MAX_FILE_PLAINTEXT_BYTES};
+use i2nclip::{StorageLimits, DEFAULT_REGISTRATION_TTL_SECS};
 
 #[derive(Parser)]
 #[command(about, version)]
@@ -32,9 +32,6 @@ enum OtcCommand {
         /// Maximum number of files.
         #[arg(long, default_value_t = StorageLimits::default().max_files, value_parser = clap::value_parser!(i64).range(0..))]
         max_files: i64,
-        /// Maximum plaintext bytes per file (32 MiB by default); zero blocks uploads.
-        #[arg(long, default_value_t = StorageLimits::default().max_file_plaintext_bytes, value_parser = clap::value_parser!(i64).range(0..=MAX_FILE_PLAINTEXT_BYTES))]
-        max_file_plaintext_bytes: i64,
     },
 }
 
@@ -49,9 +46,6 @@ enum KeyCommand {
         /// Maximum number of files; zero blocks uploads.
         #[arg(long, value_parser = clap::value_parser!(i64).range(0..))]
         max_files: i64,
-        /// Maximum plaintext bytes per file; zero blocks uploads (up to 512 MiB).
-        #[arg(long, value_parser = clap::value_parser!(i64).range(0..=MAX_FILE_PLAINTEXT_BYTES))]
-        max_file_plaintext_bytes: i64,
     },
 }
 
@@ -70,7 +64,6 @@ async fn execute(command: Option<Command>) -> Result<(), i2nclip::Error> {
             ttl_secs,
             max_bytes,
             max_files,
-            max_file_plaintext_bytes,
         })) => {
             let code = i2nclip::issue_registration_otc(
                 &i2nclip::database_url_from_env()?,
@@ -78,7 +71,6 @@ async fn execute(command: Option<Command>) -> Result<(), i2nclip::Error> {
                 StorageLimits {
                     max_content_bytes: max_bytes,
                     max_files,
-                    max_file_plaintext_bytes,
                 },
             )
             .await?;
@@ -89,7 +81,6 @@ async fn execute(command: Option<Command>) -> Result<(), i2nclip::Error> {
             public_key,
             max_bytes,
             max_files,
-            max_file_plaintext_bytes,
         })) => {
             i2nclip::set_key_limits(
                 &i2nclip::database_url_from_env()?,
@@ -97,7 +88,6 @@ async fn execute(command: Option<Command>) -> Result<(), i2nclip::Error> {
                 StorageLimits {
                     max_content_bytes: max_bytes,
                     max_files,
-                    max_file_plaintext_bytes,
                 },
             )
             .await

@@ -424,9 +424,36 @@ fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-
 #[test]
 fn chunk_reference_matches_published_vectors() {
-    let published: serde_json::Value = serde_json::from_str(include_str!("../client/tests/test-vectors.json")).unwrap();
+    let published: serde_json::Value =
+        serde_json::from_str(include_str!("../client/tests/test-vectors.json")).unwrap();
     assert_eq!(chunk_vectors(), published["chunk_v2"]);
+}
+
+pub fn encode_create(
+    id: &str,
+    plaintext_bytes: i64,
+    descriptor: &[u8],
+    meta: &[u8],
+    tags: &[u8],
+) -> Vec<u8> {
+    #[derive(serde::Serialize)]
+    struct Creation<'a> {
+        id: &'a str,
+        plaintext_bytes: i64,
+        #[serde(with = "serde_bytes")]
+        descriptor: &'a [u8],
+        #[serde(with = "serde_bytes")]
+        meta: &'a [u8],
+        tags: Vec<TagDocument>,
+    }
+    codec::encode(&Creation {
+        id,
+        plaintext_bytes,
+        descriptor,
+        meta,
+        tags: codec::decode(tags).unwrap(),
+    })
+    .unwrap()
 }

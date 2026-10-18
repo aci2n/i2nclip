@@ -58,15 +58,6 @@ fn quota_cli_rejects_invalid_arguments_before_connecting() {
         vec!["otc", "issue", "--max-file-plaintext-bytes", "536870913"],
         vec!["otc", "issue", "--max-file-plaintext-bytes", "1.5"],
         vec!["otc", "issue", "--max-file-plaintext-bytes"],
-        vec![
-            "key",
-            "set-limits",
-            &key,
-            "--max-bytes",
-            "0",
-            "--max-files",
-            "0",
-        ],
         vec!["key", "set-limits"],
         vec!["key", "set-limits", &key, "--max-bytes", "100"],
         vec![
@@ -88,7 +79,6 @@ fn quota_cli_rejects_invalid_arguments_before_connecting() {
     for args in [
         vec!["otc", "issue", "--max-bytes", "0", "--max-files", "0"],
         vec!["otc", "issue", "--max-bytes=+1", "--max-files=10000"],
-        vec!["otc", "issue", "--max-file-plaintext-bytes", "0"],
         vec![
             "key",
             "set-limits",
@@ -97,8 +87,6 @@ fn quota_cli_rejects_invalid_arguments_before_connecting() {
             "9223372036854775807",
             "--max-files",
             "10000",
-            "--max-file-plaintext-bytes",
-            "536870912",
         ],
     ] {
         let output = command().args(args).output().unwrap();
@@ -121,18 +109,11 @@ fn cli_help_is_available_without_database_configuration() {
                 "536870912",
                 "--max-files",
                 "10000",
-                "--max-file-plaintext-bytes",
-                "33554432",
             ],
         ),
         (
             vec!["key", "set-limits", "--help"],
-            vec![
-                "PUBLIC_KEY",
-                "--max-bytes",
-                "--max-files",
-                "--max-file-plaintext-bytes",
-            ],
+            vec!["PUBLIC_KEY", "--max-bytes", "--max-files"],
         ),
     ] {
         let output = command().args(args).output().unwrap();

@@ -13,7 +13,7 @@ use reference_crypto::{self as client_crypto, fixture_tag_labels, Identity};
 use tower::ServiceExt;
 
 #[path = "../src/reference_crypto.rs"]
-mod reference_crypto;
+pub mod reference_crypto;
 
 static N: AtomicU64 = AtomicU64::new(0);
 
@@ -85,43 +85,6 @@ async fn authenticated_ping_checks_registered_signatures_empty_bodies_and_replay
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
-}
-
-#[tokio::test]
-async fn tag_catalog_requires_signed_empty_requests_and_filters_owners() {
-    let owner = new_identity();
-    let other = new_identity();
-    let stranger = new_identity();
-    let (_db, app) = app(&[&owner, &other]).await;
-    let token = client_crypto::tag_token(&owner.seed, "Holiday").unwrap();
-    let content = client_crypto::sealed_fixture(0, 43);
-    let body = client_crypto::encode_upload(&content, &content, &fixture_tag_labels(&token));
-    assert_eq!(
-        call(&app, &owner, "POST", "/api/media", body).await.0,
-        StatusCode::CREATED
-    );
-    let (status, body) = call(&app, &owner, "GET", "/api/tags", vec![]).await;
-    assert_eq!(status, StatusCode::OK);
-    let value: serde_json::Value = client_crypto::document_json(&body);
-    assert_eq!(value["tags"].as_array().unwrap().len(), 1);
-    assert_eq!(
-        value["tags"][0]["token"],
-        serde_json::json!(URL_SAFE_NO_PAD.decode(token).unwrap())
-    );
-    assert!(!String::from_utf8_lossy(&body).contains("Holiday"));
-    let (_, body) = call(&app, &other, "GET", "/api/tags", vec![]).await;
-    assert_eq!(
-        client_crypto::document_json(&body)["tags"],
-        serde_json::json!([])
-    );
-    assert_eq!(
-        call(&app, &stranger, "GET", "/api/tags", vec![]).await.0,
-        StatusCode::UNAUTHORIZED
-    );
-    assert_eq!(
-        call(&app, &owner, "GET", "/api/tags", vec![1]).await.0,
-        StatusCode::PAYLOAD_TOO_LARGE
-    );
 }
 
 fn raw_hash(bytes: &[u8]) -> [u8; 32] {
@@ -258,40 +221,15 @@ async fn call(
     path: &str,
     body: Vec<u8>,
 ) -> (StatusCode, Vec<u8>) {
-    // Convenience for existing whole-file behavior checks: use the same metadata
-    // and stable-chunk sequence as the client. Raw endpoint tests use request().
-    let content = method == "GET"
-        && path
-            .strip_prefix("/api/media/")
-            .is_some_and(|tail| !tail.contains('/'));
-    let target = if content {
-        format!("{path}/chunks/0")
-    } else {
-        path.to_string()
-    };
-    let response = request(app, key, method, &target, body).await;
+    let response = request(app, key, method, path, body).await;
     let status = response.status();
-    let mut bytes = response
+    let bytes = response
         .into_body()
         .collect()
         .await
         .unwrap()
         .to_bytes()
         .to_vec();
-    if content && status == StatusCode::OK {
-        let metadata = request(app, key, "GET", &format!("{path}/meta"), vec![]).await;
-        let metadata = metadata.into_body().collect().await.unwrap().to_bytes();
-        let total = client_crypto::document_json(&metadata)["bytes"]
-            .as_u64()
-            .unwrap() as usize;
-        while bytes.len() < total {
-            let index = bytes.len() / (4 * 1024 * 1024);
-            let response =
-                request(app, key, method, &format!("{path}/chunks/{index}"), vec![]).await;
-            assert_eq!(response.status(), StatusCode::OK);
-            bytes.extend_from_slice(&response.into_body().collect().await.unwrap().to_bytes());
-        }
-    }
     (status, bytes)
 }
 
@@ -374,7 +312,8 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
         .unwrap();
     let id = "6666666666666666666666666666666666666666666666666666666666666666";
     for (method, path, seconds) in [
-        ("POST", "/api/media".to_string(), 120),
+        ("POST", "/api/media".to_string(), 30),
+        ("PUT", format!("/api/media/{id}/chunks/0"), 120),
         ("PUT", format!("/api/media/{id}/meta"), 30),
         ("GET", "/api/media".to_string(), 10),
         ("DELETE", format!("/api/media/{id}"), 10),
@@ -445,314 +384,6 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
             .await
             .unwrap(),
         0
-    );
-}
-
-#[tokio::test]
-async fn body_caps_accept_complete_frames_at_the_protocol_boundaries() {
-    let owner = new_identity();
-    let (dir, app) = app(&[&owner]).await;
-    let id = "7777777777777777777777777777777777777777777777777777777777777777";
-    assert_eq!(
-        call(
-            &app,
-            &owner,
-            "PUT",
-            &format!("/api/media/{id}/meta"),
-            vec![]
-        )
-        .await
-        .0,
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        app.clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/api/health")
-                    .body(Body::empty())
-                    .unwrap()
-            )
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::OK
-    );
-    // The server checks ciphertext framing, not the authentication tag.
-    let meta = client_crypto::sealed_fixture(0, 65_536);
-    let content = client_crypto::encrypt(
-        &owner.seed,
-        &client_crypto::content_aad(),
-        &vec![0; 33_554_432],
-    )
-    .unwrap();
-    let hash = crypto::body_hash(&content);
-    let id = hash.as_str();
-    let tags = b"\x90".to_vec();
-    let body = client_crypto::encode_upload(&meta, &content, &tags);
-    assert!(body.len() <= 33_718_400);
-    assert_eq!(
-        call(&app, &owner, "POST", "/api/media", body).await.0,
-        StatusCode::CREATED
-    );
-    let body = client_crypto::encode_meta(&raw_hash(&meta), &meta, &tags);
-    assert!(body.len() <= 163_936);
-    assert_eq!(
-        call(&app, &owner, "PUT", &format!("/api/media/{id}/meta"), body)
-            .await
-            .0,
-        StatusCode::OK
-    );
-    assert_eq!(
-        call(&app, &owner, "GET", "/api/media", vec![]).await.0,
-        StatusCode::OK
-    );
-    assert_eq!(
-        call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
-            .await
-            .0,
-        StatusCode::NO_CONTENT
-    );
-
-    let key = new_identity();
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
-        .await
-        .unwrap();
-    enroll_key(&app, &key, &otc).await;
-}
-
-#[tokio::test]
-async fn media_body_caps_reject_declared_sizes_before_polling() {
-    let owner = new_identity();
-    let (_dir, app) = app(&[&owner]).await;
-    let id = "8888888888888888888888888888888888888888888888888888888888888888";
-    for (method, path, cap) in [
-        ("POST", "/api/media".to_string(), 33_718_400),
-        ("PUT", format!("/api/media/{id}/meta"), 163_936),
-        ("GET", "/api/media".to_string(), 0),
-        ("DELETE", format!("/api/media/{id}"), 0),
-    ] {
-        let authorization = client_crypto::authorization(
-            &owner,
-            "http://i2nclip.test",
-            crypto::now_secs(),
-            &client_crypto::fresh_nonce(),
-            method,
-            &path,
-            b"",
-        );
-        let unreadable = Body::new(Body::from("unread").map_frame(|frame| {
-            assert!(
-                frame.data_ref().is_none(),
-                "oversized declared body was read"
-            );
-            frame
-        }));
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri(&path)
-                    .header("authorization", &authorization)
-                    .header("content-length", cap + 1)
-                    .body(unreadable)
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE, "{method}");
-        // Header rejection still spends the authenticated nonce.
-        let replay = Request::builder()
-            .method(method)
-            .uri(&path)
-            .header("authorization", authorization)
-            .body(Body::empty())
-            .unwrap();
-        assert_eq!(
-            app.clone().oneshot(replay).await.unwrap().status(),
-            StatusCode::UNAUTHORIZED
-        );
-    }
-}
-
-#[tokio::test]
-async fn body_caps_count_streamed_bytes_without_trusting_content_length() {
-    use axum::body::Bytes;
-    use http_body_util::Channel;
-
-    let owner = new_identity();
-    let (_dir, app) = app(&[&owner]).await;
-    let id = "9999999999999999999999999999999999999999999999999999999999999999";
-    for (method, path, cap) in [
-        ("POST", "/api/media".to_string(), 33_718_400),
-        ("PUT", format!("/api/media/{id}/meta"), 163_936),
-        ("GET", "/api/media".to_string(), 0),
-        ("DELETE", format!("/api/media/{id}"), 0),
-        ("POST", "/api/register-key".to_string(), 4096),
-    ] {
-        for declared in [None, Some(0)] {
-            let bytes = Bytes::from(vec![0u8; cap + 1]);
-            let authorization = client_crypto::authorization(
-                &owner,
-                "http://i2nclip.test",
-                crypto::now_secs(),
-                &client_crypto::fresh_nonce(),
-                method,
-                &path,
-                &bytes,
-            );
-            let (mut sender, body) = Channel::<Bytes>::new(2);
-            sender.send_data(bytes.slice(..cap)).await.unwrap();
-            sender.send_data(bytes.slice(cap..)).await.unwrap();
-            drop(sender);
-            let mut request = Request::builder().method(method).uri(&path);
-            request = request.header("authorization", authorization);
-            if let Some(len) = declared {
-                request = request.header("content-length", len);
-            }
-            let response = app
-                .clone()
-                .oneshot(request.body(Body::new(body)).unwrap())
-                .await
-                .unwrap();
-            assert_eq!(
-                response.status(),
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "{method} {path}, declared={declared:?}"
-            );
-            assert_eq!(response.headers()["cache-control"], "no-store");
-            let body = response.into_body().collect().await.unwrap().to_bytes();
-            assert_eq!(
-                client_crypto::document_json(&body),
-                serde_json::json!({ "error": "too large" })
-            );
-        }
-    }
-}
-
-#[tokio::test]
-async fn upload_list_get_delete_roundtrip_and_hides_plaintext() {
-    let key = new_identity();
-    let (dir, app) = app(&[&key]).await;
-
-    let marker = b"PLAINTEXT-MARKER-i2nclip-upload";
-    let filename = "vacation-photo.jpg";
-    let tag = "secret-tag-zebra";
-    let meta_json =
-        format!(r#"{{"name":"{filename}","contentType":"image/jpeg","size":1,"tags":["{tag}"]}}"#);
-    let content = client_crypto::encrypt(&key.seed, &client_crypto::content_aad(), marker).unwrap();
-    let hash = crypto::body_hash(&content);
-    let id = hash.as_str();
-    let meta = client_crypto::encrypt(
-        &key.seed,
-        &client_crypto::meta_aad(id),
-        meta_json.as_bytes(),
-    )
-    .unwrap();
-
-    let token = client_crypto::tag_token(&key.seed, tag).unwrap();
-    let body = client_crypto::encode_upload(&meta, &content, &fixture_tag_labels(&token));
-
-    let (status, bytes) = call(&app, &key, "POST", "/api/media", body).await;
-    assert_eq!(
-        status,
-        StatusCode::CREATED,
-        "{}",
-        String::from_utf8_lossy(&bytes)
-    );
-
-    let (status, listed) = call(
-        &app,
-        &key,
-        "GET",
-        &format!("/api/media?tag={token}"),
-        Vec::new(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let listed: serde_json::Value = client_crypto::document_json(&listed);
-    assert_eq!(listed["media"][0]["id"], id);
-
-    let (status, stored) = call(&app, &key, "GET", &format!("/api/media/{id}"), Vec::new()).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        client_crypto::decrypt(&key.seed, &client_crypto::content_aad(), &stored).unwrap(),
-        marker
-    );
-
-    let needles: [&[u8]; 3] = [marker, filename.as_bytes(), tag.as_bytes()];
-    let row: (Vec<u8>, Vec<u8>) = sqlx::query_as("SELECT meta,content FROM files WHERE id=$1")
-        .bind(id)
-        .fetch_one(&dir.1)
-        .await
-        .unwrap();
-    for data in [row.0, row.1] {
-        for needle in needles {
-            assert!(!data.windows(needle.len()).any(|w| w == needle));
-        }
-    }
-
-    let (status, _) = call(
-        &app,
-        &key,
-        "DELETE",
-        &format!("/api/media/{id}"),
-        Vec::new(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    let (status, _) = call(&app, &key, "GET", &format!("/api/media/{id}"), Vec::new()).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn another_key_cannot_see_or_search() {
-    let owner = new_identity();
-    let other = new_identity();
-    let (_dir, app) = app(&[&owner, &other]).await;
-
-    let content =
-        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"pic").unwrap();
-    let hash = crypto::body_hash(&content);
-    let id = hash.as_str();
-    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-
-    let token = client_crypto::tag_token(&owner.seed, "shared-word").unwrap();
-    let other_token = client_crypto::tag_token(&other.seed, "shared-word").unwrap();
-    assert_ne!(token, other_token);
-    let body = client_crypto::encode_upload(&meta, &content, &fixture_tag_labels(&token));
-    assert_eq!(
-        call(&app, &owner, "POST", "/api/media", body).await.0,
-        StatusCode::CREATED
-    );
-    assert_eq!(
-        call(&app, &other, "GET", &format!("/api/media/{id}"), Vec::new())
-            .await
-            .0,
-        StatusCode::NOT_FOUND
-    );
-    let (_status, listed) = call(
-        &app,
-        &other,
-        "GET",
-        &format!("/api/media?tag={other_token}"),
-        Vec::new(),
-    )
-    .await;
-    let listed: serde_json::Value = client_crypto::document_json(&listed);
-    assert_eq!(listed["media"].as_array().unwrap().len(), 0);
-    assert_eq!(
-        call(
-            &app,
-            &other,
-            "DELETE",
-            &format!("/api/media/{id}"),
-            Vec::new()
-        )
-        .await
-        .0,
-        StatusCode::NOT_FOUND
     );
 }
 
@@ -954,707 +585,6 @@ async fn legacy_weak_key_forgery_is_rejected_before_body_and_nonce() {
 }
 
 #[tokio::test]
-async fn duplicate_uploads_conflict_without_replacing_content() {
-    let owner = new_identity();
-    let other = new_identity();
-    let (_dir, app) = app(&[&owner, &other]).await;
-
-    let content =
-        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"original").unwrap();
-    let hash = crypto::body_hash(&content);
-    let id = hash.as_str();
-    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-
-    let body = client_crypto::encode_upload(&meta, &content, b"\x90");
-    let first = call(&app, &owner, "POST", "/api/media", body.clone()).await;
-    let retry = call(&app, &owner, "POST", "/api/media", body.clone()).await;
-    assert_eq!(first.0, StatusCode::CREATED);
-    assert_eq!(retry.0, StatusCode::CONFLICT);
-    assert_eq!(
-        call(&app, &other, "POST", "/api/media", body).await.0,
-        StatusCode::CONFLICT
-    );
-    let changed =
-        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"changed").unwrap();
-    assert_eq!(
-        call(
-            &app,
-            &owner,
-            "POST",
-            "/api/media",
-            client_crypto::encode_upload(&meta, &changed, b"\x90")
-        )
-        .await
-        .0,
-        StatusCode::CREATED
-    );
-    let (_, listed) = call(&app, &owner, "GET", "/api/media", vec![]).await;
-    assert_eq!(
-        client_crypto::document_json(&listed)["media"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
-    );
-    let (status, downloaded) = call(&app, &owner, "GET", &format!("/api/media/{id}"), vec![]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(downloaded, content);
-
-    assert_eq!(
-        call(
-            &app,
-            &owner,
-            "POST",
-            "/api/media",
-            client_crypto::encode_upload(&meta, &content, b"\x90")
-        )
-        .await
-        .0,
-        StatusCode::CONFLICT
-    );
-}
-
-#[tokio::test]
-async fn reopening_database_preserves_media() {
-    let owner = new_identity();
-    let (dir, app) = app(&[&owner]).await;
-
-    let content =
-        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"original").unwrap();
-    let hash = crypto::body_hash(&content);
-    let id = hash.as_str();
-    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-
-    let token = client_crypto::tag_token(&owner.seed, "keep").unwrap();
-    let body = client_crypto::encode_upload(&meta, &content, &fixture_tag_labels(&token));
-    assert_eq!(
-        call(&app, &owner, "POST", "/api/media", body).await.0,
-        StatusCode::CREATED
-    );
-    drop(app);
-
-    let app = i2nclip::router(&dir.0, "http://i2nclip.test")
-        .await
-        .unwrap();
-    let (status, downloaded) = call(&app, &owner, "GET", &format!("/api/media/{id}"), vec![]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(downloaded, content);
-    let (_, listed) = call(&app, &owner, "GET", "/api/media", vec![]).await;
-    assert_eq!(
-        client_crypto::document_json(&listed)["media"][0]["meta"],
-        serde_json::json!(meta)
-    );
-    let page: serde_json::Value = client_crypto::document_json(&listed);
-    assert!(page["media"][0].get("tokens").is_none());
-    let (_, filtered) = call(
-        &app,
-        &owner,
-        "GET",
-        &format!("/api/media?tag={token}"),
-        vec![],
-    )
-    .await;
-    let filtered: serde_json::Value = client_crypto::document_json(&filtered);
-    assert_eq!(filtered["media"][0]["id"], id);
-    drop(app);
-    let _reopened = i2nclip::router(&dir.0, "http://i2nclip.test")
-        .await
-        .unwrap();
-}
-
-#[tokio::test(start_paused = true)]
-async fn upload_admission_is_shared_and_releases_capacity() {
-    let _clock = manual_clock();
-    use std::{sync::Arc, time::Duration};
-
-    use axum::body::Bytes;
-    use http_body_util::Channel;
-
-    async fn stall(
-        app: &axum::Router,
-        owner: &Identity,
-    ) -> tokio::task::JoinHandle<Result<axum::response::Response, std::convert::Infallible>> {
-        let (mut sender, body) = Channel::<Bytes>::new(1);
-        sender.send_data(Bytes::new()).await.unwrap();
-        let polled = Arc::new(tokio::sync::Notify::new());
-        let observed = polled.clone();
-        let body = Body::new(body.map_frame(move |frame| {
-            observed.notify_one();
-            frame
-        }));
-        let authorization = client_crypto::authorization(
-            owner,
-            "http://i2nclip.test",
-            crypto::now_secs(),
-            &client_crypto::fresh_nonce(),
-            "POST",
-            "/api/media",
-            b"",
-        );
-        // Retain the sender in the HTTP task so the stream stays unfinished.
-        let router = app.clone();
-        let task = tokio::spawn(async move {
-            let result = router
-                .oneshot(
-                    Request::builder()
-                        .method("POST")
-                        .uri("/api/media")
-                        .header("authorization", authorization)
-                        .body(body)
-                        .unwrap(),
-                )
-                .await;
-            drop(sender);
-            result
-        });
-        polled.notified().await;
-        task
-    }
-
-    let owner = new_identity();
-    let other = new_identity();
-    let third_owner = new_identity();
-    let fourth_owner = new_identity();
-    let (dir, app) = app(&[&owner, &other, &third_owner, &fourth_owner]).await;
-    let first = stall(&app, &owner).await;
-    let second = stall(&app, &other).await;
-    let third = stall(&app, &third_owner).await;
-    let fourth = stall(&app, &fourth_owner).await;
-    let authorization = client_crypto::authorization(
-        &owner,
-        "http://i2nclip.test",
-        crypto::now_secs(),
-        &client_crypto::fresh_nonce(),
-        "POST",
-        "/api/media",
-        b"",
-    );
-    let queued = {
-        let router = app.clone();
-        let authorization = authorization.clone();
-        tokio::spawn(async move {
-            router
-                .oneshot(
-                    Request::builder()
-                        .method("POST")
-                        .uri("/api/media")
-                        .header("authorization", authorization)
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
-        })
-    };
-    tokio::task::yield_now().await;
-    assert!(!queued.is_finished(), "upload waits for an available slot");
-    let bad = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/media")
-                .body(Body::new(
-                    Body::from("unread").map_frame(|_| panic!("unauthenticated body polled")),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(bad.status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(
-        call(&app, &owner, "GET", "/api/media", vec![]).await.0,
-        StatusCode::OK
-    );
-    let id = "7777777777777777777777777777777777777777777777777777777777777777";
-    assert_eq!(
-        call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
-            .await
-            .0,
-        StatusCode::NOT_FOUND
-    );
-    let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
-        .await
-        .unwrap();
-    enroll_key(&app, &new_identity(), &otc).await;
-    first.abort();
-    assert!(first.await.unwrap_err().is_cancelled());
-    // Admission resumes the authenticated request. Its signed empty body
-    // matches the hash, but is not a valid upload frame.
-    assert_eq!(queued.await.unwrap().status(), StatusCode::BAD_REQUEST);
-    let replay = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/media")
-                .header("authorization", authorization)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
-    // Streaming, transport, and hash failures also return the available slot.
-    let (sender, broken) = Channel::<Bytes, std::io::Error>::new(1);
-    sender.abort(std::io::Error::other("broken upload"));
-    for (body, expected) in [
-        (Body::new(broken), StatusCode::BAD_REQUEST),
-        (
-            Body::from(vec![0; 33_718_401]),
-            StatusCode::PAYLOAD_TOO_LARGE,
-        ),
-        (Body::from("wrong signed bytes"), StatusCode::UNAUTHORIZED),
-    ] {
-        let authorization = client_crypto::authorization(
-            &owner,
-            "http://i2nclip.test",
-            crypto::now_secs(),
-            &client_crypto::fresh_nonce(),
-            "POST",
-            "/api/media",
-            b"",
-        );
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/media")
-                    .header("authorization", authorization)
-                    .body(body)
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), expected);
-    }
-    // Each failure must return the one available slot.
-    for _ in 0..3 {
-        assert_eq!(
-            call(
-                &app,
-                &owner,
-                "POST",
-                "/api/media",
-                b"invalid frame".to_vec()
-            )
-            .await
-            .0,
-            StatusCode::BAD_REQUEST
-        );
-    }
-
-    let content =
-        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"file").unwrap();
-    let hash = crypto::body_hash(&content);
-    let id = hash.as_str();
-    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-    let frame = client_crypto::encode_upload(&meta, &content, b"\x90");
-    assert_eq!(
-        call(&app, &owner, "POST", "/api/media", frame.clone())
-            .await
-            .0,
-        StatusCode::CREATED
-    );
-    assert_eq!(
-        call(&app, &owner, "POST", "/api/media", frame).await.0,
-        StatusCode::CONFLICT
-    );
-    tokio::time::advance(Duration::from_secs(120)).await;
-    assert_eq!(
-        second.await.unwrap().unwrap().status(),
-        StatusCode::REQUEST_TIMEOUT
-    );
-    for task in [third, fourth] {
-        assert_eq!(
-            task.await.unwrap().unwrap().status(),
-            StatusCode::REQUEST_TIMEOUT
-        );
-    }
-    // Slots become usable again after cancellation and timeout.
-    let first = stall(&app, &owner).await;
-    let second = stall(&app, &other).await;
-    first.abort();
-    second.abort();
-    let _ = first.await;
-    let _ = second.await;
-}
-
-async fn download_response(
-    app: &axum::Router,
-    owner: &Identity,
-    id: &str,
-) -> axum::response::Response {
-    request(
-        app,
-        owner,
-        "GET",
-        &format!("/api/media/{id}/chunks/0"),
-        vec![],
-    )
-    .await
-}
-
-#[tokio::test]
-async fn concurrent_routers_publish_one_hash() {
-    let owner = new_identity();
-    let other = new_identity();
-    let (dir, first) = app(&[&owner, &other]).await;
-    let second = i2nclip::router(&dir.0, "http://i2nclip.test")
-        .await
-        .unwrap();
-    let content = client_crypto::encrypt(
-        &owner.seed,
-        &client_crypto::content_aad(),
-        b"same sealed bytes",
-    )
-    .unwrap();
-    let id = crypto::body_hash(&content);
-    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"{}").unwrap();
-    let body = client_crypto::encode_upload(&meta, &content, b"\x90");
-    let (a, b) = tokio::join!(
-        call(&first, &owner, "POST", "/api/media", body.clone()),
-        call(&second, &other, "POST", "/api/media", body),
-    );
-    assert!(matches!(
-        (a.0, b.0),
-        (StatusCode::CREATED, StatusCode::CONFLICT) | (StatusCode::CONFLICT, StatusCode::CREATED)
-    ));
-    let winner = if a.0 == StatusCode::CREATED {
-        &owner
-    } else {
-        &other
-    };
-    assert_eq!(
-        call(&first, winner, "GET", &format!("/api/media/{id}"), vec![])
-            .await
-            .1,
-        content
-    );
-    let conn = &dir.1;
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM files")
-            .fetch_one(conn)
-            .await
-            .unwrap(),
-        1
-    );
-    for key in [&owner, &other] {
-        let actual: (i64, i64) = sqlx::query_as(
-            "SELECT used_content_bytes, file_count FROM key_quotas WHERE public_key = $1",
-        )
-        .bind(key.public.as_slice())
-        .fetch_one(&dir.1)
-        .await
-        .unwrap();
-        let expected = if key.public == winner.public {
-            (content.len() as i64, 1)
-        } else {
-            (0, 0)
-        };
-        assert_eq!(actual, expected);
-    }
-}
-
-#[tokio::test]
-async fn stable_chunks_are_bounded_private_cacheable_and_independent_of_deletion() {
-    let owner = new_identity();
-    let other = new_identity();
-    let (dir, app) = app(&[&owner, &other]).await;
-    let content = client_crypto::sealed_fixture(7, 4 * 1024 * 1024 + 123);
-    let id = crypto::body_hash(&content);
-    let path = format!("/api/media/{id}");
-    let first_path = format!("{path}/chunks/0");
-    let second_path = format!("{path}/chunks/1");
-    let body =
-        client_crypto::encode_upload(&client_crypto::sealed_fixture(1, 42), &content, b"\x90");
-    assert_eq!(
-        call(&app, &owner, "POST", "/api/media", body).await.0,
-        StatusCode::CREATED
-    );
-    assert_eq!(
-        request(&app, &owner, "GET", &path, vec![]).await.status(),
-        StatusCode::METHOD_NOT_ALLOWED
-    );
-    for index in ["2", "18446744073709551615"] {
-        assert_eq!(
-            request(
-                &app,
-                &owner,
-                "GET",
-                &format!("{path}/chunks/{index}"),
-                vec![]
-            )
-            .await
-            .status(),
-            StatusCode::NOT_FOUND
-        );
-    }
-    for index in ["-1", "nope", "18446744073709551616"] {
-        assert_eq!(
-            request(
-                &app,
-                &owner,
-                "GET",
-                &format!("{path}/chunks/{index}"),
-                vec![]
-            )
-            .await
-            .status(),
-            StatusCode::BAD_REQUEST
-        );
-    }
-    assert_eq!(
-        request(&app, &other, "GET", &first_path, vec![])
-            .await
-            .status(),
-        StatusCode::NOT_FOUND
-    );
-    for (index, expected) in [
-        (0, &content[..4 * 1024 * 1024]),
-        (1, &content[4 * 1024 * 1024..]),
-    ] {
-        let target = format!("{path}/chunks/{index}");
-        let response = request(&app, &owner, "GET", &target, vec![]).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers()["content-length"],
-            expected.len().to_string()
-        );
-        assert_eq!(response.headers()["etag"], format!("\"{id}.{index}\""));
-        assert_eq!(
-            response.headers()["cache-control"],
-            "private, max-age=31536000, immutable"
-        );
-        assert!(!response.headers().contains_key("content-range"));
-        assert_eq!(
-            &response.into_body().collect().await.unwrap().to_bytes()[..],
-            expected
-        );
-    }
-    let auth = client_crypto::authorization(
-        &owner,
-        "http://i2nclip.test",
-        crypto::now_secs(),
-        &client_crypto::fresh_nonce(),
-        "GET",
-        &first_path,
-        b"",
-    );
-    for status in [StatusCode::OK, StatusCode::UNAUTHORIZED] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(&first_path)
-                    .header("authorization", &auth)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), status);
-    }
-    let first = download_response(&app, &owner, &id).await;
-    let idle: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction'").fetch_one(&dir.1).await.unwrap();
-    assert_eq!(idle, 0);
-    assert_eq!(
-        call(&app, &owner, "DELETE", &path, vec![]).await.0,
-        StatusCode::NO_CONTENT
-    );
-    assert_eq!(
-        &first.into_body().collect().await.unwrap().to_bytes()[..],
-        &content[..4 * 1024 * 1024]
-    );
-    assert_eq!(
-        request(&app, &owner, "GET", &second_path, vec![])
-            .await
-            .status(),
-        StatusCode::NOT_FOUND
-    );
-}
-
-#[tokio::test]
-async fn buffered_chunks_retain_owned_content_after_deletion() {
-    use std::time::Duration;
-
-    tokio::time::timeout(Duration::from_secs(60), async {
-        let owner = new_identity();
-        let other = new_identity();
-        let (_dir, app) = app(&[&owner, &other]).await;
-
-        let content = client_crypto::encrypt(
-            &owner.seed,
-            &client_crypto::content_aad(),
-            &vec![7; 180_000],
-        )
-        .unwrap();
-        let hash = crypto::body_hash(&content);
-        let id = hash.as_str();
-        let meta =
-            client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-        assert_eq!(
-            call(
-                &app,
-                &owner,
-                "POST",
-                "/api/media",
-                client_crypto::encode_upload(&meta, &content, b"\x90")
-            )
-            .await
-            .0,
-            StatusCode::CREATED
-        );
-        assert_eq!(
-            download_response(&app, &other, id).await.status(),
-            StatusCode::NOT_FOUND
-        );
-        let first = download_response(&app, &owner, id).await;
-        let second = download_response(&app, &owner, id).await;
-        assert_eq!(first.status(), StatusCode::OK);
-        assert_eq!(first.headers()["content-length"], content.len().to_string());
-        assert_eq!(first.headers()["content-type"], "application/octet-stream");
-        let queued = download_response(&app, &owner, id);
-        tokio::pin!(queued);
-        assert!(
-            tokio::time::timeout(Duration::from_millis(100), &mut queued)
-                .await
-                .is_err(),
-            "a third download waits while the two per-key slots are held"
-        );
-        assert_eq!(
-            call(&app, &owner, "GET", "/api/media", vec![]).await.0,
-            StatusCode::OK
-        );
-        drop(second); // An unpolled response also returns its slot.
-        let second = tokio::time::timeout(Duration::from_secs(5), queued)
-            .await
-            .expect("dropping an unpolled response must admit the queued download");
-        assert_eq!(second.status(), StatusCode::OK);
-        let mut body = first.into_body();
-        let first_chunk = body.frame().await.unwrap().unwrap().into_data().unwrap();
-        assert!(first_chunk.len() <= 64 * 1024);
-        assert!(first_chunk.len() < content.len());
-        let queued = download_response(&app, &owner, id);
-        tokio::pin!(queued);
-        assert!(
-            tokio::time::timeout(Duration::from_millis(100), &mut queued)
-                .await
-                .is_err(),
-            "a partially consumed response continues to hold its slot"
-        );
-        let mut partial = second.into_body();
-        assert!(partial.frame().await.unwrap().is_ok());
-        drop(partial); // Cancelling after a chunk also returns its slot.
-        let admitted = tokio::time::timeout(Duration::from_secs(5), queued)
-            .await
-            .expect("dropping a partial response must admit the queued download");
-        assert_eq!(admitted.status(), StatusCode::OK);
-        drop(admitted);
-        // An already buffered chunk survives deletion. Different ciphertext has a different URL.
-        assert_eq!(
-            call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
-                .await
-                .0,
-            StatusCode::NO_CONTENT
-        );
-        let replacement =
-            client_crypto::encrypt(&other.seed, &client_crypto::content_aad(), b"replacement")
-                .unwrap();
-        let replacement_hash = crypto::body_hash(&replacement);
-        let id = replacement_hash.as_str();
-        let other_meta =
-            client_crypto::encrypt(&other.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-        assert_eq!(
-            call(
-                &app,
-                &other,
-                "POST",
-                "/api/media",
-                client_crypto::encode_upload(&other_meta, &replacement, b"\x90")
-            )
-            .await
-            .0,
-            StatusCode::CREATED
-        );
-        let mut received = first_chunk.to_vec();
-        while let Some(chunk) = body.frame().await {
-            let chunk = chunk.unwrap().into_data().unwrap();
-            assert!(chunk.len() <= 64 * 1024);
-            received.extend_from_slice(&chunk);
-        }
-        assert_eq!(received, content);
-        // Completion releases the permit even while the empty body remains alive.
-        let first = download_response(&app, &other, id).await;
-        let second = download_response(&app, &other, id).await;
-        assert_eq!(first.status(), StatusCode::OK);
-        assert_eq!(second.status(), StatusCode::OK);
-        drop(first);
-        drop(second);
-        assert_eq!(
-            download_response(&app, &owner, id).await.status(),
-            StatusCode::NOT_FOUND
-        );
-    })
-    .await
-    .expect("download ownership and admission checks must finish within 60 seconds");
-}
-
-#[tokio::test]
-async fn list_query_validation_is_scoped_to_the_list_endpoint() {
-    let owner = new_identity();
-    let (_dir, app) = app(&[&owner]).await;
-    assert_eq!(
-        call(&app, &owner, "GET", "/api/media?after=invalid", vec![])
-            .await
-            .0,
-        StatusCode::BAD_REQUEST
-    );
-    let path = format!("/api/media/{}?after=invalid&tag=invalid", "a".repeat(64));
-    let chunk = format!(
-        "/api/media/{}/chunks/0?after=invalid&tag=invalid",
-        "a".repeat(64)
-    );
-    assert_eq!(
-        call(&app, &owner, "GET", &chunk, vec![]).await.0,
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(
-        call(&app, &owner, "DELETE", &path, vec![]).await.0,
-        StatusCode::NOT_FOUND
-    );
-    let content = client_crypto::encrypt(
-        &owner.seed,
-        &client_crypto::content_aad(),
-        b"query isolation",
-    )
-    .unwrap();
-    let id = crypto::body_hash(&content);
-    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"{}").unwrap();
-    let body = client_crypto::encode_upload(&meta, &content, b"\x90");
-    assert_eq!(
-        call(&app, &owner, "POST", "/api/media?after=invalid", body)
-            .await
-            .0,
-        StatusCode::CREATED
-    );
-    let path = format!("/api/media/{id}/meta?after=invalid");
-    assert_eq!(
-        call(
-            &app,
-            &owner,
-            "PUT",
-            &path,
-            client_crypto::encode_meta(&raw_hash(&meta), &meta, b"\x90")
-        )
-        .await
-        .0,
-        StatusCode::OK
-    );
-}
-
-#[tokio::test]
 async fn invitation_race_has_one_winner() {
     let (dir, first) = app(&[]).await;
     let second = i2nclip::router(&dir.0, "http://i2nclip.test")
@@ -1672,204 +602,6 @@ async fn invitation_race_has_one_winner() {
     let mut statuses = [a.0.as_u16(), b.0.as_u16()];
     statuses.sort();
     assert_eq!(statuses, [204, 403]);
-}
-
-#[tokio::test]
-async fn failed_tag_writes_roll_back_upload_and_metadata() {
-    let key = new_identity();
-    let (dir, app) = app(&[&key]).await;
-    let token = URL_SAFE_NO_PAD.encode([1u8; 32]);
-    let content =
-        client_crypto::encrypt(&key.seed, &client_crypto::content_aad(), b"atomic").unwrap();
-    let id = crypto::body_hash(&content);
-    let meta = client_crypto::encrypt(&key.seed, &client_crypto::meta_aad(&id), b"old").unwrap();
-    sqlx::raw_sql(
-        r#"
-        CREATE FUNCTION reject_tags() RETURNS trigger LANGUAGE plpgsql AS $$
-        BEGIN
-            RAISE EXCEPTION 'test failure';
-        END;
-        $$;
-
-        CREATE TRIGGER reject_tags
-            BEFORE INSERT ON tags
-            FOR EACH ROW EXECUTE FUNCTION reject_tags();
-        "#,
-    )
-    .execute(&dir.1)
-    .await
-    .unwrap();
-    assert_eq!(
-        call(
-            &app,
-            &key,
-            "POST",
-            "/api/media",
-            client_crypto::encode_upload(&meta, &content, &fixture_tag_labels(&token))
-        )
-        .await
-        .0,
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM files")
-            .fetch_one(&dir.1)
-            .await
-            .unwrap(),
-        0
-    );
-    sqlx::query("DROP TRIGGER reject_tags ON tags")
-        .execute(&dir.1)
-        .await
-        .unwrap();
-    assert_eq!(
-        call(
-            &app,
-            &key,
-            "POST",
-            "/api/media",
-            client_crypto::encode_upload(&meta, &content, &fixture_tag_labels(&token))
-        )
-        .await
-        .0,
-        StatusCode::CREATED
-    );
-    sqlx::query(
-        r#"
-        CREATE TRIGGER reject_tags
-            BEFORE INSERT ON tags
-            FOR EACH ROW EXECUTE FUNCTION reject_tags()
-        "#,
-    )
-    .execute(&dir.1)
-    .await
-    .unwrap();
-    let new_meta =
-        client_crypto::encrypt(&key.seed, &client_crypto::meta_aad(&id), b"new").unwrap();
-    assert_eq!(
-        call(
-            &app,
-            &key,
-            "PUT",
-            &format!("/api/media/{id}/meta"),
-            client_crypto::encode_meta(&raw_hash(&meta), &new_meta, &fixture_tag_labels(&token))
-        )
-        .await
-        .0,
-        StatusCode::INTERNAL_SERVER_ERROR
-    );
-    let stored: Vec<u8> = sqlx::query_scalar("SELECT meta FROM files WHERE id=$1")
-        .bind(&id)
-        .fetch_one(&dir.1)
-        .await
-        .unwrap();
-    assert_eq!(stored, meta);
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM tags")
-            .fetch_one(&dir.1)
-            .await
-            .unwrap(),
-        1
-    );
-}
-
-#[tokio::test]
-async fn stale_metadata_update_returns_current_item_without_writing() {
-    let owner = new_identity();
-    let (dir, app) = app(&[&owner]).await;
-    let content =
-        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"clip").unwrap();
-    let id = crypto::body_hash(&content);
-    let original =
-        client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"original").unwrap();
-    let initial_token = client_crypto::tag_token(&owner.seed, "initial").unwrap();
-    let (status, response) = call(
-        &app,
-        &owner,
-        "POST",
-        "/api/media",
-        client_crypto::encode_upload(&original, &content, &fixture_tag_labels(&initial_token)),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED);
-    let payload: serde_json::Value = client_crypto::document_json(&response);
-    assert!(payload.get("tokens").is_none());
-
-    let current =
-        client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"current").unwrap();
-    let current_token = client_crypto::tag_token(&owner.seed, "current").unwrap();
-    let (status, response) = call(
-        &app,
-        &owner,
-        "PUT",
-        &format!("/api/media/{id}/meta"),
-        client_crypto::encode_meta(
-            &raw_hash(&original),
-            &current,
-            &fixture_tag_labels(&current_token),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let payload: serde_json::Value = client_crypto::document_json(&response);
-    assert!(payload.get("tokens").is_none());
-
-    let stale =
-        client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(&id), b"stale").unwrap();
-    let stale_token = client_crypto::tag_token(&owner.seed, "stale").unwrap();
-    let (status, response) = call(
-        &app,
-        &owner,
-        "PUT",
-        &format!("/api/media/{id}/meta"),
-        client_crypto::encode_meta(
-            &raw_hash(&original),
-            &stale,
-            &fixture_tag_labels(&stale_token),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    let payload: serde_json::Value = client_crypto::document_json(&response);
-    assert_eq!(payload["code"], "metadata_conflict");
-    assert_eq!(payload["media"]["meta"], serde_json::json!(current));
-    assert!(payload["media"].get("tokens").is_none());
-    for (token, count) in [(&current_token, 1), (&stale_token, 0)] {
-        let (_, page) = call(
-            &app,
-            &owner,
-            "GET",
-            &format!("/api/media?tag={token}"),
-            vec![],
-        )
-        .await;
-        let page: serde_json::Value = client_crypto::document_json(&page);
-        assert_eq!(page["media"].as_array().unwrap().len(), count);
-    }
-
-    let stored: Vec<u8> = sqlx::query_scalar("SELECT meta FROM files WHERE id=$1")
-        .bind(&id)
-        .fetch_one(&dir.1)
-        .await
-        .unwrap();
-    assert_eq!(stored, current);
-
-    assert_eq!(
-        call(
-            &app,
-            &owner,
-            "PUT",
-            &format!("/api/media/{id}/meta"),
-            client_crypto::encode_meta(
-                &raw_hash(&current),
-                &stale,
-                &fixture_tag_labels(&stale_token)
-            ),
-        )
-        .await
-        .0,
-        StatusCode::OK
-    );
 }
 
 #[tokio::test]
@@ -1923,569 +655,6 @@ async fn authentication_rechecks_timestamp_after_nonce_insert_wait() {
             .unwrap(),
         1
     );
-}
-
-#[tokio::test]
-async fn direct_metadata_reads_are_signed_private_and_do_not_return_content() {
-    let owner = new_identity();
-    let other = new_identity();
-    let stranger = new_identity();
-    let (_dir, app) = app(&[&owner, &other]).await;
-    let content =
-        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), b"file bytes").unwrap();
-    let hash = crypto::body_hash(&content);
-    let id = hash.as_str();
-    let meta = client_crypto::encrypt(&owner.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-    let body = client_crypto::encode_upload(&meta, &content, b"\x90");
-    assert_eq!(
-        call(&app, &owner, "POST", "/api/media", body).await.0,
-        StatusCode::CREATED
-    );
-    let path = format!("/api/media/{id}/meta");
-    let (status, body) = call(&app, &owner, "GET", &path, vec![]).await;
-    assert_eq!(status, StatusCode::OK);
-    let document = client_crypto::document_json(&body);
-    assert_eq!(document["id"], id);
-    assert_eq!(document["meta"], serde_json::json!(meta));
-    assert_eq!(document["bytes"], content.len());
-    assert!(document["created_at"].is_number());
-    assert_eq!(document.as_object().unwrap().len(), 4);
-    assert_eq!(
-        call(&app, &other, "GET", &path, vec![]).await.0,
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(
-        call(&app, &stranger, "GET", &path, vec![]).await.0,
-        StatusCode::UNAUTHORIZED
-    );
-    let unsigned = app
-        .clone()
-        .oneshot(Request::builder().uri(&path).body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(unsigned.status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(
-        call(&app, &owner, "GET", &path, vec![1]).await.0,
-        StatusCode::PAYLOAD_TOO_LARGE
-    );
-    assert_eq!(
-        call(&app, &owner, "GET", "/api/media/bad/meta", vec![])
-            .await
-            .0,
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        call(
-            &app,
-            &owner,
-            "GET",
-            &format!("/api/media/{}/meta", "a".repeat(64)),
-            vec![]
-        )
-        .await
-        .0,
-        StatusCode::NOT_FOUND
-    );
-    assert_eq!(
-        call(&app, &owner, "PUT", &format!("/api/media/{id}"), vec![])
-            .await
-            .0,
-        StatusCode::METHOD_NOT_ALLOWED
-    );
-    assert_eq!(
-        call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
-            .await
-            .0,
-        StatusCode::NO_CONTENT
-    );
-    assert_eq!(
-        call(&app, &owner, "GET", &path, vec![]).await.0,
-        StatusCode::NOT_FOUND
-    );
-}
-
-#[tokio::test]
-async fn quota_cli_invitation_and_http_upload_failures_work_together() {
-    let key = new_identity();
-    let (dir, app) = app(&[]).await;
-    async fn cli(database_url: &str, args: &[&str]) -> std::process::Output {
-        tokio::process::Command::new(env!("CARGO_BIN_EXE_i2nclip"))
-            .env_remove("I2N_DATABASE_URL_FILE")
-            .env("I2N_DATABASE_URL", database_url)
-            .args(args)
-            .output()
-            .await
-            .unwrap()
-    }
-    let issued = cli(
-        &dir.0,
-        &["otc", "issue", "--max-bytes", "42", "--max-files", "1"],
-    )
-    .await;
-    assert!(
-        issued.status.success(),
-        "{}",
-        String::from_utf8_lossy(&issued.stderr)
-    );
-    let code = String::from_utf8(issued.stdout).unwrap();
-    enroll_key(&app, &key, code.trim()).await;
-    let body = client_crypto::encode_upload(
-        &client_crypto::sealed_fixture(1, 42),
-        &client_crypto::sealed_fixture(1, 42),
-        b"\x90",
-    );
-    let (status, saved) = call(&app, &key, "POST", "/api/media", body.clone()).await;
-    assert_eq!(status, StatusCode::CREATED);
-    let saved: serde_json::Value = client_crypto::document_json(&saved);
-    assert_eq!(saved["bytes"], 42);
-    let second = client_crypto::encode_upload(
-        &client_crypto::sealed_fixture(1, 42),
-        &client_crypto::sealed_fixture(1, 43),
-        b"\x90",
-    );
-    let (status, error) = call(&app, &key, "POST", "/api/media", second.clone()).await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(
-        client_crypto::document_json(&error),
-        serde_json::json!({ "error": "Library storage limit reached." })
-    );
-    // Updating an existing key is administrative and preserves its files.
-    let changed = cli(
-        &dir.0,
-        &[
-            "key",
-            "set-limits",
-            &key.registration_key(),
-            "--max-bytes",
-            "0",
-            "--max-files",
-            "0",
-            "--max-file-plaintext-bytes",
-            "33554432",
-        ],
-    )
-    .await;
-    assert!(
-        !changed.status.success(),
-        "{}",
-        String::from_utf8_lossy(&changed.stderr)
-    );
-    assert!(String::from_utf8_lossy(&changed.stderr).contains("current usage"));
-    let (status, _) = call(
-        &app,
-        &key,
-        "GET",
-        &format!("/api/media/{}", saved["id"].as_str().unwrap()),
-        vec![],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, error) = call(&app, &key, "POST", "/api/media", body).await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(
-        client_crypto::document_json(&error),
-        serde_json::json!({ "error": "already exists" })
-    );
-    assert_eq!(
-        call(&app, &key, "POST", "/api/media", second.clone())
-            .await
-            .0,
-        StatusCode::CONFLICT
-    );
-    let changed = cli(
-        &dir.0,
-        &[
-            "key",
-            "set-limits",
-            &key.registration_key(),
-            "--max-bytes",
-            "85",
-            "--max-files",
-            "2",
-            "--max-file-plaintext-bytes",
-            "33554432",
-        ],
-    )
-    .await;
-    assert!(changed.status.success());
-    assert_eq!(
-        call(&app, &key, "POST", "/api/media", second).await.0,
-        StatusCode::CREATED
-    );
-    let unknown = cli(
-        &dir.0,
-        &[
-            "key",
-            "set-limits",
-            &new_identity().registration_key(),
-            "--max-bytes",
-            "0",
-            "--max-files",
-            "0",
-            "--max-file-plaintext-bytes",
-            "33554432",
-        ],
-    )
-    .await;
-    assert!(!unknown.status.success());
-    assert!(String::from_utf8_lossy(&unknown.stderr).contains("not found"));
-    let invalid = cli(
-        &dir.0,
-        &[
-            "key",
-            "set-limits",
-            "invalid",
-            "--max-bytes",
-            "0",
-            "--max-files",
-            "0",
-            "--max-file-plaintext-bytes",
-            "33554432",
-        ],
-    )
-    .await;
-    assert!(!invalid.status.success());
-    assert!(String::from_utf8_lossy(&invalid.stderr).contains("public_key"));
-    let default_code = cli(&dir.0, &["otc", "issue"]).await;
-    assert!(default_code.status.success());
-    let defaults: (i64, i64, i64) = sqlx::query_as(
-        "SELECT max_content_bytes, max_files, max_file_plaintext_bytes FROM registration_codes",
-    )
-    .fetch_one(&dir.1)
-    .await
-    .unwrap();
-    assert_eq!(defaults, (536_870_912, 10_000, 33_554_432));
-}
-
-#[tokio::test]
-async fn per_file_quota_accepts_larger_files_and_preserves_downloads_after_reduction() {
-    let owner = new_identity();
-    let (dir, app) = app(&[&owner]).await;
-    let plain = vec![7; 33_554_433];
-    let content =
-        client_crypto::encrypt(&owner.seed, &client_crypto::content_aad(), &plain).unwrap();
-    let id = crypto::body_hash(&content);
-    let body =
-        client_crypto::encode_upload(&client_crypto::sealed_fixture(1, 42), &content, b"\x90");
-    let (status, error) = call(&app, &owner, "POST", "/api/media", body.clone()).await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(
-        client_crypto::document_json(&error)["error"],
-        "File exceeds the library maximum plaintext file size."
-    );
-    i2nclip::set_key_limits(
-        &dir.0,
-        &owner.registration_key(),
-        i2nclip::StorageLimits {
-            max_file_plaintext_bytes: plain.len() as i64,
-            ..i2nclip::StorageLimits::default()
-        },
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        call(&app, &owner, "POST", "/api/media", body).await.0,
-        StatusCode::CREATED
-    );
-    i2nclip::set_key_limits(
-        &dir.0,
-        &owner.registration_key(),
-        i2nclip::StorageLimits {
-            max_file_plaintext_bytes: 0,
-            ..i2nclip::StorageLimits::default()
-        },
-    )
-    .await
-    .unwrap();
-    let (status, downloaded) = call(&app, &owner, "GET", &format!("/api/media/{id}"), vec![]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(downloaded, content);
-    let (status, quota) = call(&app, &owner, "GET", "/api/quota", vec![]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        client_crypto::document_json(&quota)["max_file_plaintext_bytes"],
-        0
-    );
-    assert_eq!(client_crypto::document_json(&quota)["file_count"], 1);
-}
-
-#[tokio::test]
-async fn signed_quota_reads_are_private_uncached_and_follow_media_mutations() {
-    let owner = new_identity();
-    let other = new_identity();
-    let stranger = new_identity();
-    let (dir, app) = app(&[&owner, &other]).await;
-    i2nclip::set_key_limits(
-        &dir.0,
-        &other.registration_key(),
-        i2nclip::StorageLimits {
-            max_file_plaintext_bytes: i2nclip::DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
-            max_content_bytes: 123,
-            max_files: 2,
-        },
-    )
-    .await
-    .unwrap();
-    let (status, bytes) = call(&app, &owner, "GET", "/api/quota", vec![]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        client_crypto::document_json(&bytes),
-        serde_json::json!({
-            "max_content_bytes": 536870912, "max_files": 10000, "max_file_plaintext_bytes": 33554432, "used_content_bytes": 0, "file_count": 0,
-        })
-    );
-    let content = client_crypto::sealed_fixture(1, 42);
-    let body =
-        client_crypto::encode_upload(&client_crypto::sealed_fixture(1, 42), &content, b"\x90");
-    assert_eq!(
-        call(&app, &owner, "POST", "/api/media", body).await.0,
-        StatusCode::CREATED
-    );
-    let (status, bytes) = call(&app, &other, "GET", "/api/quota?owner=ignored", vec![]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        client_crypto::document_json(&bytes),
-        serde_json::json!({
-            "max_content_bytes": 123, "max_files": 2, "max_file_plaintext_bytes": 33554432, "used_content_bytes": 0, "file_count": 0,
-        })
-    );
-    assert_eq!(
-        call(&app, &stranger, "GET", "/api/quota", vec![]).await.0,
-        StatusCode::UNAUTHORIZED
-    );
-    assert_eq!(
-        call(&app, &owner, "GET", "/api/quota", vec![1]).await.0,
-        StatusCode::PAYLOAD_TOO_LARGE
-    );
-    let authorization = client_crypto::authorization(
-        &owner,
-        "http://i2nclip.test",
-        crypto::now_secs(),
-        &client_crypto::fresh_nonce(),
-        "GET",
-        "/api/quota",
-        b"",
-    );
-    for status in [StatusCode::OK, StatusCode::UNAUTHORIZED] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/api/quota")
-                    .header("authorization", &authorization)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), status);
-        assert_eq!(response.headers()["cache-control"], "no-store");
-        if status == StatusCode::OK {
-            let bytes = response.into_body().collect().await.unwrap().to_bytes();
-            let quota: serde_json::Value = client_crypto::document_json(&bytes);
-            assert_eq!(quota["used_content_bytes"], 42);
-            assert_eq!(quota["file_count"], 1);
-        }
-    }
-    assert_eq!(
-        call(
-            &app,
-            &owner,
-            "DELETE",
-            &format!("/api/media/{}", crypto::body_hash(&content)),
-            vec![]
-        )
-        .await
-        .0,
-        StatusCode::NO_CONTENT
-    );
-    let (_, bytes) = call(&app, &owner, "GET", "/api/quota", vec![]).await;
-    let quota: serde_json::Value = client_crypto::document_json(&bytes);
-    assert_eq!(quota["used_content_bytes"], 0);
-    assert_eq!(quota["file_count"], 0);
-}
-
-#[tokio::test]
-async fn per_key_upload_waiters_do_not_read_bodies_or_consume_other_keys_global_capacity() {
-    use std::{
-        sync::{
-            atomic::{AtomicUsize, Ordering},
-            Arc,
-        },
-        time::Duration,
-    };
-
-    use axum::body::Bytes;
-    use http_body_util::Channel;
-    let owner = new_identity();
-    let other = new_identity();
-    let (_db, app) = app(&[&owner, &other]).await;
-    let (mut sender, body) = Channel::<Bytes>::new(1);
-    sender.send_data(Bytes::new()).await.unwrap();
-    let entered = Arc::new(tokio::sync::Notify::new());
-    let observed = entered.clone();
-    let body = Body::new(body.map_frame(move |frame| {
-        observed.notify_one();
-        frame
-    }));
-    let header = client_crypto::authorization(
-        &owner,
-        "http://i2nclip.test",
-        crypto::now_secs(),
-        &client_crypto::fresh_nonce(),
-        "POST",
-        "/api/media",
-        b"",
-    );
-    let router = app.clone();
-    let first = tokio::spawn(async move {
-        router
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/media")
-                    .header("authorization", header)
-                    .body(body)
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-    });
-    tokio::time::timeout(Duration::from_secs(5), entered.notified())
-        .await
-        .unwrap();
-    let polled = Arc::new(AtomicUsize::new(0));
-    let mut queued = Vec::new();
-    for _ in 0..4 {
-        let observed = polled.clone();
-        let body = Body::new(Body::from("queued").map_frame(move |frame| {
-            observed.fetch_add(1, Ordering::SeqCst);
-            frame
-        }));
-        let header = client_crypto::authorization(
-            &owner,
-            "http://i2nclip.test",
-            crypto::now_secs(),
-            &client_crypto::fresh_nonce(),
-            "POST",
-            "/api/media",
-            b"queued",
-        );
-        let mut request = Box::pin(
-            app.clone().oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/media")
-                    .header("authorization", header)
-                    .body(body)
-                    .unwrap(),
-            ),
-        );
-        assert!(
-            tokio::time::timeout(Duration::from_millis(50), &mut request)
-                .await
-                .is_err()
-        );
-        queued.push(request);
-    }
-    assert_eq!(polled.load(Ordering::SeqCst), 0);
-    let response = tokio::time::timeout(
-        Duration::from_secs(5),
-        call(
-            &app,
-            &other,
-            "POST",
-            "/api/media",
-            b"invalid frame".to_vec(),
-        ),
-    )
-    .await
-    .unwrap();
-    assert_eq!(response.0, StatusCode::BAD_REQUEST);
-    assert_eq!(
-        call(&app, &owner, "GET", "/api/quota", vec![]).await.0,
-        StatusCode::OK
-    );
-    assert_eq!(
-        download_response(&app, &owner, &"0".repeat(64))
-            .await
-            .status(),
-        StatusCode::NOT_FOUND
-    );
-    drop(queued);
-    first.abort();
-    assert!(first.await.unwrap_err().is_cancelled());
-    drop(sender);
-    assert_eq!(
-        tokio::time::timeout(
-            Duration::from_secs(5),
-            call(
-                &app,
-                &owner,
-                "POST",
-                "/api/media",
-                b"invalid frame".to_vec()
-            )
-        )
-        .await
-        .unwrap()
-        .0,
-        StatusCode::BAD_REQUEST
-    );
-}
-
-#[tokio::test]
-async fn global_download_limit_still_applies_across_independent_keys() {
-    use std::time::Duration;
-    let owners: Vec<_> = (0..9).map(|_| new_identity()).collect();
-    let (_db, app) = app(&owners.iter().collect::<Vec<_>>()).await;
-    let mut held = Vec::new();
-    let mut ids = Vec::new();
-    for (n, owner) in owners.iter().enumerate() {
-        let content = client_crypto::sealed_fixture(n as u8, 42);
-        let id = crypto::body_hash(&content);
-        assert_eq!(
-            call(
-                &app,
-                owner,
-                "POST",
-                "/api/media",
-                client_crypto::encode_upload(
-                    &client_crypto::sealed_fixture(1, 42),
-                    &content,
-                    b"\x90"
-                )
-            )
-            .await
-            .0,
-            StatusCode::CREATED
-        );
-        if n < 8 {
-            for _ in 0..2 {
-                let response = download_response(&app, owner, &id).await;
-                assert_eq!(response.status(), StatusCode::OK);
-                held.push(response);
-            }
-        }
-        ids.push(id);
-    }
-    let mut queued = Box::pin(download_response(&app, &owners[8], &ids[8]));
-    assert!(
-        tokio::time::timeout(Duration::from_millis(100), &mut queued)
-            .await
-            .is_err()
-    );
-    assert_eq!(
-        call(&app, &owners[8], "GET", "/api/quota", vec![]).await.0,
-        StatusCode::OK
-    );
-    drop(held.pop());
-    let admitted = tokio::time::timeout(Duration::from_secs(5), queued)
-        .await
-        .unwrap();
-    assert_eq!(admitted.status(), StatusCode::OK);
-    drop(admitted);
-    drop(held);
 }
 
 #[tokio::test]
@@ -2617,4 +786,448 @@ async fn registration_requires_possession_and_preserves_invitations_on_verificat
         call(&app, &other, "GET", "/api/ping", vec![]).await.0,
         StatusCode::UNAUTHORIZED
     );
+}
+
+struct UploadFixture {
+    id: String,
+    body: Vec<u8>,
+    encrypted: Vec<Vec<u8>>,
+    meta: Vec<u8>,
+}
+
+fn upload_fixture(owner: &Identity, size: usize, tags: &str) -> UploadFixture {
+    let id = crypto::body_hash(client_crypto::fresh_nonce().as_bytes());
+    let descriptor =
+        client_crypto::content_descriptor(&owner.seed, &id, size as u64, &[0x44; 32], &[0x55; 12]);
+    let meta = client_crypto::encrypt(
+        &owner.seed,
+        &client_crypto::meta_aad(&id),
+        b"encrypted filename",
+    )
+    .unwrap();
+    let encrypted = (0..size.div_ceil(4194304).max(1))
+        .map(|index| {
+            let length = (size - index * 4194304).min(4194304);
+            client_crypto::encrypt_chunk(
+                &[0x44; 32],
+                &id,
+                size as u64,
+                index as u64,
+                &vec![0x5a; length],
+            )
+        })
+        .collect();
+    let body = client_crypto::encode_create(
+        &id,
+        size as i64,
+        &descriptor,
+        &meta,
+        &fixture_tag_labels(tags),
+    );
+    UploadFixture {
+        id,
+        body,
+        encrypted,
+        meta,
+    }
+}
+
+async fn publish(app: &axum::Router, owner: &Identity, upload: &UploadFixture) {
+    assert_eq!(
+        call(app, owner, "POST", "/api/media", upload.body.clone())
+            .await
+            .0,
+        StatusCode::CREATED
+    );
+    for (index, bytes) in upload.encrypted.iter().enumerate() {
+        assert_eq!(
+            call(
+                app,
+                owner,
+                "PUT",
+                &format!("/api/media/{}/chunks/{index}", upload.id),
+                bytes.clone()
+            )
+            .await
+            .0,
+            StatusCode::NO_CONTENT
+        );
+    }
+}
+
+#[tokio::test]
+async fn pending_chunk_roundtrip_authenticates_metadata_and_publishes_complete_items_only() {
+    let owner = new_identity();
+    let other = new_identity();
+    assert!(!owner.registration_key().is_empty());
+    let (_db, app) = app(&[&owner, &other]).await;
+    let token = client_crypto::tag_token(&owner.seed, "Holiday").unwrap();
+    let upload = upload_fixture(&owner, 4194307, &token);
+    let (status, body) = call(&app, &owner, "POST", "/api/media", upload.body.clone()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(
+        client_crypto::document_json(&body)["expected_chunk_count"],
+        2
+    );
+    assert_eq!(
+        client_crypto::document_json(&call(&app, &owner, "GET", "/api/media", vec![]).await.1)
+            ["media"],
+        serde_json::json!([])
+    );
+    let meta_path = format!("/api/media/{}/meta", upload.id);
+    let chunk_path = format!("/api/media/{}/chunks/0", upload.id);
+    assert_eq!(
+        call(&app, &owner, "GET", &meta_path, vec![]).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(&app, &owner, "GET", &chunk_path, vec![]).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(
+            &app,
+            &other,
+            "PUT",
+            &chunk_path,
+            upload.encrypted[0].clone()
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "PUT",
+            &format!("/api/media/{}/chunks/1", upload.id),
+            upload.encrypted[1].clone()
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "PUT",
+            &chunk_path,
+            upload.encrypted[0].clone()
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let response = request(&app, &owner, "GET", &chunk_path, vec![]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()["cache-control"],
+        "private, max-age=31536000, immutable"
+    );
+    assert_eq!(response.headers()["etag"], format!("\"{}.0\"", upload.id));
+    assert_eq!(response.headers()["content-length"], "4194320");
+    assert_eq!(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .as_ref(),
+        upload.encrypted[0]
+    );
+    let (_, summary) = call(&app, &owner, "GET", &meta_path, vec![]).await;
+    assert!(!String::from_utf8_lossy(&summary).contains("encrypted filename"));
+    let doc = client_crypto::document_json(&summary);
+    assert_eq!(doc["bytes"], 4194339);
+    assert_eq!(
+        client_crypto::decrypt(
+            &owner.seed,
+            &client_crypto::meta_aad(&upload.id),
+            &upload.meta
+        )
+        .unwrap(),
+        b"encrypted filename"
+    );
+    let catalog =
+        client_crypto::document_json(&call(&app, &owner, "GET", "/api/tags", vec![]).await.1);
+    assert_eq!(catalog["tags"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        call(&app, &other, "GET", &chunk_path, vec![]).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "DELETE",
+            &format!("/api/media/{}", upload.id),
+            vec![]
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        call(&app, &owner, "GET", &chunk_path, vec![]).await.0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn concurrent_routers_share_immutable_chunks_and_id_conflicts() {
+    let owner = new_identity();
+    let (db, first) = app(&[&owner]).await;
+    let second = i2nclip::router(&db.0, "http://i2nclip.test").await.unwrap();
+    let upload = upload_fixture(&owner, 0, "");
+    let (a, b) = tokio::join!(
+        call(&first, &owner, "POST", "/api/media", upload.body.clone()),
+        call(&second, &owner, "POST", "/api/media", upload.body.clone())
+    );
+    assert!(matches!(
+        (a.0, b.0),
+        (StatusCode::CREATED, StatusCode::CONFLICT) | (StatusCode::CONFLICT, StatusCode::CREATED)
+    ));
+    let path = format!("/api/media/{}/chunks/0", upload.id);
+    let (a, b) = tokio::join!(
+        call(&first, &owner, "PUT", &path, upload.encrypted[0].clone()),
+        call(&second, &owner, "PUT", &path, upload.encrypted[0].clone())
+    );
+    assert_eq!((a.0, b.0), (StatusCode::NO_CONTENT, StatusCode::NO_CONTENT));
+    assert_eq!(
+        call(&first, &owner, "PUT", &path, vec![0; 16]).await.0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        call(&first, &owner, "PUT", &path, vec![0; 17]).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &first,
+            &owner,
+            "PUT",
+            &format!("/api/media/{}/chunks/1", upload.id),
+            vec![0; 16]
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let quota =
+        client_crypto::document_json(&call(&first, &owner, "GET", "/api/quota", vec![]).await.1);
+    assert_eq!(quota["used_content_bytes"], 16);
+    assert_eq!(quota["file_count"], 1);
+    assert!(quota.get("max_file_plaintext_bytes").is_none());
+}
+
+#[tokio::test]
+async fn metadata_conflict_returns_current_descriptor_without_mutating_chunks() {
+    let owner = new_identity();
+    let (_db, app) = app(&[&owner]).await;
+    let upload = upload_fixture(&owner, 1, "");
+    publish(&app, &owner, &upload).await;
+    let path = format!("/api/media/{}/meta", upload.id);
+    let changed = client_crypto::sealed_fixture(2, 43);
+    let update = client_crypto::encode_meta(
+        &raw_hash(&upload.meta),
+        &changed,
+        &fixture_tag_labels(&client_crypto::tag_token(&owner.seed, "updated").unwrap()),
+    );
+    assert_eq!(
+        call(&app, &owner, "PUT", &path, update.clone()).await.0,
+        StatusCode::OK
+    );
+    let (status, body) = call(&app, &owner, "PUT", &path, update).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let value = client_crypto::document_json(&body);
+    assert_eq!(value["code"], "metadata_conflict");
+    assert_eq!(value["media"]["meta"], serde_json::json!(changed));
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "GET",
+            &format!("/api/media/{}/chunks/0", upload.id),
+            vec![]
+        )
+        .await
+        .1,
+        upload.encrypted[0]
+    );
+}
+
+#[tokio::test]
+async fn chunk_caps_check_declared_and_actual_lengths_after_authentication() {
+    use std::{
+        sync::{atomic::AtomicBool, Arc},
+        task::Poll,
+    };
+    let owner = new_identity();
+    let (_db, app) = app(&[&owner]).await;
+    for (method, path, cap) in [
+        ("POST", "/api/media".to_string(), 192 * 1024),
+        (
+            "PUT",
+            format!("/api/media/{}/chunks/0", "00".repeat(32)),
+            4194320,
+        ),
+    ] {
+        let polled = Arc::new(AtomicBool::new(false));
+        let observed = polled.clone();
+        let stream = futures_util::stream::poll_fn(move |_| {
+            observed.store(true, Ordering::Relaxed);
+            Poll::<Option<Result<Vec<u8>, std::io::Error>>>::Pending
+        });
+        let header = client_crypto::authorization(
+            &owner,
+            "http://i2nclip.test",
+            crypto::now_secs(),
+            &client_crypto::fresh_nonce(),
+            method,
+            &path,
+            b"",
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(&path)
+                    .header("authorization", header)
+                    .header("content-length", cap + 1)
+                    .body(Body::from_stream(stream))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(!polled.load(Ordering::Relaxed));
+        for declared in [None, Some("1")] {
+            let body = vec![0; cap + 1];
+            let header = client_crypto::authorization(
+                &owner,
+                "http://i2nclip.test",
+                crypto::now_secs(),
+                &client_crypto::fresh_nonce(),
+                method,
+                &path,
+                &body,
+            );
+            let mut request = Request::builder()
+                .method(method)
+                .uri(&path)
+                .header("authorization", header);
+            if let Some(declared) = declared {
+                request = request.header("content-length", declared);
+            }
+            assert_eq!(
+                app.clone()
+                    .oneshot(request.body(Body::from(body)).unwrap())
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::PAYLOAD_TOO_LARGE
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn pending_reservations_obey_library_quota_and_failed_tag_writes_roll_back() {
+    let owner = new_identity();
+    let (db, app) = app(&[&owner]).await;
+    i2nclip::set_key_limits(
+        &db.0,
+        &owner.registration_key(),
+        i2nclip::StorageLimits {
+            max_content_bytes: 17,
+            max_files: 1,
+        },
+    )
+    .await
+    .unwrap();
+    let upload = upload_fixture(&owner, 1, "");
+    assert_eq!(
+        call(&app, &owner, "POST", "/api/media", upload.body.clone())
+            .await
+            .0,
+        StatusCode::CREATED
+    );
+    let other = upload_fixture(&owner, 0, "");
+    assert_eq!(
+        call(&app, &owner, "POST", "/api/media", other.body.clone())
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        call(
+            &app,
+            &owner,
+            "DELETE",
+            &format!("/api/media/{}", upload.id),
+            vec![]
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let quota = request(&app, &owner, "GET", "/api/quota", vec![]).await;
+    assert_eq!(quota.headers()["cache-control"], "no-store");
+    let quota =
+        client_crypto::document_json(&quota.into_body().collect().await.unwrap().to_bytes());
+    assert_eq!(quota["used_content_bytes"], 0);
+    sqlx::raw_sql("CREATE FUNCTION fail_tags() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test'; END; $$; CREATE TRIGGER fail_tags BEFORE INSERT ON tags FOR EACH ROW EXECUTE FUNCTION fail_tags();").execute(&db.1).await.unwrap();
+    let tagged = upload_fixture(
+        &owner,
+        0,
+        &client_crypto::tag_token(&owner.seed, "tag").unwrap(),
+    );
+    assert_eq!(
+        call(&app, &owner, "POST", "/api/media", tagged.body)
+            .await
+            .0,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert_eq!(
+        client_crypto::document_json(&call(&app, &owner, "GET", "/api/quota", vec![]).await.1)
+            ["file_count"],
+        0
+    );
+}
+
+#[tokio::test]
+async fn held_chunk_responses_keep_per_key_permits_until_disposal() {
+    use std::time::Duration;
+    let owner = new_identity();
+    let other = new_identity();
+    let (_db, app) = app(&[&owner, &other]).await;
+    let upload = upload_fixture(&owner, 0, "");
+    publish(&app, &owner, &upload).await;
+    let path = format!("/api/media/{}/chunks/0", upload.id);
+    let first = request(&app, &owner, "GET", &path, vec![]).await;
+    let second = request(&app, &owner, "GET", &path, vec![]).await;
+    let pending = {
+        let app = app.clone();
+        let owner = client_crypto::from_seed(owner.seed);
+        let path = path.clone();
+        tokio::spawn(async move { request(&app, &owner, "GET", &path, vec![]).await })
+    };
+    tokio::task::yield_now().await;
+    assert!(!pending.is_finished());
+    assert_eq!(
+        request(&app, &other, "GET", &path, vec![]).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    drop(first);
+    let resumed = tokio::time::timeout(Duration::from_secs(5), pending)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resumed.status(), StatusCode::OK);
+    drop(second);
+    drop(resumed);
 }

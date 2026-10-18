@@ -21,7 +21,7 @@ use crate::{
     frame,
     permits::TransferPermit,
     routes::{document_response, empty, fail},
-    AppState, Error, MAX_BODY, MAX_META_BODY, MAX_PLAIN,
+    AppState, Error, MAX_CHUNK_BYTES, MAX_CREATE_BODY, MAX_META_BODY,
 };
 
 pub(crate) fn router() -> Router<AppState> {
@@ -30,7 +30,10 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/api/tags", get(tags))
         .route("/api/media", get(list).post(upload))
         .route("/api/media/{id}", delete(remove))
-        .route("/api/media/{id}/chunks/{index}", get(download))
+        .route(
+            "/api/media/{id}/chunks/{index}",
+            get(download).put(upload_chunk),
+        )
         .route("/api/media/{id}/meta", get(metadata).put(update_metadata))
 }
 
@@ -124,19 +127,14 @@ async fn list(State(state): State<AppState>, media: SignedRequest) -> Response {
 }
 
 async fn upload(State(state): State<AppState>, media: SignedRequest) -> Response {
-    let quota = match state.db.quota(media.owner()).await {
-        Ok(quota) => quota,
-        Err(error) => return fail(error),
-    };
-    let max_body = MAX_BODY - MAX_PLAIN + quota.max_file_plaintext_bytes as usize;
-    if let Err(response) = media.check_size(max_body) {
+    if let Err(response) = media.check_size(MAX_CREATE_BODY) {
         return *response;
     }
     let permit = match state.permits.upload(media.owner()).await {
         Ok(permit) => permit,
         Err(error) => return fail(error),
     };
-    let (owner, body) = match media.read(max_body, UPLOAD_BODY_DEADLINE).await {
+    let (owner, body) = match media.read(MAX_CREATE_BODY, META_BODY_DEADLINE).await {
         Ok(body) => body,
         Err(response) => return *response,
     };
@@ -144,12 +142,38 @@ async fn upload(State(state): State<AppState>, media: SignedRequest) -> Response
         bytes: body,
         _upload_permit: permit,
     };
-    match state.db.add(owner, &body.bytes).await {
+    match state.db.create_upload(owner, &body.bytes).await {
         Ok(item) => {
-            tracing::info!(id = %item.id, bytes = item.bytes, "stored");
-            document_response(StatusCode::CREATED, item_document(item))
+            tracing::info!(id = %item.id, "upload created");
+            document_response(StatusCode::CREATED, item)
         }
         Err(err) => fail(err),
+    }
+}
+
+async fn upload_chunk(
+    State(state): State<AppState>,
+    UrlPath((id, index)): UrlPath<(String, u64)>,
+    media: SignedRequest,
+) -> Response {
+    if let Err(response) = media.check_size(MAX_CHUNK_BYTES) {
+        return *response;
+    }
+    let permit = match state.permits.upload(media.owner()).await {
+        Ok(permit) => permit,
+        Err(error) => return fail(error),
+    };
+    let (owner, body) = match media.read(MAX_CHUNK_BYTES, UPLOAD_BODY_DEADLINE).await {
+        Ok(body) => body,
+        Err(response) => return *response,
+    };
+    let body = BufferedBody {
+        bytes: body,
+        _upload_permit: permit,
+    };
+    match state.db.put_chunk(owner, &id, index, &body.bytes).await {
+        Ok(()) => empty(StatusCode::NO_CONTENT),
+        Err(error) => fail(error),
     }
 }
 
@@ -234,6 +258,8 @@ fn item_document(item: Item) -> MediaDocument {
         created_at: item.created_at,
         bytes: item.bytes,
         meta: item.meta,
+        descriptor: item.descriptor,
+        expected_chunk_count: item.expected_chunk_count,
     }
 }
 
@@ -244,6 +270,9 @@ struct MediaDocument {
     bytes: i64,
     #[serde(with = "serde_bytes")]
     meta: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    descriptor: Vec<u8>,
+    expected_chunk_count: i64,
 }
 
 #[derive(Serialize)]
