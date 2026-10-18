@@ -26,7 +26,8 @@ test("web build contains only its entry page and bundled assets", async () => {
 	const names = await entries("web");
 	assert(names.includes("index.html"));
 	assert(names.includes("favicon.ico"));
-	assert(!names.some((name) => /worker|background|manifest/.test(name)));
+	assert(names.includes("streaming-worker.js"));
+	assert(!names.some((name) => /background|manifest/.test(name)));
 	assert(names.some((name) => /^assets\/crypto-.*\.js$/.test(name)));
 	assert(names.some((name) => /^assets\/.*\.js$/.test(name)));
 	assert(names.some((name) => /^assets\/.*\.css$/.test(name)));
@@ -35,6 +36,8 @@ test("web build contains only its entry page and bundled assets", async () => {
 			(name) =>
 				name === "index.html" ||
 				name === "favicon.ico" ||
+				name === "streaming-worker.js" ||
+				name === "streaming-worker.js.map" ||
 				/^assets\/[^/]+\.(js|css)(\.map)?$/.test(name),
 		),
 	);

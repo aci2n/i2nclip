@@ -131,8 +131,11 @@ No server endpoint serves plaintext or accepts these tokens as API credentials.
 
 Support GET and HEAD, 200 responses, single closed/open/suffix byte ranges, 206
 Content-Range/Content-Length/Accept-Ranges, and 416 for unsatisfiable ranges.
-Ignore unsupported multipart ranges and stream a complete 200 response. Use
-attachment Content-Disposition for downloads; inline responses for native media.
+Ignore unsupported multipart ranges and stream a complete 200 response. Cap each inline partial response at 4 MiB, even when an open-ended Range asks
+for the rest of the file; clients can request further ranges. Drain transferred
+chunks in 64 KiB slices. Firefox synthesized-response read-ahead must not be
+assumed to stop at a slow JavaScript consumer. Use ordinary attachment navigation
+without an anchor download attribute and attachment Content-Disposition for downloads; inline responses for native media.
 Synthesize Cache-Control: no-store and never write plaintext to CacheStorage.
 
 Give each bridge handshake/read a 30-second response deadline so a closed or
@@ -193,3 +196,56 @@ Then verify:
   changes in the original checkout are intentionally not copied.
 - Specification recorded before implementation. Browser delivery feasibility is
   the first implementation milestone; chunk schema/protocol cutover follows it.
+
+### Browser feasibility evidence
+
+The initial transport is implemented as a standalone classic worker plus a
+session-owned content-stream store. It is deliberately not wired to the current
+whole-file API or media views yet: production crypto/storage remain unchanged.
+The proof builds a dedicated page and the actual worker and serves them through
+the real Rust listener, with a separate database and browser context per test.
+
+Verified in the repository Firefox and Chromium builds:
+
+- First visit and a second independent tab, byte offsets beyond 4 GiB, suffix/
+  open/unsatisfiable ranges, HEAD, empty files, and wrong-owner token pairing.
+- Native attachment download of 1 GiB + 123 bytes, checking every byte from the
+  downloaded file without loading it all into the test process. Source reads
+  are at most 4 MiB and sequential.
+- Native video playback/seeking and seeking in a generated gigabyte WAV while
+  reading less than one eighth of its content.
+- Bounded open-ended inline responses, two simultaneous source reads, and source
+  disposal during pending requests.
+
+Experiments found that an unread full synthesized fetch response continued
+requesting data in Firefox (68 chunks after roughly 3.3 seconds). Chunked message
+passing alone therefore does not establish a browser memory bound. Inline range
+responses are explicitly capped at 4 MiB, and arbitrary full fetches are not a
+supported application consumption path. Native downloads consume into the browser
+download sink; decoder/download-manager memory still requires resource profiling.
+Chromium cancelled attachment downloads using an anchor download attribute before
+reading source bytes; ordinary attachment navigation passed the same byte check.
+A standalone classic bundle fixed Firefox worker script evaluation; explicit
+client claiming handles pages opened after activation.
+
+Reproduce with the documented Node on PATH, a working Docker/Podman testcontainers
+socket (or I2N_TEST_DATABASE_URL), and installed Playwright Firefox/Chromium:
+
+```sh
+make test-build
+npm --prefix client exec -- playwright install firefox chromium
+cargo build --bin i2nclip --example test-server --example test-database
+cargo run --features test-containers --example postgres-tests -- \
+  npm --prefix client exec -- playwright test --config client/playwright.config.ts streaming.spec.ts
+```
+
+Remaining: encrypted descriptor/chunk vectors, SQL consolidation and chunk storage,
+API lifecycle/maintenance, removal of per-file limits, real upload and viewer
+integration (including deeplinks), worker-restart/closed-tab and tail-indexed MP4
+coverage, and process/browser resource profiling. No database-format change has
+been applied in this first milestone.
+
+Milestone checks: make test, make lint, make format-check, make test-build, and
+12 isolated Firefox/Chromium browser proofs passed. The full existing database
+and browser suites and resource profile are reserved for the actual protocol/
+storage integration.

@@ -99,9 +99,13 @@ export async function stopServer(child?: ChildProcess) {
 		child.kill("SIGTERM");
 	});
 }
-export async function startServer(data: string, profile = "debug") {
+export async function startServer(
+	data: string,
+	profile = "debug",
+	webDirectory = path.join(root, "client/dist/web"),
+) {
 	const child = spawn(binary("test-server", profile, true), [], {
-		env: fixtureEnvironment(data),
+		env: { ...fixtureEnvironment(data), I2N_WEB_DIR: webDirectory },
 		stdio: ["ignore", "pipe", "inherit"],
 	});
 	try {
