@@ -770,3 +770,18 @@ test("failed receiver import does not acknowledge or report a connection", async
 	f.sender.cancel();
 	assert.equal(await sending, false);
 });
+
+test("cancel and aborted workflow cleanup delete an attached room only once", async (t) => {
+	captureLogs(t);
+	const f = fixture(t);
+	const key = await generatePrivateKey();
+	f.senderState.update((value) => ({ ...value, ...key }));
+	const sending = f.sender.send();
+	await until(() => Boolean(get(f.sender).code));
+	f.sender.cancel();
+	f.sender.cancel();
+	assert.equal(await sending, false);
+	f.sender.dispose();
+	await tick();
+	assert.equal(f.removed(), 1);
+});

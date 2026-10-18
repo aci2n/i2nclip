@@ -85,16 +85,20 @@ export function createPairing(
 	}
 	function cleanup(current: Task, remove: boolean) {
 		log.debug("cleanup", { operation: current.operation, remove });
-		clearInterval(current.timer);
-		current.stopWatching();
-		current.crypto.dispose();
-		current.controller.abort(canceled());
-		current.approve?.();
-		current.approve = null;
+		if (!current.controller.signal.aborted) {
+			clearInterval(current.timer);
+			current.stopWatching();
+			current.crypto.dispose();
+			current.controller.abort(canceled());
+			current.approve?.();
+			current.approve = null;
+		}
 		if (remove && current.room) {
+			const room = current.room;
+			current.room = null;
 			// Cancellation uses its own bounded request, independent of the aborted workflow.
 			relayFactory(current.server, AbortSignal.timeout(10000))
-				.cancel(current.room)
+				.cancel(room)
 				.catch((error) =>
 					log.warn("cleanup-failed", {
 						operation: current.operation,
