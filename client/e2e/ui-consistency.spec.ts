@@ -56,7 +56,7 @@ test("setup, settings and password entry share usable controls at every width", 
 	page,
 	app,
 }) => {
-	await page.goto(`${app.origin}/?page=settings`);
+	await page.goto(`${app.origin}/#/settings`);
 	await master(page);
 	for (const width of [1100, 320, 360]) {
 		await page.setViewportSize({ width, height: 800 });

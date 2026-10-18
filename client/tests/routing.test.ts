@@ -4,63 +4,120 @@ import { get } from "svelte/store";
 import { parseRoute, routeHref } from "../src/lib/routes.ts";
 import { createRouting } from "../src/lib/stores/routing.ts";
 
-test("routes preserve query links and invalid media targets", () => {
-	for (const search of ["", "?page=unknown", "?id=unused"]) {
-		assert.deepEqual(parseRoute(search), { page: "library" });
+test("hash routes format links and preserve malformed media targets for local validation", () => {
+	for (const hash of ["", "#", "#/library", "#/unknown", "?page=settings"]) {
+		assert.deepEqual(parseRoute(hash), { page: "library" });
 	}
-	assert.deepEqual(parseRoute("?page=settings&id=unused"), {
-		page: "settings",
-	});
-	for (const id of ["", "bad", "a".repeat(64), "a &?#"]) {
+	assert.deepEqual(parseRoute("#/settings"), { page: "settings" });
+	for (const id of ["", "bad", "a".repeat(64), "a/extra", "%zz"]) {
 		const route = { page: "media" as const, id };
 		assert.deepEqual(parseRoute(routeHref(route)), route);
 	}
-	assert.equal(routeHref({ page: "library" }), "?page=library");
-	assert.equal(routeHref({ page: "settings" }), "?page=settings");
+	assert.equal(routeHref({ page: "library" }), "#/library");
+	assert.equal(routeHref({ page: "settings" }), "#/settings");
 	assert.equal(
 		routeHref({ page: "media", id: "a".repeat(64) }),
-		`?page=media&id=${"a".repeat(64)}`,
+		`#/media/${"a".repeat(64)}`,
 	);
-	assert.deepEqual(parseRoute("?page=media"), { page: "media", id: "" });
+	assert.deepEqual(parseRoute("#/media"), { page: "media", id: "" });
 });
 
-test("navigation publishes immediately, distinguishes push/replace and follows history until disposal", (t) => {
+function fixture(t: test.TestContext, initial = "#/settings") {
 	const events = new EventTarget();
-	const location = { search: "?page=settings" };
-	const writes: [string, string | URL | null | undefined][] = [];
+	let hash = initial;
+	const writes: [string, string][] = [];
+	const location = {
+		get hash() {
+			return hash;
+		},
+		set hash(value: string) {
+			hash = value;
+			writes.push(["push", value]);
+		},
+	};
 	const routing = createRouting({
 		location: location as Location,
 		history: {
-			pushState(_data, _unused, url) {
-				writes.push(["push", url]);
-			},
 			replaceState(_data, _unused, url) {
-				writes.push(["replace", url]);
+				hash = String(url);
+				writes.push(["replace", hash]);
 			},
 		} as History,
 		addEventListener: events.addEventListener.bind(events),
 		removeEventListener: events.removeEventListener.bind(events),
 	});
-	t.after(() => routing.dispose());
-	assert.deepEqual(get(routing), { page: "settings" });
-	routing.navigate({ page: "library" });
-	assert.deepEqual(get(routing), { page: "library" });
-	routing.navigate({ page: "settings" }, true);
-	assert.deepEqual(get(routing), { page: "settings" });
-	assert.deepEqual(writes, [
-		["push", "?page=library"],
-		["replace", "?page=settings"],
+	t.after(routing.dispose);
+	const seen: unknown[] = [];
+	const unsubscribe = routing.subscribe((route) => seen.push(route));
+	t.after(unsubscribe);
+	return {
+		routing,
+		writes,
+		seen,
+		change(value: string) {
+			hash = value;
+		},
+		notify() {
+			events.dispatchEvent(new Event("hashchange"));
+		},
+	};
+}
+
+test("programmatic navigation publishes synchronously and distinguishes push from replacement", (t) => {
+	const f = fixture(t);
+	assert.deepEqual(get(f.routing), { page: "settings" });
+	f.routing.navigate({ page: "library" });
+	assert.deepEqual(get(f.routing), { page: "library" });
+	f.routing.navigate({ page: "settings" }, true);
+	assert.deepEqual(get(f.routing), { page: "settings" });
+	assert.deepEqual(f.writes, [
+		["push", "#/library"],
+		["replace", "#/settings"],
 	]);
-	location.search = "?page=media&id=bad";
-	events.dispatchEvent(new Event("popstate"));
-	assert.deepEqual(get(routing), { page: "media", id: "bad" });
-	location.search = "?page=library";
-	events.dispatchEvent(new Event("popstate"));
-	assert.deepEqual(get(routing), { page: "library" });
-	routing.dispose();
-	location.search = "?page=settings";
-	events.dispatchEvent(new Event("popstate"));
-	routing.navigate({ page: "settings" });
-	assert.deepEqual(get(routing), { page: "library" });
-	assert.equal(writes.length, 2);
+	f.notify();
+	assert.equal(f.seen.length, 3);
+	f.routing.navigate({ page: "settings" });
+	f.routing.navigate({ page: "settings" }, true);
+	assert.equal(f.writes.length, 2);
+	assert.equal(f.seen.length, 3);
+});
+
+test("native hash navigation reads current location and ignores duplicate or queued stale events", (t) => {
+	const f = fixture(t);
+	f.change("#/media/bad");
+	f.notify();
+	assert.deepEqual(get(f.routing), { page: "media", id: "bad" });
+	f.change("#/media/another");
+	f.notify();
+	assert.deepEqual(get(f.routing), { page: "media", id: "another" });
+	f.change("#/library");
+	f.notify();
+	f.notify();
+	assert.deepEqual(get(f.routing), { page: "library" });
+	assert.equal(f.seen.length, 4);
+	// Navigation can happen before the preceding native hashchange is delivered.
+	f.change("#/settings");
+	f.routing.navigate({ page: "settings" });
+	assert.deepEqual(get(f.routing), { page: "settings" });
+	assert.equal(f.writes.length, 0);
+	f.notify();
+	assert.equal(f.seen.length, 5);
+});
+
+test("an empty hash is Library and repeated navigation does not add history", (t) => {
+	const f = fixture(t, "");
+	f.routing.navigate({ page: "library" });
+	assert.deepEqual(f.writes, []);
+	assert.deepEqual(get(f.routing), { page: "library" });
+});
+
+test("disposal removes the hash listener and disables navigation", (t) => {
+	const f = fixture(t);
+	f.routing.dispose();
+	f.change("#/library");
+	f.notify();
+	f.routing.navigate({ page: "media", id: "bad" });
+	assert.deepEqual(get(f.routing), { page: "settings" });
+	assert.equal(f.writes.length, 0);
+	assert.equal(f.seen.length, 1);
 });

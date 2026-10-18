@@ -183,7 +183,8 @@ test("a capture pending on a fresh media route creates uploads synchronously aft
 	app,
 }) => {
 	await createLibrary(page, app);
-	await page.goto(`${app.origin}/?page=media&id=${"a".repeat(64)}`);
+	await page.goto(`${app.origin}/#/media/${"a".repeat(64)}`);
+	await page.reload();
 	await expect(
 		page.getByRole("button", { name: "Unlock", exact: true }),
 	).toBeVisible();
@@ -196,7 +197,7 @@ test("a capture pending on a fresh media route creates uploads synchronously aft
 		}),
 	).toEqual({ ok: true, needsUnlock: true });
 	await master(page);
-	await expect(page).toHaveURL(/\?page=library$/);
+	await expect(page).toHaveURL(/#\/library$/);
 	await expect(
 		page
 			.getByRole("article")

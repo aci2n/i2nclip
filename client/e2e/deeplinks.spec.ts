@@ -18,7 +18,7 @@ async function linkFor(page: Page, name: string) {
 	const card = page.getByRole("article").filter({ hasText: name });
 	const link = card.getByRole("link", { name: `Link to ${name}`, exact: true });
 	const href = assertPresent(await link.getAttribute("href"));
-	expect(href).toMatch(/^\?page=media&id=[0-9a-f]{64}$/);
+	expect(href).toMatch(/^#\/media\/[0-9a-f]{64}$/);
 	return { link, href };
 }
 
@@ -121,7 +121,7 @@ test("private links inherit access and show native media, escaped text and expli
 					exact: true,
 				});
 				await expect(download).toBeEnabled();
-				expect(new URL(viewer.url()).search).toBe(href);
+				expect(new URL(viewer.url()).hash).toBe(href);
 				await expect(
 					viewer.getByRole("button", { name: "Unlock", exact: true }),
 				).toHaveCount(0);
@@ -203,8 +203,9 @@ test("direct links preserve the target through password unlock, navigation, relo
 	await expect(page.getByRole("article")).toHaveCount(1);
 	const { href } = await linkFor(page, "Target.png");
 	const url = `${app.origin}/${href}`;
-	// Replacing the sole app document leaves no donor, so the target needs unlock.
+	// Reload the sole app document: a hash-only navigation retains its session.
 	await page.goto(url);
+	await page.reload();
 	await expect(
 		page.getByRole("button", { name: "Unlock", exact: true }),
 	).toBeVisible();
@@ -284,10 +285,10 @@ test("invalid, missing and failed file links offer local errors and retry", asyn
 		}
 	});
 	try {
-		await viewer.goto(`${app.origin}/?page=media&id=bad`);
+		await viewer.goto(`${app.origin}/#/media/bad`);
 		await expect(viewer.getByRole("alert")).toHaveText("Invalid media link.");
 		expect(metadata).toBe(0);
-		await viewer.goto(`${app.origin}/?page=media&id=${"a".repeat(64)}`);
+		await viewer.goto(`${app.origin}/#/media/${"a".repeat(64)}`);
 		await expect(viewer.getByRole("alert")).toHaveText(
 			"File not found in this library.",
 		);

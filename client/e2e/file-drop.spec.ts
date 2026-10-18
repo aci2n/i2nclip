@@ -35,7 +35,7 @@ test("file drops upload batches from Settings and outside main", async ({
 		drag: true,
 		drop: true,
 	});
-	await expect(page).toHaveURL(/page=library/);
+	await expect(page).toHaveURL(/#\/library/);
 	await expect(page.getByRole("article")).toHaveCount(2);
 	await expect(
 		page.getByRole("button", { name: "Upload", exact: true }),

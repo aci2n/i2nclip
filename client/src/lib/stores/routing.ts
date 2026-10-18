@@ -8,26 +8,36 @@ export function createRouting(
 		"location" | "history" | "addEventListener" | "removeEventListener"
 	> = window,
 ) {
-	const state = writable(parseRoute(browser.location.search));
+	let current = parseRoute(browser.location.hash);
+	const state = writable(current);
 	let disposed = false;
-	const popstate = () => state.set(parseRoute(browser.location.search));
-	browser.addEventListener("popstate", popstate);
+	function syncLocation() {
+		const next = parseRoute(browser.location.hash);
+		if (routeHref(next) !== routeHref(current)) {
+			current = next;
+			state.set(next);
+		}
+	}
+	browser.addEventListener("hashchange", syncLocation);
 	return {
 		subscribe: state.subscribe,
 		navigate(route: Route, replace = false) {
 			if (disposed) {
 				return;
 			}
-			browser.history[replace ? "replaceState" : "pushState"](
-				{},
-				"",
-				routeHref(route),
-			);
-			state.set(route);
+			const href = routeHref(route);
+			if (href !== routeHref(parseRoute(browser.location.hash))) {
+				if (replace) {
+					browser.history.replaceState({}, "", href);
+				} else {
+					browser.location.hash = href;
+				}
+			}
+			syncLocation();
 		},
 		dispose() {
 			disposed = true;
-			browser.removeEventListener("popstate", popstate);
+			browser.removeEventListener("hashchange", syncLocation);
 		},
 	};
 }

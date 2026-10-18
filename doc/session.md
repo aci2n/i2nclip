@@ -25,9 +25,8 @@ Views subscribe to stores and pass ordinary props and callbacks to components.
 
 The application store creates and disposes the root resources and coordinates
 workspace creation and file uploads from drops or extension handoff. Application
-is the root view: it renders state and translates mouse/drag events into store
-calls. The routing store owns query URLs, history updates and its popstate
-listener. Ordinary navigation pushes history; accepted drops and captures replace
+is the root view: it renders state and translates drag events into store calls. Native anchors navigate through hash
+URLs; the routing store owns history updates and its hashchange listener. Ordinary navigation pushes history; accepted drops and captures replace
 the current entry with Library. Pure route parsing and link formatting live outside stores in lib/routes.ts;
 views and components use these helpers without importing routing state.
 
@@ -92,7 +91,7 @@ on navigation or close; focus returns to the opening control when available.
 
 ## Direct media links
 
-Fresh `?page=media&id=<content hash>` tabs reuse session sharing but do not create
+Fresh `#/media/<content hash>` tabs reuse session sharing but do not create
 the browsing workspace or request lists/tags. A viewer store reads one encrypted
 metadata summary, owns one media-item store, and releases it on navigation or
 context changes. Explicit downloads reuse its verified/decrypted content. Native

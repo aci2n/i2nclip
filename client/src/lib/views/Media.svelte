@@ -6,9 +6,8 @@ import type { LibraryContext } from "../stores/session.ts";
 interface Props {
 	id: string;
 	context: LibraryContext;
-	onlibrary: (event: MouseEvent) => void;
 }
-let { id, context, onlibrary }: Props = $props();
+let { id, context }: Props = $props();
 let viewer = $state.raw<ReturnType<typeof createMediaViewer> | null>(null);
 $effect(() => {
 	const current = createMediaViewer(id, context);
@@ -19,7 +18,6 @@ $effect(() => {
 {#if $viewer}
 	<MediaViewer
 		value={$viewer}
-		{onlibrary}
 		onretry={() => {
 			void viewer?.retry();
 		}}

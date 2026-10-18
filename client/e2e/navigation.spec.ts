@@ -78,3 +78,60 @@ test("an upload survives navigation through Settings", async ({
 		await page.unrouteAll({ behavior: "wait" });
 	}
 });
+
+test("native hash links support keyboard navigation and history without reloading the app", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	const nav = page.getByRole("navigation", { name: "Main navigation" });
+	const library = nav.getByRole("link", { name: "Library", exact: true });
+	const settings = nav.getByRole("link", { name: "Settings", exact: true });
+	let documents = 0;
+	page.on("request", (request) => {
+		if (
+			request.isNavigationRequest() &&
+			request.resourceType() === "document"
+		) {
+			documents++;
+		}
+	});
+	await library.click();
+	await expect(page).toHaveURL(`${app.origin}/#/library`);
+	await expect(page.getByRole("searchbox")).toBeVisible();
+	await settings.focus();
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(`${app.origin}/#/settings`);
+	await expect(settings).toHaveAttribute("aria-current", "page");
+	await page.goBack();
+	await expect(page.getByRole("searchbox")).toBeVisible();
+	await expect(library).toHaveAttribute("aria-current", "page");
+	await page.goForward();
+	await expect(settings).toHaveAttribute("aria-current", "page");
+	expect(documents).toBe(0);
+});
+
+test("modified hash-link clicks open an independent tab and preserve the current route", async ({
+	page,
+	app,
+	context,
+}) => {
+	await createLibrary(page, app);
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	await expect(page.getByRole("searchbox")).toBeVisible();
+	const opened = context.waitForEvent("page");
+	await page
+		.getByRole("link", { name: "Settings", exact: true })
+		.click({ modifiers: ["ControlOrMeta"] });
+	const other = await opened;
+	try {
+		await expect(other).toHaveURL(`${app.origin}/#/settings`);
+		await expect(
+			other.getByRole("heading", { name: "Your library", exact: true }),
+		).toBeVisible();
+		await expect(page).toHaveURL(`${app.origin}/#/library`);
+		await expect(page.getByRole("searchbox")).toBeVisible();
+	} finally {
+		await other.close();
+	}
+});

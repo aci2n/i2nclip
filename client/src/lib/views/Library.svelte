@@ -17,10 +17,9 @@ interface Props {
 	library: LibraryStore;
 	tags: Tags;
 	uploads: UploadsStore;
-	onsettings: (event: MouseEvent) => void;
 }
 
-let { session, library, tags, uploads, onsettings }: Props = $props();
+let { session, library, tags, uploads }: Props = $props();
 let filesInput = $state<HTMLInputElement>();
 onDestroy(() => library.closePreview());
 const previewable = $derived(
@@ -48,7 +47,7 @@ function movePreview(step: number) {
 	<section class="panel empty stack">
 		<h2>Your library starts here</h2>
 		<p>
-			<a href={routeHref({ page: "settings" })} onclick={onsettings}
+			<a href={routeHref({ page: "settings" })}
 				>Create or restore your library</a
 			>
 			to start saving encrypted media.

@@ -26,19 +26,6 @@ function dropFiles(event: DragEvent) {
 	event.preventDefault();
 	application.dropFiles(Array.from(event.dataTransfer.files));
 }
-function navigate(event: MouseEvent, name: "library" | "settings") {
-	if (
-		event.button !== 0 ||
-		event.metaKey ||
-		event.ctrlKey ||
-		event.shiftKey ||
-		event.altKey
-	) {
-		return;
-	}
-	event.preventDefault();
-	routing.navigate({ page: name });
-}
 </script>
 
 <svelte:window ondragover={dragFiles} ondrop={dropFiles} />
@@ -47,44 +34,29 @@ function navigate(event: MouseEvent, name: "library" | "settings") {
 	{#if $routing.page === "media" && !/^[0-9a-f]{64}$/.test($routing.id)}
 		<section class="panel stack">
 			<p class="error" role="alert">Invalid media link.</p>
-			<a
-				href={routeHref({ page: "library" })}
-				onclick={(event) => navigate(event, "library")}
-				>Library</a
-			>
+			<a href={routeHref({ page: "library" })}>Library</a>
 		</section>
 	{:else if $session.status !== "unlocked"}
 		<Unlock {session} />
 	{:else if $routing.page === "media"}
 		{#if $session.context}
-			<Media
-				id={$routing.id}
-				context={$session.context}
-				onlibrary={(event) => navigate(event, "library")}
-			/>
+			<Media id={$routing.id} context={$session.context} />
 		{:else}
 			<p>Connect the library that contains this file to open it.</p>
 			<Setup {session} {pairing} />
 		{/if}
 	{:else}
 		<header>
-			<a
-				class="brand"
-				href={routeHref({ page: "library" })}
-				onclick={(event) => navigate(event, "library")}
-				>i2nclip</a
-			>
+			<a class="brand" href={routeHref({ page: "library" })}>i2nclip</a>
 			<nav aria-label="Main navigation">
 				<a
 					href={routeHref({ page: "library" })}
 					aria-current={$routing.page === "library" ? "page" : undefined}
-					onclick={(event) => navigate(event, "library")}
 					>Library</a
 				>
 				<a
 					href={routeHref({ page: "settings" })}
 					aria-current={$routing.page === "settings" ? "page" : undefined}
-					onclick={(event) => navigate(event, "settings")}
 					>Settings</a
 				>
 			</nav>
@@ -97,15 +69,12 @@ function navigate(event: MouseEvent, name: "library" | "settings") {
 				library={workspace.library}
 				tags={workspace.tags}
 				uploads={workspace.uploads}
-				onsettings={(event) => navigate(event, "settings")}
 			/>
 		{:else}
 			<section class="panel empty stack">
 				<h2>Your library starts here</h2>
 				<p>
-					<a
-						href={routeHref({ page: "settings" })}
-						onclick={(event) => navigate(event, "settings")}
+					<a href={routeHref({ page: "settings" })}
 						>Create or restore your library</a
 					>
 					to start saving encrypted media.

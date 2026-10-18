@@ -197,7 +197,7 @@ test("tabs inherit access, reconnect after password changes, and forget together
 	await createLibrary(page, app);
 	const second = await page.context().newPage();
 	try {
-		await second.goto(`${app.origin}/?page=settings`);
+		await second.goto(`${app.origin}/#/settings`);
 		await expect(
 			second.getByRole("heading", { name: "Your library", exact: true }),
 		).toBeVisible();
@@ -239,7 +239,7 @@ test("tabs inherit access, reconnect after password changes, and forget together
 		await expect(
 			second.getByRole("button", { name: "Create library", exact: true }),
 		).toBeVisible();
-		await page.goto(`${app.origin}/?page=settings`);
+		await page.goto(`${app.origin}/#/settings`);
 		await expect(
 			page.getByRole("button", { name: "Create library", exact: true }),
 		).toBeVisible();
@@ -432,7 +432,7 @@ test("pairing transfers the single identity only after explicit verification", a
 	const context = await browser.newContext();
 	try {
 		const receiver = await context.newPage();
-		await receiver.goto(`${app.origin}/?page=settings`);
+		await receiver.goto(`${app.origin}/#/settings`);
 		await master(receiver);
 		await receiver
 			.getByRole("button", { name: "Pair device", exact: true })

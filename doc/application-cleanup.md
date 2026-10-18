@@ -1,3 +1,5 @@
+> Routing has been superseded by [Native hash navigation](hash-routing.md).
+
 # Application coordination and routing cleanup
 
 ## Goal, scope, and exclusions

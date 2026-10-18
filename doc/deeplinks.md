@@ -2,7 +2,7 @@
 
 ## Goal, scope, and exclusions
 
-Open an individual library file at `?page=media&id=<lowercase SHA-256>` in a
+Open an individual library file at `#/media/<lowercase SHA-256>` in a
 separate tab. Keep the stable app URL and a minimal full-page viewer with native
 image/audio/video elements; text uses the existing escaped bounded preview and
 other files offer Download. Keep the existing library preview and add a normal

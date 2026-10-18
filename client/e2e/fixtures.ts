@@ -51,7 +51,7 @@ export async function master(page: Page) {
 	).toBeVisible();
 }
 export async function createLibrary(page: Page, app: App, maxBytes?: number) {
-	await page.goto(`${app.origin}/?page=settings`);
+	await page.goto(`${app.origin}/#/settings`);
 	await master(page);
 	await expect(page.getByLabel("Library name", { exact: true })).toHaveCount(0);
 	await page
@@ -82,7 +82,7 @@ export async function recovery(page: Page) {
 	return readFile(await download.path());
 }
 export async function restore(page: Page, app: App, bytes: Buffer) {
-	await page.goto(`${app.origin}/?page=settings`);
+	await page.goto(`${app.origin}/#/settings`);
 	await master(page);
 	await page.getByRole("button", { name: "Restore", exact: true }).click();
 	await page.getByLabel("Recovery file", { exact: true }).setInputFiles({
