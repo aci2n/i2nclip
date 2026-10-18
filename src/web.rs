@@ -25,13 +25,21 @@ pub(crate) fn serve(api: Router, directory: PathBuf) -> Router {
             ServeFile::new(directory.join("favicon.ico")),
         )
         .layer(map_response(html_response));
+    let worker = Router::new()
+        .route_service(
+            "/streaming-worker.js",
+            ServeFile::new(directory.join("streaming-worker.js")),
+        )
+        .layer(map_response(|response: Response| async {
+            cache(response, "no-cache")
+        }));
     let assets = Router::new()
         .nest_service(
             "/assets",
             ServeDir::new(directory.join("assets")).append_index_html_on_directories(false),
         )
         .layer(map_response(asset_cache));
-    api.merge(html).merge(assets)
+    api.merge(html).merge(worker).merge(assets)
 }
 
 async fn html_response(response: Response) -> Response {
@@ -85,6 +93,11 @@ mod tests {
             std::fs::write(directory.join("assets/app-ab123456.js"), "export {};").unwrap();
             std::fs::write(directory.join("assets/app-ab123456.css"), "body {}").unwrap();
             std::fs::write(directory.join("private.txt"), "not public").unwrap();
+            std::fs::write(
+                directory.join("streaming-worker.js"),
+                "self.addEventListener(\"fetch\", () => {});",
+            )
+            .unwrap();
             Self(directory)
         }
 
@@ -226,6 +239,27 @@ mod tests {
                 .unwrap()
                 .is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn streaming_worker_is_javascript_and_revalidated_without_plaintext_routes() {
+        let files = Files::new();
+        for method in [Method::GET, Method::HEAD] {
+            let response = request(files.app().await, method, "/streaming-worker.js").await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+            assert!(response.headers()[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .contains("javascript"));
+        }
+        let response = request(
+            files.app().await,
+            Method::GET,
+            "/__content/client/token/inline",
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

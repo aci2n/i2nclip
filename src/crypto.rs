@@ -309,6 +309,7 @@ mod tests {
         })
         .unwrap());
         let vectors = Vectors {
+            chunk_v2: chunk_vectors(),
             private_key_hex,
             public_hex: hex(&id.public),
             public_key: id.registration_key(),
@@ -354,6 +355,7 @@ mod tests {
 
     #[derive(Serialize)]
     struct Vectors {
+        chunk_v2: serde_json::Value,
         private_key_hex: String,
         public_hex: String,
         public_key: String,

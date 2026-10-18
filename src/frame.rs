@@ -3,13 +3,15 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 
-use crate::{codec, crypto, Error, MAX_CONTENT, MAX_META, MAX_TAGS, MAX_TAG_DATA, MAX_TAG_LABEL};
+use crate::{
+    codec, crypto, Error, MAX_DESCRIPTOR, MAX_META, MAX_TAGS, MAX_TAG_DATA, MAX_TAG_LABEL,
+};
 
-/// Canonical SHA-256 of the complete sealed content.
+/// Random 32-byte file identifier, encoded as lowercase hexadecimal.
 pub(crate) fn parse_id(id: &str) -> Result<String, Error> {
     if id.len() != 64 || !id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
         return Err(Error::BadRequest(
-            "id must be a lowercase SHA-256 hash".into(),
+            "id must be 64 lowercase hexadecimal digits".into(),
         ));
     }
     Ok(id.to_string())
@@ -27,10 +29,12 @@ struct WireTag<'a> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UploadDocument<'a> {
+    id: String,
+    plaintext_bytes: i64,
     #[serde(with = "serde_bytes", borrow)]
     meta: &'a [u8],
     #[serde(with = "serde_bytes", borrow)]
-    content: &'a [u8],
+    descriptor: &'a [u8],
     #[serde(borrow)]
     tags: Vec<WireTag<'a>>,
 }
@@ -47,8 +51,10 @@ struct MetaDocument<'a> {
 }
 
 pub(crate) struct UploadParts<'a> {
+    pub id: String,
+    pub plaintext_bytes: i64,
     pub meta: &'a [u8],
-    pub content: &'a [u8],
+    pub descriptor: &'a [u8],
     pub tags: Vec<Tag>,
 }
 pub(crate) struct MetaParts<'a> {
@@ -59,12 +65,14 @@ pub(crate) struct MetaParts<'a> {
 
 pub(crate) fn decode_upload(bytes: &[u8]) -> Result<UploadParts<'_>, Error> {
     let doc: UploadDocument<'_> = codec::decode(bytes)?;
-    if doc.meta.len() > MAX_META || doc.content.len() > MAX_CONTENT {
+    if doc.meta.len() > MAX_META || doc.descriptor.len() > MAX_DESCRIPTOR {
         return Err(Error::BadRequest("field too large".into()));
     }
     Ok(UploadParts {
         meta: doc.meta,
-        content: doc.content,
+        id: parse_id(&doc.id)?,
+        plaintext_bytes: doc.plaintext_bytes,
+        descriptor: doc.descriptor,
         tags: parse_tags(doc.tags)?,
     })
 }
@@ -150,160 +158,79 @@ fn collect_tokens<'a>(values: impl IntoIterator<Item = &'a str>) -> Result<Vec<S
     Ok(tokens)
 }
 
+/// All wire sizes fit JavaScript's exact integer range, including GCM overhead.
+pub(crate) fn content_shape(size: i64) -> Result<(i64, i64), Error> {
+    if !(0..=crate::MAX_SAFE_INTEGER).contains(&size) {
+        return Err(Error::BadRequest("invalid plaintext size".into()));
+    }
+    let chunks = ((size + crate::CHUNK_PLAINTEXT_BYTES - 1) / crate::CHUNK_PLAINTEXT_BYTES).max(1);
+    let bytes = size
+        .checked_add(chunks * 16)
+        .filter(|bytes| *bytes <= crate::MAX_SAFE_INTEGER)
+        .ok_or_else(|| {
+            Error::BadRequest("content size exceeds the protocol integer range".into())
+        })?;
+    Ok((chunks, bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reference_crypto::{encode_meta, encode_upload, fixture_tag_labels};
     #[test]
-    fn memory_profile_frame_decoding() {
-        use std::hint::black_box;
-
-        // Fixture construction is outside measurement: we are measuring the
-        // extra heap needed to decode an already buffered request.
-        let metadata = vec![1; MAX_META];
-        let content = vec![1; crate::DEFAULT_MAX_FILE_PLAINTEXT_BYTES as usize + 64];
-        let post = encode_upload(&metadata, &content, b"\x90");
-        let put = encode_meta(&[0; 32], &metadata, b"\x90");
-        let post_info = allocation_counter::measure(|| {
-            let parts = decode_upload(black_box(&post)).unwrap();
-            black_box(parts);
-        });
-        let put_info = allocation_counter::measure(|| {
-            let parts = decode_meta(black_box(&put)).unwrap();
-            black_box(parts);
-        });
-        assert_eq!(post_info.count_total, 0, "{post_info:?}");
-        assert_eq!(put_info.count_total, 0, "{put_info:?}");
-
-        // Reproduce the old ciphertext copies as a positive control so the
-        // measurement also demonstrates the allocation we removed.
-        let copied_info = allocation_counter::measure(|| {
-            let parts = decode_upload(black_box(&post)).unwrap();
-            let meta = parts.meta.to_vec();
-            let content = parts.content.to_vec();
-            black_box((&meta, &content));
-        });
-        assert_eq!(copied_info.bytes_total, (MAX_META + content.len()) as u64);
-        assert_eq!(copied_info.bytes_max, (MAX_META + content.len()) as u64);
-        assert_eq!(copied_info.bytes_current, 0);
-
-        let tags = (0..MAX_TAGS)
-            .map(|n| URL_SAFE_NO_PAD.encode([n as u8; 32]))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let small = encode_upload(&metadata, &content[..1024], &fixture_tag_labels(&tags));
-        let large = encode_upload(&metadata, &content, &fixture_tag_labels(&tags));
-        let measure = |body: &[u8]| {
-            allocation_counter::measure(|| {
-                black_box(decode_upload(black_box(body)).unwrap());
-            })
-        };
-        let small_info = measure(&small);
-        let large_info = measure(&large);
-        assert_eq!(small_info.bytes_total, large_info.bytes_total);
-        assert_eq!(small_info.bytes_max, large_info.bytes_max);
-        assert!(large_info.bytes_total <= 65536, "{large_info:?}");
-        assert_eq!(large_info.bytes_current, 0);
-        println!("POST without tags: {post_info:?}");
-        println!("PUT without tags: {put_info:?}");
-        println!("Old copy pattern: {copied_info:?}");
-        println!("POST with 64 tags, 1 KiB content: {small_info:?}");
-        println!("POST with 64 tags, maximum content: {large_info:?}");
+    fn content_dimensions_include_empty_files_and_reject_overflow() {
+        assert_eq!(content_shape(0).unwrap(), (1, 16));
+        assert_eq!(content_shape(4194304).unwrap(), (1, 4194320));
+        assert_eq!(content_shape(4194305).unwrap(), (2, 4194337));
+        assert_eq!(content_shape(1 << 40).unwrap().0, 262144);
+        assert!(content_shape(-1).is_err());
+        assert!(content_shape(crate::MAX_SAFE_INTEGER).is_err());
     }
+}
 
+#[cfg(test)]
+mod document_tests {
+    use super::*;
+    use crate::reference_crypto::{encode_create, encode_meta, fixture_tag_labels, sealed_fixture};
     #[test]
-    fn labels_validate_every_entry_before_deduplicating() {
-        use crate::reference_crypto::sealed_fixture;
-        let label = sealed_fixture(1, 43);
-        let duplicate = sealed_fixture(2, MAX_TAG_LABEL);
-        let entries = vec![
-            WireTag {
-                token: &[1; 32],
-                label: &label,
-            },
-            WireTag {
-                token: &[1; 32],
-                label: &duplicate,
-            },
-            WireTag {
-                token: &[2; 32],
-                label: &duplicate,
-            },
-        ];
-        let tags = parse_tags(entries).unwrap();
-        assert_eq!(tags.len(), 2);
-        assert_eq!(tags[0].label, label);
-        assert_eq!(tags[1].label, duplicate);
-        for invalid in [
-            vec![],
-            sealed_fixture(0, 42),
-            sealed_fixture(0, MAX_TAG_LABEL + 1),
-        ] {
-            assert!(parse_tags(vec![
-                WireTag {
-                    token: &[1; 32],
-                    label: &label
-                },
-                WireTag {
-                    token: &[1; 32],
-                    label: &invalid
-                }
-            ])
-            .is_err());
-        }
-        assert!(parse_tags(vec![WireTag {
-            token: &[0; 31],
-            label: &label
-        }])
-        .is_err());
-    }
-
-    #[test]
-    fn full_tag_sets_fit_both_documents_and_limits_reject_excess() {
-        let label = crate::reference_crypto::sealed_fixture(1, MAX_TAG_LABEL);
-        for count in [MAX_TAGS, MAX_TAGS + 1] {
-            let tokens: Vec<_> = (0..count).map(|n| [n as u8; 32]).collect();
-            let entries: Vec<_> = tokens
-                .iter()
-                .map(|token| WireTag {
-                    token,
-                    label: &label,
-                })
-                .collect();
-            let tags = codec::encode(&entries).unwrap();
-            let post =
-                decode_upload(&encode_upload(b"meta", b"content", &tags)).map(|p| p.tags.len());
-            let meta = decode_meta(&encode_meta(&[0; 32], b"meta", &tags)).map(|p| p.tags.len());
-            if count == MAX_TAGS {
-                assert_eq!(post.unwrap(), count);
-                assert_eq!(meta.unwrap(), count);
-            } else {
-                assert!(post.is_err());
-                assert!(meta.is_err());
-            }
-        }
-    }
-
-    #[test]
-    fn documents_borrow_binary_fields_and_reject_truncation_and_trailing_data() {
+    fn frames_borrow_payloads_and_validate_tag_entries_before_deduplication() {
+        let id = "a".repeat(64);
+        let sealed = sealed_fixture(1, 43);
         let token = URL_SAFE_NO_PAD.encode([1; 32]);
-        let body = encode_upload(b"meta", b"content", &fixture_tag_labels(&token));
+        let body = encode_create(&id, 0, &sealed, &sealed, &fixture_tag_labels(&token));
         let parts = decode_upload(&body).unwrap();
-        assert_eq!(parts.meta, b"meta");
-        assert_eq!(parts.content, b"content");
-        assert_eq!(parts.tags[0].token, token);
+        assert_eq!(parts.id, id);
+        assert_eq!(parts.tags.len(), 1);
+        assert_eq!(parts.descriptor, sealed);
+        let pointer = parts.descriptor.as_ptr() as usize;
+        assert!((body.as_ptr() as usize..body.as_ptr() as usize + body.len()).contains(&pointer));
         for length in 0..body.len() {
             assert!(decode_upload(&body[..length]).is_err());
         }
-        let mut extra = body;
-        extra.push(0xc0);
-        assert!(decode_upload(&extra).is_err());
-        let body = encode_meta(&[7; 32], b"meta", b"\x90");
-        let parts = decode_meta(&body).unwrap();
-        assert_eq!(parts.prev_meta_hash, [7; 32]);
-        let mut extra = body;
-        extra.push(0xc0);
-        assert!(decode_meta(&extra).is_err());
-        assert!(decode_upload(&encode_upload(&vec![0; MAX_META + 1], b"", b"\x90")).is_err());
+        let mut trailing = body;
+        trailing.push(0xc0);
+        assert!(decode_upload(&trailing).is_err());
+        let meta = encode_meta(&[7; 32], &sealed, b"\x90");
+        assert_eq!(decode_meta(&meta).unwrap().prev_meta_hash, [7; 32]);
+        let mut entries = Vec::new();
+        let empty = sealed_fixture(1, 42);
+        entries.push(WireTag {
+            token: &[1; 32],
+            label: &sealed,
+        });
+        entries.push(WireTag {
+            token: &[1; 32],
+            label: &empty,
+        });
+        assert!(parse_tags(entries).is_err());
+        let tokens: Vec<_> = (0..64).map(|value| [value; 32]).collect();
+        let entries: Vec<_> = tokens
+            .iter()
+            .map(|token| WireTag {
+                token,
+                label: &sealed,
+            })
+            .collect();
+        assert_eq!(parse_tags(entries).unwrap().len(), 64);
+        assert!(decode_upload(&encode_create(&id, 0, &vec![0; 1025], &sealed, b"\x90")).is_err());
     }
 }

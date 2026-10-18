@@ -9,6 +9,7 @@
 - [Test pipeline](test-pipeline.md): commands, toolchains, and fixture isolation.
 - [Resource profiling](postgresql-profile.md): optional measurements and reproduction.
 - [Improvement priorities](priorities.md): open topics requiring separate specifications.
+- [Chunk uploads specification](chunk-uploads.md): independently encrypted chunks and browser streaming; implementation in progress.
 - [Transfer and shutdown proposal](transfer-shutdown-proposal.md): unimplemented deadline proposal.
 
 Current behavior is documented separately from proposed work. The Rust server is

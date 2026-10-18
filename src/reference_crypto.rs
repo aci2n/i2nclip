@@ -349,3 +349,111 @@ pub fn registration_body(otc: &str) -> Vec<u8> {
     }
     codec::encode(&Registration { otc }).unwrap()
 }
+
+pub fn content_descriptor(
+    seed: &[u8; 32],
+    id: &str,
+    size: u64,
+    key: &[u8; 32],
+    nonce: &[u8; 12],
+) -> Vec<u8> {
+    #[derive(serde::Serialize)]
+    struct Descriptor<'a> {
+        v: u8,
+        #[serde(with = "serde_bytes")]
+        key: &'a [u8],
+        plaintext_bytes: u64,
+        chunk_bytes: u64,
+        chunk_count: u64,
+    }
+    let plain = codec::encode(&Descriptor {
+        v: 2,
+        key,
+        plaintext_bytes: size,
+        chunk_bytes: 4194304,
+        chunk_count: size.div_ceil(4194304).max(1),
+    })
+    .unwrap();
+    encrypt_with_nonce(
+        seed,
+        format!("i2nclip/v2 descriptor {id}").as_bytes(),
+        &plain,
+        nonce,
+    )
+    .unwrap()
+}
+
+pub fn encrypt_chunk(key: &[u8; 32], id: &str, size: u64, index: u64, plain: &[u8]) -> Vec<u8> {
+    let mut nonce = [0; 12];
+    nonce[4..].copy_from_slice(&index.to_be_bytes());
+    let aad = format!(
+        "i2nclip/v2 chunk\n{id}\n{index}\n{}\n{size}\n",
+        size.div_ceil(4194304).max(1)
+    );
+    Aes256Gcm::new_from_slice(key)
+        .unwrap()
+        .encrypt(
+            Nonce::from_slice(&nonce),
+            Payload {
+                msg: plain,
+                aad: aad.as_bytes(),
+            },
+        )
+        .unwrap()
+}
+
+pub fn chunk_vectors() -> serde_json::Value {
+    let seed = [0x11; 32];
+    let key = [0x44; 32];
+    let id = "33".repeat(32);
+    let nonce = [0x55; 12];
+    serde_json::json!({
+        "id": id,
+        "key_hex": "44".repeat(32),
+        "nonce_hex": "55".repeat(12),
+        "size": 4194307,
+        "descriptor_hex": hex_bytes(&content_descriptor(&seed, &id, 4194307, &key, &nonce)),
+        "final_hex": hex_bytes(&encrypt_chunk(&key, &id, 4194307, 1, b"abc")),
+        "full_hash": body_hash(&encrypt_chunk(&key, &id, 4194307, 0, &vec![0x5a; 4194304])),
+        "empty_descriptor_hex": hex_bytes(&content_descriptor(&seed, &id, 0, &key, &nonce)),
+        "empty_hex": hex_bytes(&encrypt_chunk(&key, &id, 0, 0, b"")),
+    })
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[test]
+fn chunk_reference_matches_published_vectors() {
+    let published: serde_json::Value =
+        serde_json::from_str(include_str!("../client/tests/test-vectors.json")).unwrap();
+    assert_eq!(chunk_vectors(), published["chunk_v2"]);
+}
+
+pub fn encode_create(
+    id: &str,
+    plaintext_bytes: i64,
+    descriptor: &[u8],
+    meta: &[u8],
+    tags: &[u8],
+) -> Vec<u8> {
+    #[derive(serde::Serialize)]
+    struct Creation<'a> {
+        id: &'a str,
+        plaintext_bytes: i64,
+        #[serde(with = "serde_bytes")]
+        descriptor: &'a [u8],
+        #[serde(with = "serde_bytes")]
+        meta: &'a [u8],
+        tags: Vec<TagDocument>,
+    }
+    codec::encode(&Creation {
+        id,
+        plaintext_bytes,
+        descriptor,
+        meta,
+        tags: codec::decode(tags).unwrap(),
+    })
+    .unwrap()
+}
