@@ -20,7 +20,7 @@ export function createApplication() {
 			workspace.dispose();
 			workspace = null;
 		}
-		if (context && get(routing).page !== "media" && !workspace) {
+		if (context && get(routing).workspace && !workspace) {
 			workspace = createWorkspace(context, preferences);
 		}
 		state.set({ workspace });

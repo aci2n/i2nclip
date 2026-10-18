@@ -30,7 +30,10 @@ Native anchors navigate through hash URLs; the routing store owns history update
 and its hashchange listener. Ordinary navigation pushes history; accepted drops
 and captures replace the current entry with Library. Pure route parsing and link
 formatting live outside stores in lib/routes.ts; views and components use these
-helpers without importing routing state.
+helpers without importing routing state. Its ordered definitions own matching,
+parameters, canonical URLs and workspace requirements. Route types are derived
+from the definitions. Resolved routes carry a workspace flag that permits creating
+a missing workspace; navigation never disposes an existing workspace.
 
 ## Identity and persistence
 

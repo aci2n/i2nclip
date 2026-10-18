@@ -9,8 +9,10 @@ server changes, new persistence/dependencies, or visual changes.
 
 ## Interfaces and ownership
 
-lib/routes.ts retains the Route type and pure parseRoute/routeHref helpers, now
-using hashes. Empty/unknown hashes select Library; missing/malformed media IDs
+lib/routes.ts defines an ordered route table and derives Route and ResolvedRoute
+from its typed definitions. The pure parseRoute/routeHref helpers use hashes.
+Resolved routes include workspace requirements; navigation inputs do not require
+that metadata. See [Typed route definitions](typed-route-table.md). Empty/unknown hashes select Library; missing/malformed media IDs
 remain media routes so the existing invalid-link error prevents requests.
 The root-owned routing store reads the initial hash, owns its hashchange listener,
 and exposes navigate(route, replace) for application workflows. Components import
