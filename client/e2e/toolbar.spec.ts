@@ -20,7 +20,6 @@ test("chip search applies on Enter, clears draft and filters, and stays separate
 	await page
 		.getByLabel("Upload", { exact: true })
 		.setInputFiles([textFile("alpha.txt"), textFile("beta.txt")]);
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(2);
 	const uploads = page.getByRole("region", { name: "Uploads", exact: true });
 	await expect(
@@ -64,7 +63,6 @@ test("chip search applies on Enter, clears draft and filters, and stays separate
 	const choosing = page.waitForEvent("filechooser");
 	await page.getByRole("button", { name: "Upload", exact: true }).click();
 	await (await choosing).setFiles(textFile("gamma.txt"));
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(3);
 	expect(searches).toHaveLength(1);
 	expect(searches[0].searchParams.has("tag")).toBe(false);
@@ -139,7 +137,6 @@ test("compact upload summary shows progress and keeps failures visible when succ
 	await page
 		.getByLabel("Upload", { exact: true })
 		.setInputFiles([textFile("failed.txt"), textFile(longName)]);
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	const uploads = page.getByRole("region", { name: "Uploads", exact: true });
 	try {
 		await expect.poll(() => posts).toBe(2);

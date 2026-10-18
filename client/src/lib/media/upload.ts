@@ -35,6 +35,7 @@ export async function sendUpload({
 		maxFilePlaintextBytes,
 		onNotice,
 	});
+	signal.throwIfAborted();
 	onPrepared?.(file.name);
 	signal.throwIfAborted();
 	const bytes = new Uint8Array(await file.arrayBuffer());

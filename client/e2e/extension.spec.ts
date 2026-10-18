@@ -6,7 +6,7 @@ import {
 	expect,
 	imageFixture,
 	master,
-	openUploadOptions,
+	openUploadPreferences,
 	shot,
 	test,
 } from "./fixtures.ts";
@@ -77,8 +77,10 @@ test("app receives captures through its public event interface and uploads after
 	context,
 }) => {
 	await createLibrary(page, app);
-	await openUploadOptions(page);
-	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
+	await openUploadPreferences(page);
+	await page
+		.getByRole("checkbox", { name: "Compress images to WebP" })
+		.uncheck();
 	const image = await imageFixture(
 		page,
 		`${"Long portrait filename ".repeat(7)}.png`,

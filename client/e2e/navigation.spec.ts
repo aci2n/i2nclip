@@ -57,9 +57,6 @@ test("an upload survives navigation through Settings", async ({
 			mimeType: "text/plain",
 			buffer: Buffer.from("upload remains owned by the application"),
 		});
-		await page
-			.getByRole("button", { name: "Start upload", exact: true })
-			.click();
 		await started.promise;
 		await page.getByRole("link", { name: "Settings", exact: true }).click();
 		await page.getByRole("link", { name: "Library", exact: true }).click();

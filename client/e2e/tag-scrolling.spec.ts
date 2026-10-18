@@ -114,7 +114,6 @@ test("autocomplete scrolls with wheel and keyboard in search and tag editing", a
 			buffer: Buffer.from(name),
 		})),
 	);
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(2);
 	const search = page.getByRole("searchbox", {
 		name: "Search tags",

@@ -7,7 +7,7 @@ import {
 	expect,
 	imageFixture,
 	master,
-	openUploadOptions,
+	openUploadPreferences,
 	PASSWORD,
 	recovery,
 	restore,
@@ -20,8 +20,10 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	app,
 }) => {
 	await createLibrary(page, app);
-	await openUploadOptions(page);
-	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
+	await openUploadPreferences(page);
+	await page
+		.getByRole("checkbox", { name: "Compress images to WebP" })
+		.uncheck();
 	await expect(page.getByLabel("Library name", { exact: true })).toHaveCount(0);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await expect(
@@ -29,7 +31,6 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	).toBeVisible();
 	const image = await imageFixture(page, "Landscape.png", 960, 540);
 	await page.getByLabel("Upload", { exact: true }).setInputFiles(image);
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	const card = page.getByRole("article");
 	await expect(card).toHaveCount(1);
 	await expect(
@@ -305,7 +306,6 @@ test("upload failures survive navigation and files can be selected again", async
 			buffer: Buffer.from("save me"),
 		},
 	]);
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	try {
 		await expect.poll(() => posts).toBe(2);
 		await page.getByRole("link", { name: "Settings", exact: true }).click();
@@ -328,7 +328,6 @@ test("upload failures survive navigation and files can be selected again", async
 		mimeType: "text/plain",
 		buffer: Buffer.from("retry me"),
 	});
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(2);
 	await expect(
 		page.getByText("failed.txt: Upload unavailable", { exact: true }),
@@ -363,7 +362,6 @@ test("mixed media and feedback render in both themes at desktop and narrow width
 			buffer: Buffer.from("Ordinary document"),
 		},
 	]);
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(6);
 	await page.getByRole("button", { name: "Dismiss completed uploads" }).click();
 	await page.getByRole("button", { name: "Play Voice memo.wav" }).click();

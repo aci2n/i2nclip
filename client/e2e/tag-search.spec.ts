@@ -13,7 +13,6 @@ test("Backspace in an empty search removes the last tag without interfering with
 			buffer: Buffer.from(name),
 		})),
 	);
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(2);
 	const search = page.getByRole("searchbox", {
 		name: "Search tags",
@@ -77,7 +76,6 @@ test("private suggestions build immediate AND-search chips with keyboard and poi
 			buffer: Buffer.from(name),
 		})),
 	);
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(2);
 	const search = page.getByRole("searchbox", { name: "Search tags" });
 	const form = page.getByRole("form", { name: "Search library" });
@@ -196,7 +194,6 @@ test("refresh preserves the submitted search and card tags select filters", asyn
 			buffer: Buffer.from(name),
 		})),
 	);
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(2);
 	await page
 		.getByRole("button", { name: "Search for tag summer", exact: true })

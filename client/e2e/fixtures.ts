@@ -164,17 +164,21 @@ export async function shot(page: Page, name: string, { fullPage = true } = {}) {
 	await page.emulateMedia({ colorScheme: "light" });
 }
 
-export async function openUploadOptions(page: Page) {
+export async function openUploadPreferences(page: Page) {
 	const section = page
 		.locator(".settings > details")
-		.filter({ has: page.getByText("Upload options", { exact: true }) });
-	const summary = section.locator("summary").first();
-	await expect(summary).toBeVisible();
+		.filter({ has: page.locator("summary").filter({ hasText: /^Uploads$/ }) });
 	if (
 		!(await section.evaluate(
 			(node) => node instanceof HTMLDetailsElement && node.open,
 		))
 	) {
-		await summary.click();
+		await section.locator("summary").first().click();
 	}
+	await expect(
+		page.getByRole("checkbox", {
+			name: "Compress images to WebP",
+			exact: true,
+		}),
+	).toBeVisible();
 }

@@ -38,9 +38,8 @@ test("file drops upload batches from Settings and outside main", async ({
 	});
 	await expect(page).toHaveURL(/#\/library/);
 	await expect(
-		page.getByRole("region", { name: "Review uploads" }),
-	).toBeVisible();
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
+		page.getByRole("button", { name: "Start upload", exact: true }),
+	).toHaveCount(0);
 	await expect(
 		page.getByRole("button", { name: "Open first.txt", exact: true }),
 	).toBeVisible();
@@ -52,7 +51,6 @@ test("file drops upload batches from Settings and outside main", async ({
 		drag: true,
 		drop: true,
 	});
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(
 		page.getByRole("button", { name: "Open third.txt", exact: true }),
 	).toBeVisible();
@@ -111,13 +109,10 @@ test("a second drop cannot overlap an upload batch", async ({ page, app }) => {
 	});
 	try {
 		await drop(page, "html", ["accepted.txt"]);
-		await page
-			.getByRole("button", { name: "Start upload", exact: true })
-			.click();
 		await started.promise;
 		await drop(page, "html", ["busy.txt"]);
 		await expect(
-			page.getByRole("region", { name: "Review uploads" }),
+			page.getByRole("button", { name: "Start upload", exact: true }),
 		).toHaveCount(0);
 		held.resolve();
 		await expect(
@@ -130,28 +125,7 @@ test("a second drop cannot overlap an upload batch", async ({ page, app }) => {
 	}
 });
 
-test("drops append to review and cancel discards the whole pending batch", async ({
-	page,
-	app,
-}) => {
-	await createLibrary(page, app);
-	await drop(page, "html", ["same.txt"]);
-	await drop(page, "html", ["same.txt", "other.txt"]);
-	const review = page.getByRole("region", { name: "Review uploads" });
-	await expect(review.getByRole("article")).toHaveCount(3);
-	await expect(
-		page.getByRole("button", { name: "Open same.txt", exact: true }),
-	).toHaveCount(0);
-	await review
-		.getByRole("button", { name: "Remove other.txt", exact: true })
-		.click();
-	await expect(review.getByRole("article")).toHaveCount(2);
-	await review.getByRole("button", { name: "Cancel", exact: true }).click();
-	await expect(review).toHaveCount(0);
-	await expect(page.getByRole("article")).toHaveCount(0);
-});
-
-test("pasted files enter review while text-field paste stays local", async ({
+test("pasted files upload immediately while text-field paste stays local", async ({
 	page,
 	app,
 }) => {
@@ -174,13 +148,9 @@ test("pasted files enter review while text-field paste stays local", async ({
 		});
 	expect(await paste("input[type=search]")).toBe(false);
 	await expect(
-		page.getByRole("region", { name: "Review uploads" }),
+		page.getByRole("button", { name: "Start upload", exact: true }),
 	).toHaveCount(0);
 	expect(await paste("body")).toBe(true);
-	await expect(
-		page.getByRole("region", { name: "Review uploads" }),
-	).toContainText("pasted.txt");
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(
 		page.getByRole("button", { name: "Open pasted.txt", exact: true }),
 	).toBeVisible();

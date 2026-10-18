@@ -18,7 +18,6 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 		mimeType: "application/octet-stream",
 		buffer: Buffer.alloc(1024 * 1024, 7),
 	});
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(1);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(usage).toContainText("Storage: 1.0 MB of 10.0 GB");
@@ -77,7 +76,6 @@ test("workspace quota permits files above 32 MiB without visiting Settings and d
 		mimeType: "application/octet-stream",
 		buffer: bytes,
 	});
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	const card = page.getByRole("article");
 	await expect(card).toHaveCount(1);
 	await setKeyLimits(app.data, key, {
@@ -130,7 +128,6 @@ test("workspace quota permits files above 32 MiB without visiting Settings and d
 			buffer: Buffer.alloc(1),
 		},
 	]);
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(
 		page.getByText("File is larger than 1 byte.", { exact: false }),
 	).toBeVisible();

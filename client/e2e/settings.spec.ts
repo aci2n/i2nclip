@@ -1,7 +1,7 @@
 import {
 	createLibrary,
 	expect,
-	openUploadOptions,
+	openUploadPreferences,
 	shot,
 	test,
 } from "./fixtures.ts";
@@ -16,11 +16,17 @@ test("Settings opens only the library section and disclosures reset after naviga
 		"Your library",
 	);
 	await expect(
-		page.getByRole("checkbox", { name: "Convert image", exact: true }),
+		page.getByRole("checkbox", {
+			name: "Compress images to WebP",
+			exact: true,
+		}),
 	).not.toBeVisible();
-	await openUploadOptions(page);
+	await openUploadPreferences(page);
 	await expect(
-		page.getByRole("checkbox", { name: "Convert image", exact: true }),
+		page.getByRole("checkbox", {
+			name: "Compress images to WebP",
+			exact: true,
+		}),
 	).toBeVisible();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
@@ -28,6 +34,18 @@ test("Settings opens only the library section and disclosures reset after naviga
 	for (const width of [1100, 320, 360]) {
 		await page.setViewportSize({ width, height: 800 });
 		await shot(page, `settings-collapsed-${width}`);
+	}
+	await openUploadPreferences(page);
+	await expect(page.locator(".settings select")).toHaveCount(0);
+	await expect(page.getByRole("checkbox")).toHaveCount(1);
+	for (const width of [1100, 320, 360]) {
+		await page.setViewportSize({ width, height: 800 });
+		expect(
+			await page.evaluate(
+				() => document.documentElement.scrollWidth <= innerWidth,
+			),
+		).toBe(true);
+		await shot(page, `settings-image-compression-${width}`);
 	}
 });
 

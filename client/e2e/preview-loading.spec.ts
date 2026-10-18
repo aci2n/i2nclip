@@ -16,7 +16,6 @@ test("preview opens immediately and arrows, keys, swipes and close cancel stalle
 			await imageFixture(page, "Landscape.png", 960, 540),
 			await imageFixture(page, "Portrait.png", 360, 640),
 		]);
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(2);
 	await page.getByRole("button", { name: "Dismiss completed uploads" }).click();
 	const held: {

@@ -26,7 +26,6 @@ test("native players stop on preview navigation and close", async ({
 			buffer: await readFile(new URL("./fixtures/clip.webm", import.meta.url)),
 		},
 	]);
-	await page.getByRole("button", { name: "Start upload", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(2);
 	// Uploads can share a timestamp; their ID tie-breaker decides the order.
 	const videoFirst = await page
