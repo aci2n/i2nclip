@@ -42,6 +42,9 @@ test("default compression updates saved format and device preference preserves o
 	expect(bytes.subarray(8, 12).toString()).toBe("WEBP");
 	expect(bytes.length).toBeLessThan(image.buffer.length);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
+	await expect(
+		page.getByRole("heading", { name: "Images", exact: true }),
+	).toBeVisible();
 	await setting.uncheck();
 	await page.reload();
 	await master(page);
@@ -125,7 +128,9 @@ test("per-file formats and bounds stay independent across navigation and default
 	app,
 }) => {
 	await createLibrary(page, app);
-	await page.getByLabel("Output format", { exact: true }).selectOption("jpeg");
+	await page
+		.getByRole("combobox", { name: "Output format", exact: true })
+		.selectOption("jpeg");
 	await page.getByLabel("Quality (0–100)", { exact: true }).fill("72");
 	await page.getByLabel("Maximum width (px)", { exact: true }).fill("800");
 	await page.getByRole("heading", { name: "Images", exact: true }).click();
@@ -139,15 +144,17 @@ test("per-file formats and bounds stay independent across navigation and default
 	const first = review.getByRole("article").nth(0);
 	const second = review.getByRole("article").nth(1);
 	await first.getByText("Upload options", { exact: true }).click();
-	await first.getByLabel("Output format", { exact: true }).selectOption("png");
+	await first
+		.getByRole("combobox", { name: "Output format", exact: true })
+		.selectOption("png");
 	await expect(
 		first.getByLabel("Quality (0–100)", { exact: true }),
 	).toHaveCount(0);
 	await first.getByLabel("Maximum width (px)", { exact: true }).fill("400");
 	await second.getByText("Upload options", { exact: true }).click();
-	await expect(second.getByLabel("Output format", { exact: true })).toHaveValue(
-		"jpeg",
-	);
+	await expect(
+		second.getByRole("combobox", { name: "Output format", exact: true }),
+	).toHaveValue("jpeg");
 	await expect(
 		second.getByLabel("Maximum width (px)", { exact: true }),
 	).toHaveValue("800");
@@ -164,6 +171,9 @@ test("per-file formats and bounds stay independent across navigation and default
 		}
 	}
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
+	await expect(
+		page.getByRole("heading", { name: "Images", exact: true }),
+	).toBeVisible();
 	await page.getByLabel("Maximum width (px)", { exact: true }).fill("600");
 	await page.getByRole("heading", { name: "Images", exact: true }).click();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
@@ -178,9 +188,9 @@ test("per-file formats and bounds stay independent across navigation and default
 		second.getByLabel("Maximum width (px)", { exact: true }),
 	).toHaveValue("600");
 	await first.getByText("Upload options", { exact: true }).click();
-	await expect(first.getByLabel("Output format", { exact: true })).toHaveValue(
-		"png",
-	);
+	await expect(
+		first.getByRole("combobox", { name: "Output format", exact: true }),
+	).toHaveValue("png");
 	await expect(
 		first.getByLabel("Maximum width (px)", { exact: true }),
 	).toHaveValue("400");

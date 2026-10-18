@@ -37,14 +37,19 @@ export async function sendUpload({
 	signal.throwIfAborted();
 	file = await compressImage(file, signal, options.image, onNotice);
 	if (options.video.enabled && canConvertVideo(file)) {
-		const { convertVideo } = await import("./video.ts");
-		file = await convertVideo(
-			file,
-			signal,
-			options.video,
-			onNotice,
-			onConversionProgress,
-		);
+		try {
+			const { convertVideo } = await import("./video.ts");
+			file = await convertVideo(
+				file,
+				signal,
+				options.video,
+				onNotice,
+				onConversionProgress,
+			);
+		} catch {
+			signal.throwIfAborted();
+			onNotice?.("Using original: video conversion could not be loaded.");
+		}
 	}
 	signal.throwIfAborted();
 	const bytes = new Uint8Array(await file.arrayBuffer());

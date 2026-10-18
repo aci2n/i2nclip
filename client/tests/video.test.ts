@@ -172,7 +172,7 @@ for (const format of ["mp4", "webm"] as const) {
 		assert.equal(r.initialization?.audio, undefined); // Let native copy/transcode preserve audio.
 		assert.equal(r.config?.forceTranscode, true);
 		assert.equal(r.config?.codec, format === "mp4" ? "avc" : "vp9");
-		assert(r.config?.quality instanceof bunny.Quality);
+		assert.deepEqual(r.config?.quality, new bunny.Quality("low"));
 		assert.deepEqual(notices, []);
 		assert.deepEqual(progress, [0, 50, 100]);
 		r.lateProgress();
@@ -338,4 +338,21 @@ test("Mediabunny parses the checked-in WebM fixture without browser codecs", asy
 	} finally {
 		input.dispose();
 	}
+});
+
+test("library loading failure retains the original with a notice", async () => {
+	const original = file();
+	const notices: string[] = [];
+	const result = await convertVideo(
+		original,
+		new AbortController().signal,
+		options(),
+		(message) => notices.push(message),
+		undefined,
+		async () => {
+			throw new Error("module unavailable");
+		},
+	);
+	assert.equal(result, original);
+	assert.equal(notices.length, 1);
 });

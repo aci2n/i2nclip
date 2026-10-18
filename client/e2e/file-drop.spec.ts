@@ -163,11 +163,12 @@ test("pasted files enter review while text-field paste stays local", async ({
 			clipboardData.items.add(
 				new File(["pasted text"], "pasted.txt", { type: "text/plain" }),
 			);
-			const event = new ClipboardEvent("paste", {
-				clipboardData,
+			// Firefox ignores ClipboardEventInit.clipboardData on synthetic events.
+			const event = new Event("paste", {
 				bubbles: true,
 				cancelable: true,
 			});
+			Object.defineProperty(event, "clipboardData", { value: clipboardData });
 			element.dispatchEvent(event);
 			return event.defaultPrevented;
 		});

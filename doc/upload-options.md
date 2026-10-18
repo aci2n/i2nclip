@@ -13,12 +13,14 @@ changes are excluded.
 Typed media-specific options replace the compression boolean in preferences and
 upload preparation. Images have enabled, format, quality (0–100), and optional
 positive-integer maxWidth/maxHeight. Defaults are enabled, WebP, quality 85, no
-bounds. PNG ignores quality; JPEG composites transparency on white. Video options add container, codec, quality preset, bounds and a frame-rate cap
+bounds. PNG ignores quality; JPEG composites transparency on white. Video options
+add container, codec, quality preset, bounds and a frame-rate cap
 without changing batch ownership. They default disabled, MP4/H.264, medium quality
 and no bounds.
 
 The root preferences store persists defaults under a new device-local key,
-independently of identity/recovery/pairing, without migrating earlier checkbox or image-only preference records.
+independently of identity/recovery/pairing, without migrating earlier checkbox or
+image-only preference records.
 Invalid saved values use built-in defaults with feedback; failed saves retain the
 previous values. Settings saves valid changes beside the controls.
 

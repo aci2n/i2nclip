@@ -25,23 +25,26 @@ test("preview opens immediately and arrows, keys, swipes and close cancel stalle
 	}[] = [];
 	const failed = new Set();
 	page.on("requestfailed", (request) => failed.add(request));
-	await page.route(/\/api\/media\/[0-9a-f]{64}$/, async (route) => {
-		const gate = deferred<string | undefined>();
-		held.push({ gate, request: route.request() });
-		const response = await route.fetch({ timeout: 10000 });
-		const outcome = await gate.promise;
-		if (outcome === "error") {
-			await route
-				.fulfill({
-					status: 503,
-					contentType: "application/msgpack",
-					body: Buffer.from(encode({ error: "Preview unavailable" })),
-				})
-				.catch(() => {});
-		} else {
-			await route.fulfill({ response }).catch(() => {});
-		}
-	});
+	await page.route(
+		/\/api\/media\/[0-9a-f]{64}\/chunks\/\d+$/,
+		async (route) => {
+			const gate = deferred<string | undefined>();
+			held.push({ gate, request: route.request() });
+			const response = await route.fetch({ timeout: 10000 });
+			const outcome = await gate.promise;
+			if (outcome === "error") {
+				await route
+					.fulfill({
+						status: 503,
+						contentType: "application/msgpack",
+						body: Buffer.from(encode({ error: "Preview unavailable" })),
+					})
+					.catch(() => {});
+			} else {
+				await route.fulfill({ response }).catch(() => {});
+			}
+		},
+	);
 	const openers = page
 		.getByRole("article")
 		.getByRole("button", { name: /^Open / });

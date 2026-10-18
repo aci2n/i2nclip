@@ -6,7 +6,7 @@ Extend upload defaults and per-file review with local Mediabunny video conversio
 Output choices are MP4 (H.264/H.265/AV1) and WebM (VP8/VP9/AV1). Exclude standalone
 audio conversion, playlists/network input, codec polyfills, advanced editing,
 server/database changes and encryption changes. Use browser codecs only, checked
-at upload time. E2E execution and visual review remain deferred until requested.
+at upload time. The user has authorized E2E execution and visual review after implementation.
 
 ## Interfaces and ownership
 
@@ -58,5 +58,5 @@ portrait/rotation, frame caps, phase progress, cancellation during initializatio
 and execution, resource cleanup and size cutoff. Use isolated converter doubles
 for browser encoder behavior and real local media parsing for package integration.
 Update browser test definitions for conversion/fallback, mixed batches,
-navigation, both themes and narrow layouts; do not execute them yet. Run make
-test, client static checks and make test-build. Preserve unrelated working files.
+navigation, both themes and narrow layouts. Run make test, client static checks,
+make test-build, then E2E and actual Firefox screenshot review. Preserve unrelated working files.
