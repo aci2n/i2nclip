@@ -14,7 +14,7 @@ import Unlock from "./Unlock.svelte";
 
 const session = createSession();
 const preferences = createPreferences();
-let workspace = $state<Workspace | null>(null);
+let workspace = $state.raw<Workspace | null>(null);
 function pageAtLocation() {
 	const params = new URLSearchParams(location.search);
 	const name = params.get("page");

@@ -9,7 +9,7 @@ interface Props {
 	onlibrary: (event: MouseEvent) => void;
 }
 let { id, context, onlibrary }: Props = $props();
-let viewer = $state<ReturnType<typeof createMediaViewer> | null>(null);
+let viewer = $state.raw<ReturnType<typeof createMediaViewer> | null>(null);
 $effect(() => {
 	const current = createMediaViewer(id, context);
 	viewer = current;
