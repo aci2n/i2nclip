@@ -30,7 +30,12 @@ let {
 			{#if uploading}
 				<p role="status">
 					{#if progress}
-						Uploading {progress.index} of {progress.total}<span class="percent"
+						{progress.phase === "converting"
+							? "Converting"
+							: progress.phase === "preparing"
+								? "Preparing"
+								: "Uploading"} {progress.index} of {progress.total}<span
+							class="percent"
 							>{progress.percent}%</span
 						>
 					{:else}
@@ -80,7 +85,9 @@ let {
 			<progress
 				max="100"
 				value={progress.percent}
-				aria-label="Upload progress"
+				aria-label={progress.phase === "converting"
+					? "Conversion progress"
+					: "Upload progress"}
 			></progress>
 		{/if}
 		{#if notices.length}

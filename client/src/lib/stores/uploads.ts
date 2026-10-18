@@ -28,6 +28,7 @@ export interface UploadState {
 		index: number;
 		total: number;
 		percent: number;
+		phase: "preparing" | "converting" | "uploading";
 	} | null;
 	failures: { name: string; error: string }[];
 	completed: { id: string; name: string }[];
@@ -155,10 +156,31 @@ export function createUploads(
 					index: index + 1,
 					total,
 					percent: 0,
+					phase: "preparing",
 				},
 			}));
 			log.debug("file-started", { operation, index: index + 1 });
 			let finished = false;
+			function report(phase: "converting" | "uploading", percent: number) {
+				if (
+					finished ||
+					signal.aborted ||
+					!Number.isFinite(percent) ||
+					(phase === "converting" && get(state).progress?.phase === "uploading")
+				) {
+					return;
+				}
+				state.update((v) => ({
+					...v,
+					progress: {
+						name: file.name,
+						index: index + 1,
+						total,
+						percent: Math.max(0, Math.min(100, Math.round(percent))),
+						phase,
+					},
+				}));
+			}
 			try {
 				const item = await send({
 					file,
@@ -175,19 +197,8 @@ export function createUploads(
 					extra,
 					credentials,
 					signal,
-					onProgress: (percent) => {
-						if (!finished && !signal.aborted) {
-							state.update((v) => ({
-								...v,
-								progress: {
-									name: file.name,
-									index: index + 1,
-									total,
-									percent,
-								},
-							}));
-						}
-					},
+					onConversionProgress: (percent) => report("converting", percent),
+					onProgress: (percent) => report("uploading", percent),
 				});
 				if (!signal.aborted) {
 					log.debug("file-completed", { operation, index: index + 1 });

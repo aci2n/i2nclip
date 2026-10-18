@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { UploadOptions } from "../media/options.ts";
 import ImageOptions from "./ImageOptions.svelte";
+import VideoOptions from "./VideoOptions.svelte";
 
 interface Props {
 	options: UploadOptions;
@@ -16,6 +17,11 @@ let { options, error, onchange }: Props = $props();
 	<ImageOptions
 		value={options.image}
 		onchange={(image) => onchange({ ...options, image })}
+	/>
+	<h3>Videos</h3>
+	<VideoOptions
+		value={options.video}
+		onchange={(video) => onchange({ ...options, video })}
 	/>
 	{#if error}
 		<p class="error" role="alert">{error}</p>

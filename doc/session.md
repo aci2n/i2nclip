@@ -130,7 +130,7 @@ disposal ends the attempt. See [pairing](pairing.md) for protocol details.
 
 ## Upload compression
 
-A root-owned preferences store saves device-local image conversion defaults
+A root-owned preferences store saves device-local image/video conversion defaults
 separately from identity and excludes them from recovery and pairing. Web uploads
 stage files for inline per-file review before Start upload. Pending files and their
 copied options belong to the workspace and survive navigation; session disposal
@@ -145,6 +145,14 @@ unsupported or larger conversions retain the original with a per-file notice.
 Existing WebP, GIF, SVG and non-images are unchanged. Original input size is
 checked before decoding; bitmaps close even on cancellation. See
 [upload options](upload-options.md) for lifecycle and acceptance requirements.
+
+Video conversion uses lazily loaded Mediabunny and native browser codecs, checked
+only at upload time. It defaults off and supports MP4/H.264/H.265/AV1 and
+WebM/VP8/VP9/AV1, quality presets, dimension bounds and a frame-rate cap. Displayed
+aspect ratio/orientation and audio/video tracks are retained. Unsupported,
+track-dropping or non-smaller output uses the original with a notice. Conversion
+and transfer have separate progress phases; session disposal cancels conversion
+and releases its input/output. See [video conversion](video-conversion.md).
 
 ## Text previews
 

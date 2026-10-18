@@ -4,19 +4,21 @@
 
 Review web uploads per file before starting, with device-local image conversion
 defaults in Settings. JPEG, PNG and BMP inputs may become WebP, JPEG or PNG.
-Audio/video conversion, Mediabunny, new input formats, persistent queues and
-server/database/protocol changes are excluded.
+Video conversion is specified in [video conversion](video-conversion.md).
+Standalone audio conversion, persistent queues and server/database/protocol
+changes are excluded.
 
 ## Interfaces and ownership
 
 Typed media-specific options replace the compression boolean in preferences and
 upload preparation. Images have enabled, format, quality (0–100), and optional
 positive-integer maxWidth/maxHeight. Defaults are enabled, WebP, quality 85, no
-bounds. PNG ignores quality; JPEG composites transparency on white. Additional
-media/codec options can extend these types without changing batch ownership.
+bounds. PNG ignores quality; JPEG composites transparency on white. Video options add container, codec, quality preset, bounds and a frame-rate cap
+without changing batch ownership. They default disabled, MP4/H.264, medium quality
+and no bounds.
 
 The root preferences store persists defaults under a new device-local key,
-independently of identity/recovery/pairing, without migrating the old checkbox.
+independently of identity/recovery/pairing, without migrating earlier checkbox or image-only preference records.
 Invalid saved values use built-in defaults with feedback; failed saves retain the
 previous values. Settings saves valid changes beside the controls.
 

@@ -13,7 +13,7 @@ export interface PreferenceStorage {
 	getItem(key: string): string | null;
 	setItem(key: string, value: string): void;
 }
-const KEY = "i2nclip.upload-options";
+const KEY = "i2nclip.media-upload-options";
 
 export type Preferences = ReturnType<typeof createPreferences>;
 

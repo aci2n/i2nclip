@@ -162,7 +162,10 @@ test("a batch snapshots compression preferences and the next batch sees changes"
 		send: async ({ options }) => {
 			seen.push(options?.image.enabled);
 			preferences.set({
-				options: { image: { ...defaultUploadOptions().image, enabled: false } },
+				options: {
+					...defaultUploadOptions(),
+					image: { ...defaultUploadOptions().image, enabled: false },
+				},
 			});
 			return { id: String(seen.length) };
 		},
@@ -217,13 +220,19 @@ test("review entries copy defaults independently, append duplicates and reset ex
 	const [a, b] = get(f.uploads).pending;
 	assert.notEqual(a.key, b.key);
 	assert.notEqual(a.options.image, b.options.image);
-	const changed = { image: { ...a.options.image, quality: 30 } };
+	const changed = {
+		...defaultUploadOptions(),
+		image: { ...a.options.image, quality: 30 },
+	};
 	f.uploads.editOptions(a.key, changed);
 	changed.image.quality = 12;
 	assert.equal(get(f.uploads).pending[0].options.image.quality, 30);
 	assert.equal(get(f.uploads).pending[1].options.image.quality, 85);
 	preferences.set({
-		options: { image: { ...defaultUploadOptions().image, quality: 60 } },
+		options: {
+			...defaultUploadOptions(),
+			image: { ...defaultUploadOptions().image, quality: 60 },
+		},
 	});
 	f.uploads.stage([file]);
 	assert.deepEqual(
@@ -288,4 +297,48 @@ test("pending files survive subscriber changes but are discarded with their owne
 	assert.equal(get(f.uploads).pending.length, 0);
 	f.uploads.stage([new File([], "late")]);
 	assert.equal(get(f.uploads).pending.length, 0);
+});
+
+test("video review snapshots stay independent and phase callbacks cannot go stale", async (t) => {
+	const wait = deferred<{ id: string }>();
+	let callbacks: SendOptions | undefined;
+	const preferences = writable({ options: defaultUploadOptions() });
+	const f = fixture(t, {
+		preferences,
+		send: (args) => {
+			callbacks = args;
+			return wait.promise;
+		},
+	});
+	f.uploads.stage([new File([], "one.mp4"), new File([], "two.mp4")]);
+	const [a, b] = get(f.uploads).pending;
+	assert.notEqual(a.options.video, b.options.video);
+	f.uploads.editOptions(a.key, {
+		...a.options,
+		video: { ...a.options.video, enabled: true, maxWidth: 640 },
+	});
+	assert.equal(get(f.uploads).pending[1].options.video.enabled, false);
+	preferences.set({
+		options: {
+			...defaultUploadOptions(),
+			video: { ...defaultUploadOptions().video, enabled: true, maxWidth: 800 },
+		},
+	});
+	assert.equal(get(f.uploads).pending[0].options.video.maxWidth, 640);
+	f.uploads.useDefaults(a.key);
+	assert.equal(get(f.uploads).pending[0].options.video.maxWidth, 800);
+	f.uploads.remove(b.key);
+	const uploading = f.uploads.start();
+	assert.equal(get(f.uploads).progress?.phase, "preparing");
+	assertPresent(callbacks).onConversionProgress?.(25);
+	assert.equal(get(f.uploads).progress?.phase, "converting");
+	assert.equal(get(f.uploads).progress?.percent, 25);
+	assertPresent(callbacks).onProgress?.(10);
+	assertPresent(callbacks).onConversionProgress?.(99);
+	assert.equal(get(f.uploads).progress?.phase, "uploading");
+	assert.equal(get(f.uploads).progress?.percent, 10);
+	wait.resolve({ id: "saved" });
+	await uploading;
+	assertPresent(callbacks).onConversionProgress?.(50);
+	assert.equal(get(f.uploads).progress, null);
 });

@@ -1,8 +1,13 @@
 <script lang="ts">
 import { fileSize } from "../media/format.ts";
-import { canConvertImage, type UploadOptions } from "../media/options.ts";
+import {
+	canConvertImage,
+	canConvertVideo,
+	type UploadOptions,
+} from "../media/options.ts";
 import type { PendingUpload } from "../stores/uploads.ts";
 import ImageOptions from "./ImageOptions.svelte";
+import VideoOptions from "./VideoOptions.svelte";
 
 interface Props {
 	pending: PendingUpload[];
@@ -58,16 +63,25 @@ let {
 							Remove
 						</button>
 					</div>
-					{#if canConvertImage(entry.file)}
+					{#if canConvertImage(entry.file) || canConvertVideo(entry.file)}
 						<details>
 							<summary>Upload options</summary>
 							<div class="stack options">
-								<ImageOptions
-									value={entry.options.image}
-									disabled={busy}
-									onchange={(image) =>
-										onchange(entry.key, { ...entry.options, image })}
-								/>
+								{#if canConvertImage(entry.file)}
+									<ImageOptions
+										value={entry.options.image}
+										disabled={busy}
+										onchange={(image) =>
+											onchange(entry.key, { ...entry.options, image })}
+									/>
+								{:else}
+									<VideoOptions
+										value={entry.options.video}
+										disabled={busy}
+										onchange={(video) =>
+											onchange(entry.key, { ...entry.options, video })}
+									/>
+								{/if}
 								<button
 									type="button"
 									class="secondary defaults"
