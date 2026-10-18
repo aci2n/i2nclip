@@ -25,10 +25,12 @@ Views subscribe to stores and pass ordinary props and callbacks to components.
 
 The application store creates and disposes the root resources and coordinates
 workspace creation and file uploads from drops or extension handoff. Application
-is the root view: it renders state and translates drag events into store calls. Native anchors navigate through hash
-URLs; the routing store owns history updates and its hashchange listener. Ordinary navigation pushes history; accepted drops and captures replace
-the current entry with Library. Pure route parsing and link formatting live outside stores in lib/routes.ts;
-views and components use these helpers without importing routing state.
+is the root view: it renders state and translates drag events into store calls.
+Native anchors navigate through hash URLs; the routing store owns history updates
+and its hashchange listener. Ordinary navigation pushes history; accepted drops
+and captures replace the current entry with Library. Pure route parsing and link
+formatting live outside stores in lib/routes.ts; views and components use these
+helpers without importing routing state.
 
 ## Identity and persistence
 

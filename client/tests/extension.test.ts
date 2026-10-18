@@ -338,7 +338,7 @@ test("receiver checks file size without reading its bytes", (t) => {
 });
 test("configuration and tab matching require the configured origin and path", () => {
 	assert.equal(
-		checkAppUrl("https://clip.example/?page=settings#x"),
+		checkAppUrl("https://clip.example/?example=1#/settings"),
 		"https://clip.example/",
 	);
 	assert.equal(checkAppUrl("http://127.0.0.1:8080/"), "http://127.0.0.1:8080/");
@@ -351,7 +351,7 @@ test("configuration and tab matching require the configured origin and path", ()
 		assert.throws(() => checkAppUrl(value));
 	}
 	assert(
-		matchesApp("https://clip.example/?page=settings", "https://clip.example/"),
+		matchesApp("https://clip.example/#/settings", "https://clip.example/"),
 	);
 	assert(!matchesApp("https://clip.example/other", "https://clip.example/"));
 	assert(!matchesApp("https://clip.example.evil/", "https://clip.example/"));
@@ -476,7 +476,7 @@ test("extension reuses the web app tab or creates one and sends exactly once", a
 						{
 							id: 3,
 							windowId: 2,
-							url: "https://clip.example/?page=settings",
+							url: "https://clip.example/#/settings",
 							status: "complete",
 						},
 					]

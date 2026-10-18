@@ -9,7 +9,15 @@ from `extension/` to JavaScript in `dist/extension/`. Installation and configura
 
 `src/main.ts` mounts the app through a `data-app` element reference. Each tab unlocks independently. Saved identity changes cancel other sessions and require unlocking again; storage events handle invalidation without cross-tab locks.
 
-`views/Application.svelte` owns one session, library, uploads, and pairing store. The library survives navigation between Library and Settings. Views subscribe to stores, control workflows, and pass ordinary state and callback props to isolated components. Components may hold temporary input/focus state; they never receive or import stores. HTML IDs are prohibited. Controls use nested labels and browser tests use accessible names.
+`views/Application.svelte` creates the application store, which owns the session,
+preferences, pairing, extension receiver, routing, and library workspace. The
+workspace survives navigation. Native `#/library`, `#/settings`, and
+`#/media/<id>` links navigate without reloading; the routing store observes
+`hashchange`. Pure route helpers live in `lib/routes.ts`. Views subscribe to
+stores and pass ordinary state and callback props to isolated components.
+Components may hold temporary input/focus state; store imports are type-only.
+HTML IDs are prohibited. Controls use nested labels and browser tests use
+accessible names.
 
 The application also owns the extension receiver store. It accepts files only
 in each tab, delegates uploads to the root-owned uploads store, and holds at most one file
