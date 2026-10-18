@@ -113,11 +113,14 @@ const summary = $derived(
 	<output class="feedback" class:error={media.error}>{media.message}</output>
 	<div class="bar actions">
 		{#if !media.deleted}
+			<!-- biome-ignore lint/a11y/noAmbiguousAnchorText: The accessible label includes the filename. -->
 			<a
+				class="button secondary"
+				aria-label={`Link to ${name}`}
 				href={`?page=media&id=${media.id}`}
 				target="_blank"
 				rel="noopener noreferrer"
-				>Open in new tab</a
+				>Link</a
 			>
 		{/if}
 		<button
@@ -238,10 +241,6 @@ dd {
 .actions a {
 	font-size: 0.85rem;
 	padding: 0.25rem 0.5rem;
-}
-.actions a {
-	display: inline-flex;
-	align-items: center;
 }
 .actions {
 	flex-wrap: wrap;

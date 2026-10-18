@@ -16,7 +16,7 @@ import {
 
 async function linkFor(page: Page, name: string) {
 	const card = page.getByRole("article").filter({ hasText: name });
-	const link = card.getByRole("link", { name: "Open in new tab", exact: true });
+	const link = card.getByRole("link", { name: `Link to ${name}`, exact: true });
 	const href = assertPresent(await link.getAttribute("href"));
 	expect(href).toMatch(/^\?page=media&id=[0-9a-f]{64}$/);
 	return { link, href };
@@ -56,6 +56,38 @@ test("private links inherit access and show native media, escaped text and expli
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.getByLabel("Upload", { exact: true }).setInputFiles(files);
 	await expect(page.getByRole("article")).toHaveCount(files.length);
+	const first = await linkFor(page, files[0].name);
+	const card = page.getByRole("article").filter({ hasText: files[0].name });
+	for (const width of [1100, 320, 360]) {
+		await page.setViewportSize({ width, height: 800 });
+		for (const colorScheme of ["light", "dark"] as const) {
+			await page.emulateMedia({ colorScheme });
+			const appearance = (element: HTMLElement | SVGElement) => {
+				const style = getComputedStyle(element);
+				return [
+					style.backgroundColor,
+					style.color,
+					style.border,
+					style.borderRadius,
+					style.font,
+					style.padding,
+					style.minHeight,
+					style.height,
+				];
+			};
+			await expect(first.link).toHaveText("Link");
+			expect(await first.link.evaluate(appearance)).toEqual(
+				await card
+					.getByRole("button", { name: "Download", exact: true })
+					.evaluate(appearance),
+			);
+			await page.screenshot({
+				path: test.info().outputPath(`link-${width}-${colorScheme}.png`),
+				fullPage: true,
+			});
+		}
+	}
+	await page.setViewportSize({ width: 1100, height: 800 });
 	const unwanted: string[] = [];
 	const errors: string[] = [];
 	const request = (request: Request) => {

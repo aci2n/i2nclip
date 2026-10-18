@@ -76,7 +76,8 @@
 @layer controls {
 	input,
 	select,
-	button {
+	button,
+	a.button {
 		font: inherit;
 		border: 1px solid var(--line);
 		border-radius: 0.4rem;
@@ -89,6 +90,12 @@
 		background: var(--paper);
 		min-width: 0;
 	}
+	a.button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		text-decoration: none;
+	}
 	input:focus-visible,
 	select:focus-visible,
 	button:focus-visible,
@@ -99,7 +106,8 @@
 	::placeholder {
 		color: var(--muted);
 	}
-	button {
+	button,
+	a.button {
 		background: var(--accent);
 		color: var(--paper);
 		cursor: pointer;
@@ -118,6 +126,7 @@
 	}
 	@media (max-width: 32rem), (pointer: coarse) {
 		button,
+		a.button,
 		input:not([type="checkbox"]):not([type="hidden"]),
 		select,
 		summary {
@@ -160,7 +169,8 @@
 		input {
 			flex: 1;
 		}
-		button {
+		button,
+		a.button {
 			flex: none;
 			margin: 0;
 		}

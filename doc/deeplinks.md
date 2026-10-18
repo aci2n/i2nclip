@@ -6,11 +6,11 @@ Open an individual library file at `?page=media&id=<lowercase SHA-256>` in a
 separate tab. Keep the stable app URL and a minimal full-page viewer with native
 image/audio/video elements; text uses the existing escaped bounded preview and
 other files offer Download. Keep the existing library preview and add a normal
-Open in new tab anchor for each nondeleted card. Links identify a file; they do
+Link anchor styled like the adjacent action buttons for each nondeleted card. Links identify a file; they do
 not grant access or contain keys, server addresses, or plaintext metadata.
 Public sharing, blob-URL redirects, autoplay, PDF/HTML document embedding,
 streaming decryption, new dependencies, schema changes, and changes to the
-existing preview dialog or encryption protocol are excluded.
+encryption protocol are excluded.
 
 ## Interfaces and ownership
 
@@ -64,3 +64,21 @@ missing IDs, and identity invalidation during loading. Inspect actual Firefox
 screenshots with realistic aspect ratios, long names/errors, both themes, and
 320/360 px widths. Build warning-free before cohesive commits. Run make test-all
 using the documented Node/toolchain/container/browser prerequisites.
+
+## Shared media presentation
+
+MediaDialog and MediaViewer use one MediaContent component for escaped bounded
+text, images, audio/video controls, artwork, unsupported-file fallback, decoding
+errors, and playback cleanup. It receives plain MediaState and a dialog/page
+presentation prop. Dialog chrome, loading/retry, navigation and swipe handling
+remain in MediaDialog; page chrome and loading/retry remain in MediaViewer.
+Dialog playback retains autoplay; pages require user action. Changing items or
+unmounting pauses the old player. Stores retain all bytes, URLs and cancellation
+ownership; this refactor adds no persistence or application workflows.
+
+The card action remains a native anchor with target blank and its stable href,
+labelled Link. Shared button control styles apply equally to anchors and buttons,
+including focus, theme, compact spacing and narrow-screen touch size. Native copy
+link/open actions remain available. Check equal computed styles beside Download
+in both themes and at desktop/320/360 widths; inspect Firefox screenshots and run
+existing playback, text, loading and viewer browser coverage.

@@ -1,8 +1,8 @@
 <script lang="ts">
-import { isText } from "../media/text.ts";
 import type { MediaState } from "../stores/media-item.ts";
 import { modal } from "../ui/dom.ts";
 import { previewSwipes } from "../ui/preview-swipes.ts";
+import MediaContent from "./MediaContent.svelte";
 
 interface Props {
 	selected?: MediaState;
@@ -26,15 +26,7 @@ let {
 	onclose,
 }: Props = $props();
 const name = $derived(selected?.metadata?.name || selected?.id || "");
-const type = $derived(
-	selected?.metadata?.content_type || "application/octet-stream",
-);
-const text = $derived(isText(type, name) ? selected?.text : null);
-let player = $state<HTMLMediaElement>();
-$effect(() => {
-	const current = player;
-	return () => current?.pause();
-});
+const text = $derived(selected?.text);
 </script>
 
 <dialog
@@ -83,47 +75,7 @@ $effect(() => {
 >
 	{#if selected}
 		{#key selected.id}
-			{#if text !== null && text !== undefined}
-				<section class="text-preview" aria-label={name}>
-					<p class="text-name">{name}</p>
-					<pre>{text}</pre>
-					{#if selected.textTruncated}
-						<p>
-							Preview limited to the first 256 KiB. Download the file to read it
-							all.
-						</p>
-					{/if}
-				</section>
-			{:else if type.startsWith("image/") && (selected.url || selected.preview)}
-				<img src={selected.url || selected.preview} alt={name}>
-			{:else if type.startsWith("video/") && selected.url}
-				<video
-					bind:this={player}
-					src={selected.url}
-					aria-label={name}
-					controls
-					autoplay
-					playsinline
-				>
-					<track kind="captions">
-				</video>
-			{:else if type.startsWith("audio/") && selected.url}
-				<div class="audio">
-					{#if selected.preview}
-						<img src={selected.preview} alt={name}>
-					{/if}
-					<p>{name}</p>
-					<audio
-						bind:this={player}
-						src={selected.url}
-						aria-label={name}
-						controls
-						autoplay
-					></audio>
-				</div>
-			{:else if selected.preview}
-				<img src={selected.preview} alt={name}>
-			{/if}
+			<MediaContent media={selected} presentation="dialog" />
 		{/key}
 		{#if selected.busy}
 			<div class="status stack" role="status">
@@ -222,58 +174,8 @@ dialog {
 dialog.text {
 	touch-action: pan-y pinch-zoom;
 }
-.text-preview {
-	width: min(60rem, 95vw);
-	max-height: 95vh;
-	overflow: auto;
-	padding: 3rem;
-	background: var(--paper);
-	border-radius: 0.5rem;
-}
-.text-name {
-	font-weight: 600;
-	overflow-wrap: anywhere;
-	margin-bottom: 1rem;
-}
-pre {
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-	font: 0.9rem / 1.5 monospace;
-	margin: 0 0 1rem;
-}
 dialog::backdrop {
 	background: #000b;
-}
-dialog img,
-dialog video {
-	display: block;
-	max-width: 95vw;
-	max-height: 95vh;
-	object-fit: contain;
-}
-.audio {
-	max-width: 95vw;
-}
-.audio p {
-	position: fixed;
-	top: 1rem;
-	left: 1rem;
-	max-width: calc(100vw - 6rem);
-	padding: 0.5rem 0.75rem;
-	background: var(--paper);
-	border-radius: 0.25rem;
-	overflow-wrap: anywhere;
-}
-.audio img {
-	max-height: 75vh;
-	max-width: 100%;
-}
-audio {
-	position: fixed;
-	bottom: 1rem;
-	left: 50%;
-	transform: translateX(-50%);
-	width: min(28rem, calc(100vw - 2rem));
 }
 .status {
 	position: fixed;
@@ -325,28 +227,10 @@ svg {
 	right: 1rem;
 }
 @media (max-width: 32rem) {
-	dialog img,
-	dialog video {
-		max-height: calc(100dvh - 9rem);
-	}
-	.text-preview {
-		width: calc(100vw - 2rem);
-		max-height: calc(100dvh - 9rem);
-		padding: 1.5rem 1rem;
-	}
 	.arrow {
 		top: auto;
 		bottom: 1rem;
 		transform: none;
-	}
-	audio {
-		bottom: 5rem;
-	}
-	.audio img {
-		max-height: calc(100dvh - 12rem);
-	}
-	.audio p {
-		top: 5rem;
 	}
 }
 </style>
