@@ -2,12 +2,14 @@ import type { Credentials, Progress } from "../api.ts";
 import { checkFileSize, upload } from "../api.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { compressImage } from "./compress.ts";
+import { defaultUploadOptions, type UploadOptions } from "./options.ts";
 import { thumbnail } from "./thumbnail.ts";
 export interface SendOptions {
 	file: File;
 	maxFilePlaintextBytes?: number;
 	credentials: Credentials;
-	compressImages?: boolean;
+	options?: UploadOptions;
+	onNotice?: (message: string) => void;
 	tags?: string;
 	extra?: Metadata;
 	onProgress?: Progress;
@@ -18,7 +20,8 @@ export async function sendUpload({
 	file,
 	maxFilePlaintextBytes,
 	credentials,
-	compressImages = true,
+	options = defaultUploadOptions(),
+	onNotice,
 	tags = "",
 	extra = {},
 	onProgress,
@@ -26,9 +29,7 @@ export async function sendUpload({
 }: SendOptions) {
 	checkFileSize(file.size, maxFilePlaintextBytes);
 	signal.throwIfAborted();
-	if (compressImages) {
-		file = await compressImage(file, signal);
-	}
+	file = await compressImage(file, signal, options.image, onNotice);
 	const bytes = new Uint8Array(await file.arrayBuffer());
 	signal.throwIfAborted();
 	const preview = await thumbnail(file, bytes, signal);

@@ -3,6 +3,7 @@ import { onDestroy } from "svelte";
 import MediaCard from "../components/MediaCard.svelte";
 import MediaDialog from "../components/MediaDialog.svelte";
 import SearchForm from "../components/SearchForm.svelte";
+import UploadReview from "../components/UploadReview.svelte";
 import Uploads from "../components/Uploads.svelte";
 import { canPreview } from "../media/format.ts";
 import { routeHref } from "../routes.ts";
@@ -89,7 +90,7 @@ function movePreview(step: number) {
 			multiple
 			hidden
 			disabled={$uploads.uploading || $session.busy}
-			onchange={(event) => selectFiles(event, uploads.upload)}
+			onchange={(event) => selectFiles(event, uploads.stage)}
 		>
 	</div>
 	{#if $tags.error || $tags.warning}
@@ -113,11 +114,21 @@ function movePreview(step: number) {
 	{#if $library.loading}
 		<p role="status">Loading…</p>
 	{/if}
+	<UploadReview
+		pending={$uploads.pending}
+		busy={$session.busy}
+		onchange={uploads.editOptions}
+		ondefaults={uploads.useDefaults}
+		onremove={uploads.remove}
+		onstart={uploads.start}
+		oncancel={uploads.cancel}
+	/>
 	<Uploads
 		uploading={$uploads.uploading}
 		progress={$uploads.progress}
 		failures={$uploads.failures}
 		completed={$uploads.completed}
+		notices={$uploads.notices}
 		status={$uploads.status}
 		ondismiss={uploads.dismissCompleted}
 	/>

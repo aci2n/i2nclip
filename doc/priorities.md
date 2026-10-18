@@ -10,7 +10,7 @@ This list distinguishes existing behavior from unimplemented follow-ups. Startup
 - Endpoint body caps/deadlines and separate four-upload and sixteen-download admission, plus one upload and two downloads per public key. Downloads own bytes and release database connections before responses drain.
 - Metadata updates compare the prior ciphertext hash under a row lock. Stale edits return the current item without writing; the client loads current tags and preserves the draft for retry.
 - Incremental hashing yields between at most 64 KiB chunks. Maintenance runs at startup/hourly without upload permits, retaining inclusive nonce boundaries and atomically deleting expired invitations.
-- Device-local image compression defaults on: JPEG/PNG/BMP uploads become WebP only when smaller, without resizing. The preference is excluded from recovery and pairing; see [client ownership](session.md#upload-compression).
+- Device-local upload options default to WebP conversion: JPEG/PNG/BMP uploads have per-file format, quality and resize controls and only replace originals when smaller. Defaults are excluded from recovery and pairing; see [client ownership](session.md#upload-compression).
 
 ## Remaining work
 

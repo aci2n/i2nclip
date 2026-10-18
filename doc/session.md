@@ -125,13 +125,21 @@ disposal ends the attempt. See [pairing](pairing.md) for protocol details.
 
 ## Upload compression
 
-A root-owned preferences store saves the device-local compression toggle separately
-from identity. It defaults on and is excluded from recovery and pairing. Upload
-batches snapshot the preference. Shared upload preparation converts JPEG/PNG/BMP to
-WebP at quality 0.85 before encryption, without resizing, and changes the filename
-and MIME type only when output is smaller. Failed or unsupported conversions keep
-the original. Existing WebP, GIF, SVG and non-images are unchanged. Original input
-size is checked before decoding; bitmap resources close even on cancellation.
+A root-owned preferences store saves device-local image conversion defaults
+separately from identity and excludes them from recovery and pairing. Web uploads
+stage files for inline per-file review before Start upload. Pending files and their
+copied options belong to the workspace and survive navigation; session disposal
+clears them. Extension captures upload immediately using defaults, unless a web
+batch awaits review.
+
+JPEG/PNG/BMP inputs can convert to WebP, JPEG or PNG before encryption, with optional
+maximum dimensions and quality for lossy formats. Defaults are WebP at quality 85
+without resizing. Conversion preserves aspect ratio and never upscales; JPEG uses
+a white background. Only smaller output replaces the original. Failed,
+unsupported or larger conversions retain the original with a per-file notice.
+Existing WebP, GIF, SVG and non-images are unchanged. Original input size is
+checked before decoding; bitmaps close even on cancellation. See
+[upload options](upload-options.md) for lifecycle and acceptance requirements.
 
 ## Text previews
 

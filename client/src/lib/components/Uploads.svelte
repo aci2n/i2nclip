@@ -6,6 +6,7 @@ interface Props {
 	progress: UploadState["progress"];
 	failures?: UploadState["failures"];
 	completed?: UploadState["completed"];
+	notices?: UploadState["notices"];
 	status: string;
 	ondismiss: () => void;
 }
@@ -14,11 +15,16 @@ let {
 	progress,
 	failures = [],
 	completed = [],
+	notices = [],
 	status,
 	ondismiss,
 }: Props = $props();
 </script>
-{#if uploading || failures.length || completed.length || status}
+{#if uploading ||
+	failures.length ||
+	completed.length ||
+	notices.length ||
+	status}
 	<section aria-label="Uploads">
 		<div class="summary">
 			{#if uploading}
@@ -49,7 +55,7 @@ let {
 			{:else}
 				<p role="status">{status}</p>
 			{/if}
-			{#if completed.length && !uploading}
+			{#if (completed.length || notices.length) && !uploading}
 				<button
 					type="button"
 					aria-label="Dismiss completed uploads"
@@ -76,6 +82,13 @@ let {
 				value={progress.percent}
 				aria-label="Upload progress"
 			></progress>
+		{/if}
+		{#if notices.length}
+			<ul>
+				{#each notices as notice}
+					<li>{notice.name}: {notice.message}</li>
+				{/each}
+			</ul>
 		{/if}
 		{#if failures.length}
 			<ul class="error" role="alert">

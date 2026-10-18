@@ -28,7 +28,8 @@ export interface CaptureSessionState extends SessionSnapshot {
 	status: "new" | "locked" | "unlocked";
 }
 export interface CaptureSession extends Readable<CaptureSessionState> {}
-export interface CaptureUploads extends Readable<{ uploading: boolean }> {
+export interface CaptureUploads
+	extends Readable<{ uploading: boolean; pending?: readonly unknown[] }> {
 	upload(files: File[], extra?: Metadata): Promise<boolean>;
 	getMaxFilePlaintextBytes(): number;
 }
@@ -57,7 +58,10 @@ export function createExtensionReceiver(
 		if (value.status === "new" || (value.unlocked && !value.configured)) {
 			return "Set up your uploads in i2nclip, then retry.";
 		}
-		if (value.busy || (uploads ? get(uploads).uploading : false)) {
+		if (
+			value.busy ||
+			(uploads ? get(uploads).uploading || get(uploads).pending?.length : false)
+		) {
 			return "i2nclip is busy. Wait for the current operation, then retry.";
 		}
 		return "";

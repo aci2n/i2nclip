@@ -65,7 +65,7 @@ export function createApplication() {
 			}
 			routing.navigate({ page: "library" }, true);
 			log.info("drop-accepted", { count: files.length });
-			void workspace.uploads.upload(files);
+			workspace.uploads.stage(files);
 		},
 		dispose() {
 			if (disposed) {

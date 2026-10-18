@@ -1,42 +1,23 @@
 <script lang="ts">
+import type { UploadOptions } from "../media/options.ts";
+import ImageOptions from "./ImageOptions.svelte";
+
 interface Props {
-	compressImages: boolean;
+	options: UploadOptions;
 	error: string;
-	onchange: (value: boolean) => void;
+	onchange: (value: UploadOptions) => void;
 }
-let { compressImages, error, onchange }: Props = $props();
+let { options, error, onchange }: Props = $props();
 </script>
 <section class="panel stack">
-	<h2>Uploads</h2>
-	<label>
-		<input
-			type="checkbox"
-			checked={compressImages}
-			onchange={(event) => onchange(event.currentTarget.checked)}
-		>
-		Compress images to WebP
-	</label>
-	<p>
-		Replaces JPEG, PNG, and BMP originals when WebP is smaller. Keeps their
-		dimensions. This setting applies only to this device.
-	</p>
+	<h2>Upload options</h2>
+	<p>Defaults for newly selected files, saved only on this device.</p>
+	<h3>Images</h3>
+	<ImageOptions
+		value={options.image}
+		onchange={(image) => onchange({ ...options, image })}
+	/>
 	{#if error}
 		<p class="error" role="alert">{error}</p>
 	{/if}
 </section>
-<style>
-label {
-	display: flex;
-	align-items: center;
-	gap: 0.5rem;
-}
-input {
-	width: auto;
-	flex: none;
-}
-@media (max-width: 32rem), (pointer: coarse) {
-	label {
-		min-height: 3rem;
-	}
-}
-</style>

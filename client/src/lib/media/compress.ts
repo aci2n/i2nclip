@@ -1,37 +1,72 @@
+import {
+	canConvertImage,
+	defaultUploadOptions,
+	type ImageOptions,
+} from "./options.ts";
+
 // Convert before encryption. A failed or unhelpful conversion keeps the original.
-export async function compressImage(file: File, signal: AbortSignal) {
+export async function compressImage(
+	file: File,
+	signal: AbortSignal,
+	options: ImageOptions = defaultUploadOptions().image,
+	onNotice?: (message: string) => void,
+) {
 	signal.throwIfAborted();
-	if (!/^image\/(jpeg|png|bmp|x-ms-bmp)$/.test(file.type)) {
+	if (!options.enabled || !canConvertImage(file)) {
 		return file;
 	}
 	let bitmap: ImageBitmap | undefined;
 	try {
 		bitmap = await createImageBitmap(file);
 		signal.throwIfAborted();
+		const scale = Math.min(
+			1,
+			(options.maxWidth ?? bitmap.width) / bitmap.width,
+			(options.maxHeight ?? bitmap.height) / bitmap.height,
+		);
+		const width = Math.max(1, Math.floor(bitmap.width * scale));
+		const height = Math.max(1, Math.floor(bitmap.height * scale));
+		const type = `image/${options.format}`;
+		const quality =
+			options.format === "png" ? undefined : options.quality / 100;
 		const context =
 			typeof OffscreenCanvas !== "undefined"
-				? new OffscreenCanvas(bitmap.width, bitmap.height).getContext("2d")
+				? new OffscreenCanvas(width, height).getContext("2d")
 				: document.createElement("canvas").getContext("2d");
 		if (!context) {
 			throw new Error("Canvas context unavailable.");
 		}
 		const { canvas } = context;
-		canvas.width = bitmap.width;
-		canvas.height = bitmap.height;
-		context.drawImage(bitmap, 0, 0);
+		canvas.width = width;
+		canvas.height = height;
+		if (options.format === "jpeg") {
+			context.fillStyle = "#fff";
+			context.fillRect(0, 0, width, height);
+		}
+		context.drawImage(bitmap, 0, 0, width, height);
 		const blob =
 			"convertToBlob" in canvas
-				? await canvas.convertToBlob({ type: "image/webp", quality: 0.85 })
+				? await canvas.convertToBlob({ type, quality })
 				: await new Promise<Blob | null>((resolve) =>
-						canvas.toBlob(resolve, "image/webp", 0.85),
+						canvas.toBlob(resolve, type, quality),
 					);
 		signal.throwIfAborted();
-		if (blob?.type === "image/webp" && blob.size < file.size) {
+		if (blob?.type === type && blob.size < file.size) {
 			const name = file.name.replace(/\.[^.]*$/, "") || file.name;
-			return new File([blob], `${name}.webp`, { type: blob.type });
+			return new File(
+				[blob],
+				`${name}.${options.format === "jpeg" ? "jpg" : options.format}`,
+				{ type: blob.type },
+			);
 		}
+		onNotice?.(
+			blob?.type === type
+				? "Using original: converted file was not smaller."
+				: "Using original: requested image encoding is unsupported.",
+		);
 	} catch {
 		signal.throwIfAborted();
+		onNotice?.("Using original: image conversion failed.");
 	} finally {
 		bitmap?.close();
 	}

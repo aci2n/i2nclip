@@ -3,11 +3,25 @@ import { get, writable } from "svelte/store";
 import { DEFAULT_MAX_FILE_PLAINTEXT_BYTES } from "../api.ts";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
+import {
+	copyUploadOptions,
+	defaultUploadOptions,
+	type UploadOptions,
+	validUploadOptions,
+} from "../media/options.ts";
 import type { SendOptions } from "../media/upload.ts";
 import { sendUpload } from "../media/upload.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import type { LibraryContext } from "./session.ts";
+export interface PendingUpload {
+	key: number;
+	file: File;
+	options: UploadOptions;
+}
+
 export interface UploadState {
+	pending: PendingUpload[];
+	notices: { name: string; message: string }[];
 	uploading: boolean;
 	progress: {
 		name: string;
@@ -23,6 +37,8 @@ export type Uploads = ReturnType<typeof createUploads>;
 
 const empty = (): UploadState => ({
 	uploading: false,
+	pending: [],
+	notices: [],
 	progress: null,
 	failures: [],
 	completed: [],
@@ -41,45 +57,94 @@ export function createUploads(
 		getMaxFilePlaintextBytes?: () => number;
 		send?: (options: SendOptions) => Promise<{ id: string }>;
 		onComplete: () => unknown;
-		preferences?: Readable<{ compressImages: boolean }>;
+		preferences?: Readable<{ options: UploadOptions }>;
 	},
 ) {
 	const log = createLog("uploads");
 	const state = writable(empty());
 	const controller = new AbortController();
 
-	async function upload(files: File[], extra: Metadata = {}) {
-		if (
-			controller.signal.aborted ||
-			get(state).uploading ||
-			!files.length ||
-			context.signal.aborted
-		) {
-			log.debug("rejected", {
-				reason:
-					controller.signal.aborted || context.signal.aborted
-						? "disposed"
-						: files.length
-							? "busy"
-							: "empty",
-			});
-			return false;
+	let nextKey = 0;
+	let activeEntries: { file: File; options: UploadOptions }[] = [];
+	const defaults = () =>
+		copyUploadOptions(
+			preferences ? get(preferences).options : defaultUploadOptions(),
+		);
+	const available = () =>
+		!controller.signal.aborted &&
+		!context.signal.aborted &&
+		!get(state).uploading;
+	function stage(files: File[]) {
+		if (!available()) {
+			return;
 		}
+		state.update((v) => ({
+			...v,
+			pending: [
+				...v.pending,
+				...files.map((file) => ({ key: nextKey++, file, options: defaults() })),
+			],
+		}));
+	}
+	function editOptions(key: number, options: UploadOptions) {
+		if (!available() || !validUploadOptions(options)) {
+			return;
+		}
+		state.update((v) => ({
+			...v,
+			pending: v.pending.map((entry) =>
+				entry.key === key
+					? { ...entry, options: copyUploadOptions(options) }
+					: entry,
+			),
+		}));
+	}
+	function upload(files: File[], extra: Metadata = {}) {
+		if (!available() || get(state).pending.length || !files.length) {
+			return Promise.resolve(false);
+		}
+		return run(
+			files.map((file) => ({ file, options: defaults() })),
+			extra,
+		);
+	}
+	function start() {
+		if (!available() || !get(state).pending.length) {
+			return Promise.resolve(false);
+		}
+		const entries = get(state).pending.map(({ file, options }) => ({
+			file,
+			options: copyUploadOptions(options),
+		}));
+		return run(entries);
+	}
+	async function run(
+		entries: { file: File; options: UploadOptions }[],
+		extra: Metadata = {},
+	) {
+		activeEntries = entries;
+		const total = entries.length;
 		const operation = log.operation();
 		const started = performance.now();
-		log.info("started", { operation, count: files.length });
+		log.info("started", { operation, count: total });
 		const signal = AbortSignal.any([controller.signal, context.signal]);
 		const credentials = context;
-		const compressImages = preferences ? get(preferences).compressImages : true;
 		state.update((v) => ({
 			...v,
 			uploading: true,
+			pending: [],
+			notices: [],
 			status: "",
 			failures: [],
 			completed: [],
 		}));
 		const failed: UploadState["failures"] = [];
-		for (const [index, file] of files.entries()) {
+		for (let index = 0; entries.length; index++) {
+			const entry = entries.shift();
+			if (!entry) {
+				break;
+			}
+			const { file, options } = entry;
 			if (signal.aborted) {
 				break;
 			}
@@ -88,7 +153,7 @@ export function createUploads(
 				progress: {
 					name: file.name,
 					index: index + 1,
-					total: files.length,
+					total,
 					percent: 0,
 				},
 			}));
@@ -98,7 +163,15 @@ export function createUploads(
 				const item = await send({
 					file,
 					maxFilePlaintextBytes: getMaxFilePlaintextBytes(),
-					compressImages,
+					options,
+					onNotice: (message) => {
+						if (!finished && !signal.aborted) {
+							state.update((v) => ({
+								...v,
+								notices: [...v.notices, { name: file.name, message }],
+							}));
+						}
+					},
 					extra,
 					credentials,
 					signal,
@@ -109,7 +182,7 @@ export function createUploads(
 								progress: {
 									name: file.name,
 									index: index + 1,
-									total: files.length,
+									total,
 									percent,
 								},
 							}));
@@ -137,6 +210,7 @@ export function createUploads(
 			}
 		}
 		if (signal.aborted) {
+			entries.length = 0;
 			log.debug("cancelled", { operation });
 			return false;
 		}
@@ -151,7 +225,7 @@ export function createUploads(
 		}));
 		log.info("completed", {
 			operation,
-			count: files.length,
+			count: total,
 			failures: failed.length,
 			elapsedMs: Math.round(performance.now() - started),
 		});
@@ -162,16 +236,35 @@ export function createUploads(
 	return {
 		subscribe: state.subscribe,
 		upload,
+		stage,
+		start,
+		editOptions,
+		useDefaults: (key: number) => editOptions(key, defaults()),
+		remove: (key: number) => {
+			if (available()) {
+				state.update((v) => ({
+					...v,
+					pending: v.pending.filter((entry) => entry.key !== key),
+				}));
+			}
+		},
+		cancel: () => {
+			if (available()) {
+				state.update((v) => ({ ...v, pending: [] }));
+			}
+		},
 		getMaxFilePlaintextBytes,
 		dismissCompleted: () =>
 			state.update((v) => ({
 				...v,
 				completed: [],
+				notices: [],
 				status: v.failures.length || v.uploading ? v.status : "",
 			})),
 		dispose() {
 			log.debug("disposed");
 			controller.abort();
+			activeEntries.length = 0;
 			state.set(empty());
 		},
 	};

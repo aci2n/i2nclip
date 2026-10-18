@@ -20,9 +20,14 @@ instance. Further transfers wait; devices sharing a key share its permits.
 
 Uploads run sequentially and continue after individual failures. Failures show status messages; select failed files again through Upload to try again. Upload status survives navigation but is not saved across reloads. After an uncertain upload response, check the library before retrying to avoid duplicate copies.
 
-JPEG, PNG, and BMP uploads are converted to WebP by default when the result is smaller,
-without resizing. Turn off **Compress images to WebP** in Settings to preserve
-originals. This preference stays on this device and also applies to extension captures.
+Select, paste, or drop files to review them in the Library, then choose **Start upload**.
+Each JPEG, PNG, or BMP file has **Upload options** for WebP/JPEG/PNG output, quality,
+and maximum dimensions. Defaults in Settings apply to newly selected files and
+extension captures. Conversion preserves aspect ratio, never enlarges images, and
+uses the original unless output is smaller. Defaults are WebP at quality 85 without
+resizing; turn off **Convert image** to preserve originals. Defaults stay on this
+device. Pending files and their options survive navigation but not reloads.
+See [upload options](doc/upload-options.md).
 
 Search by adding tag chips with Enter or choosing a local suggestion. All selected tags must match. Remove a chip to update results, or use **Clear search** to restore all files. **Upload** opens the file picker independently of the search. Progress
 appears below the toolbar; completed filenames expand from the summary, while

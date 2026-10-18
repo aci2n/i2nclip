@@ -26,9 +26,23 @@ function dropFiles(event: DragEvent) {
 	event.preventDefault();
 	application.dropFiles(Array.from(event.dataTransfer.files));
 }
+function pasteFiles(event: ClipboardEvent) {
+	const target = event.target;
+	if (
+		target instanceof HTMLElement &&
+		(target.closest("input, textarea, select") || target.isContentEditable)
+	) {
+		return;
+	}
+	const files = Array.from(event.clipboardData?.files ?? []);
+	if (files.length && application.canDropFiles()) {
+		event.preventDefault();
+		application.dropFiles(files);
+	}
+}
 </script>
 
-<svelte:window ondragover={dragFiles} ondrop={dropFiles} />
+<svelte:window ondragover={dragFiles} ondrop={dropFiles} onpaste={pasteFiles} />
 
 <main class:media={$routing.page === "media" && Boolean($session.context)}>
 	{#if $routing.page === "media" && !/^[0-9a-f]{64}$/.test($routing.id)}

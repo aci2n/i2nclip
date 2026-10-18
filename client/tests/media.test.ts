@@ -314,7 +314,15 @@ test("a configured larger limit reaches the read for files above 32 MiB", async 
 	await assert.rejects(
 		sendUpload({
 			file,
-			compressImages: false,
+			options: {
+				image: {
+					enabled: false,
+					format: "webp",
+					quality: 85,
+					maxWidth: null,
+					maxHeight: null,
+				},
+			},
 			maxFilePlaintextBytes: 64 * 1024 * 1024,
 			credentials: { serverUrl: "https://clip.example", key: testKey() },
 			signal: new AbortController().signal,
@@ -332,7 +340,15 @@ test("prepared bytes are rechecked before encryption or a network upload", async
 	await assert.rejects(
 		sendUpload({
 			file,
-			compressImages: false,
+			options: {
+				image: {
+					enabled: false,
+					format: "webp",
+					quality: 85,
+					maxWidth: null,
+					maxHeight: null,
+				},
+			},
 			maxFilePlaintextBytes: 2,
 			credentials: { serverUrl: "https://clip.example", key: testKey() },
 			signal: new AbortController().signal,

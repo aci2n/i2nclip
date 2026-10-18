@@ -1,5 +1,11 @@
 import { writable } from "svelte/store";
 import { createLog, failureFields } from "../log.ts";
+import {
+	copyUploadOptions,
+	defaultUploadOptions,
+	type UploadOptions,
+	validUploadOptions,
+} from "../media/options.ts";
 import { b64ToBytes, bytesToB64 } from "../protocol/bytes.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
 
@@ -7,7 +13,7 @@ export interface PreferenceStorage {
 	getItem(key: string): string | null;
 	setItem(key: string, value: string): void;
 }
-const KEY = "i2nclip.compress-images";
+const KEY = "i2nclip.upload-options";
 
 export type Preferences = ReturnType<typeof createPreferences>;
 
@@ -15,30 +21,34 @@ export function createPreferences(
 	storage: PreferenceStorage = globalThis.localStorage,
 ) {
 	const log = createLog("preferences");
-	let compressImages = true;
+	let options = defaultUploadOptions();
 	let error = "";
 	try {
 		const saved = storage.getItem(KEY);
 		if (saved != null) {
 			const value = decode(b64ToBytes(saved));
-			if (typeof value !== "boolean") {
+			if (!validUploadOptions(value)) {
 				throw new Error("Invalid upload preference.");
 			}
-			compressImages = value;
+			options = copyUploadOptions(value);
 		}
 	} catch (failure) {
 		log.warn("read-failed", failureFields(failure));
 		error = "Unable to read upload preferences.";
 	}
 	log.debug("loaded", { ok: !error });
-	const state = writable({ compressImages, error });
+	const state = writable({ options, error });
 	return {
 		subscribe: state.subscribe,
-		setCompression(value: boolean) {
+		setOptions(value: UploadOptions) {
 			try {
-				storage.setItem(KEY, bytesToB64(encode(value)));
+				if (!validUploadOptions(value)) {
+					throw new Error("Invalid upload options.");
+				}
+				const options = copyUploadOptions(value);
+				storage.setItem(KEY, bytesToB64(encode(options)));
 				log.info("saved");
-				state.set({ compressImages: value, error: "" });
+				state.set({ options, error: "" });
 			} catch (error) {
 				log.warn("save-failed", failureFields(error));
 				state.update((current) => ({

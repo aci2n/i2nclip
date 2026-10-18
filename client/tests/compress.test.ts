@@ -1,13 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { compressImage } from "../src/lib/media/compress.ts";
+import {
+	defaultUploadOptions,
+	type ImageOptions,
+} from "../src/lib/media/options.ts";
 import { deferred } from "./helpers.ts";
 
-function encoder(t: test.TestContext, encode: () => Promise<Blob>) {
+function encoder(
+	t: test.TestContext,
+	encode: () => Promise<Blob>,
+	options: ImageOptions = defaultUploadOptions().image,
+	size = [640, 480],
+) {
 	let closed = 0;
+	const scale = Math.min(
+		1,
+		(options.maxWidth ?? size[0]) / size[0],
+		(options.maxHeight ?? size[1]) / size[1],
+	);
+	const width = Math.max(1, Math.floor(size[0] * scale));
+	const height = Math.max(1, Math.floor(size[1] * scale));
+	let filled = false;
 	t.mock.method(globalThis, "createImageBitmap", async () => ({
-		width: 640,
-		height: 480,
+		width: size[0],
+		height: size[1],
 		close() {
 			closed++;
 		},
@@ -16,15 +33,29 @@ function encoder(t: test.TestContext, encode: () => Promise<Blob>) {
 		configurable: true,
 		writable: true,
 		value: class {
-			constructor(width: unknown, height: unknown) {
-				assert.equal(width, 640);
-				assert.equal(height, 480);
+			constructor(w: number, h: number) {
+				assert.equal(w, width);
+				assert.equal(h, height);
 			}
 			getContext() {
-				return { canvas: this, drawImage() {} };
+				return {
+					canvas: this,
+					fillStyle: "",
+					fillRect(x: number, y: number, w: number, h: number) {
+						assert.deepEqual([x, y, w, h], [0, 0, width, height]);
+						filled = true;
+					},
+					drawImage(_bitmap: unknown, ...args: number[]) {
+						assert.deepEqual(args, [0, 0, width, height]);
+						assert.equal(filled, options.format === "jpeg");
+					},
+				};
 			}
-			convertToBlob(options: unknown) {
-				assert.deepEqual(options, { type: "image/webp", quality: 0.85 });
+			convertToBlob(config: unknown) {
+				assert.deepEqual(config, {
+					type: `image/${options.format}`,
+					quality: options.format === "png" ? undefined : options.quality / 100,
+				});
 				return encode();
 			}
 		},
@@ -88,7 +119,17 @@ for (const [name, encode] of [
 		browser(t);
 		const closed = encoder(t, encode);
 		const file = new File(["image"], "photo.jpg", { type: "image/jpeg" });
-		assert.equal(await compressImage(file, new AbortController().signal), file);
+		const notices: string[] = [];
+		assert.equal(
+			await compressImage(
+				file,
+				new AbortController().signal,
+				defaultUploadOptions().image,
+				(message) => notices.push(message),
+			),
+			file,
+		);
+		assert.equal(notices.length, 1);
 		assert.equal(closed(), 1);
 	});
 }
@@ -127,4 +168,52 @@ test("other formats bypass decoding", async (t) => {
 		const file = new File(["data"], "file", { type });
 		assert.equal(await compressImage(file, new AbortController().signal), file);
 	}
+});
+
+for (const format of ["webp", "jpeg", "png"] as const) {
+	for (const [size, bounds] of [
+		[[1920, 1080], { maxWidth: 800, maxHeight: 800 }],
+		[[1080, 1920], { maxWidth: null, maxHeight: 600 }],
+		[[1920, 1080], { maxWidth: 600, maxHeight: null }],
+		[[40, 20], { maxWidth: 800, maxHeight: 800 }],
+	] as const) {
+		test(`${format} applies quality and bounds ${JSON.stringify(bounds)} to ${size}`, async (t) => {
+			browser(t);
+			const options = {
+				...defaultUploadOptions().image,
+				format,
+				quality: 42,
+				...bounds,
+			};
+			const closed = encoder(
+				t,
+				async () => new Blob(["x"], { type: `image/${format}` }),
+				options,
+				[...size],
+			);
+			const result = await compressImage(
+				new File(["original"], "photo.bmp", { type: "image/bmp" }),
+				new AbortController().signal,
+				options,
+			);
+			assert.equal(result.type, `image/${format}`);
+			assert.equal(result.name, `photo.${format === "jpeg" ? "jpg" : format}`);
+			assert.equal(closed(), 1);
+		});
+	}
+}
+
+test("disabled conversion never decodes", async (t) => {
+	browser(t);
+	t.mock.method(globalThis, "createImageBitmap", () =>
+		assert.fail("must not decode"),
+	);
+	const file = new File(["data"], "image.png", { type: "image/png" });
+	assert.equal(
+		await compressImage(file, new AbortController().signal, {
+			...defaultUploadOptions().image,
+			enabled: false,
+		}),
+		file,
+	);
 });
