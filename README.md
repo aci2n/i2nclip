@@ -14,8 +14,8 @@ Each browser profile saves one password-protected library identity in localStora
 
 Each file has an **Link** link at `?page=media&id=<content hash>`. Bookmark or copy that app URL to open the file directly on a device connected to the same library. The viewer inherits unlocked access from another tab or asks for your master password. Images, audio and video use native browser elements; text is shown safely as text, and other files offer Download. The URL contains no keys and grants no access by itself. See [private media deeplinks](doc/deeplinks.md).
 
-The server allows one active upload and two active content downloads per library
-key, alongside global limits of four uploads and sixteen downloads per server
+The server allows one active upload and two active content chunk requests per library
+key, alongside global limits of four uploads and sixteen chunk requests per server
 instance. Further transfers wait; devices sharing a key share its permits.
 
 Uploads run sequentially and continue after individual failures. Failures show status messages; select failed files again through Upload to try again. Upload status survives navigation but is not saved across reloads. After an uncertain upload response, check the library before retrying to avoid duplicate copies.
@@ -95,8 +95,9 @@ files, with a 32 MiB (33,554,432 plaintext bytes) per-file limit.
 `--max-file-plaintext-bytes` accepts 0–536870912 (512 MiB); zero blocks all uploads,
 including empty files. The client checks original file size before reading or
 image compression and checks prepared bytes before encryption. The server checks
-the ciphertext's plaintext length, excluding encryption overhead. Transfers remain
-buffered in server/browser memory; streaming is separate work.
+the ciphertext's plaintext length, excluding encryption overhead. Uploads remain
+buffered. Downloads use stable, privately cacheable 4 MiB chunk URLs; the browser
+assembles and verifies the complete ciphertext in memory before decryption.
 Invitations carry their chosen limits to newly registered keys. Registering
 an existing key again preserves its limits. All three limit flags are required for
 `key set-limits`. Total storage and file counts accept nonnegative decimal integers

@@ -292,7 +292,7 @@ test("invalid, missing and failed file links offer local errors and retry", asyn
 		await expect(viewer.getByRole("alert")).toHaveText(
 			"File not found in this library.",
 		);
-		await viewer.route(/\/api\/media\/[0-9a-f]{64}$/, (route) =>
+		await viewer.route(/\/api\/media\/[0-9a-f]{64}\/chunks\/0$/, (route) =>
 			route.fulfill({
 				status: 503,
 				contentType: "application/msgpack",
@@ -334,16 +334,19 @@ test("forgetting the identity cancels a loading viewer and ignores its late cont
 	const entered = deferred();
 	const release = deferred();
 	const finished = deferred();
-	await viewer.route(/\/api\/media\/[0-9a-f]{64}$/, async (route) => {
-		try {
-			const response = await route.fetch();
-			entered.resolve();
-			await release.promise;
-			await route.fulfill({ response }).catch(() => {});
-		} finally {
-			finished.resolve();
-		}
-	});
+	await viewer.route(
+		/\/api\/media\/[0-9a-f]{64}\/chunks\/0$/,
+		async (route) => {
+			try {
+				const response = await route.fetch();
+				entered.resolve();
+				await release.promise;
+				await route.fulfill({ response }).catch(() => {});
+			} finally {
+				finished.resolve();
+			}
+		},
+	);
 	try {
 		await viewer.goto(`${app.origin}/${href}`);
 		await entered.promise;

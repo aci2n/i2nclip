@@ -4,7 +4,7 @@ Status: proposal only. The runtime changes below are not implemented. Current be
 
 ## Problem and intended behavior
 
-Downloads hold complete encrypted content and one of sixteen shared permits until their response body completes or is dropped. A stalled response can retain both indefinitely. Upload and download admission waits are also unbounded, and graceful shutdown awaits HTTP draining, maintenance, and pool closure without an overall deadline.
+Downloads hold at most one 4 MiB encrypted chunk and one of sixteen shared permits until their response body completes or is dropped. A stalled response can retain both indefinitely. Upload and download admission waits are also unbounded, and graceful shutdown awaits HTTP draining, maintenance, and pool closure without an overall deadline.
 
 Use fixed initial limits, defined beside the existing request deadlines:
 
@@ -16,7 +16,7 @@ Use fixed initial limits, defined beside the existing request deadlines:
 
 Admission still queues for available capacity. Authentication and early size checks retain their current ordering; upload body-read deadlines still begin after admission. A timed-out authenticated request has spent its nonce and must retry with a fresh signature. Keep existing body limits, encryption, ownership checks, and successful response headers.
 
-The response lifetime is absolute, not reset by chunks. A 32 MiB download must therefore finish within three minutes. Treat these values as initial policy choices and adjust from deployment measurements. Once headers have been sent, expiration cannot replace the response with a JSON error: terminate the body with an I/O timeout error. Content-Length makes truncation detectable, and the client's content-hash check remains mandatory.
+The response lifetime is absolute, not reset by chunks. Each chunk response must therefore finish within three minutes. Treat these values as initial policy choices and adjust from deployment measurements. Once headers have been sent, expiration cannot replace the response with a JSON error: terminate the body with an I/O timeout error. Content-Length makes truncation detectable, and the client's content-hash check remains mandatory.
 
 ## Download resource ownership
 
@@ -49,6 +49,6 @@ Reverse-proxy header and idle timeouts remain useful defense in depth. Verify th
 - Real-API admission tests: occupy all sixteen download slots, expire held responses, and verify a queued request resumes. Verify queued upload/download expiry returns `503` with `Retry-After`, consumes the original nonce, and does not read an upload body or fetch download content. Preserve successful queueing, cancellation, owner isolation, and deletion tests.
 - A real TCP slow-reader test with maximum-size content verifies that backpressure exercises expiration. In-process unpolled bodies alone do not establish transport behavior.
 - Subprocess shutdown tests: normal shutdown exits promptly; held responses and deliberately stalled cleanup cannot prevent exit by the deadline. Cover the first signal, serving failure, and completion near the deadline; assert the watchdog is disarmed on success.
-- Run `make test`, `make test-db`, `make lint`, and the Firefox suite. Profile saturation at the current four-upload/sixteen-download limits before claiming an RSS bound; previous two-transfer measurements do not establish that bound.
+- Run `make test`, `make test-db`, `make lint`, and the Firefox suite. Profile saturation at the current four-upload/sixteen-download limits before claiming an RSS bound; The current resource profile includes sixteen held chunk responses; measurements still do not establish a hard RSS bound.
 
 Existing storage quotas remain unchanged; total HTTP request concurrency is outside this proposal. Finite waits and response lifetimes do not establish a global memory or abuse bound.

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
@@ -137,8 +138,8 @@ async function upload(
 	const result = await response;
 	assert.equal(result.status, 201, result.body.toString());
 }
-async function download(key: LoadedKey, id: string) {
-	const pathname = `/api/media/${id}`;
+async function download(key: LoadedKey, id: string, index = 0) {
+	const pathname = `/api/media/${id}/chunks/${index}`;
 	const headers = await signedHeaders(key, "GET", pathname, new Uint8Array());
 	return new Promise<IncomingMessage>((resolve, reject) => {
 		const request = http.get(
@@ -156,28 +157,40 @@ async function download(key: LoadedKey, id: string) {
 }
 async function receive(
 	response: IncomingMessage,
+	key: LoadedKey,
 	id: string,
 	expectedContent: Uint8Array<ArrayBuffer>,
 ) {
-	assert.equal(response.statusCode, 200);
-	assert.equal(
-		Number(response.headers["content-length"]),
-		expectedContent.length,
-	);
-	const chunks: Buffer[] = [];
-	for await (const chunk of response) {
-		chunks.push(chunk);
+	const hash = createHash("sha256");
+	let offset = 0;
+	let index = 0;
+	while (offset < expectedContent.length) {
+		assert.equal(response.statusCode, 200);
+		const length = Math.min(4 * 1024 * 1024, expectedContent.length - offset);
+		assert.equal(Number(response.headers["content-length"]), length);
+		assert.equal(response.headers.etag, `"${id}.${index}"`);
+		const start = offset;
+		for await (const chunk of response) {
+			assert.ok(offset + chunk.length <= start + length);
+			assert.ok(
+				chunk.equals(
+					Buffer.from(
+						expectedContent.buffer,
+						expectedContent.byteOffset + offset,
+						chunk.length,
+					),
+				),
+			);
+			hash.update(chunk);
+			offset += chunk.length;
+		}
+		assert.equal(offset, start + length);
+		index++;
+		if (offset < expectedContent.length) {
+			response = await download(key, id, index);
+		}
 	}
-	const bytes = Buffer.concat(chunks);
-	assert.equal(await bodyHash(bytes), id);
-	assert.deepEqual(
-		bytes,
-		Buffer.from(
-			expectedContent.buffer,
-			expectedContent.byteOffset,
-			expectedContent.byteLength,
-		),
-	);
+	assert.equal(hash.digest("hex"), id);
 }
 async function run() {
 	const databaseUrl = await fixture("create");
@@ -189,6 +202,7 @@ async function run() {
 	let monitorError: unknown;
 	const monitorFailure = (error: unknown) => {
 		monitorError = error;
+
 		stop = true;
 	};
 	let stop = false;
@@ -316,7 +330,7 @@ async function run() {
 			);
 			await Promise.all(
 				responses.map((response, index) =>
-					receive(response, files[index].id, files[index].content),
+					receive(response, key, files[index].id, files[index].content),
 				),
 			);
 			rounds.push({
@@ -327,6 +341,45 @@ async function run() {
 				postgres,
 			});
 		}
+		// Saturate all sixteen download slots across eight independent owners.
+		const owners = [];
+		for (let i = 0; i < 8; i++) {
+			const owner = await loadKey((await generatePrivateKey()).privateKey);
+			await registerKey({
+				serverUrl: origin,
+				key: owner,
+				otc: await issueOtc(databaseUrl, "release"),
+			});
+			const content = await encrypt(
+				owner,
+				contentAad(),
+				new Uint8Array(32 * 1024 * 1024).fill(i),
+			);
+			const id = await bodyHash(content);
+			const meta = await encrypt(owner, metaAad(id), new Uint8Array());
+			await upload(owner, encodeUpload({ meta, content, tags: [] }), false);
+			owners.push({ key: owner, content, id });
+		}
+		const beforeDownloads = await status(server.pid);
+		const saturatedStart = performance.now();
+		const files = owners.flatMap((file) => [file, file]);
+		const responses = await Promise.all(
+			files.map((file) => download(file.key, file.id)),
+		);
+		await delay(250);
+		const saturation = {
+			beforeDownloads,
+			heldDownloads: await status(server.pid),
+			postgres: await postgresMemory(),
+		};
+		assert.equal(await fixture("inspect", databaseUrl), "0");
+		await Promise.all(
+			responses.map((response, i) =>
+				receive(response, files[i].key, files[i].id, files[i].content),
+			),
+		);
+		const saturatedElapsedMs = Math.round(performance.now() - saturatedStart);
+
 		stop = true;
 		await Promise.all([monitoring, healthMonitor, postgresMonitor]);
 		if (monitorError) {
@@ -347,6 +400,11 @@ async function run() {
 						(await exec("getconf", ["CLK_TCK"])).stdout.trim(),
 					),
 					rounds,
+					saturation: {
+						...saturation,
+						elapsedMs: saturatedElapsedMs,
+						downloads: files.length,
+					},
 					clientPeakKiB: process.resourceUsage().maxRSS,
 				},
 				null,

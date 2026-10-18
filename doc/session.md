@@ -76,6 +76,11 @@ checks prevent stale content/text publication, and active-load identity guards
 progress and cleanup. Cancellation releases busy/progress immediately without
 reporting an error or clearing a newer operation. Completed content stays cached.
 
+Content requests fetch sequential stable 4 MiB ciphertext chunk URLs using the native
+HTTP cache. The API assembles one full ciphertext buffer, bounds every streamed
+chunk, verifies the complete hash, and decrypts before publishing content. Aborting
+a media item cancels the active chunk request and prevents subsequent requests.
+
 Metadata updates merge name/tag patches while retaining unrelated metadata and
 thumbnails. Conflicts load current metadata and leave failed editor drafts for
 retry. Filename editing saves with Enter, cancels with Escape, and discards the
