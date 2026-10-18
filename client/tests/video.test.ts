@@ -121,7 +121,7 @@ function runtime({
 		},
 	} as unknown as typeof bunny;
 	return {
-		load: async () => module,
+		module,
 		get config() {
 			return config;
 		},
@@ -163,7 +163,7 @@ for (const format of ["mp4", "webm"] as const) {
 			},
 			(text) => notices.push(text),
 			(n) => progress.push(n),
-			r.load,
+			r.module,
 		);
 		assert.equal(result.name, `Holiday.${format}`);
 		assert.equal(result.type, `video/${format}`);
@@ -210,7 +210,7 @@ for (const [description, setup] of [
 				options(),
 				(message) => notices.push(message),
 				undefined,
-				r.load,
+				r.module,
 			),
 			original,
 		);
@@ -240,7 +240,7 @@ for (const [width, height, maxWidth, maxHeight, expected] of [
 			{ ...options(), maxWidth, maxHeight },
 			undefined,
 			undefined,
-			r.load,
+			r.module,
 		);
 		assert.deepEqual([r.config?.width, r.config?.height], expected);
 		assert.equal(r.config?.fit, "contain");
@@ -257,14 +257,15 @@ for (const cap of [24, 60, 120, null]) {
 			{ ...options(), maxFrameRate: cap },
 			undefined,
 			undefined,
-			r.load,
+			r.module,
 		);
 		assert.equal(r.config?.frameRate, cap === 24 ? 24 : undefined);
 	});
 }
 
-test("disabled video conversion never loads the library", async () => {
+test("disabled video conversion does not initialize resources", async () => {
 	const original = file();
+	const r = runtime();
 	assert.equal(
 		await convertVideo(
 			original,
@@ -272,13 +273,15 @@ test("disabled video conversion never loads the library", async () => {
 			defaultUploadOptions().video,
 			undefined,
 			undefined,
-			async () => assert.fail("must not load"),
+			r.module,
 		),
 		original,
 	);
+	assert.equal(r.initialization, undefined);
+	assert.equal(r.disposed, 0);
 });
 
-for (const phase of ["loading", "initializing", "executing"]) {
+for (const phase of ["initializing", "executing"]) {
 	test(`abort during ${phase} rejects without fallback or stale progress`, async () => {
 		const waiting = deferred();
 		const entered = deferred();
@@ -299,12 +302,7 @@ for (const phase of ["loading", "initializing", "executing"]) {
 			options(),
 			(message) => notices.push(message),
 			(n) => progress.push(n),
-			async () => {
-				if (phase === "loading") {
-					await hold();
-				}
-				return r.load();
-			},
+			r.module,
 		);
 		await entered.promise;
 		controller.abort();
@@ -315,10 +313,8 @@ for (const phase of ["loading", "initializing", "executing"]) {
 		await assert.rejects(pending, { name: "AbortError" });
 		assert.deepEqual(notices, []);
 		assert.equal(r.listening, false);
-		if (phase !== "loading") {
-			assert(r.disposed > 0);
-			assert(r.canceled > 0);
-		}
+		assert(r.disposed > 0);
+		assert(r.canceled > 0);
 	});
 }
 
@@ -338,21 +334,4 @@ test("Mediabunny parses the checked-in WebM fixture without browser codecs", asy
 	} finally {
 		input.dispose();
 	}
-});
-
-test("library loading failure retains the original with a notice", async () => {
-	const original = file();
-	const notices: string[] = [];
-	const result = await convertVideo(
-		original,
-		new AbortController().signal,
-		options(),
-		(message) => notices.push(message),
-		undefined,
-		async () => {
-			throw new Error("module unavailable");
-		},
-	);
-	assert.equal(result, original);
-	assert.equal(notices.length, 1);
 });

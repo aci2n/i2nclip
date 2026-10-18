@@ -43,47 +43,49 @@ async function action(
 	{#if !$session.configured}
 		<Setup {session} {pairing} />
 	{:else}
-		<section class="panel stack">
-			<h2>Your library</h2>
-			<p class="address">{$session.serverUrl}</p>
-			<p class="address">
-				Public key (base64url):
-				<code>{$session.context?.key.registrationKey}</code>
-			</p>
-			<section class="usage" aria-label="Library usage">
-				{#if $quota?.loading}
-					<p role="status">Loading usage…</p>
-				{:else if $quota?.error}
-					<p role="alert" class="error">
-						Unable to load usage: {$quota?.error}
-					</p>
-					<button
-						type="button"
-						class="secondary"
-						onclick={() => quota?.refresh()}
-					>
-						Retry
-					</button>
-				{:else if $quota?.value}
-					<p>
-						Storage: {fileSize($quota?.value.used_content_bytes)} of
-						{fileSize($quota?.value.max_content_bytes)}
-					</p>
-					<p>
-						Files: {$quota?.value.file_count.toLocaleString()} of
-						{$quota?.value.max_files.toLocaleString()}
-					</p>
-					<p>
-						Maximum file size:
-						{fileSize($quota?.value.max_file_plaintext_bytes)}
-					</p>
-				{/if}
-			</section>
-			<p>
-				Keep your recovery file and its password safe. Your master password
-				protects this client.
-			</p>
-		</section>
+		<details class="panel" open>
+			<summary><h2>Your library</h2></summary>
+			<div class="stack content">
+				<p class="address">{$session.serverUrl}</p>
+				<p class="address">
+					Public key (base64url):
+					<code>{$session.context?.key.registrationKey}</code>
+				</p>
+				<section class="usage" aria-label="Library usage">
+					{#if $quota?.loading}
+						<p role="status">Loading usage…</p>
+					{:else if $quota?.error}
+						<p role="alert" class="error">
+							Unable to load usage: {$quota?.error}
+						</p>
+						<button
+							type="button"
+							class="secondary"
+							onclick={() => quota?.refresh()}
+						>
+							Retry
+						</button>
+					{:else if $quota?.value}
+						<p>
+							Storage: {fileSize($quota?.value.used_content_bytes)} of
+							{fileSize($quota?.value.max_content_bytes)}
+						</p>
+						<p>
+							Files: {$quota?.value.file_count.toLocaleString()} of
+							{$quota?.value.max_files.toLocaleString()}
+						</p>
+						<p>
+							Maximum file size:
+							{fileSize($quota?.value.max_file_plaintext_bytes)}
+						</p>
+					{/if}
+				</section>
+				<p>
+					Keep your recovery file and its password safe. Your master password
+					protects this client.
+				</p>
+			</div>
+		</details>
 	{/if}
 	<UploadPreferences
 		options={$preferences.options}
@@ -162,6 +164,9 @@ async function action(
 </div>
 <AboutDialog open={about} onclose={() => (about = false)} />
 <style>
+summary h2 {
+	display: inline;
+}
 .about {
 	width: fit-content;
 }

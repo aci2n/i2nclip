@@ -3,6 +3,7 @@ import { get, writable } from "svelte/store";
 import { DEFAULT_MAX_FILE_PLAINTEXT_BYTES } from "../api.ts";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
+import { checkSourceSize } from "../media/convert.ts";
 import {
 	copyUploadOptions,
 	defaultUploadOptions,
@@ -161,6 +162,7 @@ export function createUploads(
 			}));
 			log.debug("file-started", { operation, index: index + 1 });
 			let finished = false;
+			let preparedName = file.name;
 			function report(phase: "converting" | "uploading", percent: number) {
 				if (
 					finished ||
@@ -173,7 +175,7 @@ export function createUploads(
 				state.update((v) => ({
 					...v,
 					progress: {
-						name: file.name,
+						name: preparedName,
 						index: index + 1,
 						total,
 						percent: Math.max(0, Math.min(100, Math.round(percent))),
@@ -186,6 +188,15 @@ export function createUploads(
 					file,
 					maxFilePlaintextBytes: getMaxFilePlaintextBytes(),
 					options,
+					onPrepared: (name) => {
+						if (!finished && !signal.aborted) {
+							preparedName = name;
+							state.update((v) => ({
+								...v,
+								progress: v.progress ? { ...v.progress, name } : null,
+							}));
+						}
+					},
 					onNotice: (message) => {
 						if (!finished && !signal.aborted) {
 							state.update((v) => ({
@@ -204,7 +215,7 @@ export function createUploads(
 					log.debug("file-completed", { operation, index: index + 1 });
 					state.update((v) => ({
 						...v,
-						completed: [...v.completed, { id: item.id, name: file.name }],
+						completed: [...v.completed, { id: item.id, name: preparedName }],
 					}));
 				}
 			} catch (error) {
@@ -214,7 +225,7 @@ export function createUploads(
 						index: index + 1,
 						...failureFields(error),
 					});
-					failed.push({ name: file.name, error: errorMessage(error) });
+					failed.push({ name: preparedName, error: errorMessage(error) });
 				}
 			} finally {
 				finished = true;
@@ -265,6 +276,8 @@ export function createUploads(
 			}
 		},
 		getMaxFilePlaintextBytes,
+		checkFile: (file: File) =>
+			checkSourceSize(file, defaults(), getMaxFilePlaintextBytes()),
 		dismissCompleted: () =>
 			state.update((v) => ({
 				...v,

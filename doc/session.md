@@ -142,16 +142,16 @@ maximum dimensions and quality for lossy formats. Defaults are WebP at quality 8
 without resizing. Conversion preserves aspect ratio and never upscales; JPEG uses
 a white background. Only smaller output replaces the original. Failed,
 unsupported or larger conversions retain the original with a per-file notice.
-Existing WebP, GIF, SVG and non-images are unchanged. Original input size is
-checked before decoding; bitmaps close even on cancellation. See
+Existing WebP, GIF, SVG and non-images are unchanged. Original input size is inspected before decoding; eligible oversized inputs may
+encode first, and selected output must fit the current file quota; bitmaps close even on cancellation. See
 [upload options](upload-options.md) for lifecycle and acceptance requirements.
 
-Video conversion uses lazily loaded Mediabunny and native browser codecs, checked
+Video conversion uses Mediabunny and native browser codecs, checked
 only at upload time. It defaults off and supports MP4/H.264/H.265/AV1 and
 WebM/VP8/VP9/AV1, quality presets, dimension bounds and a frame-rate cap. Displayed
 aspect ratio/orientation and audio/video tracks are retained. Unsupported,
 track-dropping or non-smaller output uses the original with a notice. Conversion
-and transfer have separate progress phases; session disposal cancels conversion
+and transfer have separate progress phases and show the accepted output filename; session disposal cancels conversion
 and releases its input/output. See [video conversion](video-conversion.md).
 
 ## Text previews
@@ -182,3 +182,7 @@ suggestion visibility, keyboard navigation and DOM focus.
 
 Upload is separate from search. Its compact summary keeps progress and failures
 visible; successful filenames live in a disclosure and completion can be dismissed.
+
+Settings sections are native disclosures; only the library/setup section opens
+by default. Media conversion and size policy share one preparation interface.
+See [upload refinements](upload-polish.md).

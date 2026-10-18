@@ -3,6 +3,7 @@ import type {
 	ConversionVideoOptions,
 	InputVideoTrack,
 } from "mediabunny";
+import * as mediabunny from "mediabunny";
 import type { Progress } from "../api.ts";
 import type { VideoOptions } from "./options.ts";
 
@@ -53,7 +54,7 @@ export async function convertVideo(
 	options: VideoOptions,
 	onNotice?: (message: string) => void,
 	onProgress?: Progress,
-	load: () => Promise<typeof import("mediabunny")> = () => import("mediabunny"),
+	bunny: typeof mediabunny = mediabunny,
 ) {
 	signal.throwIfAborted();
 	if (!options.enabled) {
@@ -62,7 +63,6 @@ export async function convertVideo(
 	let reason = "video conversion failed or is unsupported.";
 	try {
 		onProgress?.(0);
-		const bunny = await load();
 		signal.throwIfAborted();
 		const input = new bunny.Input({
 			source: new bunny.BlobSource(file),

@@ -1,12 +1,8 @@
 import type { Credentials, Progress } from "../api.ts";
-import { checkFileSize, upload } from "../api.ts";
+import { upload } from "../api.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
-import { compressImage } from "./compress.ts";
-import {
-	canConvertVideo,
-	defaultUploadOptions,
-	type UploadOptions,
-} from "./options.ts";
+import { convertMedia } from "./convert.ts";
+import { defaultUploadOptions, type UploadOptions } from "./options.ts";
 import { thumbnail } from "./thumbnail.ts";
 export interface SendOptions {
 	file: File;
@@ -15,6 +11,7 @@ export interface SendOptions {
 	options?: UploadOptions;
 	onNotice?: (message: string) => void;
 	onConversionProgress?: Progress;
+	onPrepared?: (name: string) => void;
 	tags?: string;
 	extra?: Metadata;
 	onProgress?: Progress;
@@ -28,29 +25,21 @@ export async function sendUpload({
 	options = defaultUploadOptions(),
 	onNotice,
 	onConversionProgress,
+	onPrepared,
 	tags = "",
 	extra = {},
 	onProgress,
 	signal,
 }: SendOptions) {
-	checkFileSize(file.size, maxFilePlaintextBytes);
-	signal.throwIfAborted();
-	file = await compressImage(file, signal, options.image, onNotice);
-	if (options.video.enabled && canConvertVideo(file)) {
-		try {
-			const { convertVideo } = await import("./video.ts");
-			file = await convertVideo(
-				file,
-				signal,
-				options.video,
-				onNotice,
-				onConversionProgress,
-			);
-		} catch {
-			signal.throwIfAborted();
-			onNotice?.("Using original: video conversion could not be loaded.");
-		}
-	}
+	file = await convertMedia({
+		file,
+		options,
+		signal,
+		maxFilePlaintextBytes,
+		onNotice,
+		onProgress: onConversionProgress,
+	});
+	onPrepared?.(file.name);
 	signal.throwIfAborted();
 	const bytes = new Uint8Array(await file.arrayBuffer());
 	signal.throwIfAborted();

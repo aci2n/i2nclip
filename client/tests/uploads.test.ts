@@ -342,3 +342,26 @@ test("video review snapshots stay independent and phase callbacks cannot go stal
 	assertPresent(callbacks).onConversionProgress?.(50);
 	assert.equal(get(f.uploads).progress, null);
 });
+
+test("upload progress and completion use prepared filenames and ignore late changes", async (t) => {
+	const wait = deferred<{ id: string }>();
+	let args: SendOptions | undefined;
+	const f = fixture(t, {
+		send: (options) => {
+			args = options;
+			return wait.promise;
+		},
+	});
+	const uploading = f.uploads.upload([new File([], "source.png")]);
+	assertPresent(args).onPrepared?.("source.webp");
+	assertPresent(args).onProgress?.(25);
+	assert.equal(get(f.uploads).progress?.name, "source.webp");
+	wait.resolve({ id: "saved" });
+	await uploading;
+	assert.deepEqual(get(f.uploads).completed, [
+		{ id: "saved", name: "source.webp" },
+	]);
+	assertPresent(args).onPrepared?.("stale.png");
+	assert.equal(get(f.uploads).progress, null);
+	assert.equal(get(f.uploads).completed[0].name, "source.webp");
+});

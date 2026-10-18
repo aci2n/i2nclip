@@ -23,6 +23,8 @@ import type {
 	CaptureTab,
 } from "../extension/types.d.ts";
 import { DEFAULT_MAX_FILE_PLAINTEXT_BYTES as WEB_MAX_FILE_BYTES } from "../src/lib/api.ts";
+import { checkSourceSize } from "../src/lib/media/convert.ts";
+import { defaultUploadOptions } from "../src/lib/media/options.ts";
 import type { Metadata } from "../src/lib/protocol/meta-plain.ts";
 import type {
 	CaptureEvent,
@@ -112,6 +114,12 @@ function app(
 		}),
 		{
 			getMaxFilePlaintextBytes,
+			checkFile: (file: File) =>
+				checkSourceSize(
+					file,
+					defaultUploadOptions(),
+					getMaxFilePlaintextBytes(),
+				),
 			upload: (files: File[], context?: Metadata) => {
 				uploads.push(files);
 				extra.push(context);
@@ -901,4 +909,14 @@ test("extension captures wait for the user to finish a pending web review", (t) 
 	fixture.batches.set({ uploading: false, pending: [] });
 	assert.equal(fixture.receive(file)?.ok, true);
 	assert.equal(fixture.uploads.length, 1);
+});
+
+test("eligible oversized image handoff reaches shared upload preparation without reading", (t) => {
+	const fixture = app(t, {}, Promise.resolve(true), () => 1);
+	const large = new File([new Uint8Array(10)], "large.png", {
+		type: "image/png",
+	});
+	large.arrayBuffer = async () => assert.fail("handoff must not read bytes");
+	assert.equal(fixture.receive({ ...file, file: large })?.ok, true);
+	assert.deepEqual(fixture.uploads, [[large]]);
 });

@@ -25,8 +25,10 @@ it. The application forwards quota and uploads as explicit Settings props; Setti
 does not receive its owning workspace. Settings retains entry/post-upload refresh
 and Retry behavior.
 Uploads use the current limit, or 32 MiB when quota is unavailable; zero is never
-replaced by the fallback. Check original file size before reading/compression,
-and prepared bytes before encryption. Per-file failures continue the batch.
+replaced by the fallback. Inspect original file size before reading. Reject ineligible/disabled uploads
+immediately; give enabled media encoders a chance to produce output below the
+limit. Check the selected file before reading prepared bytes and recheck prepared
+bytes before encryption. Per-file failures continue the batch.
 Web extension handoff uses the workspace limit when available. The standalone
 extension capture cap remains unchanged.
 Downloads cap actual streamed bytes using the item's encrypted byte count plus

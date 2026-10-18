@@ -31,8 +31,9 @@ Extension uploads use defaults without review as before.
 
 ## Conversion and lifecycle
 
-Lazy-load the Mediabunny converter only for enabled video conversion. Check input
-size before reading media. Read a local Blob; force selected video encoding and
+The shared media preparation interface statically imports both converters. Inspect
+input size before reading media, allowing eligible oversized inputs to encode
+before enforcing the quota on selected output. Read a local Blob; force selected video encoding and
 quality. Fit displayed dimensions within bounds with aspect ratio preserved, no
 upscaling, and dimensions rounded down for codec alignment. Preserve orientation.
 Apply frame-rate cap only below measured source average; applied caps produce

@@ -8,9 +8,10 @@ import {
 interface Props {
 	value: VideoOptions;
 	disabled?: boolean;
+	compact?: boolean;
 	onchange: (value: VideoOptions) => void;
 }
-let { value, disabled = false, onchange }: Props = $props();
+let { value, disabled = false, compact = false, onchange }: Props = $props();
 const names = {
 	avc: "H.264",
 	hevc: "H.265",
@@ -39,7 +40,7 @@ function number(
 	});
 }
 </script>
-<div class="stack">
+<div class="stack" class:compact>
 	<label class="toggle"
 		><input
 			type="checkbox"
@@ -142,11 +143,13 @@ function number(
 	{#if error}
 		<p class="error" role="alert">{error}</p>
 	{/if}
-	<p class="hint">
-		Keeps aspect ratio without enlarging and retains audio. Browser support is
-		checked during upload. Uses the original if conversion fails, loses tracks,
-		or is not smaller.
-	</p>
+	{#if !compact}
+		<p class="hint">
+			Keeps aspect ratio without enlarging and retains audio. Browser support is
+			checked during upload. Uses the original if conversion fails, loses
+			tracks, or is not smaller.
+		</p>
+	{/if}
 </div>
 <style>
 fieldset {
@@ -180,5 +183,13 @@ label {
 	.toggle {
 		min-height: 3rem;
 	}
+}
+.compact {
+	gap: 0.5rem;
+}
+.compact fieldset {
+	align-items: end;
+	gap: 0.5rem;
+	grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr));
 }
 </style>

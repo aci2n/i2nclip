@@ -5,8 +5,9 @@ interface Props {
 	value: ImageOptions;
 	onchange: (value: ImageOptions) => void;
 	disabled?: boolean;
+	compact?: boolean;
 }
-let { value, onchange, disabled = false }: Props = $props();
+let { value, onchange, disabled = false, compact = false }: Props = $props();
 let error = $state("");
 $effect(() => {
 	void value;
@@ -28,7 +29,7 @@ function number(
 	});
 }
 </script>
-<div class="stack">
+<div class="stack" class:compact>
 	<label class="toggle">
 		<input
 			type="checkbox"
@@ -95,10 +96,12 @@ function number(
 	{#if error}
 		<p class="error" role="alert">{error}</p>
 	{/if}
-	<p class="hint">
-		Keeps aspect ratio without enlarging. Uses the original if conversion fails
-		or is not smaller.
-	</p>
+	{#if !compact}
+		<p class="hint">
+			Keeps aspect ratio without enlarging. Uses the original if conversion
+			fails or is not smaller.
+		</p>
+	{/if}
 	{#if value.format === "jpeg"}
 		<p class="hint">Transparency becomes white in JPEG.</p>
 	{/if}
@@ -135,5 +138,13 @@ label {
 .hint {
 	color: var(--muted);
 	font-size: 0.9rem;
+}
+.compact {
+	gap: 0.5rem;
+}
+.compact fieldset {
+	align-items: end;
+	gap: 0.5rem;
+	grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr));
 }
 </style>

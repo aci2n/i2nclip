@@ -10,20 +10,27 @@ interface Props {
 }
 let { options, error, onchange }: Props = $props();
 </script>
-<section class="panel stack">
-	<h2>Upload options</h2>
-	<p>Defaults for newly selected files, saved only on this device.</p>
-	<h3>Images</h3>
-	<ImageOptions
-		value={options.image}
-		onchange={(image) => onchange({ ...options, image })}
-	/>
-	<h3>Videos</h3>
-	<VideoOptions
-		value={options.video}
-		onchange={(video) => onchange({ ...options, video })}
-	/>
-	{#if error}
-		<p class="error" role="alert">{error}</p>
-	{/if}
-</section>
+<details class="panel">
+	<summary>Upload options</summary>
+	<div class="stack content">
+		<p>Defaults for newly selected files, saved only on this device.</p>
+		<h3>Images</h3>
+		<ImageOptions
+			value={options.image}
+			onchange={(image) => onchange({ ...options, image })}
+		/>
+		<h3>Videos</h3>
+		<VideoOptions
+			value={options.video}
+			onchange={(video) => onchange({ ...options, video })}
+		/>
+		{#if error}
+			<p class="error" role="alert">{error}</p>
+		{/if}
+	</div>
+</details>
+<style>
+.content {
+	margin-top: 1rem;
+}
+</style>

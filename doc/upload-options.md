@@ -41,7 +41,8 @@ with defaults, but are rejected while entries await review. Processed files are
 released; failed files must be selected again.
 
 Validate options before accepting edits. Conversion and capability checks happen
-only during upload. Check original size before decoding. Preserve aspect ratio,
+only during upload. Inspect original size before decoding; eligible oversized media may encode first.
+Enforce the file limit on the selected output before reading prepared bytes. Preserve aspect ratio,
 fit within both bounds, never upscale, and replace only with strictly smaller
 output of the requested MIME type. Filename, metadata and thumbnail follow the
 chosen output. Unsupported/failed/larger conversion keeps the original with a

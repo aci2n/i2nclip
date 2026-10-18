@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { compressImage } from "../src/lib/media/compress.ts";
+import { compressImage } from "../src/lib/media/image.ts";
 import {
 	defaultUploadOptions,
 	type ImageOptions,
