@@ -185,6 +185,7 @@ test("touch gestures browse loaded previews and close media without hijacking ot
 	const dialog = page.getByRole("dialog", { name: "Media preview" });
 	const visibleName = async (name: string) => {
 		await expect(dialog).toBeVisible();
+		await expect(dialog.getByRole("status")).toHaveCount(0);
 		await expect(
 			dialog
 				.locator(
@@ -192,7 +193,6 @@ test("touch gestures browse loaded previews and close media without hijacking ot
 				)
 				.first(),
 		).toBeVisible();
-		await expect(dialog.getByText(/^Loading /)).toHaveCount(0);
 	};
 	const surface = () =>
 		dialog.locator(".text-preview, .audio, video, img").first();
