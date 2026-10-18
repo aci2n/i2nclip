@@ -49,6 +49,7 @@ export async function issueOtc(
 	data: string,
 	profile = "debug",
 	maxBytes?: number,
+	maxFilePlaintextBytes?: number,
 ) {
 	const { stdout } = await execute(
 		binary("i2nclip", profile),
@@ -56,10 +57,34 @@ export async function issueOtc(
 			"otc",
 			"issue",
 			...(maxBytes === undefined ? [] : ["--max-bytes", String(maxBytes)]),
+			...(maxFilePlaintextBytes === undefined
+				? []
+				: ["--max-file-plaintext-bytes", String(maxFilePlaintextBytes)]),
 		],
 		{ env: fixtureEnvironment(data) },
 	);
 	return stdout.trim();
+}
+export async function setKeyLimits(
+	data: string,
+	publicKey: string,
+	limits: { maxBytes: number; maxFiles: number; maxFilePlaintextBytes: number },
+) {
+	await execute(
+		binary("i2nclip"),
+		[
+			"key",
+			"set-limits",
+			publicKey,
+			"--max-bytes",
+			String(limits.maxBytes),
+			"--max-files",
+			String(limits.maxFiles),
+			"--max-file-plaintext-bytes",
+			String(limits.maxFilePlaintextBytes),
+		],
+		{ env: fixtureEnvironment(data) },
+	);
 }
 export async function stopServer(child?: ChildProcess) {
 	if (!child?.pid || child.exitCode !== null || child.signalCode !== null) {

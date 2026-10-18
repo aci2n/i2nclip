@@ -79,21 +79,32 @@ Administrators issue invitations with the Rust executable:
 ```sh
 i2nclip otc issue
 i2nclip otc issue --ttl-secs 3600
-i2nclip otc issue --max-bytes 1073741824 --max-files 20000
-i2nclip key set-limits PUBLIC_KEY --max-bytes 536870912 --max-files 10000
+i2nclip otc issue --max-bytes 1073741824 --max-files 20000 --max-file-plaintext-bytes 67108864
+i2nclip key set-limits PUBLIC_KEY --max-bytes 536870912 --max-files 10000 --max-file-plaintext-bytes 33554432
 podman exec i2nclip i2nclip otc issue
 ```
 
-Settings → **Your library** shows storage and file usage. It refreshes when opened
-and after an upload batch finishes while Settings is open; failed reads offer Retry.
+Settings → **Your library** shows the base64url public key (usable as PUBLIC_KEY
+in the CLI), storage and file usage, and the maximum file size. Quota loads when
+the workspace starts, refreshes when Settings opens and after upload batches finish
+while Settings is open; failed reads offer Retry. The web client uses the returned
+per-file limit, falling back to 32 MiB when quota is unavailable.
 
 Each key defaults to 512 MiB (536,870,912 bytes of encrypted content) and 10,000
-files. Invitations carry their chosen limits to newly registered keys. Registering
-an existing key again preserves its limits. Both limit flags are required for
-`key set-limits`; values are nonnegative decimal integers up to 9223372036854775807.
+files, with a 32 MiB (33,554,432 plaintext bytes) per-file limit.
+`--max-file-plaintext-bytes` accepts 0–536870912 (512 MiB); zero blocks all uploads,
+including empty files. The client checks original file size before reading or
+image compression and checks prepared bytes before encryption. The server checks
+the ciphertext's plaintext length, excluding encryption overhead. Transfers remain
+buffered in server/browser memory; streaming is separate work.
+Invitations carry their chosen limits to newly registered keys. Registering
+an existing key again preserves its limits. All three limit flags are required for
+`key set-limits`. Total storage and file counts accept nonnegative decimal integers
+up to 9223372036854775807. The invitation file limit defaults to 32 MiB.
 Zero blocks uploads. Paired devices share one key and quota. Lowering a quota
-below current usage is rejected without changing limits or files. Downloads, metadata
-edits, and deletion remain available; deletion frees capacity automatically.
+below current total storage/file usage is rejected without changing limits or files.
+The per-file limit may be lowered below existing file sizes; it applies to future
+uploads. Downloads, metadata edits, and deletion remain available; deletion frees capacity automatically.
 Database checks enforce used bytes and file count at or below their limits.
 Limits and current usage live in a separate `key_quotas` row per public key;
 `registered_keys` remains key-only. Uploads reserve bytes and a file slot, and

@@ -1,6 +1,6 @@
 import type { Readable } from "svelte/store";
 import { get } from "svelte/store";
-import { MAX_FILE_BYTES } from "../api.ts";
+import { checkFileSize } from "../api.ts";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
@@ -30,6 +30,7 @@ export interface CaptureSessionState extends SessionSnapshot {
 export interface CaptureSession extends Readable<CaptureSessionState> {}
 export interface CaptureUploads extends Readable<{ uploading: boolean }> {
 	upload(files: File[], extra?: Metadata): Promise<boolean>;
+	getMaxFilePlaintextBytes(): number;
 }
 interface Capture {
 	operation: number;
@@ -144,9 +145,7 @@ export function createExtensionReceiver(
 				if (!(file instanceof File)) {
 					throw new Error("Invalid file handoff.");
 				}
-				if (file.size > MAX_FILE_BYTES) {
-					throw new Error("File is larger than 32 MB.");
-				}
+				checkFileSize(file.size, getUploads()?.getMaxFilePlaintextBytes());
 				const { sourceUrl, sourceTitle, ...extra } = document(
 					message.extra || {},
 				);

@@ -11,7 +11,9 @@ const empty = (): {
 	error: string;
 } => ({ value: null, loading: false, error: "" });
 
-// Settings owns this store; identity changes and navigation dispose pending reads.
+export type QuotaStore = ReturnType<typeof createQuota>;
+
+// Workspace owns this store; navigation preserves reads until its context ends.
 export function createQuota(
 	context: LibraryContext,
 	{ http = api }: { http?: QuotaApi } = {},

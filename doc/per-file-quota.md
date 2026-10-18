@@ -21,7 +21,9 @@ under the quota-row lock, preserving duplicate precedence and atomic counters.
 
 The workspace owns the in-memory quota store, its initial refresh, cancellation
 and disposal. Navigation preserves it; identity/server/session changes dispose
-it. Settings reads it and retains entry/post-upload refresh and Retry behavior.
+it. The application forwards quota and uploads as explicit Settings props; Settings
+does not receive its owning workspace. Settings retains entry/post-upload refresh
+and Retry behavior.
 Uploads use the current limit, or 32 MiB when quota is unavailable; zero is never
 replaced by the fallback. Check original file size before reading/compression,
 and prepared bytes before encryption. Per-file failures continue the batch.

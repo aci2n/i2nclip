@@ -171,6 +171,7 @@ export function createMediaItem(
 				const bytes = await http.getContent({
 					...context,
 					id: initial.id,
+					encryptedBytes: initial.bytes,
 					signal: request,
 					onProgress: (progress) => {
 						if (activeLoad === request && !request.aborted) {

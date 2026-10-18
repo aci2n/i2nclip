@@ -30,7 +30,8 @@
 ## State and resource ownership
 
 - Views subscribe to stores and pass plain state and callback props to components. Components must not receive or import stores. Stores own async workflows; components may own presentation state. HTML `id` attributes are forbidden.
-- Keep library and uploads stores at the app root while navigating between Library and Settings so active uploads and their status survive view changes.
+- The application forwards the specific stores each view needs as explicit props. Child views must not receive or read their owning workspace/container to discover dependencies; Settings receives quota and uploads directly from the application.
+- Keep library, uploads, and quota stores owned by the workspace at the app root while navigating between Library and Settings so active uploads, their status, and quota reads survive view changes.
 - Use `$state` for bound DOM references read by template handlers. Run the Svelte checker and ensure `make client` builds without warnings.
 - Search uses cancellation plus stale-result checks. Pagination belongs to the submitted search and allows only one request at a time.
 - Identity or server changes invalidate pending library operations. Upload batches run sequentially and individual failures do not stop the batch. Upload state exists only in memory.

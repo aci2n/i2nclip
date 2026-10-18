@@ -107,10 +107,15 @@ ordinary root-owned lifetime. See [deeplinks](deeplinks.md).
 
 ## Settings and pairing
 
-Settings owns its quota store and disposes it on navigation. Reads are deduplicated,
-aborted on identity changes, and protected from stale completion. Usage refreshes
-on entering configured Settings, after session mutations, and after upload batches
-finish while Settings is open. Errors and Retry appear beside usage; there is no
+The workspace owns its quota store and starts its initial read independently of
+Settings. Navigation preserves it; ending the workspace disposes it. Reads are
+deduplicated, aborted on identity/server/session changes, and protected from stale
+completion. Uploads use `max_file_plaintext_bytes`, or 32 MiB while quota is
+unavailable; zero blocks uploads. Usage also refreshes on entering configured
+Settings, after session mutations, and after upload batches finish while Settings
+is open. The application forwards quota and uploads directly to Settings;
+Settings never receives its owning workspace. Settings shows the CLI-compatible base64url public
+key and file limit. Errors and Retry appear beside usage; there is no
 polling or persistent quota cache.
 
 The pairing store owns one isolated attempt, relay requests, expiry, approval,

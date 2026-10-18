@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+	DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
 	getContent,
 	getMedia,
 	getQuota,
 	isKeyRegistered,
 	list,
-	MAX_FILE_BYTES,
 	registerKey,
 	remove,
 	updateMetadata,
@@ -30,7 +30,7 @@ import {
 import { decode, encode } from "../src/lib/protocol/msgpack.ts";
 import { bytes as binary, document } from "../src/lib/protocol/value.ts";
 import { assertPresent } from "./assert.ts";
-import { requestBody, requestDocument } from "./helpers.ts";
+import { requestBody, requestDocument, testKey } from "./helpers.ts";
 import { documentResponse } from "./msgpack-response.ts";
 
 test("registration checks use a signed empty ping, distinguish unauthorized keys and propagate server failures", async (t) => {
@@ -88,6 +88,7 @@ for (const [body, contentType, message] of [
 			serverUrl: "https://clip.example.com",
 			key: await loadKey(privateKey),
 			id: "test",
+			encryptedBytes: DEFAULT_MAX_FILE_PLAINTEXT_BYTES + 64,
 		};
 		for (const request of [
 			() => registerKey({ ...settings, otc: "test" }),
@@ -189,7 +190,11 @@ test("downloaded encrypted content is capped before buffering", async (t) => {
 						cancelled = true;
 					},
 				}),
-				{ headers: { "content-length": String(MAX_FILE_BYTES + 65) } },
+				{
+					headers: {
+						"content-length": String(DEFAULT_MAX_FILE_PLAINTEXT_BYTES + 65),
+					},
+				},
 			),
 	);
 	await assert.rejects(
@@ -197,8 +202,9 @@ test("downloaded encrypted content is capped before buffering", async (t) => {
 			serverUrl: "https://clip.example.com",
 			key: await loadKey(privateKey),
 			id: "test",
+			encryptedBytes: DEFAULT_MAX_FILE_PLAINTEXT_BYTES + 64,
 		}),
-		/larger than 32 MB/,
+		/exceeds its expected size/,
 	);
 	assert.equal(cancelled, true);
 });
@@ -243,7 +249,11 @@ test("content hashes are checked before decryption", async (t) => {
 	const plain = new Uint8Array([1, 2, 3]);
 	const content = await encrypt(key, contentAad(), plain);
 	t.mock.method(globalThis, "fetch", async () => new Response(content));
-	const options = { serverUrl: "https://clip.example", key };
+	const options = {
+		serverUrl: "https://clip.example",
+		key,
+		encryptedBytes: content.length,
+	};
 	await assert.rejects(
 		getContent({ ...options, id: "0".repeat(64) }),
 		/Content hash mismatch/,
@@ -424,6 +434,7 @@ test("quota uses a signed empty GET and carries cancellation", async (t) => {
 	const usage = {
 		max_content_bytes: 536870912,
 		max_files: 10000,
+		max_file_plaintext_bytes: DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
 		used_content_bytes: 0,
 		file_count: 0,
 	};
@@ -478,6 +489,7 @@ test("canceling a streaming download stops its reader without unhandled cancella
 			serverUrl: "https://clip.example",
 			key: await loadKey(privateKey),
 			id: "a".repeat(64),
+			encryptedBytes: 100,
 			signal: controller.signal,
 			onProgress: () => controller.abort(),
 		}),
@@ -638,3 +650,54 @@ test("direct metadata reads use signed empty GETs, decrypt summaries, and reject
 	);
 	assert.equal(calls, before);
 });
+
+for (const length of [undefined, "1"]) {
+	test(`download enforces the item byte count with Content-Length ${length}`, async (t) => {
+		let cancelled = false;
+		t.mock.method(
+			globalThis,
+			"fetch",
+			async () =>
+				new Response(
+					new ReadableStream({
+						start(controller) {
+							controller.enqueue(new Uint8Array(3));
+							controller.enqueue(new Uint8Array(3));
+						},
+						cancel() {
+							cancelled = true;
+						},
+					}),
+					{ headers: length ? { "content-length": length } : {} },
+				),
+		);
+		await assert.rejects(
+			getContent({
+				serverUrl: "https://clip.example",
+				key: testKey(),
+				id: "a".repeat(64),
+				encryptedBytes: 5,
+			}),
+			/exceeds its expected size/,
+		);
+		assert.equal(cancelled, true);
+	});
+}
+
+for (const limit of [-1, 1.5, 536870913, Number.NaN]) {
+	test(`quota rejects invalid plaintext limit ${limit}`, async (t) => {
+		t.mock.method(globalThis, "fetch", async () =>
+			documentResponse({
+				used_content_bytes: 0,
+				max_content_bytes: 1,
+				file_count: 0,
+				max_files: 1,
+				max_file_plaintext_bytes: limit,
+			}),
+		);
+		await assert.rejects(
+			getQuota({ serverUrl: "https://clip.example", key: testKey() }),
+			/Invalid/,
+		);
+	});
+}

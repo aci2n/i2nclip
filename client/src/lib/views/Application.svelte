@@ -62,7 +62,13 @@ function dropFiles(event: DragEvent) {
 			</nav>
 		</header>
 		{#if $routing.page === "settings"}
-			<Settings {session} {pairing} {workspace} {preferences} />
+			<Settings
+				{session}
+				{pairing}
+				quota={workspace?.quota ?? null}
+				uploads={workspace?.uploads ?? null}
+				{preferences}
+			/>
 		{:else if workspace}
 			<Library
 				{session}

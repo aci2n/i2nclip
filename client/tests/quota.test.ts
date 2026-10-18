@@ -24,6 +24,7 @@ const usage = {
 	file_count: 1,
 	max_content_bytes: 536870912,
 	max_files: 10000,
+	max_file_plaintext_bytes: 33554432,
 };
 test("quota reads deduplicate and retry errors without persisting stale values", async (t) => {
 	let result = deferred<typeof usage>();
@@ -71,7 +72,7 @@ test("identity changes abort quota reads and late results cannot replace the new
 	assert.deepEqual(get(next.quota).value, usage);
 	assert.equal(await quota.refresh(), false);
 });
-test("leaving Settings aborts its quota request and ignores a late error", async (t) => {
+test("disposing the workspace quota aborts its request and ignores a late error", async (t) => {
 	const result = deferred<typeof usage>();
 	let signal: AbortSignal | undefined;
 	const { quota } = fixture(t, {

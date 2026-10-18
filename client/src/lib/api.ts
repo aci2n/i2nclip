@@ -36,6 +36,7 @@ interface RequestOptions extends Credentials {
 	signal?: AbortSignal;
 }
 export interface UploadOptions extends Credentials {
+	maxFilePlaintextBytes?: number;
 	bytes: Uint8Array<ArrayBuffer>;
 	name: string;
 	contentType?: string;
@@ -67,6 +68,7 @@ export interface MediaRequest extends AuthenticatedRequest {
 	id: string;
 }
 export interface ContentRequest extends MediaRequest {
+	encryptedBytes: number;
 	onProgress?: Progress;
 }
 export interface MetadataRequest extends MediaRequest {
@@ -86,6 +88,7 @@ export interface Quota {
 	max_content_bytes: number;
 	file_count: number;
 	max_files: number;
+	max_file_plaintext_bytes: number;
 }
 export interface TagCatalog {
 	tags: string[];
@@ -120,13 +123,31 @@ export interface TagApi {
 // HTTP requests contain signatures and ciphertext, never the private key.
 
 // Plaintext limit. The server allows this plus a small encryption header.
-export const MAX_FILE_BYTES = 32 * 1024 * 1024;
-const MAX_ENCRYPTED_FILE_BYTES = MAX_FILE_BYTES + 64;
+export const DEFAULT_MAX_FILE_PLAINTEXT_BYTES = 32 * 1024 * 1024;
+export const MAX_FILE_PLAINTEXT_BYTES = 512 * 1024 * 1024;
+const MAX_ENCRYPTED_FILE_BYTES = MAX_FILE_PLAINTEXT_BYTES + 64;
+
+export function checkFileSize(
+	size: number,
+	limit = DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
+) {
+	if (limit === 0) {
+		throw new Error("Uploads are disabled by the library file size limit.");
+	}
+	if (size > limit) {
+		const label =
+			limit % (1024 * 1024) === 0
+				? `${limit / (1024 * 1024)} MB`
+				: `${limit.toLocaleString()} ${limit === 1 ? "byte" : "bytes"}`;
+		throw new Error(`File is larger than ${label}.`);
+	}
+}
 
 export async function upload({
 	serverUrl,
 	key,
 	bytes,
+	maxFilePlaintextBytes = DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
 	name,
 	contentType,
 	tags,
@@ -136,9 +157,10 @@ export async function upload({
 	onProgress,
 	signal,
 }: UploadOptions) {
-	if (bytes.length > MAX_FILE_BYTES) {
-		throw new Error("File is larger than 32 MB.");
-	}
+	checkFileSize(
+		bytes.length,
+		Math.min(maxFilePlaintextBytes, MAX_FILE_PLAINTEXT_BYTES),
+	);
 	const metadata = {
 		...extra,
 		name: cleanName(name),
@@ -237,7 +259,20 @@ export async function getQuota({
 		max_content_bytes: number(value.max_content_bytes),
 		file_count: number(value.file_count),
 		max_files: number(value.max_files),
+		max_file_plaintext_bytes: fileLimit(value.max_file_plaintext_bytes),
 	};
+}
+
+function fileLimit(value: unknown): number {
+	const limit = number(value);
+	if (
+		!Number.isSafeInteger(limit) ||
+		limit < 0 ||
+		limit > MAX_FILE_PLAINTEXT_BYTES
+	) {
+		throw new Error("Invalid file size limit.");
+	}
+	return limit;
 }
 
 export async function list({
@@ -300,6 +335,7 @@ export async function getMedia({
 }
 
 export async function getContent({
+	encryptedBytes,
 	serverUrl,
 	key,
 	id,
@@ -312,6 +348,7 @@ export async function getContent({
 		method: "GET",
 		path: `/api/media/${id}`,
 		body: new Uint8Array(),
+		maxResponseBytes: encryptedBytes,
 		onDownloadProgress: onProgress,
 		signal,
 	});
@@ -466,13 +503,29 @@ async function requestDocument(request: RequestOptions) {
 
 async function requestBytes({
 	onDownloadProgress,
+	maxResponseBytes = MAX_ENCRYPTED_FILE_BYTES,
 	...request
-}: RequestOptions & { onDownloadProgress?: Progress }) {
+}: RequestOptions & {
+	onDownloadProgress?: Progress;
+	maxResponseBytes?: number;
+}) {
+	if (
+		!Number.isSafeInteger(maxResponseBytes) ||
+		maxResponseBytes < 0 ||
+		maxResponseBytes > MAX_ENCRYPTED_FILE_BYTES
+	) {
+		throw new Error("Invalid encrypted content size.");
+	}
 	const response = await signedFetch(request);
 	if (!response.ok) {
 		throw await responseError(response);
 	}
-	return readBody(response, onDownloadProgress, request.signal);
+	return readBody(
+		response,
+		maxResponseBytes,
+		onDownloadProgress,
+		request.signal,
+	);
 }
 
 async function sealedMetadata(
@@ -511,13 +564,14 @@ async function responseError(
 
 async function readBody(
 	response: Response,
+	maxBytes: number,
 	onProgress?: Progress,
 	signal?: AbortSignal,
 ) {
 	const total = Number(response.headers.get("content-length")) || 0;
-	if (total > MAX_ENCRYPTED_FILE_BYTES) {
+	if (total > maxBytes) {
 		await response.body?.cancel();
-		throw new Error("File is larger than 32 MB.");
+		throw new Error("Downloaded content exceeds its expected size.");
 	}
 	if (!response.body) {
 		return new Uint8Array();
@@ -536,9 +590,9 @@ async function readBody(
 				break;
 			}
 			received += value.length;
-			if (received > MAX_ENCRYPTED_FILE_BYTES) {
+			if (received > maxBytes) {
 				await reader.cancel();
-				throw new Error("File is larger than 32 MB.");
+				throw new Error("Downloaded content exceeds its expected size.");
 			}
 			chunks.push(value);
 			if (onProgress && total) {

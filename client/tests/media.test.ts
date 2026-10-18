@@ -3,7 +3,7 @@ import test from "node:test";
 import { get } from "svelte/store";
 import type { MetadataResult } from "../src/lib/api.ts";
 import * as api from "../src/lib/api.ts";
-import { MAX_FILE_BYTES } from "../src/lib/api.ts";
+import { DEFAULT_MAX_FILE_PLAINTEXT_BYTES } from "../src/lib/api.ts";
 import { sendUpload } from "../src/lib/media/upload.ts";
 import {
 	bodyHash,
@@ -109,7 +109,9 @@ for (const cancel of [false, true]) {
 }
 test("oversized local files are rejected before reading bytes", async () => {
 	const file = new File([], "oversized");
-	Object.defineProperty(file, "size", { value: MAX_FILE_BYTES + 1 });
+	Object.defineProperty(file, "size", {
+		value: DEFAULT_MAX_FILE_PLAINTEXT_BYTES + 1,
+	});
 	file.arrayBuffer = async () => assert.fail("must not read");
 	await assert.rejects(
 		sendUpload({
@@ -283,4 +285,59 @@ test("canceled text preparation cannot publish text or clear a subsequent mutati
 	updating.resolve({ conflict: false, metaHash: "saved" });
 	assert.equal(await mutation, true);
 	assert.equal(assertPresent(get(media).metadata).name, "renamed.txt");
+});
+
+for (const limit of [0, 2]) {
+	test(`configured file limit ${limit} rejects before reading`, async () => {
+		const file = new File([new Uint8Array(3)], "limit.bin");
+		file.arrayBuffer = async () => assert.fail("must not read");
+		await assert.rejects(
+			sendUpload({
+				file,
+				maxFilePlaintextBytes: limit,
+				credentials: { serverUrl: "https://clip.example", key: testKey() },
+				signal: new AbortController().signal,
+			}),
+			limit === 0 ? /Uploads are disabled/ : /larger than 2 bytes/,
+		);
+	});
+}
+
+test("a configured larger limit reaches the read for files above 32 MiB", async () => {
+	const file = new File([], "large.bin");
+	Object.defineProperty(file, "size", {
+		value: DEFAULT_MAX_FILE_PLAINTEXT_BYTES + 1,
+	});
+	file.arrayBuffer = async () => {
+		throw new Error("reached read");
+	};
+	await assert.rejects(
+		sendUpload({
+			file,
+			compressImages: false,
+			maxFilePlaintextBytes: 64 * 1024 * 1024,
+			credentials: { serverUrl: "https://clip.example", key: testKey() },
+			signal: new AbortController().signal,
+		}),
+		/reached read/,
+	);
+});
+
+test("prepared bytes are rechecked before encryption or a network upload", async (t) => {
+	const file = new File([new Uint8Array(3)], "prepared.bin");
+	Object.defineProperty(file, "size", { value: 1 });
+	const fetch = t.mock.method(globalThis, "fetch", async () =>
+		assert.fail("must not upload"),
+	);
+	await assert.rejects(
+		sendUpload({
+			file,
+			compressImages: false,
+			maxFilePlaintextBytes: 2,
+			credentials: { serverUrl: "https://clip.example", key: testKey() },
+			signal: new AbortController().signal,
+		}),
+		/larger than 2 bytes/,
+	);
+	assert.equal(fetch.mock.callCount(), 0);
 });

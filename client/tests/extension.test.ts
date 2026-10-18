@@ -22,7 +22,7 @@ import type {
 	BridgeRequest,
 	CaptureTab,
 } from "../extension/types.d.ts";
-import { MAX_FILE_BYTES as WEB_MAX_FILE_BYTES } from "../src/lib/api.ts";
+import { DEFAULT_MAX_FILE_PLAINTEXT_BYTES as WEB_MAX_FILE_BYTES } from "../src/lib/api.ts";
 import type { Metadata } from "../src/lib/protocol/meta-plain.ts";
 import type {
 	CaptureEvent,
@@ -89,6 +89,7 @@ function app(
 	t: test.TestContext,
 	patch: Partial<CaptureSessionState> = {},
 	result = Promise.resolve(true),
+	getMaxFilePlaintextBytes = () => WEB_MAX_FILE_BYTES,
 ) {
 	let lifetime = new AbortController();
 	const sessionState = writable<CaptureSessionState>({
@@ -105,6 +106,7 @@ function app(
 	const uploads: File[][] = [];
 	const extra: (Metadata | undefined)[] = [];
 	const batches = Object.assign(writable({ uploading: false }), {
+		getMaxFilePlaintextBytes,
 		upload: (files: File[], context?: Metadata) => {
 			uploads.push(files);
 			extra.push(context);
@@ -350,6 +352,21 @@ test("receiver checks file size without reading its bytes", (t) => {
 		/32 MB/,
 	);
 	assert.equal(fixture.uploads.length, 0);
+});
+test("receiver uses the active file quota and preserves a zero limit", (t) => {
+	let limit = 0;
+	const fixture = app(t, {}, Promise.resolve(true), () => limit);
+	assert.match(
+		assertPresent(fixture.receive(file)?.error),
+		/Uploads are disabled/,
+	);
+	assert.equal(fixture.uploads.length, 0);
+	limit = 64 * 1024 * 1024;
+	const large = new File([], "large.bin");
+	Object.defineProperty(large, "size", { value: WEB_MAX_FILE_BYTES + 1 });
+	large.arrayBuffer = async () => assert.fail("handoff must not read bytes");
+	assert.equal(fixture.receive({ ...file, file: large })?.ok, true);
+	assert.deepEqual(fixture.uploads, [[large]]);
 });
 test("configuration and tab matching require the configured origin and path", () => {
 	assert.equal(

@@ -7,28 +7,21 @@ import UploadPreferences from "../components/UploadPreferences.svelte";
 import { fileSize } from "../media/format.ts";
 import type { Pairing } from "../stores/pairing.ts";
 import type { Preferences } from "../stores/preferences.ts";
-import { createQuota } from "../stores/quota.ts";
+import type { QuotaStore } from "../stores/quota.ts";
 import type { Session } from "../stores/session.ts";
-import type { Workspace } from "../stores/workspace.ts";
+import type { Uploads } from "../stores/uploads.ts";
 import Setup from "./Setup.svelte";
 
 interface Props {
 	session: Session;
 	pairing: Pairing;
-	workspace: Workspace | null;
+	quota: QuotaStore | null;
+	uploads: Uploads | null;
 	preferences: Preferences;
 }
 
-let { session, pairing, workspace, preferences }: Props = $props();
+let { session, pairing, quota, uploads, preferences }: Props = $props();
 let about = $state(false);
-const uploads = $derived(workspace?.uploads);
-let quota = $state<ReturnType<typeof createQuota> | null>(null);
-$effect(() => {
-	const context = $session.context;
-	const current = context ? createQuota(context) : null;
-	quota = current;
-	return () => current?.dispose();
-});
 $effect(() => {
 	if (quota && !$session.busy && !$uploads?.uploading) {
 		void quota.refresh();
@@ -53,6 +46,10 @@ async function action(
 		<section class="panel stack">
 			<h2>Your library</h2>
 			<p class="address">{$session.serverUrl}</p>
+			<p class="address">
+				Public key (base64url):
+				<code>{$session.context?.key.registrationKey}</code>
+			</p>
 			<section class="usage" aria-label="Library usage">
 				{#if $quota?.loading}
 					<p role="status">Loading usage…</p>
@@ -75,6 +72,10 @@ async function action(
 					<p>
 						Files: {$quota?.value.file_count.toLocaleString()} of
 						{$quota?.value.max_files.toLocaleString()}
+					</p>
+					<p>
+						Maximum file size:
+						{fileSize($quota?.value.max_file_plaintext_bytes)}
 					</p>
 				{/if}
 			</section>

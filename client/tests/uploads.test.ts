@@ -7,6 +7,7 @@ import { createUploads } from "../src/lib/stores/uploads.ts";
 import { assertPresent } from "./assert.ts";
 import { deferred, testKey, tick } from "./helpers.ts";
 import { captureLogs } from "./log-capture.ts";
+import { documentResponse } from "./msgpack-response.ts";
 
 function session() {
 	const controller = new AbortController();
@@ -162,4 +163,33 @@ test("a batch snapshots compression preferences and the next batch sees changes"
 	await f.uploads.upload([new File([], "first"), new File([], "second")]);
 	await f.uploads.upload([new File([], "third")]);
 	assert.deepEqual(seen, [true, true, false]);
+});
+
+test("a configured file limit rejects an oversized file without stopping the batch and supports retry after raising it", async (t) => {
+	let limit = 2;
+	let requests = 0;
+	t.mock.method(globalThis, "fetch", async () => {
+		requests++;
+		return documentResponse(
+			{ id: `saved-${requests}`, created_at: 1 },
+			{ status: 201 },
+		);
+	});
+	const uploads = createUploads(session(), {
+		getMaxFilePlaintextBytes: () => limit,
+		onComplete: () => {},
+	});
+	t.after(uploads.dispose);
+	const large = new File([new Uint8Array(3)], "large.bin");
+	const small = new File([new Uint8Array(2)], "small.bin");
+	assert.equal(await uploads.upload([large, small]), false);
+	assert.equal(requests, 1);
+	assert.deepEqual(get(uploads).failures, [
+		{ name: "large.bin", error: "File is larger than 2 bytes." },
+	]);
+	assert.equal(get(uploads).completed[0].name, "small.bin");
+	limit = 3;
+	assert.equal(await uploads.upload([large]), true);
+	assert.equal(requests, 2);
+	assert.deepEqual(get(uploads).failures, []);
 });

@@ -1,10 +1,11 @@
 import type { Credentials, Progress } from "../api.ts";
-import { MAX_FILE_BYTES, upload } from "../api.ts";
+import { checkFileSize, upload } from "../api.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { compressImage } from "./compress.ts";
 import { thumbnail } from "./thumbnail.ts";
 export interface SendOptions {
 	file: File;
+	maxFilePlaintextBytes?: number;
 	credentials: Credentials;
 	compressImages?: boolean;
 	tags?: string;
@@ -13,13 +14,9 @@ export interface SendOptions {
 	signal: AbortSignal;
 }
 
-export function checkFileSize(size: number) {
-	if (size > MAX_FILE_BYTES) {
-		throw new Error("File is larger than 32 MB.");
-	}
-}
 export async function sendUpload({
 	file,
+	maxFilePlaintextBytes,
 	credentials,
 	compressImages = true,
 	tags = "",
@@ -27,7 +24,7 @@ export async function sendUpload({
 	onProgress,
 	signal,
 }: SendOptions) {
-	checkFileSize(file.size);
+	checkFileSize(file.size, maxFilePlaintextBytes);
 	signal.throwIfAborted();
 	if (compressImages) {
 		file = await compressImage(file, signal);
@@ -39,6 +36,7 @@ export async function sendUpload({
 	return upload({
 		...credentials,
 		bytes,
+		maxFilePlaintextBytes,
 		name: file.name,
 		contentType: file.type || "application/octet-stream",
 		tags,

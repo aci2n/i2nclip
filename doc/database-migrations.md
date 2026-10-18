@@ -1,8 +1,10 @@
 # Database initialization and reset
 
 Startup owns schema initialization through `Database::initialize`, before HTTP
-requests are accepted. The current schema is defined directly in the single
-embedded SQLx migration `sql/001_init.sql`.
+requests are accepted. The baseline schema is defined in `sql/001_init.sql`.
+`sql/002_max_file_plaintext_bytes.sql` adds the per-file plaintext quota to keys
+and invitations (default 33,554,432 bytes; range 0–536,870,912), preserving existing
+data and increasing the encrypted-content ceiling to 536,870,976 bytes.
 
 The fresh-database rebuild consolidated the former migrations 001–004 into this
 baseline. Databases from before that rebuild must be dropped and recreated;
@@ -15,7 +17,7 @@ SQLx acquires a PostgreSQL advisory lock, validates recorded checksums, and runs
 pending migrations in version order. Each migration commits its SQL and history
 entry transactionally. `_sqlx_migrations` persists versions and checksums, so
 restarts preserve data and skip applied SQL. Concurrent starters wait for the
-lock. The runner remains useful even with a single baseline. The SQL itself
+lock. The runner applies both the baseline and subsequent migrations. The SQL itself
 uses ordinary CREATE statements and does not adopt untracked existing tables.
 Content storage is declared EXTERNAL directly on its column; there is no
 follow-up ALTER step.
@@ -49,7 +51,7 @@ Execute each command only after the previous command succeeds. If recreation or
 startup fails, keep the application stopped and inspect the failure. Dropping
 cannot be rolled back. The server initializes the fresh database automatically;
 do not manually run the SQL outside SQLx or copy the old ledger. Check service
-health and the single successful version-1 ledger entry after startup. Reissue
+health and successful version-1 and version-2 ledger entries after startup. Reissue
 invitations and use the client's reset/setup flow to create a fresh identity;
 old browser identities remain stored locally but are no longer registered.
 
@@ -72,7 +74,7 @@ removal is not its reset procedure.
 ## Verification
 
 `make test-db` uses isolated PostgreSQL databases to cover fresh/concurrent
-initialization, exactly one ledger entry, restart preservation, checksum
+initialization, exactly one ledger entry per migration, restart preservation, checksum
 rejection, current schema bounds, owner isolation, quota transactions and
 immutable content. `make lint format-check` checks static conventions, and
 `make test-e2e` exercises real browser flows against fresh databases.
