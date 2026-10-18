@@ -10,14 +10,13 @@ use axum::{
     extract::{Path as UrlPath, State},
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{delete, get},
     Router,
 };
 use serde::Serialize;
 
 use crate::{
     auth::SignedRequest,
-    codec,
     db::{Item, MetadataUpdate},
     frame,
     permits::TransferPermit,
@@ -30,7 +29,8 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/api/quota", get(quota))
         .route("/api/tags", get(tags))
         .route("/api/media", get(list).post(upload))
-        .route("/api/media/{id}", get(download).delete(remove))
+        .route("/api/media/{id}", delete(remove))
+        .route("/api/media/{id}/chunks/{index}", get(download))
         .route("/api/media/{id}/meta", get(metadata).put(update_metadata))
 }
 
@@ -155,7 +155,7 @@ async fn upload(State(state): State<AppState>, media: SignedRequest) -> Response
 
 async fn download(
     State(state): State<AppState>,
-    UrlPath(id): UrlPath<String>,
+    UrlPath((id, index)): UrlPath<(String, u64)>,
     media: SignedRequest,
 ) -> Response {
     let owner = match media.empty().await {
@@ -166,8 +166,8 @@ async fn download(
         Ok(permit) => permit,
         Err(error) => return fail(error),
     };
-    match state.db.content(owner, &id).await {
-        Ok(content) => content_response(content, permit),
+    match state.db.content_chunk(owner, &id, index).await {
+        Ok(content) => content_response(content, &id, index, permit),
         Err(err) => fail(err),
     }
 }
@@ -264,7 +264,7 @@ struct MetadataConflict {
 
 const DOWNLOAD_CHUNK: usize = 64 * 1024;
 
-fn content_response(content: Vec<u8>, permit: TransferPermit) -> Response {
+fn content_response(content: Vec<u8>, id: &str, index: u64, permit: TransferPermit) -> Response {
     let bytes = content.len() as u64;
     let stream = futures_util::stream::unfold(
         (Bytes::from(content), permit),
@@ -278,8 +278,12 @@ fn content_response(content: Vec<u8>, permit: TransferPermit) -> Response {
     );
     let mut response = Body::from_stream(stream).into_response();
     response.headers_mut().insert(
+        header::ETAG,
+        HeaderValue::from_str(&format!("\"{id}.{index}\"")).unwrap(),
+    );
+    response.headers_mut().insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_static(codec::CONTENT_TYPE),
+        HeaderValue::from_static("application/octet-stream"),
     );
     response
         .headers_mut()
@@ -348,7 +352,7 @@ mod tests {
         }
         let content = vec![7_u8; DOWNLOAD_CHUNK * 2 + 1];
         let permit = permits.download([1; 32]).await.unwrap();
-        let response = content_response(content.clone(), permit);
+        let response = content_response(content.clone(), "content-hash", 0, permit);
         assert_eq!(
             response.headers()[header::CONTENT_LENGTH],
             content.len().to_string()
@@ -358,7 +362,7 @@ mod tests {
         assert_released(&permits).await;
 
         let permit = permits.download([1; 32]).await.unwrap();
-        let mut body = content_response(content.clone(), permit).into_body();
+        let mut body = content_response(content.clone(), "content-hash", 0, permit).into_body();
         let first = body.frame().await.unwrap().unwrap().into_data().unwrap();
         assert_eq!(first.len(), DOWNLOAD_CHUNK);
         assert_held(&permits).await;
@@ -366,7 +370,7 @@ mod tests {
         assert_released(&permits).await;
 
         let permit = permits.download([1; 32]).await.unwrap();
-        let mut body = content_response(content.clone(), permit).into_body();
+        let mut body = content_response(content.clone(), "content-hash", 0, permit).into_body();
         let mut received = Vec::new();
         while let Some(frame) = body.frame().await {
             let chunk = frame.unwrap().into_data().unwrap();

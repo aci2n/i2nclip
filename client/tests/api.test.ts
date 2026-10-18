@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
 	DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
+	DOWNLOAD_CHUNK_BYTES,
 	getContent,
 	getMedia,
 	getQuota,
@@ -204,7 +205,7 @@ test("downloaded encrypted content is capped before buffering", async (t) => {
 			id: "test",
 			encryptedBytes: DEFAULT_MAX_FILE_PLAINTEXT_BYTES + 64,
 		}),
-		/exceeds its expected size/,
+		/Invalid content chunk response/,
 	);
 	assert.equal(cancelled, true);
 });
@@ -248,7 +249,15 @@ test("content hashes are checked before decryption", async (t) => {
 	const key = await loadKey(privateKey);
 	const plain = new Uint8Array([1, 2, 3]);
 	const content = await encrypt(key, contentAad(), plain);
-	t.mock.method(globalThis, "fetch", async () => new Response(content));
+	t.mock.method(
+		globalThis,
+		"fetch",
+		async () =>
+			new Response(content, {
+				status: 200,
+				headers: {},
+			}),
+	);
 	const options = {
 		serverUrl: "https://clip.example",
 		key,
@@ -481,7 +490,12 @@ test("canceling a streaming download stops its reader without unhandled cancella
 						return Promise.reject(new Error("stream already failed"));
 					},
 				}),
-				{ headers: { "content-length": "100" } },
+				{
+					status: 200,
+					headers: {
+						"content-length": "100",
+					},
+				},
 			),
 	);
 	await assert.rejects(
@@ -668,7 +682,12 @@ for (const length of [undefined, "1"]) {
 							cancelled = true;
 						},
 					}),
-					{ headers: length ? { "content-length": length } : {} },
+					{
+						status: 200,
+						headers: {
+							...(length ? { "content-length": length } : {}),
+						},
+					},
 				),
 		);
 		await assert.rejects(
@@ -678,7 +697,7 @@ for (const length of [undefined, "1"]) {
 				id: "a".repeat(64),
 				encryptedBytes: 5,
 			}),
-			/exceeds its expected size/,
+			length ? /Invalid content chunk response/ : /exceeds its expected size/,
 		);
 		assert.equal(cancelled, true);
 	});
@@ -701,3 +720,169 @@ for (const limit of [-1, 1.5, 536870913, Number.NaN]) {
 		);
 	});
 }
+
+for (const plainBytes of [
+	DOWNLOAD_CHUNK_BYTES - 45,
+	DOWNLOAD_CHUNK_BYTES + 31,
+	2 * DOWNLOAD_CHUNK_BYTES + 17,
+]) {
+	test(`chunk downloads assemble ${plainBytes} plaintext bytes with fresh signatures and aggregate progress`, async (t) => {
+		const key = testKey();
+		const plain = new Uint8Array(plainBytes).fill(7);
+		const content = await encrypt(key, contentAad(), plain);
+		const id = await bodyHash(content);
+		const nonces = new Set<string>();
+		let offset = 0;
+		let calls = 0;
+		const progress: number[] = [];
+		t.mock.method(
+			globalThis,
+			"fetch",
+			async (url: string | URL | Request, options: RequestInit = {}) => {
+				assert.equal(
+					String(url),
+					`https://clip.example/api/media/${id}/chunks/${calls}`,
+				);
+				assert.equal(options.cache, "default");
+				const headers = new Headers(options.headers);
+				const end = Math.min(offset + DOWNLOAD_CHUNK_BYTES, content.length) - 1;
+				assert.equal(headers.get("range"), null);
+				const auth = assertPresent(headers.get("authorization"));
+				const [, ts, nonce] = auth.slice(7).split(".");
+				assert(!nonces.has(nonce));
+				nonces.add(nonce);
+				assert.equal(
+					auth,
+					await authorizationHeader({
+						key,
+						origin: "https://clip.example",
+						ts: Number(ts),
+						nonce,
+						method: "GET",
+						path: `/api/media/${id}/chunks/${calls}`,
+						body: new Uint8Array(),
+					}),
+				);
+				const bytes = content.slice(offset, end + 1);
+				offset = end + 1;
+				calls++;
+				return new Response(bytes, {
+					status: 200,
+					headers: {
+						"content-length": String(bytes.length),
+					},
+				});
+			},
+		);
+		const downloaded = await getContent({
+			serverUrl: "https://clip.example",
+			key,
+			id,
+			encryptedBytes: content.length,
+			onProgress: (value) => progress.push(value),
+		});
+		assert.deepEqual(downloaded, plain);
+		assert.equal(offset, content.length);
+		assert.equal(calls, Math.ceil(content.length / DOWNLOAD_CHUNK_BYTES));
+		assert.equal(progress.at(-1), 100);
+		assert(progress.slice(0, -1).every((value) => value < 100));
+		assert(progress.every((value, i) => i === 0 || value >= progress[i - 1]));
+	});
+}
+
+for (const [status, length] of [
+	[206, "2"],
+	[201, "2"],
+	[200, "1"],
+	[200, "3"],
+	[200, "NaN"],
+] as const) {
+	test(`chunk download rejects status/length ${status}/${length} before buffering`, async (t) => {
+		let cancelled = false;
+		t.mock.method(
+			globalThis,
+			"fetch",
+			async () =>
+				new Response(
+					new ReadableStream({
+						cancel() {
+							cancelled = true;
+						},
+					}),
+					{ status, headers: { "content-length": length } },
+				),
+		);
+		await assert.rejects(
+			getContent({
+				serverUrl: "https://clip.example",
+				key: testKey(),
+				id: "a".repeat(64),
+				encryptedBytes: 2,
+			}),
+			/Invalid content chunk response/,
+		);
+		assert.equal(cancelled, true);
+	});
+}
+
+test("chunk downloads reject truncation and stop after deletion or cancellation between chunks", async (t) => {
+	const key = testKey();
+	const content = await encrypt(
+		key,
+		contentAad(),
+		new Uint8Array(DOWNLOAD_CHUNK_BYTES),
+	);
+	const id = await bodyHash(content);
+	for (const failure of [
+		"truncated",
+		"deleted",
+		"cancelled",
+		"corrupted",
+	] as const) {
+		const controller = new AbortController();
+		let calls = 0;
+		const progress: number[] = [];
+		const fetch = t.mock.method(globalThis, "fetch", async () => {
+			const start = calls++ * DOWNLOAD_CHUNK_BYTES;
+			const end = Math.min(start + DOWNLOAD_CHUNK_BYTES, content.length) - 1;
+			if (start && failure === "deleted") {
+				return documentResponse({ error: "not found" }, { status: 404 });
+			}
+			const bytes = content.slice(start, end + 1);
+			if (failure === "corrupted") {
+				bytes[0] ^= 1;
+			}
+			return new Response(failure === "truncated" ? bytes.subarray(1) : bytes, {
+				status: 200,
+			});
+		});
+		await assert.rejects(
+			getContent({
+				serverUrl: "https://clip.example",
+				key,
+				id,
+				encryptedBytes: content.length,
+				signal: controller.signal,
+				onProgress(value) {
+					progress.push(value);
+					if (failure === "cancelled") {
+						controller.abort();
+					}
+				},
+			}),
+			failure === "cancelled"
+				? { name: "AbortError" }
+				: failure === "deleted"
+					? /not found/
+					: failure === "corrupted"
+						? /Content hash mismatch/
+						: /shorter than its expected size/,
+		);
+		assert.equal(
+			calls,
+			failure === "deleted" || failure === "corrupted" ? 2 : 1,
+		);
+		assert(!progress.includes(100));
+		fetch.mock.restore();
+	}
+});

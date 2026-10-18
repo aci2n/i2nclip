@@ -43,7 +43,8 @@ pub(crate) fn router(state: AppState) -> Router {
                     Method::PUT,
                     Method::DELETE,
                 ])
-                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]),
+                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+                .expose_headers([header::ETAG]),
         )
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -344,6 +345,7 @@ mod request_tests {
         let app = app().await;
         let item = format!("/api/media/{}", "a".repeat(64));
         let meta = format!("{item}/meta");
+        let chunk = format!("{item}/chunks/0");
         for (method, path) in [
             ("POST", "/api/register-key"),
             ("GET", "/api/ping"),
@@ -351,7 +353,7 @@ mod request_tests {
             ("GET", "/api/tags"),
             ("GET", "/api/media"),
             ("POST", "/api/media"),
-            ("GET", item.as_str()),
+            ("GET", chunk.as_str()),
             ("PUT", meta.as_str()),
             ("DELETE", item.as_str()),
         ] {
