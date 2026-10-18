@@ -23,6 +23,13 @@ quota for the fixed context. Root-owned pairing and extension capture use the
 record lifetime; pending captures survive unlocking the same record, not replacement.
 Views subscribe to stores and pass ordinary props and callbacks to components.
 
+The application store creates and disposes the root resources and coordinates
+workspace creation and file uploads from drops or extension handoff. Application
+is the root view: it renders state and translates mouse/drag events into store
+calls. The routing store owns query URLs, history updates and its popstate
+listener. Ordinary navigation pushes history; accepted drops and captures replace
+the current entry with Library. Components receive plain link URLs from views.
+
 ## Identity and persistence
 
 Session privately owns the wrapping key, decrypted identity and loaded keys.

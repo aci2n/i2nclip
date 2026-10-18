@@ -44,8 +44,8 @@ test("an upload survives navigation through Settings", async ({
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const pending = deferred();
 	const started = deferred();
-	await page.route(/\/api\/media\/[0-9a-f]{64}$/, async (route) => {
-		if (route.request().method() === "PUT") {
+	await page.route("**/api/media", async (route) => {
+		if (route.request().method() === "POST") {
 			started.resolve();
 			await pending.promise;
 		}
@@ -67,7 +67,8 @@ test("an upload survives navigation through Settings", async ({
 		await expect(
 			page
 				.getByRole("article")
-				.getByText("survives-navigation.txt", { exact: true }),
+				.getByText("survives-navigation.txt", { exact: true })
+				.first(),
 		).toBeVisible();
 		await expect(
 			page.getByRole("button", { name: "Upload", exact: true }),

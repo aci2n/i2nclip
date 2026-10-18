@@ -31,7 +31,12 @@ export function createApplication() {
 	const extension = createExtensionReceiver(
 		session,
 		() => workspace?.uploads ?? null,
-		() => routing.navigate({ page: "library" }, true),
+		() => {
+			routing.navigate({ page: "library" }, true);
+			// A pending capture can resume inside a session notification, before
+			// queued routing subscribers run. Its uploads must exist immediately.
+			syncWorkspace();
+		},
 	);
 	function canDropFiles() {
 		return (

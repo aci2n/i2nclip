@@ -177,3 +177,30 @@ test("app receives captures through its public event interface and uploads after
 		await other.close();
 	}
 });
+
+test("a capture pending on a fresh media route creates uploads synchronously after unlock", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	await page.goto(`${app.origin}/?page=media&id=${"a".repeat(64)}`);
+	await expect(
+		page.getByRole("button", { name: "Unlock", exact: true }),
+	).toBeVisible();
+	expect(
+		await receiveCapture(page, {
+			type: "file",
+			name: "pending-capture.txt",
+			mime: "text/plain",
+			bytes: [...Buffer.from("captured while the viewer was locked")],
+		}),
+	).toEqual({ ok: true, needsUnlock: true });
+	await master(page);
+	await expect(page).toHaveURL(/\?page=library$/);
+	await expect(
+		page
+			.getByRole("article")
+			.getByText("pending-capture.txt", { exact: true })
+			.first(),
+	).toBeVisible();
+});
