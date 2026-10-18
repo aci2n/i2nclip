@@ -126,6 +126,7 @@ export interface TagApi {
 export const DEFAULT_MAX_FILE_PLAINTEXT_BYTES = 32 * 1024 * 1024;
 export const MAX_FILE_PLAINTEXT_BYTES = 512 * 1024 * 1024;
 const MAX_ENCRYPTED_FILE_BYTES = MAX_FILE_PLAINTEXT_BYTES + 64;
+export const DOWNLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
 
 export function checkFileSize(
 	size: number,
@@ -342,20 +343,40 @@ export async function getContent({
 	onProgress,
 	signal,
 }: ContentRequest) {
-	const blob = await requestBytes({
-		serverUrl,
-		key,
-		method: "GET",
-		path: `/api/media/${id}`,
-		body: new Uint8Array(),
-		maxResponseBytes: encryptedBytes,
-		onDownloadProgress: onProgress,
-		signal,
-	});
+	signal?.throwIfAborted();
+	if (
+		!Number.isSafeInteger(encryptedBytes) ||
+		encryptedBytes <= 0 ||
+		encryptedBytes > MAX_ENCRYPTED_FILE_BYTES
+	) {
+		throw new Error("Invalid encrypted content size.");
+	}
+	const blob = new Uint8Array(encryptedBytes);
+	for (let start = 0; start < encryptedBytes; start += DOWNLOAD_CHUNK_BYTES) {
+		signal?.throwIfAborted();
+		const end = Math.min(start + DOWNLOAD_CHUNK_BYTES, encryptedBytes) - 1;
+		const response = await signedFetch({
+			serverUrl,
+			key,
+			method: "GET",
+			path: `/api/media/${id}/chunks/${start / DOWNLOAD_CHUNK_BYTES}`,
+			body: new Uint8Array(),
+			signal,
+		});
+		if (!response.ok) {
+			throw await responseError(response);
+		}
+		await readContentChunk(response, blob, start, end, onProgress, signal);
+	}
+	signal?.throwIfAborted();
 	if ((await bodyHash(blob)) !== id) {
 		throw new Error("Content hash mismatch.");
 	}
-	return decrypt(key, contentAad(), blob);
+	signal?.throwIfAborted();
+	const plain = await decrypt(key, contentAad(), blob);
+	signal?.throwIfAborted();
+	onProgress?.(100);
+	return plain;
 }
 
 export async function updateMetadata({
@@ -407,7 +428,7 @@ export async function updateMetadata({
 }
 
 export async function remove({ serverUrl, key, id, signal }: MediaRequest) {
-	await requestBytes({
+	const response = await signedFetch({
 		serverUrl,
 		key,
 		method: "DELETE",
@@ -415,6 +436,10 @@ export async function remove({ serverUrl, key, id, signal }: MediaRequest) {
 		body: new Uint8Array(),
 		signal,
 	});
+	if (!response.ok) {
+		throw await responseError(response);
+	}
+	await response.body?.cancel();
 }
 
 /** Prove possession of the key being registered and spend an invitation. */
@@ -501,33 +526,6 @@ async function requestDocument(request: RequestOptions) {
 	return responseDocument(response);
 }
 
-async function requestBytes({
-	onDownloadProgress,
-	maxResponseBytes = MAX_ENCRYPTED_FILE_BYTES,
-	...request
-}: RequestOptions & {
-	onDownloadProgress?: Progress;
-	maxResponseBytes?: number;
-}) {
-	if (
-		!Number.isSafeInteger(maxResponseBytes) ||
-		maxResponseBytes < 0 ||
-		maxResponseBytes > MAX_ENCRYPTED_FILE_BYTES
-	) {
-		throw new Error("Invalid encrypted content size.");
-	}
-	const response = await signedFetch(request);
-	if (!response.ok) {
-		throw await responseError(response);
-	}
-	return readBody(
-		response,
-		maxResponseBytes,
-		onDownloadProgress,
-		request.signal,
-	);
-}
-
 async function sealedMetadata(
 	key: LoadedKey,
 	id: string,
@@ -562,22 +560,27 @@ async function responseError(
 	return error;
 }
 
-async function readBody(
+async function readContentChunk(
 	response: Response,
-	maxBytes: number,
+	destination: Uint8Array<ArrayBuffer>,
+	start: number,
+	end: number,
 	onProgress?: Progress,
 	signal?: AbortSignal,
 ) {
-	const total = Number(response.headers.get("content-length")) || 0;
-	if (total > maxBytes) {
-		await response.body?.cancel();
-		throw new Error("Downloaded content exceeds its expected size.");
+	const length = end - start + 1;
+	const contentLength = response.headers.get("content-length");
+	if (
+		response.status !== 200 ||
+		(contentLength !== null && Number(contentLength) !== length)
+	) {
+		await response.body?.cancel().catch(() => {});
+		throw new Error("Invalid content chunk response.");
 	}
 	if (!response.body) {
-		return new Uint8Array();
+		throw new Error("Downloaded content is shorter than its expected size.");
 	}
 	const reader = response.body.getReader();
-	const chunks = [];
 	let received = 0;
 	const abort = () => reader.cancel().catch(() => {});
 	signal?.addEventListener("abort", abort, { once: true });
@@ -589,15 +592,20 @@ async function readBody(
 			if (done) {
 				break;
 			}
-			received += value.length;
-			if (received > maxBytes) {
-				await reader.cancel();
+			if (received + value.length > length) {
 				throw new Error("Downloaded content exceeds its expected size.");
 			}
-			chunks.push(value);
-			if (onProgress && total) {
-				onProgress(Math.min(99, Math.round((received / total) * 100)));
-			}
+			destination.set(value, start + received);
+			received += value.length;
+			onProgress?.(
+				Math.min(
+					99,
+					Math.floor(((start + received) / destination.length) * 100),
+				),
+			);
+		}
+		if (received !== length) {
+			throw new Error("Downloaded content is shorter than its expected size.");
 		}
 	} catch (error) {
 		await reader.cancel().catch(() => {});
@@ -606,15 +614,6 @@ async function readBody(
 		signal?.removeEventListener("abort", abort);
 		reader.releaseLock();
 	}
-	onProgress?.(100);
-	signal?.throwIfAborted();
-	const out = new Uint8Array(received);
-	let offset = 0;
-	for (const chunk of chunks) {
-		out.set(chunk, offset);
-		offset += chunk.length;
-	}
-	return out;
 }
 
 async function signedFetch({
@@ -640,7 +639,10 @@ async function signedFetch({
 	});
 	signal?.throwIfAborted();
 	const url = new URL(path, serverUrl);
-	const headers = { authorization, "content-type": CONTENT_TYPE };
+	const headers: Record<string, string> = {
+		authorization,
+		"content-type": CONTENT_TYPE,
+	};
 	const payload = method === "GET" || method === "DELETE" ? undefined : body;
 	if (onUploadProgress && payload && typeof XMLHttpRequest !== "undefined") {
 		return requestWithProgress({

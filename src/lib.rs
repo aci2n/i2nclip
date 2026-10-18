@@ -38,6 +38,8 @@ pub const DEFAULT_MAX_FILE_PLAINTEXT_BYTES: i64 = 32 * 1024 * 1024;
 /// Supported plaintext ceiling for the buffered transfer protocol (512 MiB).
 pub const MAX_FILE_PLAINTEXT_BYTES: i64 = 512 * 1024 * 1024;
 pub(crate) const MAX_PLAIN: usize = MAX_FILE_PLAINTEXT_BYTES as usize;
+/// Fixed encrypted chunk size exposed by the content chunk API.
+pub(crate) const DOWNLOAD_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_CONTENT: usize = MAX_PLAIN + 64;
 pub(crate) const MAX_META: usize = 64 * 1024;
 pub(crate) const MAX_TAGS: usize = 64;

@@ -258,20 +258,70 @@ async fn call(
     path: &str,
     body: Vec<u8>,
 ) -> (StatusCode, Vec<u8>) {
-    let ts = crypto::now_secs();
-    let nonce = client_crypto::fresh_nonce();
-    let header =
-        client_crypto::authorization(key, "http://i2nclip.test", ts, &nonce, method, path, &body);
-    let request = Request::builder()
-        .method(method)
-        .uri(path)
-        .header("authorization", header)
-        .body(Body::from(body))
-        .unwrap();
-    let response = app.clone().oneshot(request).await.unwrap();
+    // Convenience for existing whole-file behavior checks: use the same metadata
+    // and stable-chunk sequence as the client. Raw endpoint tests use request().
+    let content = method == "GET"
+        && path
+            .strip_prefix("/api/media/")
+            .is_some_and(|tail| !tail.contains('/'));
+    let target = if content {
+        format!("{path}/chunks/0")
+    } else {
+        path.to_string()
+    };
+    let response = request(app, key, method, &target, body).await;
     let status = response.status();
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    (status, bytes.to_vec())
+    let mut bytes = response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec();
+    if content && status == StatusCode::OK {
+        let metadata = request(app, key, "GET", &format!("{path}/meta"), vec![]).await;
+        let metadata = metadata.into_body().collect().await.unwrap().to_bytes();
+        let total = client_crypto::document_json(&metadata)["bytes"]
+            .as_u64()
+            .unwrap() as usize;
+        while bytes.len() < total {
+            let index = bytes.len() / (4 * 1024 * 1024);
+            let response =
+                request(app, key, method, &format!("{path}/chunks/{index}"), vec![]).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            bytes.extend_from_slice(&response.into_body().collect().await.unwrap().to_bytes());
+        }
+    }
+    (status, bytes)
+}
+
+async fn request(
+    app: &axum::Router,
+    key: &Identity,
+    method: &str,
+    path: &str,
+    body: Vec<u8>,
+) -> axum::response::Response {
+    let header = client_crypto::authorization(
+        key,
+        "http://i2nclip.test",
+        crypto::now_secs(),
+        &client_crypto::fresh_nonce(),
+        method,
+        path,
+        &body,
+    );
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .header("authorization", header)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -1236,26 +1286,14 @@ async fn download_response(
     owner: &Identity,
     id: &str,
 ) -> axum::response::Response {
-    let path = format!("/api/media/{id}");
-    let authorization = client_crypto::authorization(
+    request(
+        app,
         owner,
-        "http://i2nclip.test",
-        crypto::now_secs(),
-        &client_crypto::fresh_nonce(),
         "GET",
-        &path,
-        b"",
-    );
-    app.clone()
-        .oneshot(
-            Request::builder()
-                .uri(path)
-                .header("authorization", authorization)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap()
+        &format!("/api/media/{id}/chunks/0"),
+        vec![],
+    )
+    .await
 }
 
 #[tokio::test]
@@ -1320,7 +1358,125 @@ async fn concurrent_routers_publish_one_hash() {
 }
 
 #[tokio::test]
-async fn downloads_retain_owned_content_after_deletion() {
+async fn stable_chunks_are_bounded_private_cacheable_and_independent_of_deletion() {
+    let owner = new_identity();
+    let other = new_identity();
+    let (dir, app) = app(&[&owner, &other]).await;
+    let content = client_crypto::sealed_fixture(7, 4 * 1024 * 1024 + 123);
+    let id = crypto::body_hash(&content);
+    let path = format!("/api/media/{id}");
+    let first_path = format!("{path}/chunks/0");
+    let second_path = format!("{path}/chunks/1");
+    let body =
+        client_crypto::encode_upload(&client_crypto::sealed_fixture(1, 42), &content, b"\x90");
+    assert_eq!(
+        call(&app, &owner, "POST", "/api/media", body).await.0,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        request(&app, &owner, "GET", &path, vec![]).await.status(),
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+    for index in ["2", "18446744073709551615"] {
+        assert_eq!(
+            request(
+                &app,
+                &owner,
+                "GET",
+                &format!("{path}/chunks/{index}"),
+                vec![]
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    for index in ["-1", "nope", "18446744073709551616"] {
+        assert_eq!(
+            request(
+                &app,
+                &owner,
+                "GET",
+                &format!("{path}/chunks/{index}"),
+                vec![]
+            )
+            .await
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        request(&app, &other, "GET", &first_path, vec![])
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    for (index, expected) in [
+        (0, &content[..4 * 1024 * 1024]),
+        (1, &content[4 * 1024 * 1024..]),
+    ] {
+        let target = format!("{path}/chunks/{index}");
+        let response = request(&app, &owner, "GET", &target, vec![]).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["content-length"],
+            expected.len().to_string()
+        );
+        assert_eq!(response.headers()["etag"], format!("\"{id}.{index}\""));
+        assert_eq!(
+            response.headers()["cache-control"],
+            "private, max-age=31536000, immutable"
+        );
+        assert!(!response.headers().contains_key("content-range"));
+        assert_eq!(
+            &response.into_body().collect().await.unwrap().to_bytes()[..],
+            expected
+        );
+    }
+    let auth = client_crypto::authorization(
+        &owner,
+        "http://i2nclip.test",
+        crypto::now_secs(),
+        &client_crypto::fresh_nonce(),
+        "GET",
+        &first_path,
+        b"",
+    );
+    for status in [StatusCode::OK, StatusCode::UNAUTHORIZED] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(&first_path)
+                    .header("authorization", &auth)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status);
+    }
+    let first = download_response(&app, &owner, &id).await;
+    let idle: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction'").fetch_one(&dir.1).await.unwrap();
+    assert_eq!(idle, 0);
+    assert_eq!(
+        call(&app, &owner, "DELETE", &path, vec![]).await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        &first.into_body().collect().await.unwrap().to_bytes()[..],
+        &content[..4 * 1024 * 1024]
+    );
+    assert_eq!(
+        request(&app, &owner, "GET", &second_path, vec![])
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn buffered_chunks_retain_owned_content_after_deletion() {
     use std::time::Duration;
 
     tokio::time::timeout(Duration::from_secs(60), async {
@@ -1358,7 +1514,7 @@ async fn downloads_retain_owned_content_after_deletion() {
         let second = download_response(&app, &owner, id).await;
         assert_eq!(first.status(), StatusCode::OK);
         assert_eq!(first.headers()["content-length"], content.len().to_string());
-        assert_eq!(first.headers()["content-type"], codec::CONTENT_TYPE);
+        assert_eq!(first.headers()["content-type"], "application/octet-stream");
         let queued = download_response(&app, &owner, id);
         tokio::pin!(queued);
         assert!(
@@ -1396,7 +1552,7 @@ async fn downloads_retain_owned_content_after_deletion() {
             .expect("dropping a partial response must admit the queued download");
         assert_eq!(admitted.status(), StatusCode::OK);
         drop(admitted);
-        // An opened stream survives deletion. Different ciphertext has a different URL.
+        // An already buffered chunk survives deletion. Different ciphertext has a different URL.
         assert_eq!(
             call(&app, &owner, "DELETE", &format!("/api/media/{id}"), vec![])
                 .await
@@ -1456,8 +1612,12 @@ async fn list_query_validation_is_scoped_to_the_list_endpoint() {
         StatusCode::BAD_REQUEST
     );
     let path = format!("/api/media/{}?after=invalid&tag=invalid", "a".repeat(64));
+    let chunk = format!(
+        "/api/media/{}/chunks/0?after=invalid&tag=invalid",
+        "a".repeat(64)
+    );
     assert_eq!(
-        call(&app, &owner, "GET", &path, vec![]).await.0,
+        call(&app, &owner, "GET", &chunk, vec![]).await.0,
         StatusCode::NOT_FOUND
     );
     assert_eq!(

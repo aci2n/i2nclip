@@ -13,7 +13,10 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::Serialize;
 use sqlx::{postgres::PgPoolOptions, PgPool, Postgres, Row, Transaction};
 
-use crate::{crypto, frame, Error, StorageLimits, MAX_CONTENT, MAX_META, PAGE, SKEW_SECS};
+use crate::{
+    crypto, frame, Error, StorageLimits, DOWNLOAD_CHUNK_BYTES, MAX_CONTENT, MAX_META, PAGE,
+    SKEW_SECS,
+};
 
 // A busy pool is retryable. Other database errors retain their cause for logs;
 // handlers choose the HTTP response without exposing database details.
@@ -437,6 +440,36 @@ impl Database {
         })
     }
 
+    /// Each stable chunk URL reads at most 4 MiB and retains no connection.
+    pub(crate) async fn content_chunk(
+        &self,
+        owner: [u8; 32],
+        id: &str,
+        index: u64,
+    ) -> Result<Vec<u8>, Error> {
+        let id = frame::parse_id(id)?;
+        let offset = index
+            .checked_mul(DOWNLOAD_CHUNK_BYTES as u64)
+            .filter(|offset| *offset < MAX_CONTENT as u64)
+            .ok_or(Error::NotFound)?;
+        sqlx::query_scalar(
+            r#"
+            SELECT substring(content FROM $3 FOR $4) FROM files
+            WHERE owner = $1 AND id = $2 AND content_bytes > $5
+            "#,
+        )
+        .bind(owner.as_slice())
+        .bind(id)
+        .bind((offset + 1) as i32)
+        .bind(DOWNLOAD_CHUNK_BYTES as i32)
+        .bind(offset as i64)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(Error::NotFound)
+    }
+
+    // Whole-content inspection is available to database tests only.
+    #[cfg(all(test, feature = "postgres-tests"))]
     /// Fetch authorized content into owned bytes and release the connection.
     pub(crate) async fn content(&self, owner: [u8; 32], id: &str) -> Result<Vec<u8>, Error> {
         let id = frame::parse_id(id)?;
@@ -1408,7 +1441,7 @@ mod tests {
         let content = crate::reference_crypto::sealed_fixture(1, 100_000);
         let body = crate::reference_crypto::encode_upload(&sealed_blob(1), &content, b"\x90");
         let item = db.add([1; 32], &body).await.unwrap();
-        let downloaded = db.content([1; 32], &item.id).await.unwrap();
+        let downloaded = db.content_chunk([1; 32], &item.id, 0).await.unwrap();
         for _ in 0..8 {
             connections.push(db.pool.acquire().await.unwrap());
         }
