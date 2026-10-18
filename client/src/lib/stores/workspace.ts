@@ -1,3 +1,4 @@
+import { createLog } from "../log.ts";
 import { createLibrary } from "./library.ts";
 import type { Preferences } from "./preferences.ts";
 import type { LibraryContext } from "./session.ts";
@@ -9,6 +10,8 @@ export function createWorkspace(
 	context: LibraryContext,
 	preferences: Preferences,
 ) {
+	const log = createLog("workspace");
+	log.debug("created");
 	const tags = createTags(context);
 	const library = createLibrary(context, { onChange: tags.refresh });
 	const uploads = createUploads(context, {
@@ -19,6 +22,7 @@ export function createWorkspace(
 		},
 	});
 	function dispose() {
+		log.debug("disposed");
 		context.signal.removeEventListener("abort", dispose);
 		uploads.dispose();
 		library.dispose();

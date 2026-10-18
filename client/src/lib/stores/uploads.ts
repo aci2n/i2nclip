@@ -1,6 +1,7 @@
 import type { Readable } from "svelte/store";
 import { get, writable } from "svelte/store";
 import { errorMessage } from "../error.ts";
+import { createLog, failureFields } from "../log.ts";
 import type { SendOptions } from "../media/upload.ts";
 import { sendUpload } from "../media/upload.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
@@ -40,6 +41,7 @@ export function createUploads(
 		preferences?: Readable<{ compressImages: boolean }>;
 	},
 ) {
+	const log = createLog("uploads");
 	const state = writable(empty());
 	const controller = new AbortController();
 
@@ -50,8 +52,19 @@ export function createUploads(
 			!files.length ||
 			context.signal.aborted
 		) {
+			log.debug("rejected", {
+				reason:
+					controller.signal.aborted || context.signal.aborted
+						? "disposed"
+						: files.length
+							? "busy"
+							: "empty",
+			});
 			return false;
 		}
+		const operation = log.operation();
+		const started = performance.now();
+		log.info("started", { operation, count: files.length });
 		const signal = AbortSignal.any([controller.signal, context.signal]);
 		const credentials = context;
 		const compressImages = preferences ? get(preferences).compressImages : true;
@@ -76,6 +89,7 @@ export function createUploads(
 					percent: 0,
 				},
 			}));
+			log.debug("file-started", { operation, index: index + 1 });
 			let finished = false;
 			try {
 				const item = await send({
@@ -99,6 +113,7 @@ export function createUploads(
 					},
 				});
 				if (!signal.aborted) {
+					log.debug("file-completed", { operation, index: index + 1 });
 					state.update((v) => ({
 						...v,
 						completed: [...v.completed, { id: item.id, name: file.name }],
@@ -106,6 +121,11 @@ export function createUploads(
 				}
 			} catch (error) {
 				if (!signal.aborted) {
+					log.warn("file-failed", {
+						operation,
+						index: index + 1,
+						...failureFields(error),
+					});
 					failed.push({ name: file.name, error: errorMessage(error) });
 				}
 			} finally {
@@ -113,6 +133,7 @@ export function createUploads(
 			}
 		}
 		if (signal.aborted) {
+			log.debug("cancelled", { operation });
 			return false;
 		}
 		state.update((v) => ({
@@ -124,6 +145,12 @@ export function createUploads(
 				? `${failed.length} file(s) failed. Select the failed files again through Upload.`
 				: "Upload complete.",
 		}));
+		log.info("completed", {
+			operation,
+			count: files.length,
+			failures: failed.length,
+			elapsedMs: Math.round(performance.now() - started),
+		});
 		await onComplete();
 		return !signal.aborted && !failed.length;
 	}
@@ -138,6 +165,7 @@ export function createUploads(
 				status: v.failures.length || v.uploading ? v.status : "",
 			})),
 		dispose() {
+			log.debug("disposed");
 			controller.abort();
 			state.set(empty());
 		},

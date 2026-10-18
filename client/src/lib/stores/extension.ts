@@ -2,6 +2,7 @@ import type { Readable } from "svelte/store";
 import { get } from "svelte/store";
 import { MAX_FILE_BYTES } from "../api.ts";
 import { errorMessage } from "../error.ts";
+import { createLog, failureFields } from "../log.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { document, string } from "../protocol/value.ts";
 import type { SessionSnapshot } from "./session.ts";
@@ -31,6 +32,7 @@ export interface CaptureUploads extends Readable<{ uploading: boolean }> {
 	upload(files: File[], extra?: Metadata): Promise<boolean>;
 }
 interface Capture {
+	operation: number;
 	file: File;
 	extra: Metadata;
 	token: string;
@@ -43,6 +45,8 @@ export function createExtensionReceiver(
 	onupload: () => void,
 	browser: ReceiverBrowser = window,
 ) {
+	const log = createLog("extension-receiver");
+	log.debug("created");
 	let pending: Capture | null = null;
 
 	let disposed = false;
@@ -58,6 +62,7 @@ export function createExtensionReceiver(
 		return "";
 	}
 	function complete(capture: Capture, ok: boolean, cancelled = false) {
+		log.debug("completed", { operation: capture.operation, ok, cancelled });
 		browser.postMessage(
 			{
 				channel: "i2nclip-extension-v1",
@@ -72,10 +77,12 @@ export function createExtensionReceiver(
 		const capture = pending;
 		pending = null;
 		if (capture) {
+			log.debug("pending-discarded", { operation: capture.operation });
 			complete(capture, false, true);
 		}
 	}
 	function upload(capture: Capture) {
+		log.info("upload-started", { operation: capture.operation });
 		pending = null;
 		const signal = get(session).signal;
 		onupload();
@@ -101,6 +108,7 @@ export function createExtensionReceiver(
 			discard();
 		}
 		if (pending && value.unlocked && !rejection()) {
+			log.debug("pending-resumed", { operation: pending.operation });
 			upload(pending);
 		}
 	});
@@ -121,6 +129,8 @@ export function createExtensionReceiver(
 		) {
 			return;
 		}
+		const operation = log.operation();
+		log.debug("received", { operation, type: message.type });
 		let result: { ok: boolean; needsUnlock?: boolean; error?: string };
 		try {
 			const error =
@@ -141,6 +151,7 @@ export function createExtensionReceiver(
 					message.extra || {},
 				);
 				const capture = {
+					operation,
 					file,
 					extra: {
 						...extra,
@@ -157,12 +168,23 @@ export function createExtensionReceiver(
 					upload(capture);
 				} else {
 					pending = capture;
+					log.debug("pending-unlock", { operation });
 				}
 			}
 			result = { ok: true, needsUnlock: !get(session).unlocked };
 		} catch (error) {
+			log.warn("rejected", {
+				operation,
+				type: message.type,
+				...failureFields(error),
+			});
 			result = { ok: false, error: errorMessage(error) };
 		}
+		log.debug("reply-sent", {
+			operation,
+			ok: result.ok,
+			needsUnlock: result.needsUnlock,
+		});
 		browser.postMessage(
 			{
 				channel: "i2nclip-extension-v1",
@@ -176,6 +198,7 @@ export function createExtensionReceiver(
 	browser.addEventListener("message", receive);
 	return {
 		dispose() {
+			log.debug("disposed");
 			disposed = true;
 			browser.removeEventListener("message", receive);
 			unsubscribeSession();

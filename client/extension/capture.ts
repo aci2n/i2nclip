@@ -217,13 +217,20 @@ export async function sendToApp(
 	fetcher = fetch,
 	context: CaptureContext = {},
 ) {
+	const instance = crypto.randomUUID();
+	console.info("[i2nclip] extension.handoff-started", { instance });
 	const app = new URL(appUrl);
 	// Firefox match patterns omit ports; matchesApp checks the exact origin below.
 	const pattern = `${app.protocol}//${app.hostname}${app.pathname}*`;
 	const candidates = (await browser.tabs.query({ url: pattern })).filter(
 		(tab) => matchesApp(tab.url, appUrl),
 	);
+	console.debug("[i2nclip] extension.tabs-found", {
+		instance,
+		count: candidates.length,
+	});
 	if (!candidates.length) {
+		console.debug("[i2nclip] extension.tab-creating", { instance });
 		candidates.push(await browser.tabs.create({ url: appUrl, active: false }));
 	}
 	const request = async (
@@ -241,6 +248,7 @@ export async function sendToApp(
 			{ frameId: 0 },
 		);
 	};
+	console.debug("[i2nclip] extension.probe-started", { instance });
 	let receiver: CaptureTab | undefined;
 	let ready: BridgeReply | undefined;
 	const deadline = Date.now() + 15000;
@@ -273,6 +281,11 @@ export async function sendToApp(
 	if (!ready?.ok) {
 		throw new Error(ready?.error);
 	}
+	console.debug("[i2nclip] extension.receiver-selected", {
+		instance,
+		needsUnlock: ready.needsUnlock === true,
+	});
+	console.debug("[i2nclip] extension.capture-fetching", { instance });
 	const file = await fetchFile(srcUrl, fetcher, context);
 	const extra: CaptureExtra = {};
 	if (context.url) {
@@ -286,6 +299,7 @@ export async function sendToApp(
 			}
 		}
 	}
+	console.debug("[i2nclip] extension.file-sending", { instance });
 	const reply = await request(receiver.id, { type: "file", file, extra }, 5000);
 	if (!reply?.ok) {
 		throw new Error(
@@ -293,7 +307,12 @@ export async function sendToApp(
 				"No response from i2nclip. Check the app before trying again.",
 		);
 	}
+	console.info("[i2nclip] extension.handoff-accepted", {
+		instance,
+		needsUnlock: reply.needsUnlock === true,
+	});
 	if (reply.needsUnlock) {
+		console.debug("[i2nclip] extension.unlock-focusing", { instance });
 		if (receiver.windowId === undefined) {
 			throw new Error("Could not find the i2nclip window.");
 		}
@@ -336,6 +355,7 @@ export async function handleUploadResult(
 	if (!matchesApp(sender.url, appUrl)) {
 		return;
 	}
+	console.info("[i2nclip] extension.upload-completed", { ok: message.ok });
 	await notify(
 		message.ok
 			? `Uploaded ${message.name}.`

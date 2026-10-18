@@ -2,6 +2,7 @@ import { get, writable } from "svelte/store";
 import type { MediaApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
+import { createLog, failureFields } from "../log.ts";
 import { audioArt } from "../media/audio-art.ts";
 import { downloadName } from "../media/format.ts";
 import { sniffContentType } from "../media/metadata.ts";
@@ -40,6 +41,7 @@ export function createMediaItem(
 	context: LibraryContext,
 	{ http = api, urls = URL, download = saveDownload }: MediaOptions = {},
 ) {
+	const log = createLog("media");
 	const state = writable<MediaState>({
 		...initial,
 		busy: false,
@@ -66,6 +68,7 @@ export function createMediaItem(
 		if (controller.signal.aborted) {
 			return;
 		}
+		log.debug("disposed", { urlCount: ownedUrls.size });
 		controller.abort();
 		for (const url of ownedUrls) {
 			urls.revokeObjectURL(url);
@@ -90,14 +93,32 @@ export function createMediaItem(
 		state.update((value) => ({ ...value, preview }));
 	}
 	// Mutations only need the item's lifetime and its ordinary busy guard.
-	async function mutate(work: () => Promise<boolean>) {
+	async function mutate(action: string, work: () => Promise<boolean>) {
 		if (signal.aborted || get(state).busy || get(state).deleted) {
+			log.debug("mutation-rejected", { action, reason: "unavailable" });
 			return false;
 		}
+		const operation = log.operation();
+		log.info("mutation-started", { action, operation });
 		state.update((v) => ({ ...v, busy: true, message: "", error: false }));
 		try {
-			return await work();
+			const ok = await work();
+			if (ok) {
+				log.info("mutation-completed", { action, operation });
+			} else {
+				log.debug("mutation-cancelled", { action, operation });
+			}
+			return ok;
 		} catch (error) {
+			if (signal.aborted) {
+				log.debug("mutation-cancelled", { action, operation });
+			} else {
+				log.error("mutation-failed", {
+					action,
+					operation,
+					...failureFields(error),
+				});
+			}
 			if (!signal.aborted) {
 				state.update((v) => ({
 					...v,
@@ -114,6 +135,7 @@ export function createMediaItem(
 	}
 	// Content loading alone supports caller cancellation. Keep its guards here.
 	async function withContent<T>(
+		action: string,
 		callerSignal: AbortSignal | undefined,
 		useContent: (blob: Blob, signal: AbortSignal) => Promise<T>,
 	) {
@@ -125,6 +147,12 @@ export function createMediaItem(
 		) {
 			return false;
 		}
+		const operation = log.operation();
+		log.debug("content-started", {
+			action,
+			operation,
+			cached: Boolean(content),
+		});
 		const request = AbortSignal.any(
 			callerSignal ? [signal, callerSignal] : [signal],
 		);
@@ -170,8 +198,18 @@ export function createMediaItem(
 			}
 			const result = await useContent(blob, request);
 			request.throwIfAborted();
+			log.debug("content-completed", { action, operation });
 			return result;
 		} catch (error) {
+			if (request.aborted) {
+				log.debug("content-cancelled", { action, operation });
+			} else {
+				log.error("content-failed", {
+					action,
+					operation,
+					...failureFields(error),
+				});
+			}
 			if (!request.aborted) {
 				state.update((v) => ({
 					...v,
@@ -188,7 +226,7 @@ export function createMediaItem(
 	return {
 		subscribe: state.subscribe,
 		reveal: (callerSignal?: AbortSignal) =>
-			withContent(callerSignal, async (blob, request) => {
+			withContent("preview", callerSignal, async (blob, request) => {
 				const value = get(state);
 				if (
 					value.text === null &&
@@ -208,7 +246,7 @@ export function createMediaItem(
 				return get(state).url;
 			}),
 		download: () =>
-			withContent(undefined, async () => {
+			withContent("download", undefined, async () => {
 				const value = get(state);
 				await download(
 					value.url,
@@ -220,7 +258,7 @@ export function createMediaItem(
 				return true;
 			}),
 		updateMetadata: (patch: Metadata) =>
-			mutate(async () => {
+			mutate("metadata", async () => {
 				const value = get(state);
 				if (!value.metadata) {
 					throw new Error("File metadata is unavailable.");
@@ -241,6 +279,7 @@ export function createMediaItem(
 					return false;
 				}
 				if (result.conflict) {
+					log.warn("metadata-conflict");
 					state.update((v) => ({ ...v, ...result.item }));
 					throw new Error(
 						"Metadata changed on another device. Review the current metadata and retry.",
@@ -250,7 +289,7 @@ export function createMediaItem(
 				return true;
 			}),
 		remove: () =>
-			mutate(async () => {
+			mutate("remove", async () => {
 				await http.remove({
 					...context,
 					id: initial.id,

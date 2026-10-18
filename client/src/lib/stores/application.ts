@@ -1,4 +1,5 @@
 import { get, writable } from "svelte/store";
+import { createLog } from "../log.ts";
 import { createExtensionReceiver } from "./extension.ts";
 import { createPairing } from "./pairing.ts";
 import { createPreferences } from "./preferences.ts";
@@ -7,6 +8,8 @@ import { createSession } from "./session.ts";
 import { createWorkspace, type Workspace } from "./workspace.ts";
 
 export function createApplication() {
+	const log = createLog("application");
+	log.debug("created");
 	const session = createSession();
 	const preferences = createPreferences();
 	const routing = createRouting();
@@ -17,10 +20,12 @@ export function createApplication() {
 	function syncWorkspace() {
 		const context = get(session).context;
 		if (workspace && workspace.context !== context) {
+			log.debug("workspace-ended", { reason: "context-changed" });
 			workspace.dispose();
 			workspace = null;
 		}
 		if (context && get(routing).workspace && !workspace) {
+			log.debug("workspace-created");
 			workspace = createWorkspace(context, preferences);
 		}
 		state.set({ workspace });
@@ -55,15 +60,18 @@ export function createApplication() {
 		canDropFiles,
 		dropFiles(files: File[]) {
 			if (!files.length || !canDropFiles() || !workspace) {
+				log.debug("drop-rejected", { count: files.length });
 				return;
 			}
 			routing.navigate({ page: "library" }, true);
+			log.info("drop-accepted", { count: files.length });
 			void workspace.uploads.upload(files);
 		},
 		dispose() {
 			if (disposed) {
 				return;
 			}
+			log.debug("disposed");
 			disposed = true;
 			extension.dispose();
 			pairing.dispose();

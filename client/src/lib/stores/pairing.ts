@@ -1,5 +1,6 @@
 import { get, writable } from "svelte/store";
 import { errorMessage } from "../error.ts";
+import { createLog, failureFields } from "../log.ts";
 import type { PairingCrypto } from "../pairing/crypto.ts";
 import type { JoinedRoom, PairingRelay } from "../pairing/service.ts";
 import { pairingCrypto, pairingRelay } from "../pairing/service.ts";
@@ -17,6 +18,9 @@ import { document } from "../protocol/value.ts";
 import type { PairingSession } from "./session.ts";
 
 interface Task {
+	operation: number;
+	role: "sender" | "receiver";
+	step: number;
 	server: string;
 	controller: AbortController;
 	deadline: number;
@@ -52,6 +56,7 @@ export function createPairing(
 	session: PairingSession,
 	services: PairingServices = {},
 ) {
+	const log = createLog("pairing");
 	const cryptoFactory = services.crypto || pairingCrypto;
 	const relayFactory = services.relay || pairingRelay;
 	const now = services.now || (() => performance.now());
@@ -79,6 +84,7 @@ export function createPairing(
 		}
 	}
 	function cleanup(current: Task, remove: boolean) {
+		log.debug("cleanup", { operation: current.operation, remove });
 		clearInterval(current.timer);
 		current.stopWatching();
 		current.crypto.dispose();
@@ -89,7 +95,12 @@ export function createPairing(
 			// Cancellation uses its own bounded request, independent of the aborted workflow.
 			relayFactory(current.server, AbortSignal.timeout(10000))
 				.cancel(current.room)
-				.catch(() => {});
+				.catch((error) =>
+					log.warn("cleanup-failed", {
+						operation: current.operation,
+						...failureFields(error),
+					}),
+				);
 		}
 	}
 	function stop(message = "Pairing canceled. Start again when ready.") {
@@ -97,6 +108,10 @@ export function createPairing(
 			return;
 		}
 		const current = task;
+		log.debug("cancelled", {
+			operation: current.operation,
+			role: current.role,
+		});
 		task = null;
 		cleanup(current, true);
 		update({
@@ -135,6 +150,13 @@ export function createPairing(
 			if (room.id !== ownedRoom.id || room.instance !== ownedRoom.instance) {
 				throw new Error("Pairing session changed. Create a new code.");
 			}
+			if (room.step !== current.step) {
+				current.step = room.step;
+				log.debug("step-received", {
+					operation: current.operation,
+					step: room.step,
+				});
+			}
 			if (room.step === expected) {
 				if (!room.message) {
 					throw new Error("Invalid pairing response.");
@@ -161,6 +183,10 @@ export function createPairing(
 			) {
 				throw error;
 			}
+			log.debug("retry", {
+				operation: current.operation,
+				...failureFields(error),
+			});
 			// Retry only idempotent polls and identical submissions, once.
 			await waitToPoll(current);
 			result = await action();
@@ -183,6 +209,10 @@ export function createPairing(
 		number: number,
 		message: Uint8Array<ArrayBuffer>,
 	) {
+		log.debug("step-submitting", {
+			operation: current.operation,
+			step: number,
+		});
 		const result = await retry(current, () =>
 			current.relay.submit(ownedRoom, number, message),
 		);
@@ -195,7 +225,11 @@ export function createPairing(
 			throw new Error("Invalid pairing step.");
 		}
 	}
-	function startTask(server: string): Task {
+	function startTask(
+		server: string,
+		role: "sender" | "receiver",
+		operation: number,
+	): Task {
 		const controller = new AbortController();
 		let crypto: PairingCrypto | null = null;
 		try {
@@ -203,6 +237,9 @@ export function createPairing(
 			const relay = relayFactory(origin, controller.signal);
 			crypto = cryptoFactory();
 			const current: Task = {
+				operation,
+				role,
+				step: -1,
 				server: origin,
 				controller,
 				stopWatching: () => {},
@@ -226,6 +263,9 @@ export function createPairing(
 							),
 						});
 					} catch (error) {
+						if (!current.controller.signal.aborted) {
+							log.debug("expired", { operation: current.operation });
+						}
 						current.controller.abort(error);
 						current.crypto.dispose();
 						current.approve?.();
@@ -250,11 +290,14 @@ export function createPairing(
 	async function run(
 		role: "sender" | "receiver",
 		server: string,
-		operation: (current: Task) => Promise<void>,
+		work: (current: Task) => Promise<void>,
 	) {
 		if (disposed || task || get(session).busy) {
+			log.debug("rejected", { role, reason: disposed ? "disposed" : "busy" });
 			return false;
 		}
+		const operation = log.operation();
+		log.info("started", { role, operation });
 		update({
 			active: true,
 			approval: false,
@@ -267,10 +310,11 @@ export function createPairing(
 		});
 		let current: Task;
 		try {
-			current = startTask(server);
+			current = startTask(server, role, operation);
 			task = current;
 			watchSession(current);
 		} catch (error) {
+			log.error("start-failed", { operation, role, ...failureFields(error) });
 			update({
 				active: false,
 				remaining: 0,
@@ -280,7 +324,7 @@ export function createPairing(
 			return false;
 		}
 		try {
-			await operation(current);
+			await work(current);
 			checkTask(current);
 			if (task === current) {
 				update({
@@ -296,9 +340,27 @@ export function createPairing(
 							: "Library connected and unlocked. Download a recovery file for this device.",
 				});
 			}
+			log.info("completed", { operation, role });
 			cleanup(current, false);
 			return true;
 		} catch (error) {
+			if (task !== current) {
+				log.debug("stale-completion", { operation, role });
+			} else if (current.saved) {
+				log.warn("confirmation-failed", {
+					operation,
+					role,
+					saved: true,
+					...failureFields(error),
+				});
+			} else {
+				log.error("failed", {
+					operation,
+					role,
+					saved: false,
+					...failureFields(error),
+				});
+			}
 			if (task === current) {
 				update({
 					active: false,
@@ -328,6 +390,10 @@ export function createPairing(
 			throw new Error("Invalid pairing response.");
 		}
 		current.room = room;
+		log.debug("room-attached", {
+			operation: current.operation,
+			role: current.role,
+		});
 		const context = pairingContext(current.server, room);
 		current.deadline = Math.min(
 			current.deadline,
@@ -376,6 +442,7 @@ export function createPairing(
 			status:
 				"Compare this code with the new device. Send your library only if they match. This gives it full access.",
 		});
+		log.debug("approval-waiting", { operation: current.operation });
 		let approved = false;
 		current.approve = () => {
 			approved = true;
@@ -467,6 +534,7 @@ export function createPairing(
 			throw new Error(get(session).error || "Could not save the library.");
 		}
 		current.saved = true;
+		log.info("identity-saved", { operation: current.operation });
 		checkTask(current);
 		// Import intentionally changes the session. Guard confirmation with
 		// the newly saved identity's lifetime.
@@ -487,11 +555,13 @@ export function createPairing(
 		approve() {
 			if (get(state).approval && get(state).verificationCode && task?.approve) {
 				update({ approval: false });
+				log.info("approved", { operation: task.operation });
 				task.approve();
 			}
 		},
 		rejectVerification() {
 			if (get(state).verificationCode) {
+				log.warn("verification-rejected", { operation: task?.operation });
 				stop("Verification codes did not match. Create a new pairing code.");
 			}
 		},

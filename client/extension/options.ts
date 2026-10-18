@@ -16,6 +16,9 @@ try {
 	const saved = (await browser.storage.local.get("appUrl")).appUrl;
 	input.value = typeof saved === "string" ? saved : "";
 } catch (error) {
+	console.warn("[i2nclip] extension-options.read-failed", {
+		reason: "storage",
+	});
 	output.textContent = error instanceof Error ? error.message : String(error);
 }
 form.addEventListener("submit", async (event) => {
@@ -24,8 +27,12 @@ form.addEventListener("submit", async (event) => {
 		const appUrl = checkAppUrl(input.value);
 		await browser.storage.local.set({ appUrl });
 		input.value = appUrl;
+		console.info("[i2nclip] extension-options.saved", {});
 		output.textContent = "URL saved.";
 	} catch (error) {
+		console.warn("[i2nclip] extension-options.save-failed", {
+			reason: "validation-or-storage",
+		});
 		output.textContent = error instanceof Error ? error.message : String(error);
 	}
 });

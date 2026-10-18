@@ -3,6 +3,7 @@ import { get, writable } from "svelte/store";
 import type { Credentials, IdentityApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
+import { createLog, failureFields } from "../log.ts";
 import {
 	createPersistence,
 	IDENTITY_STORAGE_KEY,
@@ -67,6 +68,7 @@ export function createSession({
 	events?: EventTarget;
 	channel?: () => SessionChannel | null;
 } = {}) {
+	const log = createLog("session");
 	let saved: SavedIdentity | null = null;
 	let key: CryptoKey | null = null;
 	let library: LoadedIdentity | null = null;
@@ -116,9 +118,11 @@ export function createSession({
 			signal.throwIfAborted();
 			sharing.cancel();
 			install(current, grant.key, identity);
+			log.info("shared-unlock-completed");
 		},
 	});
 	function endLifetime() {
+		log.debug("lifetime-ended");
 		lifetime.abort();
 		lifetime = new AbortController();
 		key = null;
@@ -132,6 +136,7 @@ export function createSession({
 		if (saved?.text !== next.text) {
 			endLifetime();
 		}
+		log.info("installed", { configured: Boolean(identity) });
 		saved = next;
 		key = wrapping;
 		library = identity;
@@ -159,6 +164,7 @@ export function createSession({
 			saved = persistence.read();
 			status = saved ? "locked" : "new";
 		} catch (failure) {
+			log.error("read-failed", failureFields(failure));
 			saved = null;
 			status = "locked";
 			error = errorMessage(failure);
@@ -181,6 +187,7 @@ export function createSession({
 				return;
 			}
 		} catch {}
+		log.info("storage-invalidated");
 		command?.abort();
 		command = null;
 		endLifetime();
@@ -210,10 +217,19 @@ export function createSession({
 	function requestAccess() {
 		sharing.request(saved?.text ?? null);
 	}
-	async function action(work: (signal: AbortSignal) => Promise<void>) {
+	async function action(
+		name: string,
+		work: (signal: AbortSignal) => Promise<void>,
+	) {
 		if (disposed || command) {
+			log.debug("rejected", {
+				action: name,
+				reason: disposed ? "disposed" : "busy",
+			});
 			return false;
 		}
+		const operation = log.operation();
+		log.info("started", { action: name, operation });
 		sharing.cancel();
 		const own = new AbortController();
 		command = own;
@@ -221,8 +237,18 @@ export function createSession({
 		try {
 			await work(own.signal);
 			own.signal.throwIfAborted();
+			log.info("completed", { action: name, operation });
 			return true;
 		} catch (error) {
+			if (own.signal.aborted) {
+				log.debug("cancelled", { action: name, operation });
+			} else {
+				log.error("failed", {
+					action: name,
+					operation,
+					...failureFields(error),
+				});
+			}
 			if (!own.signal.aborted) {
 				publish({ error: errorMessage(error) });
 			}
@@ -292,7 +318,7 @@ export function createSession({
 			};
 		},
 		initialize: (password: string) =>
-			action(async (signal) => {
+			action("initialize", async (signal) => {
 				if (persistence.text() !== null) {
 					throw new Error("A master password is already configured.");
 				}
@@ -300,7 +326,7 @@ export function createSession({
 				install(next.saved, next.key, null);
 			}),
 		unlock: (password: string) =>
-			action(async (signal) => {
+			action("unlock", async (signal) => {
 				const current = persistence.read();
 				if (!current) {
 					throw new Error("Create a master password first.");
@@ -315,7 +341,7 @@ export function createSession({
 			}),
 
 		create: ({ serverUrl, otc }: { serverUrl: string; otc: string }) =>
-			action(async (signal) => {
+			action("create", async (signal) => {
 				requireSetup();
 				checkServer(serverUrl);
 				const { privateKey } = await generatePrivateKey();
@@ -333,7 +359,7 @@ export function createSession({
 				await apply(next, signal);
 			}),
 		restore: (file: Blob, password: string) =>
-			action(async (signal) => {
+			action("restore", async (signal) => {
 				requireSetup();
 				if (file.size > MAX_RECOVERY_BYTES) {
 					throw new Error("Recovery file is too large.");
@@ -355,7 +381,7 @@ export function createSession({
 				await apply(next, signal);
 			}),
 		importPairing: (value: PairedIdentity) =>
-			action(async (signal) => {
+			action("importPairing", async (signal) => {
 				requireSetup();
 				const next = await validateIdentity(value);
 				if (next.key.registrationKey !== bytesToB64url(value.public_key)) {
@@ -364,7 +390,7 @@ export function createSession({
 				await apply(next, AbortSignal.any([signal, value.signal]));
 			}),
 		changePassword: (current: string, password: string) =>
-			action(async (signal) => {
+			action("changePassword", async (signal) => {
 				const before = unlocked();
 				const currentKey = await persistence.passwordKey(
 					before.saved,
@@ -380,8 +406,9 @@ export function createSession({
 				);
 				install(next.saved, next.key, identity);
 			}),
-		forget: () => action((signal) => apply(null, signal)),
+		forget: () => action("forget", (signal) => apply(null, signal)),
 		reset() {
+			log.info("reset-requested");
 			if (disposed || command) {
 				return false;
 			}
@@ -390,14 +417,16 @@ export function createSession({
 				persistence.reset(persistence.text());
 				endLifetime();
 				readSaved();
+				log.info("reset-completed");
 				return true;
 			} catch (error) {
+				log.error("reset-failed", failureFields(error));
 				publish({ error: errorMessage(error) });
 				return false;
 			}
 		},
 		downloadRecovery: (password: string) =>
-			action(async (signal) => {
+			action("downloadRecovery", async (signal) => {
 				const current = session.identity();
 				const bytes = await exportRecovery(
 					{ server_url: current.serverUrl, private_key: current.privateKey },
@@ -420,6 +449,7 @@ export function createSession({
 			if (disposed) {
 				return;
 			}
+			log.debug("disposed");
 			disposed = true;
 			command?.abort();
 			events?.removeEventListener("storage", storageChanged);

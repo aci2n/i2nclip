@@ -2,6 +2,7 @@ import { writable } from "svelte/store";
 import type { ViewerApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
+import { createLog, failureFields } from "../log.ts";
 import {
 	createMediaItem,
 	type MediaItem,
@@ -25,6 +26,7 @@ export function createMediaViewer(
 		...options
 	}: Omit<MediaOptions, "http"> & { http?: ViewerApi } = {},
 ) {
+	const log = createLog("media-viewer");
 	const state = writable<ViewerState>({
 		media: null,
 		loading: false,
@@ -39,6 +41,8 @@ export function createMediaViewer(
 		if (signal.aborted || loading) {
 			return false;
 		}
+		const operation = log.operation();
+		log.debug("load-started", { operation });
 		loading = true;
 		state.update((value) => ({ ...value, loading: true, error: "" }));
 		try {
@@ -59,8 +63,18 @@ export function createMediaViewer(
 					state.update((value) => ({ ...value, media })),
 				);
 			}
-			return Boolean(await item.reveal(signal));
+			const ok = Boolean(await item.reveal(signal));
+			log.debug(signal.aborted ? "load-cancelled" : "load-completed", {
+				operation,
+				ok,
+			});
+			return ok;
 		} catch (error) {
+			if (signal.aborted) {
+				log.debug("load-cancelled", { operation });
+			} else {
+				log.error("load-failed", { operation, ...failureFields(error) });
+			}
 			if (!signal.aborted) {
 				const message =
 					error &&
@@ -80,6 +94,7 @@ export function createMediaViewer(
 		}
 	}
 	function dispose() {
+		log.debug("disposed");
 		signal.removeEventListener("abort", dispose);
 		controller.abort();
 		unsubscribe?.();

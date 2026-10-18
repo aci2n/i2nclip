@@ -2,6 +2,7 @@ import { writable } from "svelte/store";
 import type { TagApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
+import { createLog, failureFields } from "../log.ts";
 import type { LibraryContext } from "./session.ts";
 
 const empty = (): {
@@ -18,6 +19,7 @@ export function createTags(
 	context: LibraryContext,
 	{ http = api }: { http?: TagApi } = {},
 ) {
+	const log = createLog("tags");
 	const state = writable(empty());
 	let controller: AbortController | undefined;
 	let disposed = false;
@@ -27,12 +29,19 @@ export function createTags(
 		}
 		controller?.abort();
 		controller = new AbortController();
+		const operation = log.operation();
+		log.debug("refresh-started", { operation });
 		const signal = AbortSignal.any([controller.signal, context.signal]);
 		state.update((v) => ({ ...v, loading: true, error: "" }));
 		try {
 			const result = await http.getTags({ ...context, signal });
 			if (signal.aborted) {
+				log.debug("refresh-stale", { operation });
 				return false;
+			}
+			log.debug("refresh-completed", { operation });
+			if (result.invalid) {
+				log.warn("partial-catalog", { operation, invalid: result.invalid });
 			}
 			state.set({
 				tags: result.tags,
@@ -42,6 +51,11 @@ export function createTags(
 			});
 			return true;
 		} catch (error) {
+			if (signal.aborted) {
+				log.debug("refresh-cancelled", { operation });
+			} else {
+				log.warn("refresh-failed", { operation, ...failureFields(error) });
+			}
 			if (!signal.aborted) {
 				state.update((v) => ({
 					...v,
@@ -57,6 +71,7 @@ export function createTags(
 		subscribe: state.subscribe,
 		refresh,
 		dispose() {
+			log.debug("disposed");
 			disposed = true;
 			controller?.abort();
 			state.set(empty());

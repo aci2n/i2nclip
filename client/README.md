@@ -35,6 +35,23 @@ The uploads store owns sequential batches and refreshes the submitted library se
 
 Pairing uses isolated OPAQUE attempts, explicit verification, and the relay API. Sender, receiver, and progress display have separate components; the store owns the workflow. Recovery exports one identity using an independent password. No migrations or legacy formats are supported.
 
+## Logging
+
+Production and development builds write structured events to the browser console:
+`[i2nclip] pairing.started` followed by an expandable object. Filter for
+`[i2nclip]` or a scope such as `pairing.` or `session-sharing.`. Enable Debug in
+Firefox or Verbose in Chromium to see intermediate steps, retries, cancellations,
+and stale results. Info shows major actions/outcomes; warnings show recoverable
+problems and errors show terminal failures. Instance identifiers distinguish
+owners; operation numbers correlate work within an owner. Neither is persisted.
+
+Web events appear in the page's developer console. Firefox extension background
+events appear in the add-on's console opened through `about:debugging`; injected
+bridge events appear in the app tab's extension/content-script context. Extension
+options events appear in the options page console. There is no remote collection
+or application log storage. Logs omit credentials, codes, payloads, filenames,
+tags, URLs, media hashes, and arbitrary error messages/stacks.
+
 ## Verification
 
 `npm test` runs unit tests; `npm run check` runs Biome checks (lint, formatting, and import organization) strict TypeScript checks, and the Svelte checker. `npm run fix` applies Biome fixes. Both fail on warnings. `make test-build` and `npm run test:build` build and inspect the web and unpacked extension directories.

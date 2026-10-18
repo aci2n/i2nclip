@@ -5,6 +5,9 @@ export function installBridge() {
 		return;
 	}
 	globalThis.i2nclipBridgeInstalled = true;
+	const instance = crypto.randomUUID();
+	let sequence = 0;
+	console.debug("[i2nclip] extension-bridge.installed", { instance });
 	browser.runtime.onMessage.addListener((input: unknown, sender) => {
 		const message =
 			input && typeof input === "object"
@@ -38,6 +41,13 @@ export function installBridge() {
 					"The i2nclip tab is now on another page. Open i2nclip and try again.",
 			});
 		}
+		const operation = ++sequence;
+		if (request.type === "file") {
+			console.debug("[i2nclip] extension-bridge.file-received", {
+				instance,
+				operation,
+			});
+		}
 		return new Promise<BridgeReply>((resolve) => {
 			const token = crypto.randomUUID();
 			let accepted = false;
@@ -51,6 +61,14 @@ export function installBridge() {
 				if (replied) {
 					return;
 				}
+				if (request.type === "file") {
+					console.debug("[i2nclip] extension-bridge.reply", {
+						instance,
+						operation,
+						ok: result.ok,
+						needsUnlock: result.needsUnlock === true,
+					});
+				}
 				replied = true;
 				accepted = result?.ok === true && request.type === "file";
 				clearTimeout(timer);
@@ -60,6 +78,10 @@ export function installBridge() {
 				resolve(result);
 			};
 			const leave = () => {
+				console.debug("[i2nclip] extension-bridge.page-left", {
+					instance,
+					operation,
+				});
 				if (!replied) {
 					finish({
 						ok: false,
@@ -105,6 +127,12 @@ export function installBridge() {
 					if (data.type === "reply" && isReply(result)) {
 						finish(result);
 					} else if (data.type === "complete" && accepted) {
+						console.debug("[i2nclip] extension-bridge.completed", {
+							instance,
+							operation,
+							ok: result.ok === true,
+							cancelled: result.cancelled === true,
+						});
 						cleanup();
 						if (!result.cancelled) {
 							void browser.runtime
@@ -120,21 +148,27 @@ export function installBridge() {
 											: "",
 									appUrl,
 								})
-								.catch(() => {});
+								.catch(() =>
+									console.warn(
+										"[i2nclip] extension-bridge.notification-failed",
+										{ instance, operation },
+									),
+								);
 						}
 					}
 				}
 			};
-			const timer = setTimeout(
-				() =>
-					finish({
-						ok: false,
-						unavailable: true,
-						error:
-							"No response from i2nclip. Check the app before trying again.",
-					}),
-				timeout,
-			);
+			const timer = setTimeout(() => {
+				console.debug("[i2nclip] extension-bridge.timeout", {
+					instance,
+					operation,
+				});
+				finish({
+					ok: false,
+					unavailable: true,
+					error: "No response from i2nclip. Check the app before trying again.",
+				});
+			}, timeout);
 			window.addEventListener("message", reply);
 			window.addEventListener("pagehide", leave, { once: true });
 			window.postMessage(

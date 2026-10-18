@@ -2,6 +2,7 @@ import { get, writable } from "svelte/store";
 import type { LibraryApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
+import { createLog, failureFields } from "../log.ts";
 import { canPreview } from "../media/format.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { normalizeTag } from "../protocol/tags.ts";
@@ -35,6 +36,7 @@ export function createLibrary(
 		confirm = (message: string) => globalThis.confirm(message),
 	}: LibraryOptions = {},
 ) {
+	const log = createLog("library");
 	const state = writable<LibraryState>({
 		cards: [],
 		query: [],
@@ -104,10 +106,14 @@ export function createLibrary(
 		{ more = false, clearDraft = false } = {},
 	) {
 		if (disposed || context.signal.aborted) {
+			log.debug("search-rejected", { reason: "disposed" });
 			return false;
 		}
 		const previous = get(state);
 		if (more && (previous.loading || !previous.next)) {
+			log.debug("search-rejected", {
+				reason: previous.loading ? "busy" : "no-next-page",
+			});
 			return false;
 		}
 		let submitted: string[];
@@ -127,9 +133,16 @@ export function createLibrary(
 				throw new Error("Too many search tags (maximum 64).");
 			}
 		} catch (error) {
+			log.warn("search-invalid", failureFields(error));
 			state.update((v) => ({ ...v, status: errorMessage(error) }));
 			return false;
 		}
+		const operation = log.operation();
+		log.debug("search-started", {
+			operation,
+			more,
+			tagCount: submitted.length,
+		});
 		searchController?.abort();
 		searchController = new AbortController();
 		const signal = AbortSignal.any([searchController.signal, context.signal]);
@@ -155,8 +168,14 @@ export function createLibrary(
 				signal,
 			});
 			if (signal.aborted) {
+				log.debug("search-stale", { operation });
 				return false;
 			}
+			log.debug("search-completed", {
+				operation,
+				count: page.items.length,
+				hasNext: Boolean(page.next),
+			});
 			for (const item of page.items) {
 				add(item);
 			}
@@ -167,6 +186,11 @@ export function createLibrary(
 			}));
 			return true;
 		} catch (error) {
+			if (signal.aborted) {
+				log.debug("search-cancelled", { operation });
+			} else {
+				log.error("search-failed", { operation, ...failureFields(error) });
+			}
 			if (!signal.aborted) {
 				state.update((v) => ({ ...v, status: errorMessage(error) }));
 			}
@@ -250,6 +274,7 @@ export function createLibrary(
 			return false;
 		},
 		dispose() {
+			log.debug("disposed");
 			disposed = true;
 			reset();
 		},

@@ -1,3 +1,4 @@
+import { createLog, failureFields } from "./log.ts";
 export type SessionChannel = Pick<
 	BroadcastChannel,
 	"postMessage" | "close" | "addEventListener" | "removeEventListener"
@@ -24,6 +25,8 @@ export function createSessionSharing({
 	accept: (grant: Grant, signal: AbortSignal) => Promise<void>;
 	checking: (value: boolean) => void;
 }) {
+	const log = createLog("session-sharing");
+	let operation = 0;
 	let channel: SessionChannel | null = null;
 	let pending: {
 		id: string;
@@ -32,6 +35,9 @@ export function createSessionSharing({
 	} | null = null;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	function cancel() {
+		if (pending) {
+			log.debug("cancelled", { operation });
+		}
 		pending?.controller.abort();
 		pending = null;
 		clearTimeout(timer);
@@ -40,7 +46,8 @@ export function createSessionSharing({
 	function send(message: unknown) {
 		try {
 			channel?.postMessage(message);
-		} catch {
+		} catch (error) {
+			log.warn("send-failed", failureFields(error));
 			dispose();
 		}
 	}
@@ -49,13 +56,18 @@ export function createSessionSharing({
 		if (!channel || record === null) {
 			return;
 		}
+		operation = log.operation();
+		log.debug("requested", { operation });
 		pending = {
 			id: crypto.randomUUID(),
 			record,
 			controller: new AbortController(),
 		};
 		checking(true);
-		timer = setTimeout(() => checking(false), 500);
+		timer = setTimeout(() => {
+			log.debug("discovery-wait-elapsed", { operation });
+			checking(false);
+		}, 500);
 		send({ type: "request", id: pending.id, record });
 	}
 	function receive(event: MessageEvent<unknown>) {
@@ -70,6 +82,7 @@ export function createSessionSharing({
 			return;
 		}
 		if (data.type === "available") {
+			log.debug("available-received");
 			if (lockedRecord() === data.record) {
 				request(data.record);
 			}
@@ -80,6 +93,7 @@ export function createSessionSharing({
 		) {
 			const grant = current();
 			if (grant?.record === data.record) {
+				log.debug("grant-sent");
 				send({ type: "grant", id: data.id, ...grant });
 			}
 		} else if (
@@ -98,15 +112,29 @@ export function createSessionSharing({
 				!key.usages.includes("encrypt") ||
 				!key.usages.includes("decrypt")
 			) {
+				log.warn("grant-rejected", { operation, reason: "key-policy" });
 				return;
 			}
+			const received = operation;
+			const signal = pending.controller.signal;
+			log.debug("grant-received", { operation: received });
 			void accept(
 				{ record: data.record, key },
 				pending.controller.signal,
-			).catch(() => {});
+			).catch((error) => {
+				if (signal.aborted) {
+					log.debug("accept-cancelled", { operation: received });
+				} else {
+					log.warn("accept-failed", {
+						operation: received,
+						...failureFields(error),
+					});
+				}
+			});
 		}
 	}
 	function dispose() {
+		log.debug("disposed");
 		cancel();
 		channel?.removeEventListener("message", receive);
 		channel?.removeEventListener("messageerror", dispose);
@@ -115,15 +143,20 @@ export function createSessionSharing({
 	}
 	try {
 		channel = factory();
+		log.debug("channel-ready", { available: Boolean(channel) });
 		channel?.addEventListener("message", receive);
 		channel?.addEventListener("messageerror", dispose);
-	} catch {
+	} catch (error) {
+		log.warn("channel-failed", failureFields(error));
 		dispose();
 	}
 	return {
 		request,
 		cancel,
 		dispose,
-		announce: (record: string) => send({ type: "available", record }),
+		announce(record: string) {
+			log.debug("announced");
+			send({ type: "available", record });
+		},
 	};
 }
