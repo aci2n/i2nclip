@@ -8,7 +8,7 @@ import {
 	number,
 	string,
 } from "../protocol/value.ts";
-import type { PairingCrypto } from "./crypto.ts";
+import { createPairingCrypto, type PairingCrypto } from "./crypto.ts";
 export interface Room {
 	v: number;
 	id: string;
@@ -64,7 +64,6 @@ export function pairingCrypto(): PairingCrypto {
 			signal.addEventListener("abort", onAbort, { once: true });
 		});
 		const work = async () => {
-			const { createPairingCrypto } = await import("./crypto.ts");
 			signal.throwIfAborted();
 			execute ||= createPairingCrypto();
 			const current = execute;

@@ -8,6 +8,7 @@ import {
 	imageFixture,
 	issueOtc,
 	master,
+	openUploadOptions,
 	shot,
 	test,
 } from "./fixtures.ts";
@@ -99,6 +100,7 @@ test("setup, settings and password entry share usable controls at every width", 
 		await page.setViewportSize({ width, height: 800 });
 		await consistentControls(page, width < 500);
 		if (width < 500) {
+			await openUploadOptions(page);
 			expect(
 				assertPresent(
 					await page
@@ -153,6 +155,7 @@ test("mixed media, inline filename editing and preview icons stay consistent acr
 	app,
 }) => {
 	await createLibrary(page, app);
+	await openUploadOptions(page);
 	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.route("**/api/tags", (route) =>

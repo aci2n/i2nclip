@@ -8,6 +8,7 @@ import {
 	createLibrary,
 	expect,
 	imageFixture,
+	openUploadOptions,
 	PASSWORD,
 	recovery,
 	shot,
@@ -27,6 +28,7 @@ test("private links inherit access and show native media, escaped text and expli
 	app,
 }) => {
 	await createLibrary(page, app);
+	await openUploadOptions(page);
 	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	const files = [
 		await imageFixture(page, "Landscape.png", 960, 540),
@@ -191,6 +193,7 @@ test("direct links preserve the target through password unlock, navigation, relo
 	browser,
 }) => {
 	await createLibrary(page, app);
+	await openUploadOptions(page);
 	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	const backup = await recovery(page);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
@@ -266,6 +269,7 @@ test("invalid, missing and failed file links offer local errors and retry", asyn
 	app,
 }) => {
 	await createLibrary(page, app);
+	await openUploadOptions(page);
 	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page
@@ -318,6 +322,7 @@ test("forgetting the identity cancels a loading viewer and ignores its late cont
 	app,
 }) => {
 	await createLibrary(page, app);
+	await openUploadOptions(page);
 	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page

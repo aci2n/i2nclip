@@ -163,3 +163,18 @@ export async function shot(page: Page, name: string, { fullPage = true } = {}) {
 	}
 	await page.emulateMedia({ colorScheme: "light" });
 }
+
+export async function openUploadOptions(page: Page) {
+	const section = page
+		.locator(".settings > details")
+		.filter({ has: page.getByText("Upload options", { exact: true }) });
+	const summary = section.locator("summary").first();
+	await expect(summary).toBeVisible();
+	if (
+		!(await section.evaluate(
+			(node) => node instanceof HTMLDetailsElement && node.open,
+		))
+	) {
+		await summary.click();
+	}
+}

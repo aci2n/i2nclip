@@ -6,6 +6,7 @@ import {
 	expect,
 	imageFixture,
 	master,
+	openUploadOptions,
 	shot,
 	test,
 } from "./fixtures.ts";
@@ -15,18 +16,22 @@ test("video options preserve per-file snapshots across navigation and persist de
 	app,
 }) => {
 	await createLibrary(page, app);
+	await openUploadOptions(page);
 	const enabled = page.getByRole("checkbox", {
 		name: "Convert video",
 		exact: true,
 	});
 	await expect(enabled).not.toBeChecked();
 	await enabled.check();
+	await openUploadOptions(page);
 	await page
 		.getByRole("combobox", { name: "Video container", exact: true })
 		.selectOption("webm");
+	await openUploadOptions(page);
 	await expect(
 		page.getByRole("combobox", { name: "Video codec", exact: true }),
 	).toHaveValue("vp9");
+	await openUploadOptions(page);
 	await page
 		.getByLabel("Maximum video width (px)", { exact: true })
 		.fill("320");
@@ -75,9 +80,7 @@ test("video options preserve per-file snapshots across navigation and persist de
 		}
 	}
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
-	await expect(
-		page.getByRole("heading", { name: "Videos", exact: true }),
-	).toBeVisible();
+	await openUploadOptions(page);
 	await page
 		.getByLabel("Maximum video width (px)", { exact: true })
 		.fill("240");
@@ -101,13 +104,13 @@ test("video options preserve per-file snapshots across navigation and persist de
 	await page.reload();
 	await master(page);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
-	await expect(
-		page.getByRole("heading", { name: "Videos", exact: true }),
-	).toBeVisible();
+	await openUploadOptions(page);
 	await expect(enabled).toBeChecked();
+	await openUploadOptions(page);
 	await expect(
 		page.getByRole("combobox", { name: "Video container", exact: true }),
 	).toHaveValue("webm");
+	await openUploadOptions(page);
 	await expect(
 		page.getByLabel("Maximum video width (px)", { exact: true }),
 	).toHaveValue("240");

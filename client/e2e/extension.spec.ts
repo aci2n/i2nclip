@@ -6,6 +6,7 @@ import {
 	expect,
 	imageFixture,
 	master,
+	openUploadOptions,
 	shot,
 	test,
 } from "./fixtures.ts";
@@ -76,6 +77,7 @@ test("app receives captures through its public event interface and uploads after
 	context,
 }) => {
 	await createLibrary(page, app);
+	await openUploadOptions(page);
 	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	const image = await imageFixture(
 		page,

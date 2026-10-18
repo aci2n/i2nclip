@@ -14,7 +14,9 @@ Expose one convertMedia request interface for image/video dispatch, source/outpu
 size policy, callbacks and cancellation; keep codec implementations in matching
 image/video modules. Upload preparation calls only this interface. Replace dynamic
 and inline type imports in this conversion path with module-scope imports. This
-explicitly replaces the earlier lazy-loading decision. No plugin/codec polyfills.
+explicitly replaces the earlier lazy-loading decision. The existing pairing
+crypto module is also imported at module scope; its per-attempt executor remains
+created on demand and disposable. No plugin/codec polyfills.
 
 The source file's size is inspected before reading: disabled uploads and files
 with no enabled applicable converter reject immediately. Eligible oversized media

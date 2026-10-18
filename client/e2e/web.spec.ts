@@ -7,6 +7,7 @@ import {
 	expect,
 	imageFixture,
 	master,
+	openUploadOptions,
 	PASSWORD,
 	recovery,
 	restore,
@@ -19,6 +20,7 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	app,
 }) => {
 	await createLibrary(page, app);
+	await openUploadOptions(page);
 	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	await expect(page.getByLabel("Library name", { exact: true })).toHaveCount(0);
 	await page.getByRole("link", { name: "Library", exact: true }).click();

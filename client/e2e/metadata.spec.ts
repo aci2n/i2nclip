@@ -6,6 +6,7 @@ import {
 	createLibrary,
 	expect,
 	imageFixture,
+	openUploadOptions,
 	PASSWORD,
 	recovery,
 	test,
@@ -57,6 +58,7 @@ test("generic encrypted metadata updates rename downloads and preserve file cont
 	app,
 }) => {
 	await createLibrary(page, app);
+	await openUploadOptions(page);
 	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	const manifest = await recovery(page);
 	const { identity, key } = await openRecovery(manifest, PASSWORD);

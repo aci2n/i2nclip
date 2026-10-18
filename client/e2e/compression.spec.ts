@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises";
+import { deferred } from "../tests/helpers.ts";
 import {
 	createLibrary,
 	expect,
 	imageFixture,
 	master,
+	openUploadOptions,
 	shot,
 	test,
 } from "./fixtures.ts";
@@ -13,6 +15,7 @@ test("default compression updates saved format and device preference preserves o
 	app,
 }) => {
 	await createLibrary(page, app);
+	await openUploadOptions(page);
 	const setting = page.getByRole("checkbox", {
 		name: "Convert image",
 	});
@@ -42,12 +45,11 @@ test("default compression updates saved format and device preference preserves o
 	expect(bytes.subarray(8, 12).toString()).toBe("WEBP");
 	expect(bytes.length).toBeLessThan(image.buffer.length);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
-	await expect(
-		page.getByRole("heading", { name: "Images", exact: true }),
-	).toBeVisible();
+	await openUploadOptions(page);
 	await setting.uncheck();
 	await page.reload();
 	await master(page);
+	await openUploadOptions(page);
 	await expect(setting).not.toBeChecked();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.getByLabel("Upload", { exact: true }).setInputFiles(image);
@@ -128,10 +130,13 @@ test("per-file formats and bounds stay independent across navigation and default
 	app,
 }) => {
 	await createLibrary(page, app);
+	await openUploadOptions(page);
 	await page
 		.getByRole("combobox", { name: "Output format", exact: true })
 		.selectOption("jpeg");
+	await openUploadOptions(page);
 	await page.getByLabel("Quality (0–100)", { exact: true }).fill("72");
+	await openUploadOptions(page);
 	await page.getByLabel("Maximum width (px)", { exact: true }).fill("800");
 	await page.getByRole("heading", { name: "Images", exact: true }).click();
 	const images = [
@@ -171,9 +176,7 @@ test("per-file formats and bounds stay independent across navigation and default
 		}
 	}
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
-	await expect(
-		page.getByRole("heading", { name: "Images", exact: true }),
-	).toBeVisible();
+	await openUploadOptions(page);
 	await page.getByLabel("Maximum width (px)", { exact: true }).fill("600");
 	await page.getByRole("heading", { name: "Images", exact: true }).click();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
@@ -209,5 +212,50 @@ test("per-file formats and bounds stay independent across navigation and default
 		await card.getByText("File details", { exact: true }).click();
 		await expect(card.getByText(type, { exact: true })).toBeVisible();
 		await expect(card.getByText(dimensions, { exact: true })).toBeVisible();
+	}
+});
+
+test("oversized images can encode below quota and progress uses the converted filename", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app, undefined, 1024);
+	await expect(
+		page.getByRole("region", { name: "Library usage" }),
+	).toContainText("Maximum file size: 1.0 KB");
+	const image = await imageFixture(page, "Quota image.png", 1920, 1080);
+	expect(image.buffer.length).toBeGreaterThan(1024);
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	await page.getByLabel("Upload", { exact: true }).setInputFiles(image);
+	const review = page.getByRole("region", { name: "Review uploads" });
+	await review.getByText("Upload options", { exact: true }).click();
+	await review.getByLabel("Maximum width (px)", { exact: true }).fill("240");
+	const held = deferred();
+	const started = deferred();
+	await page.route("**/api/media", async (route) => {
+		if (route.request().method() === "POST") {
+			started.resolve();
+			await held.promise;
+		}
+		await route.continue().catch(() => {});
+	});
+	try {
+		await review
+			.getByRole("button", { name: "Start upload", exact: true })
+			.click();
+		await started.promise;
+		const uploads = page.getByRole("region", { name: "Uploads", exact: true });
+		await expect(uploads).toContainText("Quota image.webp");
+		held.resolve();
+		await expect(
+			page.getByRole("button", { name: "Open Quota image.webp", exact: true }),
+		).toBeVisible();
+		await uploads.getByText("1 file uploaded", { exact: true }).click();
+		await expect(
+			uploads.getByText("Quota image.webp", { exact: true }),
+		).toBeVisible();
+	} finally {
+		held.resolve();
+		await page.unrouteAll({ behavior: "wait" });
 	}
 });

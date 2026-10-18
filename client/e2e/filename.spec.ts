@@ -1,13 +1,21 @@
 import { readFile } from "node:fs/promises";
 import { encode } from "../src/lib/protocol/msgpack.ts";
 import { assertPresent } from "../tests/assert.ts";
-import { createLibrary, expect, imageFixture, shot, test } from "./fixtures.ts";
+import {
+	createLibrary,
+	expect,
+	imageFixture,
+	openUploadOptions,
+	shot,
+	test,
+} from "./fixtures.ts";
 
 test("filenames edit inline, save on Enter, retain failed drafts, and do not save on blur", async ({
 	page,
 	app,
 }) => {
 	await createLibrary(page, app);
+	await openUploadOptions(page);
 	await page.getByRole("checkbox", { name: "Convert image" }).uncheck();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const originalName = `${"A landscape with a long filename ".repeat(4)}.png`;
