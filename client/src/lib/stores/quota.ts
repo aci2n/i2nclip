@@ -14,53 +14,76 @@ const empty = (): {
 export type QuotaStore = ReturnType<typeof createQuota>;
 
 // Workspace owns this store; navigation preserves reads until its context ends.
+interface QuotaDependencies {
+	context: LibraryContext;
+	http: QuotaApi;
+	log: ReturnType<typeof createLog>;
+}
+interface QuotaRuntime {
+	state: ReturnType<typeof writable<ReturnType<typeof empty>>>;
+	controller?: AbortController;
+	disposed: boolean;
+}
+
 export function createQuota(
 	context: LibraryContext,
 	{ http = api }: { http?: QuotaApi } = {},
 ) {
-	const log = createLog("quota");
-	const state = writable(empty());
-	let controller: AbortController | undefined;
-	let disposed = false;
+	const deps: QuotaDependencies = { context, http, log: createLog("quota") };
+	const runtime: QuotaRuntime = { state: writable(empty()), disposed: false };
 
-	async function refresh() {
-		if (disposed || get(state).loading || context.signal.aborted) {
-			return false;
-		}
-		controller = new AbortController();
-		const operation = log.operation();
-		log.debug("refresh-started", { operation });
-		const signal = AbortSignal.any([controller.signal, context.signal]);
-		state.set({ value: null, loading: true, error: "" });
-		try {
-			const quota = await http.getQuota({ ...context, signal });
-			if (signal.aborted) {
-				log.debug("refresh-stale", { operation });
-				return false;
-			}
-			log.debug("refresh-completed", { operation });
-			state.set({ value: quota, loading: false, error: "" });
-			return true;
-		} catch (error) {
-			if (signal.aborted) {
-				log.debug("refresh-cancelled", { operation });
-			} else {
-				log.warn("refresh-failed", { operation, ...failureFields(error) });
-			}
-			if (!signal.aborted) {
-				state.set({ value: null, loading: false, error: errorMessage(error) });
-			}
-			return false;
-		}
-	}
 	return {
-		subscribe: state.subscribe,
-		refresh,
-		dispose() {
-			log.debug("disposed");
-			disposed = true;
-			controller?.abort();
-			state.set(empty());
-		},
+		subscribe: runtime.state.subscribe,
+		refresh: refreshQuota.bind(null, deps, runtime),
+		dispose: disposeQuota.bind(null, deps, runtime),
 	};
+}
+
+async function refreshQuota(deps: QuotaDependencies, runtime: QuotaRuntime) {
+	if (
+		runtime.disposed ||
+		get(runtime.state).loading ||
+		deps.context.signal.aborted
+	) {
+		return false;
+	}
+	runtime.controller = new AbortController();
+	const operation = deps.log.operation();
+	deps.log.debug("refresh-started", { operation });
+	const signal = AbortSignal.any([
+		runtime.controller.signal,
+		deps.context.signal,
+	]);
+	runtime.state.set({ value: null, loading: true, error: "" });
+	try {
+		const quota = await deps.http.getQuota({ ...deps.context, signal });
+		if (signal.aborted) {
+			deps.log.debug("refresh-stale", { operation });
+			return false;
+		}
+		deps.log.debug("refresh-completed", { operation });
+		runtime.state.set({ value: quota, loading: false, error: "" });
+		return true;
+	} catch (error) {
+		if (signal.aborted) {
+			deps.log.debug("refresh-cancelled", { operation });
+		} else {
+			deps.log.warn("refresh-failed", { operation, ...failureFields(error) });
+		}
+		if (!signal.aborted) {
+			runtime.state.set({
+				value: null,
+				loading: false,
+				error: errorMessage(error),
+			});
+		}
+		return false;
+	}
+}
+
+function disposeQuota(deps: QuotaDependencies, runtime: QuotaRuntime) {
+	deps.log.debug("disposed");
+	runtime.disposed = true;
+	runtime.controller?.abort();
+	runtime.state.set(empty());
 }

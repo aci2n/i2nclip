@@ -15,66 +15,82 @@ const empty = (): {
 // Application owns the catalog for the unlocked identity, independently of pages.
 export type Tags = ReturnType<typeof createTags>;
 
+interface TagsDependencies {
+	context: LibraryContext;
+	http: TagApi;
+	log: ReturnType<typeof createLog>;
+}
+interface TagsRuntime {
+	state: ReturnType<typeof writable<ReturnType<typeof empty>>>;
+	controller?: AbortController;
+	disposed: boolean;
+}
+
 export function createTags(
 	context: LibraryContext,
 	{ http = api }: { http?: TagApi } = {},
 ) {
-	const log = createLog("tags");
-	const state = writable(empty());
-	let controller: AbortController | undefined;
-	let disposed = false;
-	async function refresh() {
-		if (disposed || context.signal.aborted) {
-			return false;
-		}
-		controller?.abort();
-		controller = new AbortController();
-		const operation = log.operation();
-		log.debug("refresh-started", { operation });
-		const signal = AbortSignal.any([controller.signal, context.signal]);
-		state.update((v) => ({ ...v, loading: true, error: "" }));
-		try {
-			const result = await http.getTags({ ...context, signal });
-			if (signal.aborted) {
-				log.debug("refresh-stale", { operation });
-				return false;
-			}
-			log.debug("refresh-completed", { operation });
-			if (result.invalid) {
-				log.warn("partial-catalog", { operation, invalid: result.invalid });
-			}
-			state.set({
-				tags: result.tags,
-				loading: false,
-				error: "",
-				warning: result.invalid ? "Some tag suggestions are unavailable." : "",
-			});
-			return true;
-		} catch (error) {
-			if (signal.aborted) {
-				log.debug("refresh-cancelled", { operation });
-			} else {
-				log.warn("refresh-failed", { operation, ...failureFields(error) });
-			}
-			if (!signal.aborted) {
-				state.update((v) => ({
-					...v,
-					loading: false,
-					error: errorMessage(error),
-				}));
-			}
-			return false;
-		}
-	}
-	void refresh();
+	const deps: TagsDependencies = { context, http, log: createLog("tags") };
+	const runtime: TagsRuntime = { state: writable(empty()), disposed: false };
+	void refreshTags(deps, runtime);
+
 	return {
-		subscribe: state.subscribe,
-		refresh,
-		dispose() {
-			log.debug("disposed");
-			disposed = true;
-			controller?.abort();
-			state.set(empty());
-		},
+		subscribe: runtime.state.subscribe,
+		refresh: refreshTags.bind(null, deps, runtime),
+		dispose: disposeTags.bind(null, deps, runtime),
 	};
+}
+
+async function refreshTags(deps: TagsDependencies, runtime: TagsRuntime) {
+	if (runtime.disposed || deps.context.signal.aborted) {
+		return false;
+	}
+	runtime.controller?.abort();
+	runtime.controller = new AbortController();
+	const operation = deps.log.operation();
+	deps.log.debug("refresh-started", { operation });
+	const signal = AbortSignal.any([
+		runtime.controller.signal,
+		deps.context.signal,
+	]);
+	runtime.state.update((v) => ({ ...v, loading: true, error: "" }));
+	try {
+		const result = await deps.http.getTags({ ...deps.context, signal });
+		if (signal.aborted) {
+			deps.log.debug("refresh-stale", { operation });
+			return false;
+		}
+		deps.log.debug("refresh-completed", { operation });
+		if (result.invalid) {
+			deps.log.warn("partial-catalog", { operation, invalid: result.invalid });
+		}
+		runtime.state.set({
+			tags: result.tags,
+			loading: false,
+			error: "",
+			warning: result.invalid ? "Some tag suggestions are unavailable." : "",
+		});
+		return true;
+	} catch (error) {
+		if (signal.aborted) {
+			deps.log.debug("refresh-cancelled", { operation });
+		} else {
+			deps.log.warn("refresh-failed", { operation, ...failureFields(error) });
+		}
+		if (!signal.aborted) {
+			runtime.state.update((v) => ({
+				...v,
+				loading: false,
+				error: errorMessage(error),
+			}));
+		}
+		return false;
+	}
+}
+
+function disposeTags(deps: TagsDependencies, runtime: TagsRuntime) {
+	deps.log.debug("disposed");
+	runtime.disposed = true;
+	runtime.controller?.abort();
+	runtime.state.set(empty());
 }
