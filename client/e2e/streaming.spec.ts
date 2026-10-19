@@ -329,3 +329,66 @@ test("locking aborts active content and rejects new streaming sessions", async (
 		}),
 	).toBe(true);
 });
+
+test("fresh worker instances retain virtual URLs while closing the owning tab ends access", async ({
+	page,
+	context,
+	browserName,
+	streamingOrigin,
+}) => {
+	await page.goto(streamingOrigin);
+	await page.waitForFunction(() => Boolean(window.streamingProof));
+	const source = await page.evaluate(() =>
+		window.streamingProof.generated(2 ** 33),
+	);
+	if (browserName === "chromium") {
+		const protocol = await context.newCDPSession(page);
+		await protocol.send("ServiceWorker.enable");
+		await protocol.send("ServiceWorker.stopAllWorkers");
+		await protocol.detach();
+	} else {
+		await page.evaluate(async () => {
+			const registration = await navigator.serviceWorker.getRegistration();
+			await registration?.unregister();
+			await navigator.serviceWorker.register(
+				`/streaming-worker.js?instance=${crypto.randomUUID()}`,
+				{ scope: "/" },
+			);
+		});
+		await page.waitForFunction(() =>
+			navigator.serviceWorker.controller?.scriptURL.includes("?instance="),
+		);
+	}
+	const bytes = await page.evaluate(
+		async (url) =>
+			Array.from(
+				new Uint8Array(
+					await (
+						await fetch(url, {
+							headers: { range: "bytes=4294967296-4294967300" },
+						})
+					).arrayBuffer(),
+				),
+			),
+		source.url,
+	);
+	expect(bytes).toEqual(
+		Array.from({ length: 5 }, (_, i) => (2 ** 32 + i) % 251),
+	);
+	const remaining = await context.newPage();
+	try {
+		await remaining.goto(streamingOrigin);
+		await remaining.waitForFunction(() => Boolean(window.streamingProof));
+		await remaining.evaluate(() => window.streamingProof.generated(1));
+		await page.close();
+		expect(
+			await remaining.evaluate(
+				async (url) =>
+					(await fetch(url, { headers: { range: "bytes=0-0" } })).status,
+				source.url,
+			),
+		).toBe(404);
+	} finally {
+		await remaining.close();
+	}
+});

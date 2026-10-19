@@ -181,3 +181,66 @@ test("preview stops at loaded boundaries and More loads the submitted search", a
 	await expect(next).toBeDisabled();
 	expect(requests).toHaveLength(1);
 });
+
+test("tail-indexed MP4 reads its final encrypted chunk and seeks through the native player", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	const original = await readFile(
+		new URL("./fixtures/clip.mp4", import.meta.url),
+	);
+	let offset = 0;
+	while (
+		offset < original.length &&
+		original.toString("ascii", offset + 4, offset + 8) !== "moov"
+	) {
+		offset += original.readUInt32BE(offset);
+	}
+	expect(offset).toBeLessThan(original.length);
+	const padding = Buffer.alloc(8 * 1024 * 1024);
+	padding.writeUInt32BE(padding.length);
+	padding.write("free", 4, "ascii");
+	// A free box after mdat preserves sample offsets and moves moov past 8 MiB.
+	const buffer = Buffer.concat([
+		original.subarray(0, offset),
+		padding,
+		original.subarray(offset),
+	]);
+	await page
+		.getByLabel("Upload", { exact: true })
+		.setInputFiles({ name: "Tail.mp4", mimeType: "video/mp4", buffer });
+	await expect(page.getByRole("article")).toHaveCount(1);
+	const chunks = new Set<number>();
+	page.on("request", (request) => {
+		if (request.method() === "GET") {
+			const match = new URL(request.url()).pathname.match(/\/chunks\/(\d+)$/);
+			if (match) {
+				chunks.add(Number(match[1]));
+			}
+		}
+	});
+	await page
+		.getByRole("button", { name: "Play Tail.mp4", exact: true })
+		.click();
+	const video = page.getByRole("dialog").locator("video");
+	await expect
+		.poll(() =>
+			video.evaluate((element: HTMLVideoElement) => element.readyState),
+		)
+		.toBeGreaterThanOrEqual(1);
+	await video.evaluate(async (element: HTMLVideoElement) => {
+		element.currentTime = 1;
+		await element.play();
+	});
+	await expect
+		.poll(() =>
+			video.evaluate((element: HTMLVideoElement) => element.currentTime),
+		)
+		.toBeGreaterThan(1);
+	expect(chunks.has(2)).toBe(true);
+	await page
+		.getByRole("button", { name: "Close preview", exact: true })
+		.click();
+});
