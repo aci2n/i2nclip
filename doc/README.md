@@ -9,9 +9,9 @@
 - [Test pipeline](test-pipeline.md): commands, toolchains, and fixture isolation.
 - [Resource profiling](postgresql-profile.md): optional measurements and reproduction.
 - [Improvement priorities](priorities.md): open topics requiring separate specifications.
-- [Chunk uploads specification](chunk-uploads.md): independently encrypted chunks and browser streaming; implementation in progress.
-- [Transfer and shutdown proposal](transfer-shutdown-proposal.md): unimplemented deadline proposal.
+- [Chunk uploads specification](chunk-uploads.md): independently encrypted chunks and browser streaming; implemented.
+- [Transfer and shutdown deadlines](transfer-shutdown-proposal.md): implemented resource and shutdown limits.
 
 Current behavior is documented separately from proposed work. The Rust server is
-in `src/`; the web app and extension are in `client/`. Completed implementation
-plans and verification reports live in Git history rather than this directory.
+in `src/`; the web app and extension are in `client/`. Historical change specifications remain in this directory and Git history;
+use the documents linked above for current behavior.

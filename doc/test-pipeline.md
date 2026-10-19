@@ -22,6 +22,16 @@ Shared test process helpers discover Cargo's target directory from metadata, exe
 
 Browser startup is prepared before scenario execution. Screenshots use Playwright's per-test output directory, preventing concurrent scenarios and separate projects from overwriting each other's artifacts.
 
+## Reliability checks
+
+Session tests cover same-tab Create recovery after lost registration replies and
+storage failures, reuse of the original key, failed registration checks, rejected
+invitations and invalidation. Server tests use paused time to verify admission and
+download deadlines, including response bodies never polled. A real loopback port-0
+TCP fixture bounds socket buffers to exercise backpressure without assuming host
+buffer sizes. The shutdown subprocess fixture verifies nonzero termination despite
+a detached blocking task; its parent bounds waiting and kills/reaps it on failure.
+
 ## Mobile layout checks
 
 `make test-e2e` (also included in `make test-all`) runs the mobile tag-editor

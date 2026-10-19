@@ -16,10 +16,10 @@ Late grants cannot restore old access. A missing or failed channel uses password
 unlock. See [shared-session specification](shared-session.md).
 
 The root application owns a workspace for the fixed LibraryContext (server URL,
-loaded key and lifetime signal). It contains library, tags and uploads stores,
+loaded key and lifetime signal). It contains library, tags, quota and uploads stores,
 survives page navigation, and is synchronously disposed when its context ends.
-These stores never subscribe to session changes or compare epochs. Settings owns
-quota for the fixed context. Root-owned pairing and extension capture use the
+These stores never subscribe to session changes or compare epochs. Settings receives
+quota and uploads explicitly from the application. Root-owned pairing and extension capture use the
 record lifetime; pending captures survive unlocking the same record, not replacement.
 Views subscribe to stores and pass ordinary props and callbacks to components.
 
@@ -54,6 +54,15 @@ There are no migrations or unlock caches in sessionStorage.
 Setup offers Create, Restore, and Pair device. Create and Pair use a view-local
 server draft in a disclosure, defaulting to the app origin. Restore uses the
 server in the recovery identity. Stores own validation, registration and saving.
+Create retains one candidate identity in session memory before sending registration.
+Retrying Create for the same normalized server origin checks its signed registration
+first: a registered candidate is saved without spending another invitation; a
+definitively unregistered candidate uses the currently submitted invitation. Failed
+checks do not submit registration. Registration/storage failures and failed Restore
+attempts retain the candidate. Successful installation, saved-record invalidation,
+Reset, disposal, or Create selecting another origin clears it. No invitation or
+pending enrollment is persisted; reload/closure can lose an uncertain registration.
+Keep the tab open and retry Create until the identity is saved.
 
 ## Browsing and uploads
 
