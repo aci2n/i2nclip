@@ -1,7 +1,7 @@
 # Chunk uploads and browser streaming
 
-Status: implementation specification. Approved decisions are recorded below;
-implementation progress and evidence follow at the end. Deploy as a fresh storage
+Status: implemented. Approved decisions are recorded below;
+verification evidence follows at the end. Deploy as a fresh storage
 format, with client and server updated together.
 
 ## Goal and scope
@@ -255,7 +255,28 @@ cargo run --features test-containers --example postgres-tests -- \
   invalidation, view-independent downloads and context teardown.
 - Native loading feedback stays beside the preview; chunk failures offer retry.
 
-Verification evidence is updated after final regression/resource runs. The
-cutover requires a fresh database and matching client/server; SQLx still owns
+The cutover requires a fresh database and matching client/server; SQLx still owns
 startup migration application. The ordinary future-migration policy resumes
 with the next numbered SQL file.
+
+### Final verification (2026-10-19)
+
+Work was merged into `/home/i2n/src/i2nclip` before the client cutover and continued
+there in cohesive commits. Client unit tests, the Svelte/TypeScript/Biome checks,
+Rust Clippy/formatting, web/extension artifact checks, and PostgreSQL suites passed
+(56 library tests, five configuration tests and 18 signed API tests).
+
+All 120 browser cases passed across the final regression run and targeted reruns:
+118 ordinary/streaming cases plus the real encrypted 1 GiB + 123-byte transfer in
+each browser. Two visual assertions still expected Blob URLs or a single image
+element while a thumbnail was visible; they were updated for the streaming path
+and rerun successfully in Firefox and Chromium. The final 12-case deeplink/visual
+rerun also passed after the ready-item download retry correction.
+
+Coverage includes independent authenticated chunks, native byte-exact downloads
+across navigation, first visits/deeplinks, media seeking, tail-indexed VP9 MP4,
+worker stop/replacement, closed owning tabs, cancellation and lock. Firefox
+screenshots were inspected in both themes at narrow widths, including loading,
+portrait/panorama media and error states. `make test-profile` passed; see
+[resource measurements](postgresql-profile.md) for host-specific figures and
+measurement limits. No existing user database was converted or reset.

@@ -131,11 +131,16 @@ test("private links inherit access and show native media, escaped text and expli
 					await expect(
 						viewer.getByRole("img", { name: file.name, exact: true }),
 					).toBeVisible();
-					expect(
-						await viewer
-							.locator("img")
-							.evaluate((image: HTMLImageElement) => image.naturalWidth),
-					).toBeGreaterThan(1);
+					await expect
+						.poll(() =>
+							viewer
+								.locator('img[src^="/__content/"]')
+								.evaluate(
+									(image: HTMLImageElement) =>
+										image.complete && image.naturalWidth > 1,
+								),
+						)
+						.toBe(true);
 				} else if (
 					file.mimeType.startsWith("audio/") ||
 					file.mimeType.startsWith("video/")

@@ -216,7 +216,10 @@ test("mixed media, inline filename editing and preview icons stay consistent acr
 			await page.getByRole("button", { name, exact: true }).click();
 			await expect(dialog).toBeVisible();
 			if (name.startsWith("Play")) {
-				await expect(dialog.locator("audio")).toHaveAttribute("src", /^blob:/);
+				await expect(dialog.locator("audio")).toHaveAttribute(
+					"src",
+					/^\/__content\//,
+				);
 			} else if (name.includes("notes")) {
 				await expect(dialog.locator("pre")).toContainText("Readable notes");
 			} else {
