@@ -1,4 +1,4 @@
-import { get, writable } from "svelte/store";
+import { get, type Writable, writable } from "svelte/store";
 import { createLog } from "../log.ts";
 import {
 	type ContentStreams,
@@ -19,12 +19,10 @@ interface ApplicationDependencies {
 	log: ReturnType<typeof createLog>;
 }
 interface ApplicationRuntime {
-	state: ReturnType<
-		typeof writable<{
-			workspace: Workspace | null;
-			streams: ContentStreams | null;
-		}>
-	>;
+	state: Writable<{
+		workspace: Workspace | null;
+		streams: ContentStreams | null;
+	}>;
 	workspace: Workspace | null;
 	disposed: boolean;
 	streamContext: LibraryContext | null;

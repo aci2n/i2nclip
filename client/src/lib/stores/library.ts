@@ -1,4 +1,4 @@
-import { get, writable } from "svelte/store";
+import { get, type Writable, writable } from "svelte/store";
 import type { LibraryApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
@@ -41,7 +41,7 @@ interface LibraryCard {
 	unsubscribe: () => void;
 }
 interface LibraryRuntime {
-	state: ReturnType<typeof writable<LibraryState>>;
+	state: Writable<LibraryState>;
 	cards: Map<string, LibraryCard>;
 	disposed: boolean;
 	searchController?: AbortController;

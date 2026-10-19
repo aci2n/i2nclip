@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { type Writable, writable } from "svelte/store";
 import { createLog } from "../log.ts";
 
 import {
@@ -18,7 +18,7 @@ interface RoutingDependencies {
 }
 interface RoutingRuntime {
 	current: ResolvedRoute;
-	state: ReturnType<typeof writable<ResolvedRoute>>;
+	state: Writable<ResolvedRoute>;
 	disposed: boolean;
 	syncLocation: () => void;
 }

@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { type Writable, writable } from "svelte/store";
 import type { ViewerApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
@@ -17,7 +17,6 @@ export interface ViewerState {
 	error: string;
 }
 
-// One direct link owns one item; it never searches or paginates the library.
 interface MediaViewerDependencies {
 	id: string;
 	context: LibraryContext;
@@ -26,7 +25,7 @@ interface MediaViewerDependencies {
 	log: ReturnType<typeof createLog>;
 }
 interface MediaViewerRuntime {
-	state: ReturnType<typeof writable<ViewerState>>;
+	state: Writable<ViewerState>;
 	controller: AbortController;
 	signal: AbortSignal;
 	item: MediaItem | null;
@@ -35,6 +34,7 @@ interface MediaViewerRuntime {
 	dispose: () => void;
 }
 
+// One direct link owns one item; it never searches or paginates the library.
 export function createMediaViewer(
 	id: string,
 	context: LibraryContext,

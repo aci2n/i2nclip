@@ -1,4 +1,4 @@
-import { get, writable } from "svelte/store";
+import { get, type Writable, writable } from "svelte/store";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
 import type { PairingCrypto } from "../pairing/crypto.ts";
@@ -61,9 +61,17 @@ interface PairingDependencies {
 	log: ReturnType<typeof createLog>;
 }
 interface PairingRuntime {
-	state: ReturnType<typeof writable<PairingState>>;
+	state: Writable<PairingState>;
 	task: Task | null;
 	disposed: boolean;
+}
+
+interface PollWait {
+	signal: AbortSignal;
+	resolve: () => void;
+	reject: (error: unknown) => void;
+	abort: () => void;
+	timer?: ReturnType<typeof setTimeout>;
 }
 
 export function createPairing(
@@ -740,13 +748,6 @@ function tickPairing(
 	}
 }
 
-interface PollWait {
-	signal: AbortSignal;
-	resolve: () => void;
-	reject: (error: unknown) => void;
-	abort: () => void;
-	timer?: ReturnType<typeof setTimeout>;
-}
 function waitPollDelay(
 	signal: AbortSignal,
 	milliseconds: number,

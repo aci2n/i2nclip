@@ -1,4 +1,4 @@
-import { get, writable } from "svelte/store";
+import { get, type Writable, writable } from "svelte/store";
 import type { Quota, QuotaApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
@@ -13,18 +13,18 @@ const empty = (): {
 
 export type QuotaStore = ReturnType<typeof createQuota>;
 
-// Workspace owns this store; navigation preserves reads until its context ends.
 interface QuotaDependencies {
 	context: LibraryContext;
 	http: QuotaApi;
 	log: ReturnType<typeof createLog>;
 }
 interface QuotaRuntime {
-	state: ReturnType<typeof writable<ReturnType<typeof empty>>>;
+	state: Writable<ReturnType<typeof empty>>;
 	controller?: AbortController;
 	disposed: boolean;
 }
 
+// Workspace owns this store; navigation preserves reads until its context ends.
 export function createQuota(
 	context: LibraryContext,
 	{ http = api }: { http?: QuotaApi } = {},

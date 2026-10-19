@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { type Writable, writable } from "svelte/store";
 import { createLog, failureFields } from "../log.ts";
 import { b64ToBytes, bytesToB64 } from "../protocol/bytes.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
@@ -16,9 +16,7 @@ interface PreferencesDependencies {
 	log: ReturnType<typeof createLog>;
 }
 interface PreferencesRuntime {
-	state: ReturnType<
-		typeof writable<{ compressImages: boolean; error: string }>
-	>;
+	state: Writable<{ compressImages: boolean; error: string }>;
 }
 
 export function createPreferences(

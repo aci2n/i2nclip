@@ -25,8 +25,6 @@ interface Entry {
 	dispose(): void;
 }
 
-// Owned by the unlocked application session, independently of workspace/views.
-// The worker transports plaintext only; keys and authenticated workflows stay here.
 interface ContentStreamsDependencies {
 	sessionSignal: AbortSignal;
 }
@@ -42,6 +40,56 @@ interface ContentStreamsRuntime {
 	dispose: () => void;
 }
 
+interface StreamRequest {
+	port: MessagePort;
+	entry: Entry;
+	downloadRequest: boolean;
+	operation: AbortController;
+	request: AbortSignal;
+	closed: boolean;
+	busy: boolean;
+	heartbeat?: ReturnType<typeof setInterval>;
+	deadline?: ReturnType<typeof setTimeout>;
+	abort: () => void;
+}
+
+export type ContentStreams = ReturnType<typeof createContentStreams>;
+
+interface ReadWait {
+	waiting: Set<() => void>;
+	signal: AbortSignal;
+	resolve: () => void;
+	reject: (error: unknown) => void;
+	ready: () => void;
+	abort: () => void;
+}
+
+interface ControllerWait {
+	signal: AbortSignal;
+	resolve: () => void;
+	reject: (error: unknown) => void;
+	changed: () => void;
+	abort: () => void;
+	timer?: ReturnType<typeof setTimeout>;
+}
+
+interface ClientWait {
+	signal: AbortSignal;
+	channel: MessageChannel;
+	resolve: (client: string) => void;
+	reject: (error: unknown) => void;
+	abort: () => void;
+	timer?: ReturnType<typeof setTimeout>;
+}
+
+interface DownloadCompletion {
+	finished: boolean;
+	resolve: () => void;
+	reject: (error: Error) => void;
+}
+
+// Owned by the unlocked application session, independently of workspace/views.
+// The worker transports plaintext only; keys and authenticated workflows stay here.
 export function createContentStreams(sessionSignal: AbortSignal) {
 	const deps: ContentStreamsDependencies = { sessionSignal };
 	const controller = new AbortController();
@@ -133,19 +181,6 @@ function openRequest(
 	}
 	const { size, type, name } = entry.source;
 	sendRequest(current, { kind: "description", value: { size, type, name } });
-}
-
-interface StreamRequest {
-	port: MessagePort;
-	entry: Entry;
-	downloadRequest: boolean;
-	operation: AbortController;
-	request: AbortSignal;
-	closed: boolean;
-	busy: boolean;
-	heartbeat?: ReturnType<typeof setInterval>;
-	deadline?: ReturnType<typeof setTimeout>;
-	abort: () => void;
 }
 
 function sendRequest(
@@ -319,10 +354,9 @@ async function openStream(
 	if (!Number.isSafeInteger(source.size) || source.size < 0) {
 		throw new Error("Invalid plaintext size.");
 	}
-	runtime.initialization ??= initializeStreams(runtime).catch((error) => {
-		runtime.initialization = undefined;
-		throw error;
-	});
+	runtime.initialization ??= initializeStreams(runtime).catch((error) =>
+		initializationFailed(runtime, error),
+	);
 	const client = await runtime.initialization;
 	runtime.signal.throwIfAborted();
 	lifetime?.throwIfAborted();
@@ -393,8 +427,6 @@ function invalidateContent(runtime: ContentStreamsRuntime, id: string) {
 	}
 }
 
-export type ContentStreams = ReturnType<typeof createContentStreams>;
-
 function disposeEntry(
 	entries: Map<string, Entry>,
 	entry: Entry,
@@ -410,15 +442,6 @@ function disposeEntry(
 	entry.finished = undefined;
 	finished?.(new Error("The file session has ended."));
 	entries.delete(token);
-}
-
-interface ReadWait {
-	waiting: Set<() => void>;
-	signal: AbortSignal;
-	resolve: () => void;
-	reject: (error: unknown) => void;
-	ready: () => void;
-	abort: () => void;
 }
 
 function waitForRead(
@@ -450,15 +473,6 @@ function finishReadWait(wait: ReadWait, aborted = false) {
 	} else {
 		wait.resolve();
 	}
-}
-
-interface ControllerWait {
-	signal: AbortSignal;
-	resolve: () => void;
-	reject: (error: unknown) => void;
-	changed: () => void;
-	abort: () => void;
-	timer?: ReturnType<typeof setTimeout>;
 }
 
 function waitForController(
@@ -506,15 +520,6 @@ function finishControllerWait(wait: ControllerWait, error?: unknown) {
 	}
 }
 
-interface ClientWait {
-	signal: AbortSignal;
-	channel: MessageChannel;
-	resolve: (client: string) => void;
-	reject: (error: unknown) => void;
-	abort: () => void;
-	timer?: ReturnType<typeof setTimeout>;
-}
-
 function requestClient(
 	signal: AbortSignal,
 	resolve: (client: string) => void,
@@ -558,12 +563,6 @@ function failClientWait(wait: ClientWait, error: unknown) {
 	wait.reject(error);
 }
 
-interface DownloadCompletion {
-	finished: boolean;
-	resolve: () => void;
-	reject: (error: Error) => void;
-}
-
 function finishDownload(completion: DownloadCompletion, error?: Error) {
 	if (completion.finished) {
 		return;
@@ -574,4 +573,12 @@ function finishDownload(completion: DownloadCompletion, error?: Error) {
 	} else {
 		completion.resolve();
 	}
+}
+
+function initializationFailed(
+	runtime: Pick<ContentStreamsRuntime, "initialization">,
+	error: unknown,
+): never {
+	runtime.initialization = undefined;
+	throw error;
 }

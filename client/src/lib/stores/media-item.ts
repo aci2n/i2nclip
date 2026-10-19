@@ -1,4 +1,4 @@
-import { get, writable } from "svelte/store";
+import { get, type Writable, writable } from "svelte/store";
 import type { MediaApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
@@ -46,7 +46,7 @@ interface MediaItemDependencies {
 	log: ReturnType<typeof createLog>;
 }
 interface MediaItemRuntime {
-	state: ReturnType<typeof writable<MediaState>>;
+	state: Writable<MediaState>;
 	controller: AbortController;
 	signal: AbortSignal;
 	ownedUrls: Set<string>;

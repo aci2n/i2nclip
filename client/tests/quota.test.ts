@@ -87,3 +87,32 @@ test("disposing the workspace quota aborts its request and ignores a late error"
 	assert.equal(await loading, false);
 	assert.deepEqual(get(quota), { value: null, loading: false, error: "" });
 });
+
+test("live quota instances sharing an API keep requests and disposal independent", async (t) => {
+	const requests: {
+		signal: AbortSignal | undefined;
+		result: ReturnType<typeof deferred<typeof usage>>;
+	}[] = [];
+	const http: QuotaApi = {
+		getQuota: ({ signal }) => {
+			const result = deferred<typeof usage>();
+			requests.push({ signal, result });
+			return result.promise;
+		},
+	};
+	const first = fixture(t, http).quota;
+	const second = fixture(t, http).quota;
+	const firstRead = first.refresh();
+	const secondRead = second.refresh();
+	assert.equal(requests.length, 2);
+	first.dispose();
+	assert.equal(assertPresent(requests[0].signal).aborted, true);
+	assert.equal(assertPresent(requests[1].signal).aborted, false);
+	assert.equal(get(second).loading, true);
+	requests[0].result.resolve({ ...usage, file_count: 999 });
+	requests[1].result.resolve(usage);
+	assert.equal(await firstRead, false);
+	assert.equal(await secondRead, true);
+	assert.deepEqual(get(first), { value: null, loading: false, error: "" });
+	assert.deepEqual(get(second).value, usage);
+});

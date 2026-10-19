@@ -1,5 +1,5 @@
 import type { Readable } from "svelte/store";
-import { get, writable } from "svelte/store";
+import { get, type Writable, writable } from "svelte/store";
 import type { Credentials, IdentityApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
@@ -63,7 +63,7 @@ interface SessionDependencies {
 	log: ReturnType<typeof createLog>;
 }
 interface SessionRuntime {
-	state: ReturnType<typeof writable<SessionState>>;
+	state: Writable<SessionState>;
 	saved: SavedIdentity | null;
 	key: CryptoKey | null;
 	library: LoadedIdentity | null;

@@ -1,5 +1,5 @@
 import type { Readable } from "svelte/store";
-import { get, writable } from "svelte/store";
+import { get, type Writable, writable } from "svelte/store";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
 import type { SendOptions } from "../media/upload.ts";
@@ -31,7 +31,6 @@ const empty = (): UploadState => ({
 	status: "",
 });
 
-// Application owns this store so batches survive navigation between views.
 interface UploadsDependencies {
 	context: LibraryContext;
 	send: (options: SendOptions) => Promise<{ id: string }>;
@@ -40,7 +39,7 @@ interface UploadsDependencies {
 	log: ReturnType<typeof createLog>;
 }
 interface UploadsRuntime {
-	state: ReturnType<typeof writable<UploadState>>;
+	state: Writable<UploadState>;
 	controller: AbortController;
 	activeFiles: File[];
 }
@@ -53,6 +52,7 @@ interface UploadFile {
 	finished: boolean;
 }
 
+// Application owns this store so batches survive navigation between views.
 export function createUploads(
 	context: LibraryContext,
 	{

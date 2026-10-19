@@ -38,7 +38,6 @@ interface Capture {
 	token: string;
 }
 
-// Each app tab owns its receiver and at most one pending capture.
 interface ExtensionReceiverDependencies {
 	session: CaptureSession;
 	getUploads: () => CaptureUploads | null;
@@ -54,6 +53,7 @@ interface ExtensionReceiverRuntime {
 	receive: (event: CaptureEvent) => void;
 }
 
+// Each app tab owns its receiver and at most one pending capture.
 export function createExtensionReceiver(
 	session: CaptureSession,
 	getUploads: () => CaptureUploads | null,

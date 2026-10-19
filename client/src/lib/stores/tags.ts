@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { type Writable, writable } from "svelte/store";
 import type { TagApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
@@ -21,7 +21,7 @@ interface TagsDependencies {
 	log: ReturnType<typeof createLog>;
 }
 interface TagsRuntime {
-	state: ReturnType<typeof writable<ReturnType<typeof empty>>>;
+	state: Writable<ReturnType<typeof empty>>;
 	controller?: AbortController;
 	disposed: boolean;
 }
