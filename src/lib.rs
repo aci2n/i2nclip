@@ -25,7 +25,7 @@ pub mod crypto;
 use std::{net::SocketAddr, sync::Arc};
 
 use axum::Router;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::watch};
 
 use crate::{db::Database, pairing::Pairings, permits::Permits};
 pub use crate::{db::DEFAULT_REGISTRATION_TTL_SECS, error::Error};
@@ -207,14 +207,15 @@ fn origin_from_env() -> Result<String, Error> {
 }
 
 /// Serve until Ctrl-C or SIGTERM, then drain work and close PostgreSQL.
-pub async fn run() -> Result<(), Error> {
+/// Notify the executable before draining so it can enforce its shutdown deadline.
+pub async fn run(stop: watch::Sender<bool>) -> Result<(), Error> {
     init_tracing();
     let origin = origin_from_env()?;
     let state = open_state(&database_url_from_env()?, origin).await?;
     let app = web::serve(routes::router(state.clone()), web::directory());
     let listener = TcpListener::bind(LISTEN).await?;
     tracing::info!(listen = LISTEN, origin = state.origin(), "listening");
-    let (stop, receiver) = tokio::sync::watch::channel(false);
+    let receiver = stop.subscribe();
     let stop_shutdown = stop.clone();
     let maintenance = tokio::spawn(maintenance::run(state.db.clone(), receiver));
     let served = axum::serve(

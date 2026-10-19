@@ -2,11 +2,14 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, Weak},
+    time::Duration,
 };
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::Error;
+
+const ADMISSION_DEADLINE: Duration = Duration::from_secs(30);
 
 const UPLOAD_SLOTS: usize = 4;
 const DOWNLOAD_SLOTS: usize = 16;
@@ -58,17 +61,21 @@ async fn acquire(
     global: &Arc<Semaphore>,
     owner: [u8; 32],
 ) -> Result<TransferPermit, Error> {
-    // Busy keys must not reserve global capacity while waiting for their turn.
-    let user = users.acquire(owner).await?;
-    let global = global
-        .clone()
-        .acquire_owned()
-        .await
-        .map_err(|_| Error::Unavailable)?;
-    Ok(TransferPermit {
-        _user: user,
-        _global: global,
+    tokio::time::timeout(ADMISSION_DEADLINE, async {
+        // Busy keys must not reserve global capacity while waiting for their turn.
+        let user = users.acquire(owner).await?;
+        let global = global
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        Ok(TransferPermit {
+            _user: user,
+            _global: global,
+        })
     })
+    .await
+    .map_err(|_| Error::Unavailable)?
 }
 
 #[derive(Clone)]
@@ -113,6 +120,48 @@ mod tests {
     };
 
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn admission_deadline_covers_both_stages_without_leaking_slots() {
+        let permits = Permits::new();
+        let first = permits.upload([1; 32]).await.unwrap();
+        let waiting = {
+            let permits = permits.clone();
+            tokio::spawn(async move { permits.upload([1; 32]).await })
+        };
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(20)).await;
+        // Spend the remaining allowance waiting globally, not a fresh 30 seconds.
+        let mut others = Vec::new();
+        for key in 2..=4 {
+            others.push(permits.upload([key; 32]).await.unwrap());
+        }
+        drop(first);
+        // The released global slot is occupied before the queued task runs.
+        others.push(permits.upload([5; 32]).await.unwrap());
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(9)).await;
+        assert!(!waiting.is_finished());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(matches!(waiting.await.unwrap(), Err(Error::Unavailable)));
+        drop(others);
+        let replacement = permits.upload([1; 32]).await.unwrap();
+        drop(replacement);
+
+        let first = permits.download([1; 32]).await.unwrap();
+        let second = permits.download([1; 32]).await.unwrap();
+        let waiting = {
+            let permits = permits.clone();
+            tokio::spawn(async move { permits.download([1; 32]).await })
+        };
+        tokio::task::yield_now().await;
+        tokio::time::advance(ADMISSION_DEADLINE).await;
+        assert!(matches!(waiting.await.unwrap(), Err(Error::Unavailable)));
+        drop((first, second));
+        let first = permits.download([1; 32]).await.unwrap();
+        let second = permits.download([1; 32]).await.unwrap();
+        drop((first, second));
+    }
 
     #[tokio::test]
     async fn keyed_waiters_leave_global_capacity_for_other_keys() {

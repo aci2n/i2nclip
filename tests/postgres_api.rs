@@ -1223,3 +1223,163 @@ async fn held_chunk_responses_keep_per_key_permits_until_disposal() {
     drop(second);
     drop(resumed);
 }
+
+#[tokio::test(start_paused = true)]
+async fn transfer_admission_timeouts_preserve_nonce_and_body_policy_and_expiry_restores_capacity() {
+    use std::{sync::Arc, time::Duration};
+
+    use axum::body::Bytes;
+    use http_body_util::Channel;
+    use tokio::sync::Notify;
+
+    let _clock = manual_clock();
+    let owner = new_identity();
+    let (db, app) = app(&[&owner]).await;
+    let upload = upload_fixture(&owner, 0, "");
+    publish(&app, &owner, &upload).await;
+    let path = format!("/api/media/{}/chunks/0", upload.id);
+    let first = request(&app, &owner, "GET", &path, vec![]).await;
+    let second = request(&app, &owner, "GET", &path, vec![]).await;
+
+    let (mut sender, body) = Channel::<Bytes>::new(1);
+    sender
+        .send_data(Bytes::from(upload.encrypted[0].clone()))
+        .await
+        .unwrap();
+    let polled = Arc::new(Notify::new());
+    let observed = polled.clone();
+    let header = client_crypto::authorization(
+        &owner,
+        "http://i2nclip.test",
+        crypto::now_secs(),
+        &client_crypto::fresh_nonce(),
+        "PUT",
+        &path,
+        &upload.encrypted[0],
+    );
+    let holding = tokio::spawn(
+        app.clone().oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(&path)
+                .header("authorization", header)
+                .body(Body::new(body.map_frame(move |frame| {
+                    observed.notify_one();
+                    frame
+                })))
+                .unwrap(),
+        ),
+    );
+    polled.notified().await;
+
+    for (method, target) in [
+        ("POST", "/api/media".to_string()),
+        ("GET", format!("/api/media/{}/chunks/0", "f".repeat(64))),
+    ] {
+        let nonce = client_crypto::fresh_nonce();
+        let header = client_crypto::authorization(
+            &owner,
+            "http://i2nclip.test",
+            crypto::now_secs(),
+            &nonce,
+            method,
+            &target,
+            b"",
+        );
+        let unread = if method == "POST" {
+            Body::new(
+                Body::from("unread").map_frame(|_| panic!("queued upload body must not be read")),
+            )
+        } else {
+            Body::empty()
+        };
+        let waiting = tokio::spawn(
+            app.clone().oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(&target)
+                    .header("authorization", &header)
+                    .body(unread)
+                    .unwrap(),
+            ),
+        );
+        // Nonce insertion is the last database step before admission.
+        while !sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM nonces WHERE nonce=$1)")
+            .bind(&nonce)
+            .fetch_one(&db.1)
+            .await
+            .unwrap()
+        {
+            tokio::task::yield_now().await;
+        }
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(29)).await;
+        assert!(!waiting.is_finished());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let response = waiting.await.unwrap().unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()["retry-after"], "1");
+        let replay = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(&target)
+                    .header("authorization", header)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+    }
+    holding.abort();
+    assert!(holding.await.unwrap_err().is_cancelled());
+    drop(sender);
+    // Sixty seconds have elapsed; queue a fresh read shortly before expiry.
+    tokio::time::advance(Duration::from_secs(100)).await;
+    let nonce = client_crypto::fresh_nonce();
+    let header = client_crypto::authorization(
+        &owner,
+        "http://i2nclip.test",
+        crypto::now_secs(),
+        &nonce,
+        "GET",
+        &path,
+        b"",
+    );
+    let waiting = tokio::spawn(
+        app.clone().oneshot(
+            Request::builder()
+                .uri(&path)
+                .header("authorization", header)
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    );
+    while !sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM nonces WHERE nonce=$1)")
+        .bind(&nonce)
+        .fetch_one(&db.1)
+        .await
+        .unwrap()
+    {
+        tokio::task::yield_now().await;
+    }
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(20)).await;
+    let response = waiting.await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .as_ref(),
+        upload.encrypted[0]
+    );
+    for response in [first, second] {
+        assert!(response.into_body().collect().await.is_err());
+    }
+}

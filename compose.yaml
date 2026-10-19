@@ -27,6 +27,7 @@ services:
       start_period: 5s
 
   server:
+    stop_grace_period: 40s
     build:
       context: .
       dockerfile: Containerfile
