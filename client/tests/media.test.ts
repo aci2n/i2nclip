@@ -156,3 +156,14 @@ test("stream read failures remain local to the current preview and permit retry"
 	assert.equal(f.previews[0].disposed, true);
 	assert.equal(get(f.media).error, false);
 });
+
+test("retrying a ready file clears a failed download without reopening its preview", async (t) => {
+	const f = fixture(t);
+	await f.media.reveal();
+	f.finish.reject(new Error("Download interrupted."));
+	assert.equal(await f.media.download(), false);
+	assert.equal(get(f.media).error, true);
+	assert.equal(await f.media.reveal(), true);
+	assert.equal(get(f.media).error, false);
+	assert.equal(f.previews.length, 1);
+});

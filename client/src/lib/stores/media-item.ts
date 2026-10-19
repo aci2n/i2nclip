@@ -176,6 +176,7 @@ export function createMediaItem(
 			return false;
 		}
 		if (get(state).ready) {
+			state.update((v) => ({ ...v, message: "", error: false }));
 			return true;
 		}
 		const request = AbortSignal.any(

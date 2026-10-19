@@ -23,7 +23,7 @@ const ready = $derived(!value.loading && !error && Boolean(media?.ready));
 			type="button"
 			class="secondary"
 			onclick={ondownload}
-			disabled={!ready}
+			disabled={!ready || media?.busy}
 		>
 			Download
 		</button>
