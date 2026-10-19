@@ -12,93 +12,162 @@ import type { LibraryContext } from "./session.ts";
 import { createSession } from "./session.ts";
 import { createWorkspace, type Workspace } from "./workspace.ts";
 
+interface ApplicationDependencies {
+	session: ReturnType<typeof createSession>;
+	preferences: ReturnType<typeof createPreferences>;
+	routing: ReturnType<typeof createRouting>;
+	log: ReturnType<typeof createLog>;
+}
+interface ApplicationRuntime {
+	state: ReturnType<
+		typeof writable<{
+			workspace: Workspace | null;
+			streams: ContentStreams | null;
+		}>
+	>;
+	workspace: Workspace | null;
+	disposed: boolean;
+	streamContext: LibraryContext | null;
+	streams: ContentStreams | null;
+}
+interface ApplicationResources {
+	stopSession: () => void;
+	stopRouting: () => void;
+	pairing: ReturnType<typeof createPairing>;
+	extension: ReturnType<typeof createExtensionReceiver>;
+}
+
 export function createApplication() {
 	const log = createLog("application");
 	log.debug("created");
-	const session = createSession();
-	const preferences = createPreferences();
-	const routing = createRouting();
-	const state = writable<{
-		workspace: Workspace | null;
-		streams: ContentStreams | null;
-	}>({ workspace: null, streams: null });
-	let workspace: Workspace | null = null;
-	let disposed = false;
-	let streamContext: LibraryContext | null = null;
-	let streams: ContentStreams | null = null;
-
-	function syncWorkspace() {
-		const context = get(session).context;
-		if (streamContext !== context) {
-			streams?.dispose();
-			streamContext = context;
-			streams = context ? createContentStreams(context.signal) : null;
-		}
-		if (workspace && workspace.context !== context) {
-			log.debug("workspace-ended", { reason: "context-changed" });
-			workspace.dispose();
-			workspace = null;
-		}
-		if (context && get(routing).workspace && !workspace) {
-			log.debug("workspace-created");
-			workspace = createWorkspace(context, preferences, streams ?? undefined);
-		}
-		state.set({ workspace, streams });
-	}
-	const stopSession = session.subscribe(syncWorkspace);
-	const stopRouting = routing.subscribe(syncWorkspace);
-	const pairing = createPairing(session);
-	const extension = createExtensionReceiver(
-		session,
-		() => workspace?.uploads ?? null,
-		() => {
-			routing.navigate({ page: "library" }, true);
-			// A pending capture can resume inside a session notification, before
-			// queued routing subscribers run. Its uploads must exist immediately.
-			syncWorkspace();
-		},
+	const deps: ApplicationDependencies = {
+		session: createSession(),
+		preferences: createPreferences(),
+		routing: createRouting(),
+		log,
+	};
+	const runtime: ApplicationRuntime = {
+		state: writable<{
+			workspace: Workspace | null;
+			streams: ContentStreams | null;
+		}>({ workspace: null, streams: null }),
+		workspace: null,
+		disposed: false,
+		streamContext: null,
+		streams: null,
+	};
+	const stopSession = deps.session.subscribe(() =>
+		syncWorkspace(deps, runtime),
 	);
-	function canDropFiles() {
-		return (
-			!disposed &&
-			session.ready &&
-			workspace !== null &&
-			!get(workspace.uploads).uploading
+	const stopRouting = deps.routing.subscribe(() =>
+		syncWorkspace(deps, runtime),
+	);
+	const pairing = createPairing(deps.session);
+	const extension = createExtensionReceiver(
+		deps.session,
+		() => runtime.workspace?.uploads ?? null,
+		() => openCaptureLibrary(deps, runtime),
+	);
+	const resources: ApplicationResources = {
+		stopSession,
+		stopRouting,
+		pairing,
+		extension,
+	};
+
+	return {
+		subscribe: runtime.state.subscribe,
+		session: deps.session,
+		preferences: deps.preferences,
+		pairing,
+		routing: deps.routing,
+		canDropFiles: canDropFiles.bind(null, deps, runtime),
+		dropFiles: dropFiles.bind(null, deps, runtime),
+		dispose: () => disposeApplication(deps, runtime, resources),
+	};
+}
+
+function syncWorkspace(
+	deps: ApplicationDependencies,
+	runtime: ApplicationRuntime,
+) {
+	const context = get(deps.session).context;
+	if (runtime.streamContext !== context) {
+		runtime.streams?.dispose();
+		runtime.streamContext = context;
+		runtime.streams = context ? createContentStreams(context.signal) : null;
+	}
+	if (runtime.workspace && runtime.workspace.context !== context) {
+		deps.log.debug("workspace-ended", { reason: "context-changed" });
+		runtime.workspace.dispose();
+		runtime.workspace = null;
+	}
+	if (context && get(deps.routing).workspace && !runtime.workspace) {
+		deps.log.debug("workspace-created");
+		runtime.workspace = createWorkspace(
+			context,
+			deps.preferences,
+			runtime.streams ?? undefined,
 		);
 	}
-	return {
-		subscribe: state.subscribe,
-		session,
-		preferences,
-		pairing,
-		routing,
-		canDropFiles,
-		dropFiles(files: File[]) {
-			if (!files.length || !canDropFiles() || !workspace) {
-				log.debug("drop-rejected", { count: files.length });
-				return;
-			}
-			routing.navigate({ page: "library" }, true);
-			log.info("drop-accepted", { count: files.length });
-			void workspace.uploads.upload(files);
-		},
-		dispose() {
-			if (disposed) {
-				return;
-			}
-			log.debug("disposed");
-			disposed = true;
-			extension.dispose();
-			pairing.dispose();
-			stopSession();
-			stopRouting();
-			routing.dispose();
-			workspace?.dispose();
-			workspace = null;
-			state.set({ workspace, streams });
-			streams?.dispose();
-			streams = null;
-			session.dispose();
-		},
-	};
+	runtime.state.set({ workspace: runtime.workspace, streams: runtime.streams });
+}
+
+function canDropFiles(
+	deps: ApplicationDependencies,
+	runtime: ApplicationRuntime,
+) {
+	return (
+		!runtime.disposed &&
+		deps.session.ready &&
+		runtime.workspace !== null &&
+		!get(runtime.workspace.uploads).uploading
+	);
+}
+
+function dropFiles(
+	deps: ApplicationDependencies,
+	runtime: ApplicationRuntime,
+	files: File[],
+) {
+	if (!files.length || !canDropFiles(deps, runtime) || !runtime.workspace) {
+		deps.log.debug("drop-rejected", { count: files.length });
+		return;
+	}
+	deps.routing.navigate({ page: "library" }, true);
+	deps.log.info("drop-accepted", { count: files.length });
+	void runtime.workspace.uploads.upload(files);
+}
+
+function disposeApplication(
+	deps: ApplicationDependencies,
+	runtime: ApplicationRuntime,
+	resources: ApplicationResources,
+) {
+	if (runtime.disposed) {
+		return;
+	}
+	deps.log.debug("disposed");
+	runtime.disposed = true;
+	resources.extension.dispose();
+	resources.pairing.dispose();
+	resources.stopSession();
+	resources.stopRouting();
+	deps.routing.dispose();
+	runtime.workspace?.dispose();
+	runtime.workspace = null;
+	runtime.state.set({ workspace: runtime.workspace, streams: runtime.streams });
+	runtime.streams?.dispose();
+	runtime.streams = null;
+	deps.session.dispose();
+}
+
+function openCaptureLibrary(
+	deps: ApplicationDependencies,
+	runtime: ApplicationRuntime,
+) {
+	deps.routing.navigate({ page: "library" }, true);
+	// A capture may resume within a session notification before queued routing
+	// subscribers run. Ensure its uploads exist before returning to the receiver.
+	syncWorkspace(deps, runtime);
 }

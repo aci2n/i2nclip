@@ -7,6 +7,13 @@ import type { LibraryContext } from "./session.ts";
 import { createTags } from "./tags.ts";
 import { createUploads } from "./uploads.ts";
 
+interface WorkspaceResources {
+	quota: ReturnType<typeof createQuota>;
+	tags: ReturnType<typeof createTags>;
+	library: ReturnType<typeof createLibrary>;
+	uploads: ReturnType<typeof createUploads>;
+}
+
 // One owner replaces all library state when its fixed identity context ends.
 export function createWorkspace(
 	context: LibraryContext,
@@ -24,20 +31,34 @@ export function createWorkspace(
 	});
 	const uploads = createUploads(context, {
 		preferences,
-		onComplete: () => {
-			void tags.refresh();
-			return library.refresh();
-		},
+		onComplete: () => uploadsCompleted(tags, library),
 	});
-	function dispose() {
-		log.debug("disposed");
-		context.signal.removeEventListener("abort", dispose);
-		uploads.dispose();
-		library.dispose();
-		tags.dispose();
-		quota.dispose();
-	}
+	const resources: WorkspaceResources = { quota, tags, library, uploads };
+	const dispose = () =>
+		disposeWorkspace(context.signal, log, resources, dispose);
 	context.signal.addEventListener("abort", dispose, { once: true });
-	return { context, tags, library, uploads, quota, dispose };
+	return { context, ...resources, dispose };
 }
 export type Workspace = ReturnType<typeof createWorkspace>;
+
+function uploadsCompleted(
+	tags: WorkspaceResources["tags"],
+	library: WorkspaceResources["library"],
+) {
+	void tags.refresh();
+	return library.refresh();
+}
+
+function disposeWorkspace(
+	signal: AbortSignal,
+	log: ReturnType<typeof createLog>,
+	resources: WorkspaceResources,
+	dispose: () => void,
+) {
+	log.debug("disposed");
+	signal.removeEventListener("abort", dispose);
+	resources.uploads.dispose();
+	resources.library.dispose();
+	resources.tags.dispose();
+	resources.quota.dispose();
+}
