@@ -659,3 +659,28 @@ for (const failure of [
 		}
 	});
 }
+
+test("a rejected creation never deletes an existing file ID", async (t) => {
+	const methods: string[] = [];
+	t.mock.method(
+		globalThis,
+		"fetch",
+		async (_url: string | URL | Request, options: RequestInit = {}) => {
+			methods.push(options.method || "GET");
+			return documentResponse(
+				{ error: "File already exists." },
+				{ status: 409 },
+			);
+		},
+	);
+	await assert.rejects(
+		upload({
+			serverUrl: "https://clip.example",
+			key: testKey(),
+			file: new Blob(["x"]),
+			name: "x",
+		}),
+		/already exists/,
+	);
+	assert.deepEqual(methods, ["POST"]);
+});

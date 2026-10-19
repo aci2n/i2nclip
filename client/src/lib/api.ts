@@ -168,8 +168,9 @@ export async function upload({
 	const { meta } = await sealedMetadata(key, content.id, metadata, thumb);
 	const tokens = await sealTags(key, metadata.tags);
 	const credentials = { serverUrl, key, signal };
+	let reservationPossible = true;
 	try {
-		const saved = await requestDocument({
+		const response = await signedFetch({
 			...credentials,
 			method: "POST",
 			path: "/api/media",
@@ -181,6 +182,11 @@ export async function upload({
 				tags: tokens,
 			}),
 		});
+		if (!response.ok) {
+			reservationPossible = false;
+			throw await responseError(response);
+		}
+		const saved = await responseDocument(response);
 		if (
 			saved.id !== content.id ||
 			saved.expected_chunk_count !== content.chunks ||
@@ -243,9 +249,9 @@ export async function upload({
 		onProgress?.(100);
 		return item;
 	} catch (error) {
-		// A lost creation response may still reserve quota; deleting our random ID
-		// is safe even when creation failed. Session teardown leaves cleanup to maintenance.
-		if (!signal?.aborted) {
+		// A lost creation response may still reserve quota. A definitive rejection
+		// must not delete an existing ID; session teardown leaves cleanup to maintenance.
+		if (reservationPossible && !signal?.aborted) {
 			await remove({ ...credentials, id: content.id }).catch(() => {});
 		}
 		throw error;
