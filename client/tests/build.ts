@@ -27,6 +27,16 @@ test("web build contains only its entry page and bundled assets", async () => {
 	assert(names.includes("index.html"));
 	assert(names.includes("favicon.ico"));
 	assert(names.includes("streaming-worker.js"));
+	assert(names.includes("streaming-worker.js.map"));
+	const worker = await readFile(join(dist, "web/streaming-worker.js"), "utf8");
+	assert(worker.includes("//# sourceMappingURL=streaming-worker.js.map"));
+	const workerMap = document(
+		JSON.parse(
+			await readFile(join(dist, "web/streaming-worker.js.map"), "utf8"),
+		),
+	);
+	assert.equal(workerMap.version, 3);
+	assert(Array.isArray(workerMap.sources) && workerMap.sources.length > 0);
 	assert(!names.some((name) => /background|manifest/.test(name)));
 	assert(names.some((name) => /^assets\/.*\.js$/.test(name)));
 	assert(names.some((name) => /^assets\/.*\.css$/.test(name)));
