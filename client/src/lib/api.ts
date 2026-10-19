@@ -1,11 +1,21 @@
 import { sniffContentType } from "./media/metadata.ts";
 import { automaticTags } from "./media/tags.ts";
 import { hexToBytes } from "./protocol/bytes.ts";
+import {
+	CHUNK_BYTES,
+	CHUNK_TAG_BYTES,
+	type ContentFile,
+	chunkLength,
+	contentShape,
+	createContent,
+	decryptChunk,
+	encryptChunk,
+	openDescriptor,
+} from "./protocol/content.ts";
 import type { LoadedKey } from "./protocol/crypto.ts";
 import {
 	authorizationHeader,
 	bodyHash,
-	contentAad,
 	decrypt,
 	encrypt,
 	freshNonce,
@@ -33,11 +43,11 @@ interface RequestOptions extends Credentials {
 	path: string;
 	body: Uint8Array<ArrayBuffer>;
 	onUploadProgress?: Progress;
+	contentType?: string;
 	signal?: AbortSignal;
 }
 export interface UploadOptions extends Credentials {
-	maxFilePlaintextBytes?: number;
-	bytes: Uint8Array<ArrayBuffer>;
+	file: Blob;
 	name: string;
 	contentType?: string;
 	tags?: unknown;
@@ -54,6 +64,7 @@ export interface Media {
 	metadata: Metadata | null;
 	thumb: Uint8Array<ArrayBuffer> | null;
 	metaHash: string;
+	content: ContentFile | null;
 }
 
 // Each workflow depends on the capability it uses, not on the API module shape.
@@ -67,9 +78,10 @@ export interface ListRequest extends AuthenticatedRequest {
 export interface MediaRequest extends AuthenticatedRequest {
 	id: string;
 }
-export interface ContentRequest extends MediaRequest {
-	encryptedBytes: number;
-	onProgress?: Progress;
+export interface ContentRequest extends AuthenticatedRequest {
+	content: ContentFile;
+	start: number;
+	end: number;
 }
 export interface MetadataRequest extends MediaRequest {
 	metadata: Metadata;
@@ -88,7 +100,6 @@ export interface Quota {
 	max_content_bytes: number;
 	file_count: number;
 	max_files: number;
-	max_file_plaintext_bytes: number;
 }
 export interface TagCatalog {
 	tags: string[];
@@ -98,11 +109,11 @@ export type MetadataResult =
 	| { conflict: true; item: Media }
 	| { conflict: false; metaHash: string };
 export interface MediaApi {
-	getContent(request: ContentRequest): Promise<Uint8Array<ArrayBuffer>>;
+	readContentRange(request: ContentRequest): Promise<Uint8Array<ArrayBuffer>>;
 	updateMetadata(request: MetadataRequest): Promise<MetadataResult>;
 	remove(request: MediaRequest): Promise<void>;
 }
-export interface ViewerApi extends Pick<MediaApi, "getContent"> {
+export interface ViewerApi extends Pick<MediaApi, "readContentRange"> {
 	getMedia(request: MediaRequest): Promise<Media>;
 }
 export interface LibraryApi extends MediaApi {
@@ -122,33 +133,11 @@ export interface TagApi {
 // Browser HTTP calls.
 // HTTP requests contain signatures and ciphertext, never the private key.
 
-// Plaintext limit. The server allows this plus a small encryption header.
-export const DEFAULT_MAX_FILE_PLAINTEXT_BYTES = 32 * 1024 * 1024;
-export const MAX_FILE_PLAINTEXT_BYTES = 512 * 1024 * 1024;
-const MAX_ENCRYPTED_FILE_BYTES = MAX_FILE_PLAINTEXT_BYTES + 64;
-export const DOWNLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
-
-export function checkFileSize(
-	size: number,
-	limit = DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
-) {
-	if (limit === 0) {
-		throw new Error("Uploads are disabled by the library file size limit.");
-	}
-	if (size > limit) {
-		const label =
-			limit % (1024 * 1024) === 0
-				? `${limit / (1024 * 1024)} MB`
-				: `${limit.toLocaleString()} ${limit === 1 ? "byte" : "bytes"}`;
-		throw new Error(`File is larger than ${label}.`);
-	}
-}
-
+// One encrypted chunk is resident at a time; the source remains a Blob/File.
 export async function upload({
 	serverUrl,
 	key,
-	bytes,
-	maxFilePlaintextBytes = DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
+	file,
 	name,
 	contentType,
 	tags,
@@ -157,56 +146,110 @@ export async function upload({
 	thumb,
 	onProgress,
 	signal,
-}: UploadOptions) {
-	checkFileSize(
-		bytes.length,
-		Math.min(maxFilePlaintextBytes, MAX_FILE_PLAINTEXT_BYTES),
-	);
-	const metadata = {
+}: UploadOptions): Promise<Media> {
+	const shape = contentShape(file.size);
+	signal?.throwIfAborted();
+	const { descriptor, content } = await createContent(key, file.size);
+	const prefix = new Uint8Array(await file.slice(0, 512).arrayBuffer());
+	const metadata: Metadata = {
 		...extra,
 		name: cleanName(name),
-		content_type: sniffContentType(bytes, contentType || ""),
-		size: bytes.length,
+		content_type: sniffContentType(prefix, contentType || ""),
+		size: file.size,
 		tags: uniqueTags(tags),
 	};
 	metadata.tags = uniqueTags([
-		...metadata.tags,
-		...automaticTags(metadata.name, metadata.content_type),
+		...(metadata.tags ?? []),
+		...automaticTags(metadata.name || "", metadata.content_type || ""),
 	]);
 	if (image) {
 		metadata.image = image;
 	}
-	const content = await encrypt(key, contentAad(), bytes);
-	const mediaId = await bodyHash(content);
-	const { meta, storedThumb } = await sealedMetadata(
-		key,
-		mediaId,
-		metadata,
-		thumb,
-	);
+	const { meta } = await sealedMetadata(key, content.id, metadata, thumb);
 	const tokens = await sealTags(key, metadata.tags);
-	const body = encodeUpload({
-		meta,
-		content,
-		tags: tokens,
-	});
-	const saved = await requestDocument({
-		serverUrl,
-		key,
-		method: "POST",
-		path: "/api/media",
-		body,
-		onUploadProgress: onProgress,
-		signal,
-	});
-	return {
-		...saved,
-		id: string(saved.id),
-		createdAt: number(saved.created_at),
-		metadata,
-		thumb: storedThumb,
-		metaHash: await bodyHash(meta),
-	};
+	const credentials = { serverUrl, key, signal };
+	try {
+		const saved = await requestDocument({
+			...credentials,
+			method: "POST",
+			path: "/api/media",
+			body: encodeUpload({
+				id: content.id,
+				plaintext_bytes: file.size,
+				descriptor,
+				meta,
+				tags: tokens,
+			}),
+		});
+		if (
+			saved.id !== content.id ||
+			saved.expected_chunk_count !== content.chunks ||
+			saved.current_chunk_count !== 0
+		) {
+			throw new Error("Invalid upload receipt.");
+		}
+		let sent = 0;
+		for (let index = 0; index < content.chunks; index++) {
+			signal?.throwIfAborted();
+			const plain = new Uint8Array(
+				await file
+					.slice(
+						index * CHUNK_BYTES,
+						index * CHUNK_BYTES + chunkLength(content, index),
+					)
+					.arrayBuffer(),
+			);
+			signal?.throwIfAborted();
+			const encrypted = await encryptChunk(content, index, plain);
+			plain.fill(0);
+			const response = await signedFetch({
+				...credentials,
+				method: "PUT",
+				path: `/api/media/${content.id}/chunks/${index}`,
+				body: encrypted,
+				contentType: "application/octet-stream",
+				onUploadProgress: onProgress
+					? (percent) =>
+							onProgress(
+								Math.min(
+									99,
+									Math.floor(
+										((sent + (encrypted.length * percent) / 100) /
+											shape.encryptedBytes) *
+											100,
+									),
+								),
+							)
+					: undefined,
+			});
+			if (!response.ok) {
+				throw await responseError(response);
+			}
+			await response.body?.cancel();
+			sent += encrypted.length;
+			onProgress?.(
+				Math.min(99, Math.floor((sent / shape.encryptedBytes) * 100)),
+			);
+		}
+		const item = await getMedia({ ...credentials, id: content.id });
+		if (
+			!item.content ||
+			item.bytes !== shape.encryptedBytes ||
+			item.content.size !== file.size
+		) {
+			throw new Error("Invalid completed upload.");
+		}
+		signal?.throwIfAborted();
+		onProgress?.(100);
+		return item;
+	} catch (error) {
+		// A lost creation response may still reserve quota; deleting our random ID
+		// is safe even when creation failed. Session teardown leaves cleanup to maintenance.
+		if (!signal?.aborted) {
+			await remove({ ...credentials, id: content.id }).catch(() => {});
+		}
+		throw error;
+	}
 }
 
 export async function getTags({
@@ -260,20 +303,7 @@ export async function getQuota({
 		max_content_bytes: number(value.max_content_bytes),
 		file_count: number(value.file_count),
 		max_files: number(value.max_files),
-		max_file_plaintext_bytes: fileLimit(value.max_file_plaintext_bytes),
 	};
-}
-
-function fileLimit(value: unknown): number {
-	const limit = number(value);
-	if (
-		!Number.isSafeInteger(limit) ||
-		limit < 0 ||
-		limit > MAX_FILE_PLAINTEXT_BYTES
-	) {
-		throw new Error("Invalid file size limit.");
-	}
-	return limit;
 }
 
 export async function list({
@@ -335,48 +365,70 @@ export async function getMedia({
 	return item;
 }
 
-export async function getContent({
-	encryptedBytes,
+// Authenticate each complete chunk before exposing any of its plaintext.
+// A range can span two chunks, but never allocates a file-sized buffer.
+export async function readContentRange({
 	serverUrl,
 	key,
-	id,
-	onProgress,
+	content,
+	start,
+	end,
 	signal,
-}: ContentRequest) {
-	signal?.throwIfAborted();
+}: ContentRequest): Promise<Uint8Array<ArrayBuffer>> {
 	if (
-		!Number.isSafeInteger(encryptedBytes) ||
-		encryptedBytes <= 0 ||
-		encryptedBytes > MAX_ENCRYPTED_FILE_BYTES
+		!Number.isSafeInteger(start) ||
+		!Number.isSafeInteger(end) ||
+		start < 0 ||
+		end < start ||
+		end > content.size ||
+		end - start > CHUNK_BYTES
 	) {
-		throw new Error("Invalid encrypted content size.");
+		throw new Error("Invalid content range.");
 	}
-	const blob = new Uint8Array(encryptedBytes);
-	for (let start = 0; start < encryptedBytes; start += DOWNLOAD_CHUNK_BYTES) {
-		signal?.throwIfAborted();
-		const end = Math.min(start + DOWNLOAD_CHUNK_BYTES, encryptedBytes) - 1;
+	signal?.throwIfAborted();
+	const result = new Uint8Array(end - start);
+	for (
+		let index = Math.floor(start / CHUNK_BYTES);
+		index * CHUNK_BYTES < end;
+		index++
+	) {
 		const response = await signedFetch({
 			serverUrl,
 			key,
-			method: "GET",
-			path: `/api/media/${id}/chunks/${start / DOWNLOAD_CHUNK_BYTES}`,
-			body: new Uint8Array(),
 			signal,
+			method: "GET",
+			path: `/api/media/${content.id}/chunks/${index}`,
+			body: new Uint8Array(),
 		});
 		if (!response.ok) {
 			throw await responseError(response);
 		}
-		await readContentChunk(response, blob, start, end, onProgress, signal);
+		const encrypted = new Uint8Array(
+			chunkLength(content, index) + CHUNK_TAG_BYTES,
+		);
+		await readContentChunk(
+			response,
+			encrypted,
+			0,
+			encrypted.length - 1,
+			undefined,
+			signal,
+		);
+		const plain = await decryptChunk(content, index, encrypted);
+		try {
+			signal?.throwIfAborted();
+			const chunkStart = index * CHUNK_BYTES;
+			const from = Math.max(start, chunkStart);
+			const to = Math.min(end, chunkStart + plain.length);
+			result.set(
+				plain.subarray(from - chunkStart, to - chunkStart),
+				from - start,
+			);
+		} finally {
+			plain.fill(0);
+		}
 	}
-	signal?.throwIfAborted();
-	if ((await bodyHash(blob)) !== id) {
-		throw new Error("Content hash mismatch.");
-	}
-	signal?.throwIfAborted();
-	const plain = await decrypt(key, contentAad(), blob);
-	signal?.throwIfAborted();
-	onProgress?.(100);
-	return plain;
+	return result;
 }
 
 export async function updateMetadata({
@@ -493,6 +545,13 @@ async function openMeta(key: LoadedKey, input: unknown): Promise<Media> {
 	const encrypted = binary(item.meta);
 	const metaHash = await bodyHash(encrypted);
 	try {
+		const content = await openDescriptor(key, id, binary(item.descriptor));
+		if (
+			contentShape(content.size).encryptedBytes !== size ||
+			content.chunks !== number(item.expected_chunk_count)
+		) {
+			throw new Error("Invalid media dimensions.");
+		}
 		const plain = await decrypt(key, metaAad(id), encrypted);
 		const { metadata, thumb } = decodeMetaPlain(plain);
 		return {
@@ -502,12 +561,14 @@ async function openMeta(key: LoadedKey, input: unknown): Promise<Media> {
 			metadata,
 			thumb,
 			metaHash,
+			content,
 		};
 	} catch {
 		return {
 			id,
 			createdAt,
 			bytes: size,
+			content: null,
 			metadata: null,
 			thumb: null,
 			metaHash,
@@ -623,6 +684,7 @@ async function signedFetch({
 	path,
 	body,
 	onUploadProgress,
+	contentType = CONTENT_TYPE,
 	signal,
 }: RequestOptions) {
 	const ts = Math.floor(Date.now() / 1000);
@@ -641,7 +703,7 @@ async function signedFetch({
 	const url = new URL(path, serverUrl);
 	const headers: Record<string, string> = {
 		authorization,
-		"content-type": CONTENT_TYPE,
+		"content-type": contentType,
 	};
 	const payload = method === "GET" || method === "DELETE" ? undefined : body;
 	if (onUploadProgress && payload && typeof XMLHttpRequest !== "undefined") {

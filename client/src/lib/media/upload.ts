@@ -1,11 +1,10 @@
 import type { Credentials, Progress } from "../api.ts";
 import { upload } from "../api.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
-import { prepareFile } from "./prepare.ts";
+import { PREPARATION_BYTES, prepareFile } from "./prepare.ts";
 import { thumbnail } from "./thumbnail.ts";
 export interface SendOptions {
 	file: File;
-	maxFilePlaintextBytes?: number;
 	credentials: Credentials;
 	compressImages?: boolean;
 	onNotice?: (message: string) => void;
@@ -18,7 +17,6 @@ export interface SendOptions {
 
 export async function sendUpload({
 	file,
-	maxFilePlaintextBytes,
 	credentials,
 	compressImages = true,
 	onNotice,
@@ -32,21 +30,20 @@ export async function sendUpload({
 		file,
 		compressImages,
 		signal,
-		maxFilePlaintextBytes,
 		onNotice,
 	});
 	signal.throwIfAborted();
 	onPrepared?.(file.name);
 	signal.throwIfAborted();
-	const bytes = new Uint8Array(await file.arrayBuffer());
-	signal.throwIfAborted();
-	const preview = await thumbnail(file, bytes, signal);
+	const preview =
+		file.size <= PREPARATION_BYTES
+			? await thumbnail(file, new Uint8Array(await file.arrayBuffer()), signal)
+			: null;
 	signal.throwIfAborted();
 	onProgress?.(0);
 	return upload({
 		...credentials,
-		bytes,
-		maxFilePlaintextBytes,
+		file,
 		name: file.name,
 		contentType: file.type || "application/octet-stream",
 		tags,

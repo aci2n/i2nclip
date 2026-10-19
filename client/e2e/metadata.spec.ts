@@ -23,7 +23,7 @@ test("decomposed Unicode tag spellings survive upload, metadata updates and cata
 	const tag = "가".normalize("NFD").repeat(64);
 	const saved = await upload({
 		...credentials,
-		bytes: new TextEncoder().encode("Unicode tag regression"),
+		file: new Blob(["Unicode tag regression"]),
 		name: "Unicode.txt",
 		contentType: "text/plain",
 		tags: [tag],

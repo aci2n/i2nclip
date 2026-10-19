@@ -1,23 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-	DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
-	DOWNLOAD_CHUNK_BYTES,
-	getContent,
 	getMedia,
 	getQuota,
 	isKeyRegistered,
 	list,
+	readContentRange,
 	registerKey,
-	remove,
 	updateMetadata,
 	upload,
 } from "../src/lib/api.ts";
 import { hexToBytes } from "../src/lib/protocol/bytes.ts";
 import {
+	CHUNK_BYTES,
+	chunkLength,
+	contentShape,
+	createContent,
+	decryptChunk,
+	encryptChunk,
+	sealDescriptor,
+} from "../src/lib/protocol/content.ts";
+import {
 	authorizationHeader,
 	bodyHash,
-	contentAad,
 	decrypt,
 	encrypt,
 	loadKey,
@@ -28,7 +33,7 @@ import {
 	decodeMetaPlain,
 	encodeMetaPlain,
 } from "../src/lib/protocol/meta-plain.ts";
-import { decode, encode } from "../src/lib/protocol/msgpack.ts";
+import { decode } from "../src/lib/protocol/msgpack.ts";
 import { bytes as binary, document } from "../src/lib/protocol/value.ts";
 import { assertPresent } from "./assert.ts";
 import { requestBody, requestDocument, testKey } from "./helpers.ts";
@@ -64,218 +69,17 @@ test("registration checks use a signed empty ping, distinguish unauthorized keys
 			error instanceof Error && "status" in error && error.status === 503,
 	);
 });
-for (const [body, contentType, message] of [
-	[
-		encode({ error: "permission denied" }),
-		"application/msgpack",
-		"permission denied",
-	],
-	["upstream unavailable", "text/plain", "Service Unavailable"],
-	["", "text/plain", "Service Unavailable"],
-] as const) {
-	test(`API errors are consistent across endpoints: ${message}`, async (t) => {
-		const { privateKey } = await generatePrivateKey();
-		t.mock.method(
-			globalThis,
-			"fetch",
-			async () =>
-				new Response(body, {
-					status: 503,
-					statusText: "Service Unavailable",
-					headers: { "content-type": contentType },
-				}),
-		);
-		const settings = {
-			serverUrl: "https://clip.example.com",
-			key: await loadKey(privateKey),
-			id: "test",
-			encryptedBytes: DEFAULT_MAX_FILE_PLAINTEXT_BYTES + 64,
-		};
-		for (const request of [
-			() => registerKey({ ...settings, otc: "test" }),
-			() => list(settings),
-			() => getContent(settings),
-			() => remove(settings),
-		]) {
-			await assert.rejects(
-				request,
-				(error) => error instanceof Error && error.message === message,
-			);
-		}
-	});
-}
-test("upload progress uses the same response handling as fetch", async (t) => {
-	const { privateKey } = await generatePrivateKey();
-	const requests: {
-		method: string;
-		url: string;
-	}[] = [];
-	const original = globalThis.XMLHttpRequest;
-	t.after(() => {
-		if (original === undefined) {
-			Reflect.deleteProperty(globalThis, "XMLHttpRequest");
-		} else {
-			globalThis.XMLHttpRequest = original;
-		}
-	});
-	Object.defineProperty(globalThis, "XMLHttpRequest", {
-		configurable: true,
-		writable: true,
-		value: class {
-			upload: {
-				onprogress?: (event: {
-					lengthComputable: boolean;
-					loaded: number;
-					total: number;
-				}) => void;
-			} = {};
-			onload?: () => void;
-			status = 201;
-			statusText = "Created";
-			response = encode({ id: "saved", created_at: 1 }).slice().buffer;
-			open(method: string, url: string) {
-				requests.push({ method, url: String(url) });
-			}
-			setRequestHeader() {}
-			send(body: Uint8Array) {
-				assertPresent(this.upload.onprogress)({
-					lengthComputable: true,
-					loaded: body.length,
-					total: body.length,
-				});
-				assertPresent(this.onload)();
-			}
-		},
-	});
-	const progress: Array<number> = [];
-	const result = await upload({
-		serverUrl: "https://clip.example.com",
-		key: await loadKey(privateKey),
-		bytes: new Uint8Array([1, 2, 3]),
-		name: "sample.bin",
-		tags: [" Vacation, dog ", "Cat"],
-		extra: {
-			name: "ignored",
-			source_url: "https://example.com/page",
-			source_title: "A page",
-		},
-		onProgress: (percent) => progress.push(percent),
-	});
-	assert.equal(result.id, "saved");
-	assert.equal(result.metadata.name, "sample.bin");
-	assert.equal(result.metadata.source_url, "https://example.com/page");
-	assert.equal(result.metadata.source_title, "A page");
-	assert.deepEqual(result.metadata.tags, [
-		"Vacation",
-		"dog",
-		"Cat",
-		"file",
-		"bin",
-		"sample",
-	]);
-	assert.deepEqual(progress, [100]);
-	assert.deepEqual(requests, [
-		{ method: "POST", url: "https://clip.example.com/api/media" },
-	]);
-});
-test("downloaded encrypted content is capped before buffering", async (t) => {
-	const { privateKey } = await generatePrivateKey();
-	let cancelled = false;
-	t.mock.method(
-		globalThis,
-		"fetch",
-		async () =>
-			new Response(
-				new ReadableStream({
-					cancel() {
-						cancelled = true;
-					},
-				}),
-				{
-					headers: {
-						"content-length": String(DEFAULT_MAX_FILE_PLAINTEXT_BYTES + 65),
-					},
-				},
-			),
-	);
-	await assert.rejects(
-		getContent({
-			serverUrl: "https://clip.example.com",
-			key: await loadKey(privateKey),
-			id: "test",
-			encryptedBytes: DEFAULT_MAX_FILE_PLAINTEXT_BYTES + 64,
-		}),
-		/Invalid content chunk response/,
-	);
-	assert.equal(cancelled, true);
-});
-test("reencrypting an upload uses fresh sealed content after a lost response", async (t) => {
-	const { privateKey } = await generatePrivateKey();
-	const bodies: Array<Uint8Array<ArrayBuffer>> = [];
-	const contentOf = (body: Uint8Array<ArrayBufferLike>) =>
-		binary(document(decode(body)).content);
-	t.mock.method(
-		globalThis,
-		"fetch",
-		async (_url: string | URL | Request, options: RequestInit = {}) => {
-			bodies.push(requestBody(options));
-			if (bodies.length === 1) {
-				throw new Error("lost response");
-			}
-			return new Response(
-				encode({
-					id: await bodyHash(contentOf(requestBody(options))),
-					created_at: 1,
-				}),
-				{ status: 201 },
-			);
-		},
-	);
-	const options = {
-		serverUrl: "https://clip.example",
-		key: await loadKey(privateKey),
-		bytes: new Uint8Array([1]),
-		name: "file",
-		tags: [],
-	};
-	await assert.rejects(upload(options), /lost response/);
-	const saved = await upload(options);
-	assert.equal(saved.id, await bodyHash(contentOf(bodies[1])));
-	assert.equal(bodies.length, 2);
-	assert.notDeepEqual(contentOf(bodies[0]), contentOf(bodies[1]));
-});
-test("content hashes are checked before decryption", async (t) => {
-	const { privateKey } = await generatePrivateKey();
-	const key = await loadKey(privateKey);
-	const plain = new Uint8Array([1, 2, 3]);
-	const content = await encrypt(key, contentAad(), plain);
-	t.mock.method(
-		globalThis,
-		"fetch",
-		async () =>
-			new Response(content, {
-				status: 200,
-				headers: {},
-			}),
-	);
-	const options = {
-		serverUrl: "https://clip.example",
-		key,
-		encryptedBytes: content.length,
-	};
-	await assert.rejects(
-		getContent({ ...options, id: "0".repeat(64) }),
-		/Content hash mismatch/,
-	);
-	assert.deepEqual(
-		await getContent({ ...options, id: await bodyHash(content) }),
-		plain,
-	);
-});
+
 test("metadata list and update sign their routes and preserve decrypted fields", async (t) => {
 	const { privateKey } = await generatePrivateKey();
 	const key = await loadKey(privateKey);
 	const id = "a".repeat(64);
+	const { descriptor, content } = await sealDescriptor(
+		key,
+		id,
+		3,
+		new Uint8Array(32),
+	);
 	const metadata = {
 		name: "photo",
 		source_url: "https://example.com/photo",
@@ -336,7 +140,9 @@ test("metadata list and update sign their routes and preserve decrypted fields",
 			const item = {
 				id,
 				created_at: 123,
-				bytes: 32,
+				bytes: 19,
+				descriptor,
+				expected_chunk_count: 1,
 				meta,
 			};
 			return documentResponse(
@@ -356,7 +162,8 @@ test("metadata list and update sign their routes and preserve decrypted fields",
 	assert.deepEqual(item, {
 		id,
 		createdAt: 123,
-		bytes: 32,
+		bytes: 19,
+		content,
 		metadata,
 		thumb,
 		metaHash: await bodyHash(meta),
@@ -373,6 +180,7 @@ test("metadata list and update sign their routes and preserve decrypted fields",
 	await assert.rejects(list(credentials), { name: "AbortError" });
 	assert.deepEqual(methods, ["GET", "PUT"]);
 });
+
 test("undecryptable metadata is returned without an editable payload", async (t) => {
 	const { privateKey } = await generatePrivateKey();
 	const meta = new Uint8Array(29);
@@ -400,26 +208,7 @@ test("undecryptable metadata is returned without an editable payload", async (t)
 	assert.equal(item.thumb, null);
 	assert.equal(item.metaHash, await bodyHash(meta));
 });
-test("Node uploads with progress callbacks fall back to fetch", async (t) => {
-	const { privateKey } = await generatePrivateKey();
-	assert.equal(typeof XMLHttpRequest, "undefined");
-	let calls = 0;
-	t.mock.method(globalThis, "fetch", async () => {
-		calls++;
-		return documentResponse({ id: "saved", created_at: 1 }, { status: 201 });
-	});
-	await upload({
-		serverUrl: "https://clip.example",
-		key: await loadKey(privateKey),
-		bytes: new Uint8Array([1]),
-		name: "file",
-		tags: [],
-		onProgress: () => {
-			throw new Error("fetch cannot report upload progress");
-		},
-	});
-	assert.equal(calls, 1);
-});
+
 test("HTTP failures expose status without changing their error message", async (t) => {
 	const { privateKey } = await generatePrivateKey();
 	t.mock.method(globalThis, "fetch", async () =>
@@ -437,13 +226,13 @@ test("HTTP failures expose status without changing their error message", async (
 			error.message === "not found",
 	);
 });
+
 test("quota uses a signed empty GET and carries cancellation", async (t) => {
 	const { privateKey } = await generatePrivateKey();
 	const controller = new AbortController();
 	const usage = {
 		max_content_bytes: 536870912,
 		max_files: 10000,
-		max_file_plaintext_bytes: DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
 		used_content_bytes: 0,
 		file_count: 0,
 	};
@@ -472,45 +261,7 @@ test("quota uses a signed empty GET and carries cancellation", async (t) => {
 		usage,
 	);
 });
-test("canceling a streaming download stops its reader without unhandled cancellation failures", async (t) => {
-	const { privateKey } = await generatePrivateKey();
-	const controller = new AbortController();
-	let canceled = false;
-	t.mock.method(
-		globalThis,
-		"fetch",
-		async () =>
-			new Response(
-				new ReadableStream({
-					start(stream) {
-						stream.enqueue(new Uint8Array([1]));
-					},
-					cancel() {
-						canceled = true;
-						return Promise.reject(new Error("stream already failed"));
-					},
-				}),
-				{
-					status: 200,
-					headers: {
-						"content-length": "100",
-					},
-				},
-			),
-	);
-	await assert.rejects(
-		getContent({
-			serverUrl: "https://clip.example",
-			key: await loadKey(privateKey),
-			id: "a".repeat(64),
-			encryptedBytes: 100,
-			signal: controller.signal,
-			onProgress: () => controller.abort(),
-		}),
-		{ name: "AbortError" },
-	);
-	assert.equal(canceled, true);
-});
+
 test("metadata conflicts preserve ordinary errors and HTTP fallback", async (t) => {
 	const { privateKey } = await generatePrivateKey();
 	const key = await loadKey(privateKey);
@@ -536,6 +287,7 @@ test("metadata conflicts preserve ordinary errors and HTTP fallback", async (t) 
 		status: 409,
 	});
 });
+
 test("registration signs the otc-only body with the unregistered key", async (t) => {
 	const { privateKey } = await generatePrivateKey();
 	const key = await loadKey(privateKey);
@@ -610,6 +362,7 @@ test("direct metadata reads use signed empty GETs, decrypt summaries, and reject
 	const { privateKey } = await generatePrivateKey();
 	const key = await loadKey(privateKey);
 	const id = "a".repeat(64);
+	const { descriptor } = await sealDescriptor(key, id, 3, new Uint8Array(32));
 	const controller = new AbortController();
 	let responseId = id;
 	let damaged = false;
@@ -638,7 +391,9 @@ test("direct metadata reads use signed empty GETs, decrypt summaries, and reject
 			return documentResponse({
 				id: responseId,
 				created_at: 1,
-				bytes: 42,
+				bytes: 19,
+				descriptor,
+				expected_chunk_count: 1,
 				meta,
 			});
 		},
@@ -665,8 +420,194 @@ test("direct metadata reads use signed empty GETs, decrypt summaries, and reject
 	assert.equal(calls, before);
 });
 
-for (const length of [undefined, "1"]) {
-	test(`download enforces the item byte count with Content-Length ${length}`, async (t) => {
+function uploadServer(t: test.TestContext, key = testKey()) {
+	let item: Record<string, unknown> | undefined;
+	const chunks: Uint8Array<ArrayBuffer>[] = [];
+	const calls: string[] = [];
+	const signatures = new Set<string>();
+	t.mock.method(
+		globalThis,
+		"fetch",
+		async (url: string | URL | Request, options: RequestInit = {}) => {
+			const path = new URL(String(url)).pathname;
+			const method = options.method || "GET";
+			calls.push(`${method} ${path}`);
+			const auth = assertPresent(
+				new Headers(options.headers).get("authorization"),
+			);
+			assert(!signatures.has(auth));
+			signatures.add(auth);
+			const [, ts, nonce] = auth.slice(7).split(".");
+			assert.equal(
+				auth,
+				await authorizationHeader({
+					key,
+					origin: "https://clip.example",
+					ts: Number(ts),
+					nonce,
+					method,
+					path,
+					body: options.body ? requestBody(options) : new Uint8Array(),
+				}),
+			);
+			if (method === "POST") {
+				item = requestDocument(options);
+				assert.equal("content" in item, false);
+				const shape = contentShape(Number(item.plaintext_bytes));
+				return documentResponse({
+					id: item.id,
+					expected_chunk_count: shape.chunks,
+					current_chunk_count: 0,
+				});
+			}
+			if (method === "PUT") {
+				assert.equal(
+					new Headers(options.headers).get("content-type"),
+					"application/octet-stream",
+				);
+				chunks.push(requestBody(options).slice());
+				return new Response(null, { status: 204 });
+			}
+			assert(item);
+			return documentResponse({
+				...item,
+				bytes: contentShape(Number(item.plaintext_bytes)).encryptedBytes,
+				expected_chunk_count: chunks.length,
+				created_at: 123,
+			});
+		},
+	);
+	return {
+		key,
+		chunks,
+		calls,
+		get item() {
+			return assertPresent(item);
+		},
+	};
+}
+
+for (const size of [0, CHUNK_BYTES + 19]) {
+	test(`upload slices ${size} bytes, independently encrypts chunks and completes progress after publication`, async (t) => {
+		const server = uploadServer(t);
+		const plain = new Uint8Array(size).fill(7);
+		const file = new Blob([plain]);
+		t.mock.method(file, "arrayBuffer", async () =>
+			assert.fail("whole-file read"),
+		);
+		const progress: number[] = [];
+		const saved = await upload({
+			serverUrl: "https://clip.example",
+			key: server.key,
+			file,
+			name: "folder/sample.bin",
+			tags: ["One"],
+			onProgress: (p) => progress.push(p),
+		});
+		assert.match(saved.id, /^[a-f0-9]{64}$/);
+		assert.equal(saved.metadata?.name, "sample.bin");
+		assert.equal(saved.content?.size, size);
+		assert.equal(saved.bytes, size + server.chunks.length * 16);
+		const content = assertPresent(saved.content);
+		for (let i = 0; i < content.chunks; i++) {
+			assert.equal(server.chunks[i].length, chunkLength(content, i) + 16);
+			assert.deepEqual(
+				await decryptChunk(content, i, server.chunks[i]),
+				plain.slice(i * CHUNK_BYTES, (i + 1) * CHUNK_BYTES),
+			);
+		}
+		assert.equal(progress.at(-1), 100);
+		assert(progress.slice(0, -1).every((p) => p < 100));
+		assert.equal(server.calls.length, content.chunks + 2);
+	});
+}
+
+test("failed upload attempts delete their reservation and retry with a fresh ID and key", async (t) => {
+	const key = testKey();
+	const ids: string[] = [];
+	const descriptors: Uint8Array[] = [];
+	const deleted: string[] = [];
+	t.mock.method(
+		globalThis,
+		"fetch",
+		async (url: string | URL | Request, options: RequestInit = {}) => {
+			if (options.method === "POST") {
+				const value = requestDocument(options);
+				ids.push(String(value.id));
+				descriptors.push(binary(value.descriptor));
+				throw new Error("lost creation response");
+			}
+			assert.equal(options.method, "DELETE");
+			deleted.push(new URL(String(url)).pathname.split("/").at(-1) || "");
+			return new Response(null, { status: 204 });
+		},
+	);
+	for (let i = 0; i < 2; i++) {
+		await assert.rejects(
+			upload({
+				serverUrl: "https://clip.example",
+				key,
+				file: new Blob(["x"]),
+				name: "x",
+			}),
+			/lost creation/,
+		);
+	}
+	assert.deepEqual(deleted, ids);
+	assert.notEqual(ids[0], ids[1]);
+	assert.notDeepEqual(descriptors[0], descriptors[1]);
+});
+
+test("range reads cross independently authenticated chunks with bounded allocation", async (t) => {
+	const key = testKey();
+	const { content } = await createContent(key, CHUNK_BYTES + 10);
+	const plain = new Uint8Array(content.size).map((_, i) => i % 251);
+	const chunks = await Promise.all(
+		[0, 1].map((i) =>
+			encryptChunk(
+				content,
+				i,
+				plain.slice(i * CHUNK_BYTES, (i + 1) * CHUNK_BYTES),
+			),
+		),
+	);
+	const calls: number[] = [];
+	t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+		const index = Number(new URL(String(url)).pathname.split("/").at(-1));
+		calls.push(index);
+		return new Response(chunks[index]);
+	});
+	const request = {
+		serverUrl: "https://clip.example",
+		key,
+		content,
+		start: CHUNK_BYTES - 3,
+		end: CHUNK_BYTES + 7,
+	};
+	assert.deepEqual(
+		await readContentRange(request),
+		plain.slice(request.start, request.end),
+	);
+	assert.deepEqual(calls, [0, 1]);
+	chunks[1][0] ^= 1;
+	await assert.rejects(readContentRange(request));
+	await assert.rejects(
+		readContentRange({ ...request, start: 0, end: content.size }),
+		/Invalid content range/,
+	);
+});
+
+for (const failure of [
+	"oversized",
+	"truncated",
+	"wrong length",
+	"wrong status",
+	"cancelled",
+] as const) {
+	test(`range reads reject ${failure} ciphertext and release the response reader`, async (t) => {
+		const key = testKey();
+		const { content } = await createContent(key, 3);
+		const controller = new AbortController();
 		let cancelled = false;
 		t.mock.method(
 			globalThis,
@@ -674,215 +615,47 @@ for (const length of [undefined, "1"]) {
 			async () =>
 				new Response(
 					new ReadableStream({
-						start(controller) {
-							controller.enqueue(new Uint8Array(3));
-							controller.enqueue(new Uint8Array(3));
+						start(stream) {
+							if (failure === "cancelled") {
+								stream.enqueue(new Uint8Array(1));
+								setImmediate(() => controller.abort());
+							} else if (failure === "oversized") {
+								stream.enqueue(new Uint8Array(20));
+							} else if (failure === "truncated") {
+								stream.enqueue(new Uint8Array(1));
+								stream.close();
+							}
 						},
 						cancel() {
 							cancelled = true;
 						},
 					}),
 					{
-						status: 200,
-						headers: {
-							...(length ? { "content-length": length } : {}),
-						},
+						status: failure === "wrong status" ? 206 : 200,
+						headers:
+							failure === "wrong length" ? { "content-length": "1" } : {},
 					},
 				),
 		);
 		await assert.rejects(
-			getContent({
-				serverUrl: "https://clip.example",
-				key: testKey(),
-				id: "a".repeat(64),
-				encryptedBytes: 5,
-			}),
-			length ? /Invalid content chunk response/ : /exceeds its expected size/,
-		);
-		assert.equal(cancelled, true);
-	});
-}
-
-for (const limit of [-1, 1.5, 536870913, Number.NaN]) {
-	test(`quota rejects invalid plaintext limit ${limit}`, async (t) => {
-		t.mock.method(globalThis, "fetch", async () =>
-			documentResponse({
-				used_content_bytes: 0,
-				max_content_bytes: 1,
-				file_count: 0,
-				max_files: 1,
-				max_file_plaintext_bytes: limit,
-			}),
-		);
-		await assert.rejects(
-			getQuota({ serverUrl: "https://clip.example", key: testKey() }),
-			/Invalid/,
-		);
-	});
-}
-
-for (const plainBytes of [
-	DOWNLOAD_CHUNK_BYTES - 45,
-	DOWNLOAD_CHUNK_BYTES + 31,
-	2 * DOWNLOAD_CHUNK_BYTES + 17,
-]) {
-	test(`chunk downloads assemble ${plainBytes} plaintext bytes with fresh signatures and aggregate progress`, async (t) => {
-		const key = testKey();
-		const plain = new Uint8Array(plainBytes).fill(7);
-		const content = await encrypt(key, contentAad(), plain);
-		const id = await bodyHash(content);
-		const nonces = new Set<string>();
-		let offset = 0;
-		let calls = 0;
-		const progress: number[] = [];
-		t.mock.method(
-			globalThis,
-			"fetch",
-			async (url: string | URL | Request, options: RequestInit = {}) => {
-				assert.equal(
-					String(url),
-					`https://clip.example/api/media/${id}/chunks/${calls}`,
-				);
-				assert.equal(options.cache, "default");
-				const headers = new Headers(options.headers);
-				const end = Math.min(offset + DOWNLOAD_CHUNK_BYTES, content.length) - 1;
-				assert.equal(headers.get("range"), null);
-				const auth = assertPresent(headers.get("authorization"));
-				const [, ts, nonce] = auth.slice(7).split(".");
-				assert(!nonces.has(nonce));
-				nonces.add(nonce);
-				assert.equal(
-					auth,
-					await authorizationHeader({
-						key,
-						origin: "https://clip.example",
-						ts: Number(ts),
-						nonce,
-						method: "GET",
-						path: `/api/media/${id}/chunks/${calls}`,
-						body: new Uint8Array(),
-					}),
-				);
-				const bytes = content.slice(offset, end + 1);
-				offset = end + 1;
-				calls++;
-				return new Response(bytes, {
-					status: 200,
-					headers: {
-						"content-length": String(bytes.length),
-					},
-				});
-			},
-		);
-		const downloaded = await getContent({
-			serverUrl: "https://clip.example",
-			key,
-			id,
-			encryptedBytes: content.length,
-			onProgress: (value) => progress.push(value),
-		});
-		assert.deepEqual(downloaded, plain);
-		assert.equal(offset, content.length);
-		assert.equal(calls, Math.ceil(content.length / DOWNLOAD_CHUNK_BYTES));
-		assert.equal(progress.at(-1), 100);
-		assert(progress.slice(0, -1).every((value) => value < 100));
-		assert(progress.every((value, i) => i === 0 || value >= progress[i - 1]));
-	});
-}
-
-for (const [status, length] of [
-	[206, "2"],
-	[201, "2"],
-	[200, "1"],
-	[200, "3"],
-	[200, "NaN"],
-] as const) {
-	test(`chunk download rejects status/length ${status}/${length} before buffering`, async (t) => {
-		let cancelled = false;
-		t.mock.method(
-			globalThis,
-			"fetch",
-			async () =>
-				new Response(
-					new ReadableStream({
-						cancel() {
-							cancelled = true;
-						},
-					}),
-					{ status, headers: { "content-length": length } },
-				),
-		);
-		await assert.rejects(
-			getContent({
-				serverUrl: "https://clip.example",
-				key: testKey(),
-				id: "a".repeat(64),
-				encryptedBytes: 2,
-			}),
-			/Invalid content chunk response/,
-		);
-		assert.equal(cancelled, true);
-	});
-}
-
-test("chunk downloads reject truncation and stop after deletion or cancellation between chunks", async (t) => {
-	const key = testKey();
-	const content = await encrypt(
-		key,
-		contentAad(),
-		new Uint8Array(DOWNLOAD_CHUNK_BYTES),
-	);
-	const id = await bodyHash(content);
-	for (const failure of [
-		"truncated",
-		"deleted",
-		"cancelled",
-		"corrupted",
-	] as const) {
-		const controller = new AbortController();
-		let calls = 0;
-		const progress: number[] = [];
-		const fetch = t.mock.method(globalThis, "fetch", async () => {
-			const start = calls++ * DOWNLOAD_CHUNK_BYTES;
-			const end = Math.min(start + DOWNLOAD_CHUNK_BYTES, content.length) - 1;
-			if (start && failure === "deleted") {
-				return documentResponse({ error: "not found" }, { status: 404 });
-			}
-			const bytes = content.slice(start, end + 1);
-			if (failure === "corrupted") {
-				bytes[0] ^= 1;
-			}
-			return new Response(failure === "truncated" ? bytes.subarray(1) : bytes, {
-				status: 200,
-			});
-		});
-		await assert.rejects(
-			getContent({
+			readContentRange({
 				serverUrl: "https://clip.example",
 				key,
-				id,
-				encryptedBytes: content.length,
+				content,
+				start: 0,
+				end: 3,
 				signal: controller.signal,
-				onProgress(value) {
-					progress.push(value);
-					if (failure === "cancelled") {
-						controller.abort();
-					}
-				},
 			}),
 			failure === "cancelled"
 				? { name: "AbortError" }
-				: failure === "deleted"
-					? /not found/
-					: failure === "corrupted"
-						? /Content hash mismatch/
-						: /shorter than its expected size/,
+				: failure === "truncated"
+					? /shorter/
+					: failure === "oversized"
+						? /exceeds/
+						: /Invalid content chunk/,
 		);
-		assert.equal(
-			calls,
-			failure === "deleted" || failure === "corrupted" ? 2 : 1,
-		);
-		assert(!progress.includes(100));
-		fetch.mock.restore();
-	}
-});
+		if (failure !== "truncated") {
+			assert.equal(cancelled, true);
+		}
+	});
+}

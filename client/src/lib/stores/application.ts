@@ -1,9 +1,14 @@
 import { get, writable } from "svelte/store";
 import { createLog } from "../log.ts";
+import {
+	type ContentStreams,
+	createContentStreams,
+} from "./content-streams.ts";
 import { createExtensionReceiver } from "./extension.ts";
 import { createPairing } from "./pairing.ts";
 import { createPreferences } from "./preferences.ts";
 import { createRouting } from "./routing.ts";
+import type { LibraryContext } from "./session.ts";
 import { createSession } from "./session.ts";
 import { createWorkspace, type Workspace } from "./workspace.ts";
 
@@ -13,12 +18,22 @@ export function createApplication() {
 	const session = createSession();
 	const preferences = createPreferences();
 	const routing = createRouting();
-	const state = writable<{ workspace: Workspace | null }>({ workspace: null });
+	const state = writable<{
+		workspace: Workspace | null;
+		streams: ContentStreams | null;
+	}>({ workspace: null, streams: null });
 	let workspace: Workspace | null = null;
 	let disposed = false;
+	let streamContext: LibraryContext | null = null;
+	let streams: ContentStreams | null = null;
 
 	function syncWorkspace() {
 		const context = get(session).context;
+		if (streamContext !== context) {
+			streams?.dispose();
+			streamContext = context;
+			streams = context ? createContentStreams(context.signal) : null;
+		}
 		if (workspace && workspace.context !== context) {
 			log.debug("workspace-ended", { reason: "context-changed" });
 			workspace.dispose();
@@ -26,9 +41,9 @@ export function createApplication() {
 		}
 		if (context && get(routing).workspace && !workspace) {
 			log.debug("workspace-created");
-			workspace = createWorkspace(context, preferences);
+			workspace = createWorkspace(context, preferences, streams ?? undefined);
 		}
-		state.set({ workspace });
+		state.set({ workspace, streams });
 	}
 	const stopSession = session.subscribe(syncWorkspace);
 	const stopRouting = routing.subscribe(syncWorkspace);
@@ -80,7 +95,9 @@ export function createApplication() {
 			routing.dispose();
 			workspace?.dispose();
 			workspace = null;
-			state.set({ workspace });
+			state.set({ workspace, streams });
+			streams?.dispose();
+			streams = null;
 			session.dispose();
 		},
 	};

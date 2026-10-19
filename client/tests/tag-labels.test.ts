@@ -88,30 +88,32 @@ test("upload labels and encrypted metadata contain the same ordinary tags", asyn
 		globalThis,
 		"fetch",
 		async (_url: string | URL | Request, options: RequestInit = {}) => {
-			frame = options.body;
-			return documentResponse({ id: "saved", created_at: 1 });
+			if (options.method === "POST") {
+				frame = options.body;
+			}
+			throw new Error("creation captured");
 		},
 	);
-	const saved = await upload({
-		serverUrl: "https://clip.example",
-		key,
-		bytes: new Uint8Array([1]),
-		name: "Summer holiday.txt",
-		contentType: "text/plain",
-	});
+	await assert.rejects(
+		upload({
+			serverUrl: "https://clip.example",
+			key,
+			file: new Blob([new Uint8Array([1])]),
+			name: "Summer holiday.txt",
+			contentType: "text/plain",
+		}),
+		/creation captured/,
+	);
 	const packet = document(decode(binary(frame)));
 	const metadata = binary(packet.meta);
-	const content = binary(packet.content);
+	const id = String(packet.id);
 	const tags = packet.tags;
 	assert(Array.isArray(tags));
-	const { bodyHash } = await import("../src/lib/protocol/crypto.ts");
-	const opened = decodeMetaPlain(
-		await decrypt(key, metaAad(await bodyHash(content)), metadata),
-	);
-	assert.deepEqual(opened.metadata.tags, saved.metadata.tags);
+	const opened = decodeMetaPlain(await decrypt(key, metaAad(id), metadata));
+	assert.deepEqual(opened.metadata.tags, ["text", "txt", "summer", "holiday"]);
 	assert.deepEqual(
 		await Promise.all(tags.map((tag: unknown) => openTag(key, tag))),
-		saved.metadata.tags,
+		["text", "txt", "summer", "holiday"],
 	);
 	assert(!new TextDecoder().decode(binary(frame)).includes("holiday"));
 });

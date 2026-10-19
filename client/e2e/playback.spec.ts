@@ -109,7 +109,7 @@ test("preview stops at loaded boundaries and More loads the submitted search", a
 		await upload({
 			serverUrl: identity.server_url,
 			key,
-			bytes: new Uint8Array(image.buffer),
+			file: new Blob([image.buffer]),
 			name: `Landscape ${index}.png`,
 			contentType: image.mimeType,
 			tags: ["Gallery"],

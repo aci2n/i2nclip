@@ -5,12 +5,15 @@ import type { ContentRequest, Media, ViewerApi } from "../src/lib/api.ts";
 import { createMediaViewer } from "../src/lib/stores/media-viewer.ts";
 import { assertPresent } from "./assert.ts";
 import { deferred, mediaData, testKey, tick } from "./helpers.ts";
+import { streamFixture } from "./stream-fixture.ts";
 
 const id = "a".repeat(64);
 function fixture(t: test.TestContext, http: Partial<ViewerApi> = {}) {
 	const lifetime = new AbortController();
 	const created: Blob[] = [];
 	const revoked: string[] = [];
+	const streaming = streamFixture();
+	streaming.finish.resolve();
 	const downloads: { url: string; name: string }[] = [];
 	const viewer = createMediaViewer(
 		id,
@@ -20,13 +23,14 @@ function fixture(t: test.TestContext, http: Partial<ViewerApi> = {}) {
 			signal: lifetime.signal,
 		},
 		{
+			streams: streaming.streams,
 			http: {
 				getMedia: async () =>
 					mediaData({
 						id,
-						metadata: { name: "Portrait.png", content_type: "image/png" },
+						metadata: { name: "Portrait.png", content_type: "text/plain" },
 					}),
-				getContent: async () => new Uint8Array([1, 2, 3]),
+				readContentRange: async () => new Uint8Array([1, 2, 3]),
 				...http,
 			},
 			urls: {
@@ -66,9 +70,8 @@ function settled(
 	t.after(cleanup);
 	return done.promise.finally(cleanup);
 }
-test("viewer reads one item, publishes progress, prepares text and reuses content for explicit downloads", async (t) => {
+test("viewer reads one item, prepares text and delegates explicit downloads to session streams", async (t) => {
 	const content = deferred<Uint8Array<ArrayBuffer>>();
-	let request: ContentRequest | undefined;
 	let reads = 0;
 	const f = fixture(t, {
 		getMedia: async () =>
@@ -76,31 +79,28 @@ test("viewer reads one item, publishes progress, prepares text and reuses conten
 				id,
 				metadata: { name: "note.html", content_type: "text/html" },
 			}),
-		getContent: (args) => {
+		readContentRange: () => {
 			reads++;
-			request = args;
 			return content.promise;
 		},
 	});
 	await tick();
 	assert.equal(get(f.viewer).loading, true);
-	assertPresent(request).onProgress?.(37);
-	assert.equal(get(f.viewer).media?.progress, 37);
 	assert.equal(await f.viewer.retry(), false);
 	content.resolve(new TextEncoder().encode("<script>unsafe()</script>"));
 	await settled(t, f.viewer);
 	assert.equal(get(f.viewer).media?.text, "<script>unsafe()</script>");
-	assert.equal(f.created.length, 1);
+	assert.equal(f.created.length, 0);
 	assert.equal(f.downloads.length, 0);
 	assert.equal(await f.viewer.download(), true);
 	assert.equal(await f.viewer.download(), true);
 	assert.equal(reads, 1);
 	assert.deepEqual(f.downloads, [
-		{ url: "blob:1", name: "note.html" },
-		{ url: "blob:1", name: "note.html" },
+		{ url: "/__content/download", name: "note.html" },
+		{ url: "/__content/download", name: "note.html" },
 	]);
 	f.viewer.dispose();
-	assert.deepEqual(f.revoked, ["blob:1"]);
+	assert.deepEqual(f.revoked, []);
 });
 test("metadata failures and missing files can retry without starting content prematurely", async (t) => {
 	let missing = true;
@@ -115,7 +115,7 @@ test("metadata failures and missing files can retry without starting content pre
 				metadata: { name: "file", content_type: "application/octet-stream" },
 			});
 		},
-		getContent: async () => {
+		readContentRange: async () => {
 			reads++;
 			return new Uint8Array([1]);
 		},
@@ -125,7 +125,7 @@ test("metadata failures and missing files can retry without starting content pre
 	assert.equal(reads, 0);
 	missing = false;
 	assert.equal(await f.viewer.retry(), true);
-	assert.equal(reads, 1);
+	assert.equal(reads, 0);
 	assert.equal(get(f.viewer).error, "");
 });
 test("content failures keep metadata for retry and leave other content untouched", async (t) => {
@@ -136,10 +136,10 @@ test("content failures keep metadata for retry and leave other content untouched
 			metadataReads++;
 			return mediaData({
 				id,
-				metadata: { name: "image.png", content_type: "image/png" },
+				metadata: { name: "image.png", content_type: "text/plain" },
 			});
 		},
-		getContent: async () => {
+		readContentRange: async () => {
 			if (fail) {
 				throw new Error("offline");
 			}
@@ -151,7 +151,7 @@ test("content failures keep metadata for retry and leave other content untouched
 	fail = false;
 	assert.equal(await f.viewer.retry(), true);
 	assert.equal(metadataReads, 1);
-	assert.equal(f.created.length, 1);
+	assert.equal(f.created.length, 0);
 });
 for (const end of ["dispose", "identity"] as const) {
 	test(`${end} cancels metadata and ignores its late result`, async (t) => {
@@ -163,7 +163,7 @@ for (const end of ["dispose", "identity"] as const) {
 				signal = args.signal;
 				return metadata.promise;
 			},
-			getContent: async () => {
+			readContentRange: async () => {
 				reads++;
 				return new Uint8Array([1]);
 			},
@@ -180,11 +180,11 @@ for (const end of ["dispose", "identity"] as const) {
 		assert.equal(get(f.viewer).media, null);
 		assert.equal(f.created.length, 0);
 	});
-	test(`${end} cancels content, ignores late progress and cannot create URLs or save dialogs`, async (t) => {
+	test(`${end} cancels content and cannot publish late text or save dialogs`, async (t) => {
 		const content = deferred<Uint8Array<ArrayBuffer>>();
 		let request: ContentRequest | undefined;
 		const f = fixture(t, {
-			getContent: (args) => {
+			readContentRange: (args) => {
 				request = args;
 				return content.promise;
 			},
@@ -196,7 +196,6 @@ for (const end of ["dispose", "identity"] as const) {
 			f.lifetime.abort();
 		}
 		assert.equal(assertPresent(assertPresent(request).signal).aborted, true);
-		assertPresent(request).onProgress?.(99);
 		content.resolve(new Uint8Array([1]));
 		await tick();
 		assert.equal(f.created.length, 0);
@@ -222,7 +221,7 @@ test("invalid links and undecryptable metadata do not request content", async (t
 					reads++;
 					throw new Error("unexpected");
 				},
-				getContent: async () => {
+				readContentRange: async () => {
 					reads++;
 					return new Uint8Array();
 				},
@@ -235,7 +234,7 @@ test("invalid links and undecryptable metadata do not request content", async (t
 	assert.equal(reads, 0);
 	const f = fixture(t, {
 		getMedia: async () => mediaData({ id, metadata: null }),
-		getContent: async () => {
+		readContentRange: async () => {
 			reads++;
 			return new Uint8Array();
 		},

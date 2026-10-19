@@ -1,9 +1,7 @@
 import type { Readable } from "svelte/store";
 import { get, writable } from "svelte/store";
-import { DEFAULT_MAX_FILE_PLAINTEXT_BYTES } from "../api.ts";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
-import { checkSourceSize } from "../media/prepare.ts";
 import type { SendOptions } from "../media/upload.ts";
 import { sendUpload } from "../media/upload.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
@@ -40,9 +38,7 @@ export function createUploads(
 		send = sendUpload,
 		onComplete,
 		preferences,
-		getMaxFilePlaintextBytes = () => DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
 	}: {
-		getMaxFilePlaintextBytes?: () => number;
 		send?: (options: SendOptions) => Promise<{ id: string }>;
 		onComplete: () => unknown;
 		preferences?: Readable<{ compressImages: boolean }>;
@@ -123,7 +119,6 @@ export function createUploads(
 			try {
 				const item = await send({
 					file,
-					maxFilePlaintextBytes: getMaxFilePlaintextBytes(),
 					compressImages,
 					onPrepared: (name) => {
 						if (!finished && !signal.aborted) {
@@ -194,9 +189,6 @@ export function createUploads(
 	return {
 		subscribe: state.subscribe,
 		upload,
-		getMaxFilePlaintextBytes,
-		checkFile: (file: File) =>
-			checkSourceSize(file, compression(), getMaxFilePlaintextBytes()),
 		dismissCompleted: () =>
 			state.update((v) => ({
 				...v,

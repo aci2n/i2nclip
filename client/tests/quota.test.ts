@@ -24,7 +24,6 @@ const usage = {
 	file_count: 1,
 	max_content_bytes: 536870912,
 	max_files: 10000,
-	max_file_plaintext_bytes: 33554432,
 };
 test("quota reads deduplicate and retry errors without persisting stale values", async (t) => {
 	let result = deferred<typeof usage>();

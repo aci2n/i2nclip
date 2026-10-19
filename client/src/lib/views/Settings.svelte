@@ -74,10 +74,7 @@ async function action(
 							Files: {$quota?.value.file_count.toLocaleString()} of
 							{$quota?.value.max_files.toLocaleString()}
 						</p>
-						<p>
-							Maximum file size:
-							{fileSize($quota?.value.max_file_plaintext_bytes)}
-						</p>
+						<p>Storage includes reservations for uploads in progress.</p>
 					{/if}
 				</section>
 				<p>

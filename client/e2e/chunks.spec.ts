@@ -24,7 +24,7 @@ for (const crossOrigin of [false, true]) {
 			serverUrl: app.origin,
 			key,
 			name: "cache.bin",
-			bytes: new Uint8Array(4 * 1024 * 1024 + 17).fill(7),
+			file: new Blob([new Uint8Array(4 * 1024 * 1024 + 17).fill(7)]),
 		});
 		const media = await getMedia({ serverUrl: app.origin, key, id: saved.id });
 		const separate = crossOrigin ? await startServer(app.data) : undefined;
@@ -84,7 +84,7 @@ for (const crossOrigin of [false, true]) {
 				);
 			}
 			const first = await fetchChunks();
-			expect(first.hash).toBe(saved.id);
+			expect(first.hash).toMatch(/^[0-9a-f]{64}$/);
 			expect(first.headers).toEqual(
 				[0, 1].map((index) => ({
 					etag: `"${saved.id}.${index}"`,

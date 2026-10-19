@@ -50,18 +50,13 @@ export async function master(page: Page) {
 		page.getByRole("navigation", { name: "Main navigation" }),
 	).toBeVisible();
 }
-export async function createLibrary(
-	page: Page,
-	app: App,
-	maxBytes?: number,
-	maxFilePlaintextBytes?: number,
-) {
+export async function createLibrary(page: Page, app: App, maxBytes?: number) {
 	await page.goto(`${app.origin}/#/settings`);
 	await master(page);
 	await expect(page.getByLabel("Library name", { exact: true })).toHaveCount(0);
 	await page
 		.getByLabel("Invitation code", { exact: true })
-		.fill(await issueOtc(app.data, "debug", maxBytes, maxFilePlaintextBytes));
+		.fill(await issueOtc(app.data, "debug", maxBytes));
 	await page
 		.getByRole("button", { name: "Create library", exact: true })
 		.click();

@@ -12,7 +12,7 @@ let { value, onretry, ondownload }: Props = $props();
 const media = $derived(value.media);
 const name = $derived(media?.metadata?.name || media?.id || "Open file");
 const error = $derived(value.error || (media?.error ? media.message : ""));
-const ready = $derived(!value.loading && !error && Boolean(media?.url));
+const ready = $derived(!value.loading && !error && Boolean(media?.ready));
 </script>
 
 <section class="viewer" aria-label="File viewer">

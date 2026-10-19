@@ -5,6 +5,12 @@ import { decode } from "../src/lib/protocol/msgpack.ts";
 import { bytes, document } from "../src/lib/protocol/value.ts";
 export function mediaData(value: Partial<Media> & { id: string }): Media {
 	return {
+		content: {
+			id: value.id,
+			size: value.metadata?.size ?? 3,
+			chunks: 1,
+			key: sharedContentKey,
+		},
 		createdAt: 0,
 		bytes: 0,
 		metadata: null,
@@ -34,3 +40,11 @@ export function deferred<T = void>() {
 	return Promise.withResolvers<T>();
 }
 export const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+const sharedContentKey = await crypto.subtle.importKey(
+	"raw",
+	new Uint8Array(32),
+	"AES-GCM",
+	false,
+	["encrypt", "decrypt"],
+);

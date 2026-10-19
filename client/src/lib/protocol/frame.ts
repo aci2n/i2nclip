@@ -2,16 +2,14 @@ import { encode } from "./msgpack.ts";
 import type { SealedTag } from "./tag-labels.ts";
 // Named maps match src/frame.rs; signatures cover these exact encoded bytes.
 
-export function encodeUpload({
-	meta,
-	content,
-	tags,
-}: {
+export function encodeUpload(value: {
+	id: string;
+	plaintext_bytes: number;
+	descriptor: Uint8Array;
 	meta: Uint8Array;
-	content: Uint8Array;
 	tags: SealedTag[];
 }) {
-	return encode({ meta, content, tags });
+	return encode(value);
 }
 
 export function encodeMeta({

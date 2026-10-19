@@ -72,7 +72,7 @@ $effect(() => {
 			</div>
 		{:else if media.preview}
 			<img src={media.preview} alt={name}>
-		{:else if media.url}
+		{:else if media.ready}
 			<p>This file is ready to download.</p>
 		{/if}
 	{/key}

@@ -54,7 +54,13 @@ function pasteFiles(event: ClipboardEvent) {
 		<Unlock {session} />
 	{:else if $routing.page === "media"}
 		{#if $session.context}
-			<Media id={$routing.id} context={$session.context} />
+			{#if $application.streams}
+				<Media
+					id={$routing.id}
+					context={$session.context}
+					streams={$application.streams}
+				/>
+			{/if}
 		{:else}
 			<p>Connect the library that contains this file to open it.</p>
 			<Setup {session} {pairing} />

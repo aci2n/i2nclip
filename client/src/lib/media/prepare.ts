@@ -1,26 +1,13 @@
-import {
-	checkFileSize,
-	DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
-	MAX_FILE_PLAINTEXT_BYTES,
-} from "../api.ts";
-import { canCompressImage, compressImage } from "./image.ts";
+import { contentShape } from "../protocol/content.ts";
+import { compressImage } from "./image.ts";
 
-export function checkSourceSize(
-	file: File,
-	compressImages: boolean,
-	maxFilePlaintextBytes = DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
-) {
-	const limit = Math.min(maxFilePlaintextBytes, MAX_FILE_PLAINTEXT_BYTES);
-	if (!compressImages || !canCompressImage(file) || limit === 0) {
-		checkFileSize(file.size, limit);
-	}
-}
+// Optional preparation may buffer the source; chunk transport never does.
+export const PREPARATION_BYTES = 32 * 1024 * 1024;
 
 interface PreparationRequest {
 	file: File;
 	compressImages: boolean;
 	signal: AbortSignal;
-	maxFilePlaintextBytes?: number;
 	onNotice?: (message: string) => void;
 }
 
@@ -28,18 +15,19 @@ export async function prepareFile({
 	file,
 	compressImages,
 	signal,
-	maxFilePlaintextBytes = DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
 	onNotice,
 }: PreparationRequest) {
 	signal.throwIfAborted();
-	checkSourceSize(file, compressImages, maxFilePlaintextBytes);
+	contentShape(file.size);
+	if (file.size > PREPARATION_BYTES) {
+		onNotice?.(
+			"Uploading original file; compression and thumbnail preparation are skipped above 32 MiB.",
+		);
+		return file;
+	}
 	if (compressImages) {
 		file = await compressImage(file, signal, onNotice);
 	}
 	signal.throwIfAborted();
-	checkFileSize(
-		file.size,
-		Math.min(maxFilePlaintextBytes, MAX_FILE_PLAINTEXT_BYTES),
-	);
 	return file;
 }

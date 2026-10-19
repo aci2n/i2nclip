@@ -11,7 +11,9 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 	const usage = page.getByLabel("Library usage");
 	await expect(usage).toContainText("Storage: 0 B of 10.0 GB");
 	await expect(usage).toContainText("Files: 0 of 10,000");
-	await expect(usage).toContainText("Maximum file size: 32.0 MB");
+	await expect(usage).toContainText(
+		"Storage includes reservations for uploads in progress.",
+	);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.getByLabel("Upload", { exact: true }).setInputFiles({
 		name: "Notes.bin",
@@ -53,15 +55,15 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 	expect(await page.locator("[id]").count()).toBe(0);
 });
 
-test("workspace quota permits files above 32 MiB without visiting Settings and downloads survive a limit reduction", async ({
+test("files above 32 MiB stream through library and deeplink downloads after quota is reduced", async ({
 	page,
 	app,
 }) => {
-	await createLibrary(page, app, undefined, 64 * 1024 * 1024);
+	await createLibrary(page, app, 128 * 1024 * 1024);
 	const key = (await page.locator("code").first().innerText()).trim();
 	expect(key).toMatch(/^[A-Za-z0-9_-]{43}$/);
 	await expect(page.getByLabel("Library usage")).toContainText(
-		"Maximum file size: 64.0 MB",
+		"Storage: 0 B of 128.0 MB",
 	);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const quota = page.waitForResponse(
@@ -79,13 +81,12 @@ test("workspace quota permits files above 32 MiB without visiting Settings and d
 	const card = page.getByRole("article");
 	await expect(card).toHaveCount(1);
 	await setKeyLimits(app.data, key, {
-		maxBytes: 536870912,
+		maxBytes: 32 * 1024 * 1024 + 1 + 9 * 16 + 17,
 		maxFiles: 10000,
-		maxFilePlaintextBytes: 1,
 	});
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(page.getByLabel("Library usage")).toContainText(
-		"Maximum file size: 1 B",
+		"Files: 1 of 10,000",
 	);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const downloading = page.waitForEvent("download");
@@ -115,7 +116,7 @@ test("workspace quota permits files above 32 MiB without visiting Settings and d
 	} finally {
 		await linked.close();
 	}
-	// The new limit applies before reading subsequent files, and failures are local.
+	// The remaining quota admits a one-byte file plus its GCM tag.
 	await page.getByLabel("Upload", { exact: true }).setInputFiles([
 		{
 			name: "Too large.bin",
@@ -129,7 +130,7 @@ test("workspace quota permits files above 32 MiB without visiting Settings and d
 		},
 	]);
 	await expect(
-		page.getByText("File is larger than 1 byte.", { exact: false }),
+		page.getByText("Library storage limit reached.", { exact: false }),
 	).toBeVisible();
 	await expect(page.getByRole("article")).toHaveCount(2);
 });

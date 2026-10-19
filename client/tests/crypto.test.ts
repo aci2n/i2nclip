@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-	b64urlToBytes,
-	bytesToHex,
-	hexToBytes,
-	utf8,
-} from "../src/lib/protocol/bytes.ts";
+import { bytesToHex, hexToBytes, utf8 } from "../src/lib/protocol/bytes.ts";
 import {
 	authorizationHeader,
 	bodyHash,
@@ -17,8 +12,8 @@ import {
 	requestMessage,
 	tagToken,
 } from "../src/lib/protocol/crypto.ts";
-import { encodeMeta, encodeUpload } from "../src/lib/protocol/frame.ts";
-import { decode, encode } from "../src/lib/protocol/msgpack.ts";
+import { encodeMeta } from "../src/lib/protocol/frame.ts";
+import { decode } from "../src/lib/protocol/msgpack.ts";
 
 import vectors from "./test-vectors.json" with { type: "json" };
 
@@ -52,17 +47,6 @@ test("library identity matches the rust vectors", async () => {
 		nonce,
 	);
 	assert.equal(bytesToHex(meta), vectors.meta_ciphertext_hex);
-	const frame = encodeUpload({
-		meta,
-		content,
-		tags: [
-			{
-				token: b64urlToBytes(vectors.token),
-				label: encode({ v: 1, iv: new Uint8Array(12), ct: new Uint8Array(17) }),
-			},
-		],
-	});
-	assert.equal(bytesToHex(frame), vectors.frame_hex);
 
 	const body = utf8(vectors.sign_body_utf8);
 	const request = requestMessage({

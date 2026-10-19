@@ -1,9 +1,8 @@
 import type { Readable } from "svelte/store";
 import { get } from "svelte/store";
-import { checkFileSize } from "../api.ts";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
-import { canCompressImage } from "../media/image.ts";
+import { contentShape } from "../protocol/content.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { document, string } from "../protocol/value.ts";
 import type { SessionSnapshot } from "./session.ts";
@@ -31,7 +30,6 @@ export interface CaptureSessionState extends SessionSnapshot {
 export interface CaptureSession extends Readable<CaptureSessionState> {}
 export interface CaptureUploads extends Readable<{ uploading: boolean }> {
 	upload(files: File[], extra?: Metadata): Promise<boolean>;
-	checkFile(file: File): void;
 }
 interface Capture {
 	operation: number;
@@ -146,12 +144,7 @@ export function createExtensionReceiver(
 				if (!(file instanceof File)) {
 					throw new Error("Invalid file handoff.");
 				}
-				const uploads = getUploads();
-				if (uploads) {
-					uploads.checkFile(file);
-				} else if (!canCompressImage(file)) {
-					checkFileSize(file.size);
-				}
+				contentShape(file.size);
 				const { sourceUrl, sourceTitle, ...extra } = document(
 					message.extra || {},
 				);

@@ -1,6 +1,5 @@
-import { get } from "svelte/store";
-import { DEFAULT_MAX_FILE_PLAINTEXT_BYTES } from "../api.ts";
 import { createLog } from "../log.ts";
+import type { ContentStreams } from "./content-streams.ts";
 import { createLibrary } from "./library.ts";
 import type { Preferences } from "./preferences.ts";
 import { createQuota } from "./quota.ts";
@@ -12,18 +11,19 @@ import { createUploads } from "./uploads.ts";
 export function createWorkspace(
 	context: LibraryContext,
 	preferences: Preferences,
+	streams?: ContentStreams,
 ) {
 	const log = createLog("workspace");
 	log.debug("created");
 	const quota = createQuota(context);
 	void quota.refresh();
 	const tags = createTags(context);
-	const library = createLibrary(context, { onChange: tags.refresh });
+	const library = createLibrary(context, {
+		onChange: tags.refresh,
+		mediaOptions: { streams },
+	});
 	const uploads = createUploads(context, {
 		preferences,
-		getMaxFilePlaintextBytes: () =>
-			get(quota).value?.max_file_plaintext_bytes ??
-			DEFAULT_MAX_FILE_PLAINTEXT_BYTES,
 		onComplete: () => {
 			void tags.refresh();
 			return library.refresh();

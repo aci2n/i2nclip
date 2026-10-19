@@ -15,6 +15,7 @@ import { createMediaItem } from "../src/lib/stores/media-item.ts";
 import { assertPresent } from "./assert.ts";
 import { deferred, mediaData, testKey, tick } from "./helpers.ts";
 import { captureLogs } from "./log-capture.ts";
+import { streamFixture } from "./stream-fixture.ts";
 
 function session() {
 	const controller = new AbortController();
@@ -45,14 +46,15 @@ function fixture(
 	owner.signal.addEventListener("abort", library.dispose, { once: true });
 	return { owner, library };
 }
-const item = (id: string) => ({
-	id,
-	metaHash: "hash",
-	bytes: 0,
-	createdAt: 0,
-	thumb: null,
-	metadata: { name: id, tags: [], content_type: "application/octet-stream" },
-});
+const item = (id: string) =>
+	mediaData({
+		id,
+		metaHash: "hash",
+		bytes: 0,
+		createdAt: 0,
+		thumb: null,
+		metadata: { name: id, tags: [], content_type: "application/octet-stream" },
+	});
 test("stale searches cannot publish; pagination uses the submitted query and permits one request", async (t) => {
 	const logs = captureLogs(t);
 	const requests: (ListRequest & {
@@ -129,10 +131,14 @@ test("stale media downloads create no URLs or save dialogs; disposal revokes pre
 	const revoked: Array<string> = [];
 	let downloads = 0;
 	const media = createMediaItem(
-		mediaData({ ...item("a"), thumb: new Uint8Array([1]) }),
+		mediaData({
+			...item("a"),
+			metadata: { name: "a.txt", content_type: "text/plain" },
+			thumb: new Uint8Array([1]),
+		}),
 		owner,
 		{
-			http: { ...api, getContent: () => pending.promise },
+			http: { ...api, readContentRange: () => pending.promise },
 			urls: {
 				createObjectURL: () => {
 					const value = `blob:${created.length}`;
@@ -145,7 +151,7 @@ test("stale media downloads create no URLs or save dialogs; disposal revokes pre
 		},
 	);
 	t.after(media.dispose);
-	const downloading = media.download();
+	const downloading = media.reveal();
 	owner.end();
 	pending.resolve(new Uint8Array([1, 2]));
 	assert.equal(await downloading, false);
@@ -176,6 +182,7 @@ test("overlapping media mutations are rejected and conflicts load current metada
 		conflict: true as const,
 		item: {
 			...item("a"),
+			content: null,
 			metaHash: "new",
 			metadata: { ...item("a").metadata, tags: ["other"] },
 		},
@@ -213,11 +220,13 @@ test("generic metadata updates rename files, preserve omitted fields and preview
 		name: string;
 	}> = [];
 	const revoked: Array<string> = [];
+	const streaming = streamFixture();
+	streaming.finish.resolve();
 	const f = fixture(t, {
 		http: {
 			...api,
 			list: async () => ({ items: [initial], next: null }),
-			getContent: async () => new Uint8Array([1, 2, 3, 4]),
+			readContentRange: async () => new Uint8Array([1, 2, 3, 4]),
 			updateMetadata: async (request) => {
 				requests.push(request);
 				return { conflict: false as const, metaHash: `hash${requests.length}` };
@@ -228,6 +237,7 @@ test("generic metadata updates rename files, preserve omitted fields and preview
 				createObjectURL: () => "blob:owned",
 				revokeObjectURL: (url) => revoked.push(url),
 			},
+			streams: streaming.streams,
 			download: async (url, name) => downloaded.push({ url, name }),
 		},
 	});
@@ -245,7 +255,9 @@ test("generic metadata updates rename files, preserve omitted fields and preview
 	assert.deepEqual(requests[0].thumb, initial.thumb);
 	assert.equal(get(f.library).cards[0].preview, "blob:owned");
 	await f.library.download("a");
-	assert.deepEqual(downloaded, [{ url: "blob:owned", name: "Renamed.txt" }]);
+	assert.deepEqual(downloaded, [
+		{ url: "/__content/download", name: "Renamed.txt" },
+	]);
 	assert.equal(
 		await f.library.updateMetadata("a", {
 			tags: [" Vacation ", "vacation", "Keep"],
@@ -357,103 +369,32 @@ test("failed and canceled deletions preserve active cards", async (t) => {
 	assert.equal(get(f.library).cards[0].deleted, false);
 	assert.equal(get(f.library).cards[0].message, "Delete unavailable");
 });
-test("loaded previews skip files, reuse downloads, and never reopen after close", async (t) => {
-	const requests: (ListRequest & {
-		done: PromiseWithResolvers<MediaPage>;
-	})[] = [];
-	const downloads: (ContentRequest & {
-		done: PromiseWithResolvers<Uint8Array<ArrayBuffer>>;
-	})[] = [];
-	const created: Array<string> = [];
-	const revoked: Array<string> = [];
-	const playable = (id: string, content_type: string) => ({
-		...item(id),
-		metadata: { ...item(id).metadata, content_type },
-	});
+test("library previews use view-owned leases and close without reopening", async (t) => {
+	const streaming = streamFixture();
 	const f = fixture(t, {
 		http: {
-			...api,
-			list: (args) => {
-				const done = deferred<MediaPage>();
-				requests.push({ ...args, done });
-				return done.promise;
-			},
-			getContent: (args) => {
-				const done = deferred<Uint8Array<ArrayBuffer>>();
-				downloads.push({ ...args, done });
-				return done.promise;
-			},
+			list: async () => ({
+				items: [
+					mediaData({
+						id: "image",
+						metadata: { name: "image.png", content_type: "image/png" },
+					}),
+					item("document"),
+				],
+				next: null,
+			}),
 		},
-		mediaOptions: {
-			urls: {
-				createObjectURL: () => {
-					const url = `blob:${created.length}`;
-					created.push(url);
-					return url;
-				},
-				revokeObjectURL: (url) => revoked.push(url),
-			},
-		},
+		mediaOptions: { streams: streaming.streams },
 	});
-	t.after(() => {
-		for (const request of requests) {
-			request.done.resolve({ items: [], next: null });
-		}
-		for (const request of downloads) {
-			request.done.resolve(new Uint8Array([1]));
-		}
-	});
-
-	requests[0].done.resolve({ items: [], next: null });
 	await tick();
-	const searching = f.library.search(["submitted"]);
-	requests[1].done.resolve({
-		items: [
-			playable("image", "image/png"),
-			item("document"),
-			playable("audio", "audio/wav"),
-			playable("video", "video/webm"),
-		],
-		next: "files",
-	});
-	await searching;
-	f.library.editDraft("not submitted");
 	assert.equal(await f.library.reveal("document"), false);
-	const opening = f.library.reveal("image");
-	downloads[0].done.resolve(new Uint8Array([1]));
-	await opening;
 	assert.equal(await f.library.reveal("image"), true);
-	assert.equal(downloads.length, 1);
-	assert.equal(requests.length, 2);
-	const openingAudio = f.library.reveal("audio");
-	downloads[1].done.resolve(new Uint8Array([2]));
-	assert.equal(await openingAudio, true);
-	assert.equal(assertPresent(get(f.library).selected).id, "audio");
-	assert.equal(
-		assertPresent(
-			assertPresent(get(f.library).cards.find((card) => card.id === "audio"))
-				.metadata,
-		).content_type,
-		"audio/wav",
-	);
-	const pendingDownload = f.library.reveal("video");
+	assert.equal(streaming.previews.length, 1);
 	f.library.closePreview();
-	downloads[2].done.resolve(new Uint8Array([3]));
-	await pendingDownload;
+	assert.equal(streaming.previews[0].disposed, true);
 	assert.equal(get(f.library).selected, null);
-	const reopeningVideo = f.library.reveal("video");
-	assert.equal(downloads.length, 4);
-	downloads[3].done.resolve(new Uint8Array([3]));
-	assert.equal(await reopeningVideo, true);
-	assert.equal(
-		assertPresent(
-			assertPresent(get(f.library).cards.find((card) => card.id === "video"))
-				.metadata,
-		).content_type,
-		"video/webm",
-	);
-	f.library.dispose();
-	assert.deepEqual(revoked, created);
+	assert.equal(await f.library.reveal("image"), true);
+	assert.equal(streaming.previews.length, 2);
 });
 test("rapid preview changes abort old loads and ignore their progress, results, errors and cleanup", async (t) => {
 	const loads: (ContentRequest & {
@@ -463,14 +404,14 @@ test("rapid preview changes abort old loads and ignore their progress, results, 
 	const saved: Array<string> = [];
 	const items = ["a", "b", "c"].map((id) => ({
 		...item(id),
-		metadata: { ...item(id).metadata, content_type: "image/png" },
+		metadata: { ...item(id).metadata, content_type: "text/plain" },
 		thumb: new Uint8Array([1]),
 	}));
 	const f = fixture(t, {
 		http: {
 			...api,
 			list: async () => ({ items, next: null }),
-			getContent: (args) => {
+			readContentRange: (args) => {
 				const done = deferred<Uint8Array<ArrayBuffer>>();
 				loads.push({ ...args, done });
 				return done.promise;
@@ -499,8 +440,6 @@ test("rapid preview changes abort old loads and ignore their progress, results, 
 	const first = f.library.reveal("a");
 	assert.equal(assertPresent(get(f.library).selected).id, "a");
 	assert.equal(assertPresent(card("a")).busy, true);
-	assertPresent(loads[0].onProgress)(17);
-	assert.equal(assertPresent(card("a")).progress, 17);
 	const second = f.library.reveal("b");
 	assert.equal(assertPresent(loads[0].signal).aborted, true);
 	assert.equal(assertPresent(card("a")).busy, false);
@@ -509,14 +448,11 @@ test("rapid preview changes abort old loads and ignore their progress, results, 
 	const latest = f.library.reveal("a");
 	assert.equal(assertPresent(loads[1].signal).aborted, true);
 	assert.equal(loads.length, 3);
-	assertPresent(loads[2].onProgress)(42);
-	assertPresent(loads[0].onProgress)(99);
 	loads[0].done.resolve(new Uint8Array([1]));
 	loads[1].done.reject(new Error("late failure"));
 	assert.equal(await first, false);
 	assert.equal(await second, false);
 	assert.equal(assertPresent(card("a")).busy, true);
-	assert.equal(assertPresent(card("a")).progress, 42);
 	assert.equal(assertPresent(card("b")).message, "");
 	assert.equal(
 		blobs.length,
@@ -527,7 +463,7 @@ test("rapid preview changes abort old loads and ignore their progress, results, 
 	assert.equal(await latest, true);
 	assert.equal(assertPresent(get(f.library).selected).id, "a");
 	assert.equal(assertPresent(card("a")).error, false);
-	assert.equal(blobs.length, 4);
+	assert.equal(blobs.length, 3);
 	assert.equal(await f.library.reveal("a"), true);
 	assert.equal(loads.length, 3, "completed content remains cached");
 	const pending = f.library.reveal("c");
@@ -541,16 +477,7 @@ test("rapid preview changes abort old loads and ignore their progress, results, 
 	assert.equal(assertPresent(card("c")).url, "");
 	loads[4].done.resolve(new Uint8Array([4]));
 	assert.equal(await reopened, true);
-	const saving = f.library.download("b");
 	f.library.closePreview();
-	assert.equal(
-		assertPresent(loads[5].signal).aborted,
-		false,
-		"close does not cancel an explicit download",
-	);
-	loads[5].done.resolve(new Uint8Array([5]));
-	assert.equal(await saving, true);
-	assert.equal(saved.length, 1);
 	assert.equal(get(f.library).selected, null);
 });
 for (const ending of ["close", "search", "lock", "dispose"]) {
@@ -565,12 +492,12 @@ for (const ending of ["close", "search", "lock", "dispose"]) {
 					items: [
 						{
 							...item("a"),
-							metadata: { content_type: "image/png", name: "a" },
+							metadata: { content_type: "text/plain", name: "a" },
 						},
 					],
 					next: null,
 				}),
-				getContent: (args) => {
+				readContentRange: (args) => {
 					request = args;
 					return pending.promise;
 				},
@@ -602,7 +529,6 @@ for (const ending of ["close", "search", "lock", "dispose"]) {
 			f.library.dispose();
 		}
 		assert.equal(assertPresent(assertPresent(request).signal).aborted, true);
-		assertPresent(assertPresent(request).onProgress)(90);
 		pending.resolve(new Uint8Array([1]));
 		assert.equal(await opening, false);
 		assert.equal(get(f.library).selected, null);

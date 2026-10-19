@@ -126,10 +126,10 @@ test("oversized images can encode below quota and progress uses the converted fi
 	page,
 	app,
 }) => {
-	await createLibrary(page, app, undefined, 6000);
+	await createLibrary(page, app, 6000);
 	await expect(
 		page.getByRole("region", { name: "Library usage" }),
-	).toContainText("Maximum file size: 5.9 KB");
+	).toContainText("Storage: 0 B of 5.9 KB");
 	const image = await imageFixture(page, "Quota image.png", 1920, 1080);
 	expect(image.buffer.length).toBeGreaterThan(6000);
 	await page.getByRole("link", { name: "Library", exact: true }).click();

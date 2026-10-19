@@ -3,9 +3,7 @@ import type { MediaApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
-import { audioArt } from "../media/audio-art.ts";
 import { downloadName } from "../media/format.ts";
-import { sniffContentType } from "../media/metadata.ts";
 import {
 	decodeTextPreview,
 	isText,
@@ -13,8 +11,10 @@ import {
 } from "../media/text.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { uniqueTags } from "../protocol/tags.ts";
+import type { ContentSource, ContentStreams } from "./content-streams.ts";
 import type { LibraryContext } from "./session.ts";
 export interface MediaState extends api.Media {
+	ready: boolean;
 	busy: boolean;
 	deleted: boolean;
 	url: string;
@@ -30,6 +30,7 @@ export interface ObjectUrls {
 	revokeObjectURL(url: string): void;
 }
 export interface MediaOptions {
+	streams?: ContentStreams;
 	http?: MediaApi;
 	urls?: ObjectUrls;
 	download?: (url: string, filename: string) => unknown;
@@ -39,11 +40,17 @@ export type MediaItem = ReturnType<typeof createMediaItem>;
 export function createMediaItem(
 	initial: api.Media,
 	context: LibraryContext,
-	{ http = api, urls = URL, download = saveDownload }: MediaOptions = {},
+	{
+		http = api,
+		urls = URL,
+		download = saveDownload,
+		streams,
+	}: MediaOptions = {},
 ) {
 	const log = createLog("media");
 	const state = writable<MediaState>({
 		...initial,
+		ready: false,
 		busy: false,
 		deleted: false,
 		url: "",
@@ -57,7 +64,7 @@ export function createMediaItem(
 	const controller = new AbortController();
 	const signal = AbortSignal.any([controller.signal, context.signal]);
 	const ownedUrls = new Set<string>();
-	let content: Blob | null = null;
+	let previewLease: Awaited<ReturnType<ContentStreams["open"]>> | null = null;
 	let activeLoad: AbortSignal | null = null;
 	function makeUrl(blob: Blob) {
 		const url = urls.createObjectURL(blob);
@@ -74,9 +81,11 @@ export function createMediaItem(
 			urls.revokeObjectURL(url);
 		}
 		ownedUrls.clear();
-		content = null;
+		previewLease?.dispose();
+		previewLease = null;
 		state.update((v) => ({
 			...v,
+			ready: false,
 			url: "",
 			preview: "",
 			text: null,
@@ -133,26 +142,42 @@ export function createMediaItem(
 			}
 		}
 	}
-	// Content loading alone supports caller cancellation. Keep its guards here.
-	async function withContent<T>(
-		action: string,
-		callerSignal: AbortSignal | undefined,
-		useContent: (blob: Blob, signal: AbortSignal) => Promise<T>,
-	) {
+	function source(): ContentSource {
+		const value = get(state);
+		const content = value.content;
+		if (!content) {
+			throw new Error("File content descriptor is unavailable.");
+		}
+		return {
+			id: content.id,
+			size: content.size,
+			name: downloadName(
+				value.metadata?.name || value.id,
+				value.metadata?.content_type || "",
+			),
+			type: value.metadata?.content_type || "application/octet-stream",
+			read: (start, end, request) =>
+				http.readContentRange({
+					...context,
+					content,
+					start,
+					end,
+					signal: AbortSignal.any([context.signal, request]),
+				}),
+		};
+	}
+	async function reveal(callerSignal?: AbortSignal) {
 		if (
 			signal.aborted ||
+			callerSignal?.aborted ||
 			get(state).busy ||
-			get(state).deleted ||
-			callerSignal?.aborted
+			get(state).deleted
 		) {
 			return false;
 		}
-		const operation = log.operation();
-		log.debug("content-started", {
-			action,
-			operation,
-			cached: Boolean(content),
-		});
+		if (get(state).ready) {
+			return true;
+		}
 		const request = AbortSignal.any(
 			callerSignal ? [signal, callerSignal] : [signal],
 		);
@@ -160,57 +185,52 @@ export function createMediaItem(
 		const release = () => {
 			if (activeLoad === request) {
 				activeLoad = null;
-				state.update((v) => ({ ...v, busy: false, progress: null }));
+				state.update((v) => ({ ...v, busy: false }));
 			}
 		};
 		request.addEventListener("abort", release, { once: true });
 		state.update((v) => ({ ...v, busy: true, message: "", error: false }));
 		try {
-			let blob = content;
-			if (!blob) {
-				const bytes = await http.getContent({
-					...context,
-					id: initial.id,
-					encryptedBytes: initial.bytes,
-					signal: request,
-					onProgress: (progress) => {
-						if (activeLoad === request && !request.aborted) {
-							state.update((v) => ({ ...v, progress }));
+			const content = source();
+			const value = get(state);
+			if (isText(content.type, value.metadata?.name)) {
+				const bytes = await content.read(
+					0,
+					Math.min(content.size, TEXT_PREVIEW_BYTES),
+					request,
+				);
+				request.throwIfAborted();
+				const textTruncated = content.size > TEXT_PREVIEW_BYTES;
+				state.update((v) => ({
+					...v,
+					text: decodeTextPreview(bytes, textTruncated),
+					textTruncated,
+					ready: true,
+				}));
+			} else if (/^(image|audio|video)\//.test(content.type)) {
+				if (!streams) {
+					throw new Error("Streaming is unavailable.");
+				}
+				const lease = await streams.open(content, request);
+				request.throwIfAborted();
+				previewLease?.dispose();
+				previewLease = lease;
+				state.update((v) => ({ ...v, url: lease.url, ready: true }));
+				request.addEventListener(
+					"abort",
+					() => {
+						if (previewLease === lease) {
+							previewLease = null;
+							state.update((v) => ({ ...v, url: "", ready: false }));
 						}
 					},
-				});
-				request.throwIfAborted();
-				const value = get(state);
-				blob = new Blob([bytes], {
-					type: value.metadata?.content_type || "application/octet-stream",
-				});
-				content = blob;
-				const url = makeUrl(blob);
-				let preview = value.preview;
-				if (value.metadata?.content_type?.startsWith("audio/")) {
-					const art = audioArt(bytes);
-					if (art) {
-						preview = makeUrl(
-							new Blob([art], { type: sniffContentType(art, "") }),
-						);
-					}
-				}
-				state.update((v) => ({ ...v, url, preview }));
-			}
-			const result = await useContent(blob, request);
-			request.throwIfAborted();
-			log.debug("content-completed", { action, operation });
-			return result;
-		} catch (error) {
-			if (request.aborted) {
-				log.debug("content-cancelled", { action, operation });
+					{ once: true },
+				);
 			} else {
-				log.error("content-failed", {
-					action,
-					operation,
-					...failureFields(error),
-				});
+				state.update((v) => ({ ...v, ready: true }));
 			}
+			return true;
+		} catch (error) {
 			if (!request.aborted) {
 				state.update((v) => ({
 					...v,
@@ -226,36 +246,15 @@ export function createMediaItem(
 	}
 	return {
 		subscribe: state.subscribe,
-		reveal: (callerSignal?: AbortSignal) =>
-			withContent("preview", callerSignal, async (blob, request) => {
-				const value = get(state);
-				if (
-					value.text === null &&
-					isText(value.metadata?.content_type || "", value.metadata?.name)
-				) {
-					const bytes = new Uint8Array(
-						await blob.slice(0, TEXT_PREVIEW_BYTES).arrayBuffer(),
-					);
-					request.throwIfAborted();
-					const textTruncated = blob.size > TEXT_PREVIEW_BYTES;
-					state.update((v) => ({
-						...v,
-						text: decodeTextPreview(bytes, textTruncated),
-						textTruncated,
-					}));
-				}
-				return get(state).url;
-			}),
+		reveal,
 		download: () =>
-			withContent("download", undefined, async () => {
-				const value = get(state);
-				await download(
-					value.url,
-					downloadName(
-						value.metadata?.name || value.id,
-						value.metadata?.content_type || "",
-					),
-				);
+			mutate("download", async () => {
+				if (!streams) {
+					throw new Error("Streaming is unavailable.");
+				}
+				const content = source();
+				// Session ownership lets native downloads continue across navigation.
+				await streams.download(content, (url) => download(url, content.name));
 				return true;
 			}),
 		updateMetadata: (patch: Metadata) =>
@@ -299,6 +298,7 @@ export function createMediaItem(
 				if (signal.aborted) {
 					return false;
 				}
+				streams?.invalidate(initial.id);
 				dispose();
 				state.update((v) => ({ ...v, deleted: true }));
 				return true;
@@ -309,9 +309,8 @@ export function createMediaItem(
 		},
 	};
 }
-export function saveDownload(url: string, filename: string) {
+export function saveDownload(url: string, _filename: string) {
 	const anchor = document.createElement("a");
 	anchor.href = url;
-	anchor.download = filename;
 	anchor.click();
 }

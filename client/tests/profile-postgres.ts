@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import http from "node:http";
 import { promisify } from "node:util";
 import { registerKey } from "../src/lib/api.ts";
+import {
+	CHUNK_BYTES,
+	createContent,
+	encryptChunk,
+} from "../src/lib/protocol/content.ts";
 import type { LoadedKey } from "../src/lib/protocol/crypto.ts";
 import {
 	authorizationHeader,
-	bodyHash,
-	contentAad,
 	encrypt,
 	freshNonce,
 	loadKey,
@@ -96,12 +98,17 @@ async function signedHeaders(
 		}),
 	};
 }
-async function upload(
+async function send(
 	key: LoadedKey,
 	body: Uint8Array<ArrayBuffer>,
 	chunked: boolean,
+	path = "/api/media",
+	method = "POST",
 ) {
-	const headers = await signedHeaders(key, "POST", "/api/media", body);
+	const headers = await signedHeaders(key, method, path, body);
+	if (method === "PUT") {
+		headers["content-type"] = "application/octet-stream";
+	}
 	if (!chunked) {
 		headers["content-length"] = body.length;
 	}
@@ -110,8 +117,8 @@ async function upload(
 		body: Buffer;
 	}>((resolve, reject) => {
 		const request = http.request(
-			`${origin}/api/media`,
-			{ method: "POST", headers },
+			`${origin}${path}`,
+			{ method, headers },
 			(res) => {
 				const chunks: Buffer[] = [];
 				res.on("data", (chunk) => chunks.push(chunk));
@@ -136,7 +143,10 @@ async function upload(
 		})().catch(reject);
 	});
 	const result = await response;
-	assert.equal(result.status, 201, result.body.toString());
+	assert.ok(
+		result.status === 201 || result.status === 204,
+		result.body.toString(),
+	);
 }
 async function download(key: LoadedKey, id: string, index = 0) {
 	const pathname = `/api/media/${id}/chunks/${index}`;
@@ -155,42 +165,74 @@ async function download(key: LoadedKey, id: string, index = 0) {
 		request.on("error", reject);
 	});
 }
+async function prepared(key: LoadedKey, fill: number) {
+	const { descriptor, content } = await createContent(key, 32 * 1024 * 1024);
+	const meta = await encrypt(
+		key,
+		metaAad(content.id),
+		new Uint8Array(65536 - 43),
+	);
+	const chunks: Uint8Array<ArrayBuffer>[] = [];
+	for (let i = 0; i < content.chunks; i++) {
+		chunks.push(
+			await encryptChunk(content, i, new Uint8Array(CHUNK_BYTES).fill(fill)),
+		);
+	}
+	return {
+		id: content.id,
+		content: chunks,
+		body: encodeUpload({
+			id: content.id,
+			plaintext_bytes: content.size,
+			descriptor,
+			meta,
+			tags: [],
+		}),
+	};
+}
+async function upload(
+	key: LoadedKey,
+	file: Awaited<ReturnType<typeof prepared>>,
+	chunked: boolean,
+) {
+	await send(key, file.body, chunked);
+	for (let i = 0; i < file.content.length; i++) {
+		await send(
+			key,
+			file.content[i],
+			chunked,
+			`/api/media/${file.id}/chunks/${i}`,
+			"PUT",
+		);
+	}
+}
 async function receive(
 	response: IncomingMessage,
 	key: LoadedKey,
 	id: string,
-	expectedContent: Uint8Array<ArrayBuffer>,
+	expected: Uint8Array<ArrayBuffer>[],
 ) {
-	const hash = createHash("sha256");
-	let offset = 0;
-	let index = 0;
-	while (offset < expectedContent.length) {
-		assert.equal(response.statusCode, 200);
-		const length = Math.min(4 * 1024 * 1024, expectedContent.length - offset);
-		assert.equal(Number(response.headers["content-length"]), length);
-		assert.equal(response.headers.etag, `"${id}.${index}"`);
-		const start = offset;
-		for await (const chunk of response) {
-			assert.ok(offset + chunk.length <= start + length);
-			assert.ok(
-				chunk.equals(
-					Buffer.from(
-						expectedContent.buffer,
-						expectedContent.byteOffset + offset,
-						chunk.length,
-					),
-				),
-			);
-			hash.update(chunk);
-			offset += chunk.length;
-		}
-		assert.equal(offset, start + length);
-		index++;
-		if (offset < expectedContent.length) {
+	for (let index = 0; index < expected.length; index++) {
+		if (index) {
 			response = await download(key, id, index);
 		}
+		assert.equal(response.statusCode, 200);
+		assert.equal(
+			Number(response.headers["content-length"]),
+			expected[index].length,
+		);
+		assert.equal(response.headers.etag, `"${id}.${index}"`);
+		let offset = 0;
+		for await (const chunk of response) {
+			assert(
+				chunk.equals(
+					Buffer.from(expected[index].subarray(offset, offset + chunk.length)),
+				),
+			);
+			offset += chunk.length;
+		}
+		assert.equal(offset, expected[index].length);
 	}
-	assert.equal(hash.digest("hex"), id);
 }
 async function run() {
 	const databaseUrl = await fixture("create");
@@ -294,28 +336,10 @@ async function run() {
 		}> = [];
 		for (const chunked of [false, true]) {
 			const files = await Promise.all(
-				[1, 2].map(async (fill) => {
-					const content = await encrypt(
-						key,
-						contentAad(),
-						new Uint8Array(32 * 1024 * 1024).fill(fill),
-					);
-					const id = await bodyHash(content);
-					const meta = await encrypt(
-						key,
-						metaAad(id),
-						new Uint8Array(65536 - 43),
-					);
-					assert.equal(meta.length, 65536);
-					return {
-						content,
-						id,
-						body: encodeUpload({ meta, content, tags: [] }),
-					};
-				}),
+				[1, 2].map((fill) => prepared(key, fill)),
 			);
 			const start = performance.now();
-			await Promise.all(files.map((file) => upload(key, file.body, chunked)));
+			await Promise.all(files.map((file) => upload(key, file, chunked)));
 			const afterUpload = await status(server.pid);
 			const responses = await Promise.all(
 				files.map((file) => download(key, file.id)),
@@ -350,15 +374,9 @@ async function run() {
 				key: owner,
 				otc: await issueOtc(databaseUrl, "release"),
 			});
-			const content = await encrypt(
-				owner,
-				contentAad(),
-				new Uint8Array(32 * 1024 * 1024).fill(i),
-			);
-			const id = await bodyHash(content);
-			const meta = await encrypt(owner, metaAad(id), new Uint8Array());
-			await upload(owner, encodeUpload({ meta, content, tags: [] }), false);
-			owners.push({ key: owner, content, id });
+			const file = await prepared(owner, i);
+			await upload(owner, file, false);
+			owners.push({ key: owner, ...file });
 		}
 		const beforeDownloads = await status(server.pid);
 		const saturatedStart = performance.now();

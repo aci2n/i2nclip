@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { prepareFile } from "../src/lib/media/prepare.ts";
-import { sendUpload } from "../src/lib/media/upload.ts";
-import { testKey } from "./helpers.ts";
-import { documentResponse } from "./msgpack-response.ts";
+import { PREPARATION_BYTES, prepareFile } from "../src/lib/media/prepare.ts";
 
 function imageEncoder(t: test.TestContext, outputSize: number | null) {
 	for (const key of ["createImageBitmap", "OffscreenCanvas"]) {
@@ -42,70 +39,42 @@ function imageEncoder(t: test.TestContext, outputSize: number | null) {
 	return () => decoded;
 }
 
-for (const outputSize of [100, 500, null]) {
-	test(`oversized image gets an encoding attempt and its selected size is enforced (${outputSize})`, async (t) => {
+for (const outputSize of [100, 1500, null]) {
+	test(`small image preparation selects the smaller valid WebP or preserves the original (${outputSize})`, async (t) => {
 		const decoded = imageEncoder(t, outputSize);
 		const file = new File([new Uint8Array(1000)], "source.png", {
 			type: "image/png",
 		});
-		file.arrayBuffer = async () =>
-			assert.fail("must not read the oversized original");
-		const preparing = prepareFile({
+		const result = await prepareFile({
 			file,
 			signal: new AbortController().signal,
 			compressImages: true,
-			maxFilePlaintextBytes: 200,
 		});
-		if (outputSize === 100) {
-			const result = await preparing;
-			assert.equal(result.name, "source.webp");
-			assert.equal(result.size, 100);
-		} else {
-			await assert.rejects(preparing, /larger than 200 bytes/);
-		}
+		assert.equal(
+			result.name,
+			outputSize === 100 ? "source.webp" : "source.png",
+		);
+		assert.equal(result.size, outputSize === 100 ? 100 : 1000);
 		assert.equal(decoded(), 1);
 	});
 }
-
-test("disabled and ineligible uploads reject before decoding or reading bytes", async (t) => {
+test("large originals bypass optional decoding and explain skipped preparation", async (t) => {
 	const decoded = imageEncoder(t, 100);
-	for (const [type, enabled, limit] of [
-		["image/png", false, 200],
-		["application/octet-stream", true, 200],
-		["video/mp4", true, 200],
-		["image/png", true, 0],
-	] as const) {
-		const file = new File([new Uint8Array(1000)], "file", { type });
-		file.arrayBuffer = async () => assert.fail("must not read");
-
-		await assert.rejects(
-			prepareFile({
-				file,
-				signal: new AbortController().signal,
-				compressImages: enabled,
-				maxFilePlaintextBytes: limit,
-			}),
-			limit === 0 ? /disabled/ : /larger than/,
-		);
-	}
-	assert.equal(decoded(), 0);
-});
-
-test("upload preparation publishes the accepted converted name", async (t) => {
-	imageEncoder(t, 100);
-	t.mock.method(globalThis, "fetch", async () =>
-		documentResponse({ id: "saved", created_at: 1 }, { status: 201 }),
+	const file = new File([], "huge.png", { type: "image/png" });
+	Object.defineProperty(file, "size", { value: PREPARATION_BYTES + 1 });
+	file.arrayBuffer = async () => assert.fail("whole-file read");
+	const notices: string[] = [];
+	assert.equal(
+		await prepareFile({
+			file,
+			signal: new AbortController().signal,
+			compressImages: true,
+			onNotice: (message) => notices.push(message),
+		}),
+		file,
 	);
-	const names: string[] = [];
-	const result = await sendUpload({
-		file: new File([new Uint8Array(1000)], "source.png", { type: "image/png" }),
-		maxFilePlaintextBytes: 200,
-		credentials: { serverUrl: "https://clip.example", key: testKey() },
-		signal: new AbortController().signal,
-		onPrepared: (name) => names.push(name),
-	});
-	assert.deepEqual(names, ["source.webp"]);
-	assert.equal(result.metadata.name, "source.webp");
+	assert.equal(decoded(), 0);
+	assert.match(notices[0], /Uploading original/);
 });
 
 test("videos and disabled images preserve their original file without decoding", async (t) => {

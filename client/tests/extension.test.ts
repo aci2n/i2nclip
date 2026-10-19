@@ -22,8 +22,6 @@ import type {
 	BridgeRequest,
 	CaptureTab,
 } from "../extension/types.d.ts";
-import { DEFAULT_MAX_FILE_PLAINTEXT_BYTES as WEB_MAX_FILE_BYTES } from "../src/lib/api.ts";
-import { checkSourceSize } from "../src/lib/media/prepare.ts";
 import type { Metadata } from "../src/lib/protocol/meta-plain.ts";
 import type {
 	CaptureEvent,
@@ -90,7 +88,6 @@ function app(
 	t: test.TestContext,
 	patch: Partial<CaptureSessionState> = {},
 	result = Promise.resolve(true),
-	getMaxFilePlaintextBytes = () => WEB_MAX_FILE_BYTES,
 ) {
 	let lifetime = new AbortController();
 	const sessionState = writable<CaptureSessionState>({
@@ -111,9 +108,6 @@ function app(
 			uploading: false,
 		}),
 		{
-			getMaxFilePlaintextBytes,
-			checkFile: (file: File) =>
-				checkSourceSize(file, true, getMaxFilePlaintextBytes()),
 			upload: (files: File[], context?: Metadata) => {
 				uploads.push(files);
 				extra.push(context);
@@ -349,29 +343,10 @@ test("receiver rejects setup, mutation, foreign messages, and malformed files", 
 	);
 	assert.equal(fixture.uploads.length, 0);
 });
-test("receiver checks file size without reading its bytes", (t) => {
+test("receiver accepts large files without reading their bytes", (t) => {
 	const fixture = app(t);
-	assert.equal(MAX_FILE_BYTES, WEB_MAX_FILE_BYTES);
-	const tooLarge = new File([new Uint8Array(MAX_FILE_BYTES + 1)], "large.bin");
-	assert.match(
-		assertPresent(
-			assertPresent(fixture.receive({ ...file, file: tooLarge })).error,
-		),
-		/32 MB/,
-	);
-	assert.equal(fixture.uploads.length, 0);
-});
-test("receiver uses the active file quota and preserves a zero limit", (t) => {
-	let limit = 0;
-	const fixture = app(t, {}, Promise.resolve(true), () => limit);
-	assert.match(
-		assertPresent(fixture.receive(file)?.error),
-		/Uploads are disabled/,
-	);
-	assert.equal(fixture.uploads.length, 0);
-	limit = 64 * 1024 * 1024;
 	const large = new File([], "large.bin");
-	Object.defineProperty(large, "size", { value: WEB_MAX_FILE_BYTES + 1 });
+	Object.defineProperty(large, "size", { value: 2 ** 30 });
 	large.arrayBuffer = async () => assert.fail("handoff must not read bytes");
 	assert.equal(fixture.receive({ ...file, file: large })?.ok, true);
 	assert.deepEqual(fixture.uploads, [[large]]);
@@ -895,7 +870,7 @@ test("cancelled captures release bridge listeners without notifications", async 
 });
 
 test("eligible oversized image handoff reaches shared upload preparation without reading", (t) => {
-	const fixture = app(t, {}, Promise.resolve(true), () => 1);
+	const fixture = app(t);
 	const large = new File([new Uint8Array(10)], "large.png", {
 		type: "image/png",
 	});
