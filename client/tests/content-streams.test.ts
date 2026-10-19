@@ -200,3 +200,71 @@ test("answering heartbeats preserves idle downloads and content messages", async
 	await downloading;
 	t.mock.timers.tick(120_000);
 });
+
+test("concurrent requests keep cancellation separate and release read capacity", async (t) => {
+	const f = fixture(t);
+	const started = [
+		deferred<AbortSignal>(),
+		deferred<AbortSignal>(),
+		deferred<AbortSignal>(),
+	];
+	const results = [
+		deferred<Uint8Array<ArrayBuffer>>(),
+		deferred<Uint8Array<ArrayBuffer>>(),
+		deferred<Uint8Array<ArrayBuffer>>(),
+	];
+	let active = 0;
+	let maximum = 0;
+	let count = 0;
+	f.source.read = async (_start, _end, signal) => {
+		const index = count++;
+		active++;
+		maximum = Math.max(maximum, active);
+		const abort = () => results[index].reject(signal.reason);
+		signal.addEventListener("abort", abort, { once: true });
+		started[index].resolve(signal);
+		try {
+			return await results[index].promise;
+		} finally {
+			active--;
+			signal.removeEventListener("abort", abort);
+		}
+	};
+	const leases = await Promise.all(
+		[0, 1, 2].map(() => f.streams.open(f.source)),
+	);
+	const peers = leases.map((lease) => f.connect(lease.url, false));
+	await Promise.all(peers.map((peer) => peer.description));
+	peers[0].send({ kind: "read", start: 0, end: 4 });
+	const first = await started[0].promise;
+	peers[1].send({ kind: "read", start: 0, end: 4 });
+	const second = await started[1].promise;
+	peers[2].send({ kind: "read", start: 0, end: 4 });
+	peers[0].send({ kind: "cancel" });
+	const third = await started[2].promise;
+	assert.equal(first.aborted, true);
+	assert.equal(second.aborted, false);
+	assert.equal(third.aborted, false);
+	assert.equal(maximum, 2);
+	const bytes = peers.slice(1).map(
+		(peer) =>
+			new Promise<ArrayBuffer>((resolve) => {
+				peer.port.onmessage = (event: MessageEvent<PageMessage>) => {
+					if (event.data.kind === "bytes") {
+						resolve(event.data.value);
+					}
+				};
+			}),
+	);
+	results[1].resolve(new Uint8Array([1, 2, 3, 4]));
+	results[2].resolve(new Uint8Array([5, 6, 7, 8]));
+	assert.deepEqual(
+		(await Promise.all(bytes)).map((value) => [...new Uint8Array(value)]),
+		[
+			[1, 2, 3, 4],
+			[5, 6, 7, 8],
+		],
+	);
+	peers[1].send({ kind: "complete" });
+	peers[2].send({ kind: "complete" });
+});
