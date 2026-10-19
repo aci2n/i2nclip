@@ -140,12 +140,10 @@ test("native download larger than 1 GiB preserves every byte with bounded reads"
 		size,
 	);
 	const downloading = page.waitForEvent("download");
-	await page.evaluate((url) => {
-		const anchor = document.createElement("a");
-		anchor.href = url;
-		anchor.textContent = "Download generated file";
-		document.body.append(anchor);
-	}, source.downloadUrl);
+	await page.evaluate(
+		(key) => window.streamingProof.beginDownload(key),
+		source.key,
+	);
 	await page.getByRole("link", { name: "Download generated file" }).click();
 	const download = await downloading;
 	expect(download.suggestedFilename()).toBe("Generated file.bin");
@@ -167,6 +165,7 @@ test("native download larger than 1 GiB preserves every byte with bounded reads"
 		offset += bytes.length;
 	}
 	expect(offset).toBe(size);
+	await page.evaluate(() => window.streamingProof.downloadDone());
 	const metrics = await page.evaluate(() => window.streamingProof.metrics);
 	expect(metrics.maximumRead).toBeLessThanOrEqual(4 * 1024 * 1024);
 	expect(metrics.maximumActive).toBe(1);

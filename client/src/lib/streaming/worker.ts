@@ -67,14 +67,14 @@ async function serve(request: Request, url: URL): Promise<Response> {
 	let consumed = 0;
 	let bodyController: ReadableStreamDefaultController<Uint8Array> | null = null;
 	const send = (message: WorkerMessage) => port.postMessage(message);
-	const close = () => {
+	const close = (complete = false) => {
 		if (closed) {
 			return;
 		}
 		closed = true;
 		buffered = new Uint8Array();
 		consumed = 0;
-		send({ kind: "cancel" });
+		send({ kind: complete ? "complete" : "cancel" });
 		pending?.reject(new Error("Stream closed."));
 		pending = null;
 		port.close();
@@ -114,9 +114,14 @@ async function serve(request: Request, url: URL): Promise<Response> {
 		});
 	try {
 		const describing = receive();
-		client.postMessage({ kind: "open", token } satisfies WorkerMessage, [
-			channel.port2,
-		]);
+		client.postMessage(
+			{
+				kind: "open",
+				token,
+				download: mode === "download" && request.method === "GET",
+			} satisfies WorkerMessage,
+			[channel.port2],
+		);
 		const message = await describing;
 		if (message.kind !== "description") {
 			throw new Error("Invalid stream description.");
@@ -162,7 +167,7 @@ async function serve(request: Request, url: URL): Promise<Response> {
 			`${mode === "download" ? "attachment" : "inline"}; filename*=UTF-8''${encoded}`,
 		);
 		if (request.method === "HEAD" || range.start === range.end) {
-			close();
+			close(true);
 			return new Response(request.method === "HEAD" ? null : new Uint8Array(), {
 				status: partial ? 206 : 200,
 				headers,
@@ -196,14 +201,14 @@ async function serve(request: Request, url: URL): Promise<Response> {
 						offset += length;
 						if (offset === range.end) {
 							controller.close();
-							close();
+							close(true);
 						}
 					} catch (error) {
 						controller.error(error);
 						close();
 					}
 				},
-				cancel: close,
+				cancel: () => close(),
 			},
 			{ highWaterMark: 0 },
 		);

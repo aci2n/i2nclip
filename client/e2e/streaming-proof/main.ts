@@ -4,7 +4,12 @@ const clip = new URL("../fixtures/clip.webm", import.meta.url).href;
 
 const controller = new AbortController();
 const streams = createContentStreams(controller.signal);
-const sources = new Map<string, Awaited<ReturnType<typeof streams.open>>>();
+const sources = new Map<
+	string,
+	Awaited<ReturnType<typeof streams.open>> & {
+		source: import("../../src/lib/stores/content-streams.ts").ContentSource;
+	}
+>();
 const metrics = {
 	reads: [] as { start: number; end: number }[],
 	active: 0,
@@ -13,6 +18,7 @@ const metrics = {
 	aborted: 0,
 };
 let sequence = 0;
+let downloading: Promise<void> | undefined;
 
 function pause(milliseconds: number, signal: AbortSignal) {
 	return new Promise<void>((resolve, reject) => {
@@ -52,40 +58,59 @@ const proof = {
 			text(36, "data");
 			view.setUint32(40, size - 44, true);
 		}
-		const session = await streams.open({
-			size,
-			name: "Generated file.bin",
-			type,
-			async read(start, end, signal) {
-				metrics.active++;
-				metrics.maximumActive = Math.max(metrics.maximumActive, metrics.active);
-				metrics.maximumRead = Math.max(metrics.maximumRead, end - start);
-				metrics.reads.push({ start, end });
-				try {
-					if (delay) {
-						await pause(delay, signal);
+		const source: import("../../src/lib/stores/content-streams.ts").ContentSource =
+			{
+				size,
+				name: "Generated file.bin",
+				type,
+				async read(start, end, signal) {
+					metrics.active++;
+					metrics.maximumActive = Math.max(
+						metrics.maximumActive,
+						metrics.active,
+					);
+					metrics.maximumRead = Math.max(metrics.maximumRead, end - start);
+					metrics.reads.push({ start, end });
+					try {
+						if (delay) {
+							await pause(delay, signal);
+						}
+						signal.throwIfAborted();
+						const result = new Uint8Array(end - start);
+						for (let index = 0; index < result.length; index++) {
+							result[index] =
+								type === "audio/wav" && start + index < 44
+									? header[start + index]
+									: (start + index) % 251;
+						}
+						return result;
+					} catch (error) {
+						metrics.aborted++;
+						throw error;
+					} finally {
+						metrics.active--;
 					}
-					signal.throwIfAborted();
-					const result = new Uint8Array(end - start);
-					for (let index = 0; index < result.length; index++) {
-						result[index] =
-							type === "audio/wav" && start + index < 44
-								? header[start + index]
-								: (start + index) % 251;
-					}
-					return result;
-				} catch (error) {
-					metrics.aborted++;
-					throw error;
-				} finally {
-					metrics.active--;
-				}
-			},
-		});
+				},
+			};
+		const session = await streams.open(source);
 		const key = String(sequence++);
-		sources.set(key, session);
+		sources.set(key, { ...session, source });
 		return { key, url: session.url, downloadUrl: session.downloadUrl };
 	},
+	beginDownload(key: string) {
+		const source = sources.get(key)?.source;
+		if (!source) {
+			throw new Error("Unknown source.");
+		}
+		downloading = streams.download(source, (url) => {
+			const anchor = document.createElement("a");
+			anchor.href = url;
+			anchor.textContent = "Download generated file";
+			document.body.append(anchor);
+		});
+		void downloading.catch(() => {});
+	},
+	downloadDone: () => downloading,
 	async audio(size: number) {
 		const source = await proof.generated(size, 10, "audio/wav");
 		const audio = document.createElement("audio");

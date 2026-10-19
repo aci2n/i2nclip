@@ -9,8 +9,9 @@ export interface StreamDescription {
 }
 
 export type WorkerMessage =
-	| { kind: "open"; token: string }
+	| { kind: "open"; token: string; download?: boolean }
 	| { kind: "read"; start: number; end: number }
+	| { kind: "complete" }
 	| { kind: "cancel" };
 
 export type PageMessage =

@@ -8,6 +8,7 @@ import {
 } from "../streaming/messages.ts";
 
 export interface ContentSource extends StreamDescription {
+	id?: string;
 	read(
 		start: number,
 		end: number,
@@ -18,6 +19,9 @@ export interface ContentSource extends StreamDescription {
 interface Entry {
 	source: ContentSource;
 	controller: AbortController;
+	finished?: (error?: Error) => void;
+	started?: () => void;
+	dispose(): void;
 }
 
 // Owned by the unlocked application session, independently of workspace/views.
@@ -74,6 +78,8 @@ export function createContentStreams(sessionSignal: AbortSignal) {
 			port.close();
 			return;
 		}
+		entry.started?.();
+		const downloadRequest = event.data.download === true;
 		const operation = new AbortController();
 		const request = AbortSignal.any([
 			signal,
@@ -84,22 +90,33 @@ export function createContentStreams(sessionSignal: AbortSignal) {
 		let busy = false;
 		const send = (message: PageMessage, transfer: Transferable[] = []) =>
 			port.postMessage(message, transfer);
-		const close = () => {
+		const close = (error = new Error("The file session has ended.")) => {
 			if (closed) {
 				return;
 			}
 			closed = true;
 			send({ kind: "error", message: "The file session has ended." });
 			operation.abort();
-			requests.delete(close);
-			request.removeEventListener("abort", close);
+			requests.delete(abort);
+			request.removeEventListener("abort", abort);
 			port.close();
+			if (downloadRequest) {
+				entry.finished?.(error);
+			}
 		};
-		request.addEventListener("abort", close, { once: true });
-		requests.add(close);
+		const abort = () => close();
+		request.addEventListener("abort", abort, { once: true });
+		requests.add(abort);
 		port.onmessage = async (message: MessageEvent<WorkerMessage>) => {
-			if (message.data.kind === "cancel") {
+			if (message.data.kind === "complete") {
+				if (downloadRequest) {
+					entry.finished?.();
+				}
 				close();
+				return;
+			}
+			if (message.data.kind === "cancel") {
+				close(new Error("Download cancelled."));
 				return;
 			}
 			if (message.data.kind !== "read" || closed) {
@@ -133,8 +150,10 @@ export function createContentStreams(sessionSignal: AbortSignal) {
 						? bytes.buffer
 						: bytes.slice().buffer;
 				send({ kind: "bytes", value }, [value]);
-			} catch {
-				close();
+			} catch (error) {
+				close(
+					error instanceof Error ? error : new Error("Content read failed."),
+				);
 			} finally {
 				busy = false;
 				if (acquired) {
@@ -227,42 +246,102 @@ export function createContentStreams(sessionSignal: AbortSignal) {
 	function dispose() {
 		controller.abort();
 		sessionSignal.removeEventListener("abort", dispose);
-		if ("serviceWorker" in navigator) {
+		if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
 			navigator.serviceWorker.removeEventListener("message", onMessage);
 		}
 		for (const close of requests) {
 			close();
 		}
 		for (const entry of entries.values()) {
-			entry.controller.abort();
+			entry.dispose();
 		}
 		entries.clear();
 	}
 	sessionSignal.addEventListener("abort", dispose, { once: true });
+	async function open(
+		source: ContentSource,
+		lifetime?: AbortSignal,
+		finished?: (error?: Error) => void,
+	) {
+		signal.throwIfAborted();
+		lifetime?.throwIfAborted();
+		if (!Number.isSafeInteger(source.size) || source.size < 0) {
+			throw new Error("Invalid plaintext size.");
+		}
+		initialization ??= initialize().catch((error) => {
+			initialization = undefined;
+			throw error;
+		});
+		const client = await initialization;
+		signal.throwIfAborted();
+		lifetime?.throwIfAborted();
+		const token = crypto.randomUUID();
+		const entry: Entry = {
+			source,
+			controller: new AbortController(),
+			finished,
+			dispose() {
+				lifetime?.removeEventListener("abort", entry.dispose);
+				entry.controller.abort();
+				entry.finished?.(new Error("The file session has ended."));
+				entries.delete(token);
+			},
+		};
+		entries.set(token, entry);
+		lifetime?.addEventListener("abort", entry.dispose, { once: true });
+		const base = `${STREAM_PREFIX}${client}/${token}`;
+		return {
+			url: `${base}/inline`,
+			downloadUrl: `${base}/download`,
+			dispose: entry.dispose,
+			entry,
+		};
+	}
+
 	return {
-		async open(source: ContentSource) {
-			signal.throwIfAborted();
-			if (!Number.isSafeInteger(source.size) || source.size < 0) {
-				throw new Error("Invalid plaintext size.");
-			}
-			initialization ??= initialize().catch((error) => {
-				initialization = undefined;
-				throw error;
+		async open(source: ContentSource, lifetime?: AbortSignal) {
+			const { entry: _entry, ...lease } = await open(source, lifetime);
+			return lease;
+		},
+		async download(source: ContentSource, start: (url: string) => unknown) {
+			let finish: (error?: Error) => void = () => {};
+			const done = new Promise<void>((resolve, reject) => {
+				let finished = false;
+				finish = (error) => {
+					if (finished) {
+						return;
+					}
+					finished = true;
+					if (error) {
+						reject(error);
+					} else {
+						resolve();
+					}
+				};
 			});
-			const client = await initialization;
-			signal.throwIfAborted();
-			const token = crypto.randomUUID();
-			const entry = { source, controller: new AbortController() };
-			entries.set(token, entry);
-			const base = `${STREAM_PREFIX}${client}/${token}`;
-			return {
-				url: `${base}/inline`,
-				downloadUrl: `${base}/download`,
-				dispose() {
-					entry.controller.abort();
-					entries.delete(token);
-				},
-			};
+			// Observe rejection before waiting for initialization or a browser request.
+			void done.catch(() => {});
+			const lease = await open(source, undefined, finish);
+			const timer = setTimeout(
+				() => finish(new Error("The browser did not start the download.")),
+				BRIDGE_TIMEOUT_MS,
+			);
+			lease.entry.started = () => clearTimeout(timer);
+			try {
+				signal.throwIfAborted();
+				await start(lease.downloadUrl);
+				await done;
+			} finally {
+				clearTimeout(timer);
+				lease.dispose();
+			}
+		},
+		invalidate(id: string) {
+			for (const entry of entries.values()) {
+				if (entry.source.id === id) {
+					entry.dispose();
+				}
+			}
 		},
 		dispose,
 	};
