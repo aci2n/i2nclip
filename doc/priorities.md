@@ -11,7 +11,7 @@ This list distinguishes existing behavior from unimplemented follow-ups. Startup
 - Metadata updates compare the prior ciphertext hash under a row lock. Stale edits return the current item without writing; the client loads current tags and preserves the draft for retry.
 - Incremental hashing yields between at most 64 KiB chunks. Maintenance runs at startup/hourly without upload permits, retaining inclusive nonce boundaries and atomically deleting expired invitations.
 - Device-local “Compress images to WebP” defaults on: JPEG/PNG/BMP uploads retain dimensions and replace originals only when smaller. The preference is excluded from recovery and pairing; see [client ownership](session.md#upload-compression).
-- Transfer admission expires after 30 seconds, download resources after 180 seconds even without body polling, and executable shutdown after 30 seconds; see [deadline behavior](transfer-shutdown-proposal.md).
+- Transfer admission and executable shutdown expire after 30 seconds. Download responses own bytes and permits until completion/disposal, without a response-lifetime limit; see [deadline behavior](transfer-shutdown-proposal.md).
 - Create retains one candidate identity in session memory across registration/storage failures. Same-origin retries check signed registration before submitting an invitation. Reload or closure loses pending enrollment.
 
 ## Remaining work

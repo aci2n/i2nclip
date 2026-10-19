@@ -1225,7 +1225,7 @@ async fn held_chunk_responses_keep_per_key_permits_until_disposal() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn transfer_admission_timeouts_preserve_nonce_and_body_policy_and_expiry_restores_capacity() {
+async fn transfer_admission_timeouts_preserve_nonce_and_body_policy() {
     use std::{sync::Arc, time::Duration};
 
     use axum::body::Bytes;
@@ -1336,50 +1336,5 @@ async fn transfer_admission_timeouts_preserve_nonce_and_body_policy_and_expiry_r
     holding.abort();
     assert!(holding.await.unwrap_err().is_cancelled());
     drop(sender);
-    // Sixty seconds have elapsed; queue a fresh read shortly before expiry.
-    tokio::time::advance(Duration::from_secs(100)).await;
-    let nonce = client_crypto::fresh_nonce();
-    let header = client_crypto::authorization(
-        &owner,
-        "http://i2nclip.test",
-        crypto::now_secs(),
-        &nonce,
-        "GET",
-        &path,
-        b"",
-    );
-    let waiting = tokio::spawn(
-        app.clone().oneshot(
-            Request::builder()
-                .uri(&path)
-                .header("authorization", header)
-                .body(Body::empty())
-                .unwrap(),
-        ),
-    );
-    while !sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM nonces WHERE nonce=$1)")
-        .bind(&nonce)
-        .fetch_one(&db.1)
-        .await
-        .unwrap()
-    {
-        tokio::task::yield_now().await;
-    }
-    tokio::task::yield_now().await;
-    tokio::time::advance(Duration::from_secs(20)).await;
-    let response = waiting.await.unwrap().unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        response
-            .into_body()
-            .collect()
-            .await
-            .unwrap()
-            .to_bytes()
-            .as_ref(),
-        upload.encrypted[0]
-    );
-    for response in [first, second] {
-        assert!(response.into_body().collect().await.is_err());
-    }
+    drop((first, second));
 }

@@ -2,8 +2,8 @@
 
 ## Goal and scope
 
-Recover uncertain registration in the current tab, bound transfer admission and
-response lifetimes, bound executable shutdown, and reconcile current protocol docs.
+Recover uncertain registration in the current tab, bound transfer admission,
+bound executable shutdown, and reconcile current protocol docs.
 Use existing stores, HTTP responses and dependencies. No schema, encryption,
 configuration, automatic retry, persistent pending enrollment or general refactor.
 
@@ -21,10 +21,12 @@ No invitation is retained and the existing Create interface stays unchanged.
 Transfer admission owns one absolute 30-second timeout across per-key and global
 acquisition. Authentication, nonce consumption and size checks precede admission.
 Timeout uses existing 503/Retry-After: 1 without body reads or content lookup.
-A private download stream owns bytes and permits through completion, disposal or
-an independent absolute 180-second deadline, including bodies never polled.
-Emitted chunks own independent allocations of at most 64 KiB. Expiry releases
-resources and the next poll fails once, then ends. Completion/Drop stops its timer.
+Download responses use a plain stream of shared byte slices of at most 64 KiB.
+The stream owns its buffer and permit until completion or disposal. There is no
+application response-lifetime limit, timer, shared mutex state or forced buffer
+release; stalled/unpolled responses retain their resources until disposed.
+This revision removes only the download response deadline and its machinery;
+admission, request-body and executable shutdown deadlines remain in scope.
 
 The executable creates a shutdown watch channel passed to run. The server notifies
 on its first signal and serving exit before awaiting maintenance/database cleanup.
@@ -35,10 +37,10 @@ nonzero process-exit path. No lingering watchdog task. Compose allows 40 seconds
 
 Test same-key retries after lost replies/storage failures, definitive rejection,
 failed checks, changed origin, invalidation and failed Restore. Test admission at
-both stages, absolute response expiry without polling, partial/trickling reads,
-independent output allocations, cancellation and successful resource release.
-Verify real API status/nonce/body ordering and queued capacity recovery, real TCP
-backpressure, and normal/stalled executable shutdown including nonzero subprocess
+both stages, cancellation and successful resource release. Verify responses remain
+valid beyond the former 180-second limit, keep their permits until completion or
+disposal, emit bounded slices and preserve bytes. Verify real API status/nonce/body
+ordering and normal/stalled executable shutdown including nonzero subprocess
 exit. Every fixture owns isolated mutable state and listeners bind loopback port 0.
 Run client/Rust/database tests, lint/format/build checks and Firefox/Chromium suites
 including large files. Commit registration, deadlines, then documentation in

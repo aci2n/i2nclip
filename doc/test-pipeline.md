@@ -27,9 +27,8 @@ Browser startup is prepared before scenario execution. Screenshots use Playwrigh
 Session tests cover same-tab Create recovery after lost registration replies and
 storage failures, reuse of the original key, failed registration checks, rejected
 invitations and invalidation. Server tests use paused time to verify admission and
-download deadlines, including response bodies never polled. A real loopback port-0
-TCP fixture bounds socket buffers to exercise backpressure without assuming host
-buffer sizes. The shutdown subprocess fixture verifies nonzero termination despite
+body ownership, including unpolled responses and reads past the former response
+lifetime limit. The shutdown subprocess fixture verifies nonzero termination despite
 a detached blocking task; its parent bounds waiting and kills/reaps it on failure.
 
 ## Mobile layout checks

@@ -3,13 +3,7 @@
 //! Signature checks precede body limits, upload admission, reading, and hashing.
 //! Buffered upload bodies retain their permits through database writes.
 
-use std::{
-    io,
-    pin::Pin,
-    sync::{Arc, Mutex},
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::time::Duration;
 
 use axum::{
     body::{Body, Bytes},
@@ -19,9 +13,7 @@ use axum::{
     routing::{delete, get},
     Router,
 };
-use futures_util::Stream;
 use serde::Serialize;
-use tokio::{task::JoinHandle, time::Instant};
 
 use crate::{
     auth::SignedRequest,
@@ -45,7 +37,6 @@ pub(crate) fn router() -> Router<AppState> {
         .route("/api/media/{id}/meta", get(metadata).put(update_metadata))
 }
 
-const DOWNLOAD_DEADLINE: Duration = Duration::from_secs(180);
 const META_BODY_DEADLINE: Duration = Duration::from_secs(30);
 const UPLOAD_BODY_DEADLINE: Duration = Duration::from_secs(120);
 
@@ -302,91 +293,18 @@ struct MetadataConflict {
 
 const DOWNLOAD_CHUNK: usize = 64 * 1024;
 
-// Only active responses retain the original allocation and admission permit.
-// Emitted chunks own separate allocations so the deadline can free this buffer.
-enum DownloadState {
-    Active {
-        content: Bytes,
-        _permit: TransferPermit,
-    },
-    Complete,
-    Expired,
-}
-
-struct DownloadStream {
-    state: Arc<Mutex<DownloadState>>,
-    deadline: Instant,
-    timer: JoinHandle<()>,
-}
-
-impl DownloadStream {
-    fn new(content: Vec<u8>, permit: TransferPermit) -> Self {
-        let state = Arc::new(Mutex::new(DownloadState::Active {
-            content: Bytes::from(content),
-            _permit: permit,
-        }));
-        let weak = Arc::downgrade(&state);
-        let deadline = Instant::now() + DOWNLOAD_DEADLINE;
-        let timer = tokio::spawn(async move {
-            tokio::time::sleep_until(deadline).await;
-            if let Some(state) = weak.upgrade() {
-                let mut state = state.lock().unwrap();
-                if matches!(*state, DownloadState::Active { .. }) {
-                    *state = DownloadState::Expired;
-                    tracing::warn!("download response timed out");
-                }
-            }
-        });
-        Self {
-            state,
-            deadline,
-            timer,
-        }
-    }
-}
-
-impl Stream for DownloadStream {
-    type Item = Result<Bytes, io::Error>;
-
-    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut state = self.state.lock().unwrap();
-        // Enforce the absolute deadline even if the timer has not been scheduled yet.
-        if Instant::now() >= self.deadline && matches!(*state, DownloadState::Active { .. }) {
-            *state = DownloadState::Expired;
-        }
-        let result = match &mut *state {
-            DownloadState::Active { content, .. } => {
-                let chunk = Bytes::copy_from_slice(&content[..content.len().min(DOWNLOAD_CHUNK)]);
-                let _ = content.split_to(chunk.len());
-                if content.is_empty() {
-                    *state = DownloadState::Complete;
-                    self.timer.abort();
-                }
-                Some(Ok(chunk))
-            }
-            DownloadState::Expired => {
-                *state = DownloadState::Complete;
-                Some(Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "download response timed out",
-                )))
-            }
-            DownloadState::Complete => None,
-        };
-        // This stream never returns Pending; expiry needs no stored body waker.
-        Poll::Ready(result)
-    }
-}
-
-impl Drop for DownloadStream {
-    fn drop(&mut self) {
-        self.timer.abort();
-    }
-}
-
 fn content_response(content: Vec<u8>, id: &str, index: u64, permit: TransferPermit) -> Response {
     let bytes = content.len() as u64;
-    let stream = DownloadStream::new(content, permit);
+    let stream = futures_util::stream::unfold(
+        (Bytes::from(content), permit),
+        |(mut content, permit)| async move {
+            if content.is_empty() {
+                return None;
+            }
+            let chunk = content.split_to(content.len().min(DOWNLOAD_CHUNK));
+            Some((Ok::<_, std::io::Error>(chunk), (content, permit)))
+        },
+    );
     let mut response = Body::from_stream(stream).into_response();
     response.headers_mut().insert(
         header::ETAG,
@@ -419,157 +337,6 @@ mod tests {
     use super::*;
     use crate::permits::Permits;
 
-    #[tokio::test(start_paused = true)]
-    async fn unpolled_and_partial_responses_expire_and_release_original_allocations() {
-        use futures_util::StreamExt;
-
-        for partial in [false, true] {
-            let permits = Permits::new();
-            let permit = permits.download([1; 32]).await.unwrap();
-            let content = vec![7; DOWNLOAD_CHUNK * 4];
-            let original = content.as_ptr() as usize;
-            let mut stream = DownloadStream::new(content, permit);
-            let state = Arc::downgrade(&stream.state);
-            let retained = if partial {
-                let chunk = stream.next().await.unwrap().unwrap();
-                assert_eq!(chunk.len(), DOWNLOAD_CHUNK);
-                assert_ne!(chunk.as_ptr() as usize, original);
-                Some(chunk)
-            } else {
-                None
-            };
-            let other = permits.download([1; 32]).await.unwrap();
-            let mut waiting = Box::pin(permits.download([1; 32]));
-            assert!(poll_fn(|cx| Poll::Ready(waiting.as_mut().poll(cx)))
-                .await
-                .is_pending());
-            drop(waiting);
-            tokio::time::advance(DOWNLOAD_DEADLINE - Duration::from_secs(1)).await;
-            let mut waiting = Box::pin(permits.download([1; 32]));
-            if partial {
-                stream.next().await.unwrap().unwrap();
-            }
-            assert!(poll_fn(|cx| Poll::Ready(waiting.as_mut().poll(cx)))
-                .await
-                .is_pending());
-            tokio::time::advance(Duration::from_secs(1)).await;
-            tokio::task::yield_now().await;
-            assert!(matches!(
-                *state.upgrade().unwrap().lock().unwrap(),
-                DownloadState::Expired
-            ));
-            let replacement = waiting.await.unwrap();
-            assert_eq!(
-                stream.next().await.unwrap().unwrap_err().kind(),
-                io::ErrorKind::TimedOut
-            );
-            assert!(stream.next().await.is_none());
-            if let Some(chunk) = retained {
-                assert!(chunk.iter().all(|byte| *byte == 7));
-            }
-            drop(stream);
-            assert!(state.upgrade().is_none());
-            drop((other, replacement));
-        }
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn completion_and_drop_cancel_deadline_tasks() {
-        use futures_util::StreamExt;
-
-        let permits = Permits::new();
-        for complete in [false, true] {
-            let permit = permits.download([1; 32]).await.unwrap();
-            let mut stream = DownloadStream::new(vec![1; 16], permit);
-            let timer = stream.timer.abort_handle();
-            let state = Arc::downgrade(&stream.state);
-            if complete {
-                assert_eq!(stream.next().await.unwrap().unwrap().len(), 16);
-                assert!(matches!(
-                    *stream.state.lock().unwrap(),
-                    DownloadState::Complete
-                ));
-            }
-            drop(stream);
-            tokio::task::yield_now().await;
-            assert!(timer.is_finished());
-            assert!(state.upgrade().is_none());
-        }
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn tcp_slow_reader_cannot_hold_application_resources_past_deadline() {
-        use axum::routing::get;
-        use tokio::{
-            io::{AsyncReadExt, AsyncWriteExt},
-            net::TcpSocket,
-        };
-
-        struct Server(JoinHandle<()>);
-        impl Drop for Server {
-            fn drop(&mut self) {
-                self.0.abort();
-            }
-        }
-        // Prevent paused time from auto-advancing during real socket I/O.
-        let clock = Server(tokio::spawn(async {
-            loop {
-                tokio::task::yield_now().await;
-            }
-        }));
-        let permits = Permits::new();
-        let other = permits.download([1; 32]).await.unwrap();
-        let permit = permits.download([1; 32]).await.unwrap();
-        let stream = DownloadStream::new(vec![7; MAX_CHUNK_BYTES], permit);
-        let state = stream.state.clone();
-        let mut response = Body::from_stream(stream).into_response();
-        response
-            .headers_mut()
-            .insert(header::CONTENT_LENGTH, HeaderValue::from(MAX_CHUNK_BYTES));
-        let response = Arc::new(Mutex::new(Some(response)));
-        let app = Router::new().route(
-            "/",
-            get(move || {
-                let response = response.lock().unwrap().take().unwrap();
-                async { response }
-            }),
-        );
-        let socket = TcpSocket::new_v4().unwrap();
-        socket.set_send_buffer_size(32 * 1024).unwrap();
-        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
-        let listener = socket.listen(1).unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = Server(tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        }));
-        let socket = TcpSocket::new_v4().unwrap();
-        socket.set_recv_buffer_size(4096).unwrap();
-        let mut client = socket.connect(address).await.unwrap();
-        client
-            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-            .await
-            .unwrap();
-        let mut header = [0; 1024];
-        let length = client.read(&mut header).await.unwrap();
-        assert!(header[..length].starts_with(b"HTTP/1.1 200"));
-        // Let Hyper fill the socket while this client stops reading.
-        for _ in 0..100 {
-            tokio::task::yield_now().await;
-        }
-        assert!(
-            matches!(*state.lock().unwrap(), DownloadState::Active { .. }),
-            "transport must actually exercise backpressure"
-        );
-        tokio::time::advance(DOWNLOAD_DEADLINE).await;
-        tokio::task::yield_now().await;
-        assert!(!matches!(
-            *state.lock().unwrap(),
-            DownloadState::Active { .. }
-        ));
-        let replacement = permits.download([1; 32]).await.unwrap();
-        drop((replacement, other, client, server, clock));
-    }
-
     #[test]
     fn list_query_validates_cursor_and_deduplicates_tags_without_database() {
         assert_eq!(list_query(None).unwrap(), (vec![], None));
@@ -593,7 +360,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn download_body_owns_bytes_and_releases_permit_without_database() {
         let permits = Permits::new();
         // Hold the other per-key download slot so one response saturates this key.
@@ -619,6 +386,7 @@ mod tests {
             response.headers()[header::CONTENT_LENGTH],
             content.len().to_string()
         );
+        tokio::time::advance(Duration::from_secs(181)).await;
         assert_held(&permits).await;
         drop(response);
         assert_released(&permits).await;
@@ -633,6 +401,7 @@ mod tests {
 
         let permit = permits.download([1; 32]).await.unwrap();
         let mut body = content_response(content.clone(), "content-hash", 0, permit).into_body();
+        tokio::time::advance(Duration::from_secs(181)).await;
         let mut received = Vec::new();
         while let Some(frame) = body.frame().await {
             let chunk = frame.unwrap().into_data().unwrap();

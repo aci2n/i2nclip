@@ -183,11 +183,10 @@ requests wait at most 30 seconds across both admission stages. Timeout returns
 `503` with `Retry-After: 1`, without reading an upload body or looking up content;
 the authenticated nonce remains spent. Each download holds at most one 4 MiB + tag chunk,
 sends at most 64 KiB per response slice, and releases its database connection before
-draining. Its original buffer and permit last until completion, disposal, or an
-absolute 180-second deadline from response construction, including unpolled bodies.
-Response slices own independent allocations; expiry releases application resources
-and subsequent body reads fail. Bytes already handed to the transport remain
-transport-owned. Chunk URLs have strong ETag
+draining. The stream owns its buffer and permit until completion or disposal;
+response slices share that allocation. There is no application response-lifetime
+limit, so stalled or unpolled responses retain their resources until disposed.
+Chunk URLs have strong ETag
 `"{id}.{index}"`, `application/octet-stream`, and
 `Cache-Control: private, max-age=31536000, immutable`. Cached ciphertext can remain
 after server deletion. The virtual plaintext service-worker URLs use `no-store`.
