@@ -30,13 +30,6 @@ pub(crate) fn serve(api: Router, directory: PathBuf) -> Router {
             "/streaming-worker.js",
             ServeFile::new(directory.join("streaming-worker.js")),
         )
-        .route_service(
-            "/streaming-worker.js.map",
-            ServeFile::new_with_mime(
-                directory.join("streaming-worker.js.map"),
-                &"application/json".parse().unwrap(),
-            ),
-        )
         .layer(map_response(|response: Response| async {
             cache(response, "no-cache")
         }));
@@ -275,68 +268,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn worker_source_map_supports_get_head_revalidation_and_missing_files() {
+    async fn worker_source_map_is_not_exposed() {
         let files = Files::new();
         let app = files.app().await;
-        let path = "/streaming-worker.js.map";
-        let expected = std::fs::read(files.0.join("streaming-worker.js.map")).unwrap();
-        let response = request(app.clone(), Method::GET, path).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
-        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
-        assert_eq!(
-            response.headers()[header::CONTENT_LENGTH],
-            expected.len().to_string()
-        );
-        let modified = response.headers()[header::LAST_MODIFIED].clone();
-        assert_eq!(
-            to_bytes(response.into_body(), 1024).await.unwrap(),
-            expected
-        );
-
-        let response = request(app.clone(), Method::HEAD, path).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
-        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
-        assert_eq!(
-            response.headers()[header::CONTENT_LENGTH],
-            expected.len().to_string()
-        );
-        assert!(to_bytes(response.into_body(), 1024)
-            .await
-            .unwrap()
-            .is_empty());
-
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(path)
-                    .header(header::IF_MODIFIED_SINCE, modified)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
-        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
-        assert!(to_bytes(response.into_body(), 1024)
-            .await
-            .unwrap()
-            .is_empty());
-        assert_eq!(
-            request(app.clone(), Method::POST, path).await.status(),
-            StatusCode::METHOD_NOT_ALLOWED
-        );
-
-        std::fs::remove_file(files.0.join("streaming-worker.js.map")).unwrap();
-        let response = request(app, Method::GET, path).await;
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        assert!(!response.headers().contains_key(header::CACHE_CONTROL));
-        assert!(to_bytes(response.into_body(), 1024)
-            .await
-            .unwrap()
-            .is_empty());
+        for method in [Method::GET, Method::HEAD] {
+            let response = request(app.clone(), method, "/streaming-worker.js.map").await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert!(!response.headers().contains_key(header::CACHE_CONTROL));
+        }
     }
 
     #[tokio::test]

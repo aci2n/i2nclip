@@ -27,16 +27,6 @@ test("web build contains only its entry page and bundled assets", async () => {
 	assert(names.includes("index.html"));
 	assert(names.includes("favicon.ico"));
 	assert(names.includes("streaming-worker.js"));
-	assert(names.includes("streaming-worker.js.map"));
-	const worker = await readFile(join(dist, "web/streaming-worker.js"), "utf8");
-	assert(worker.includes("//# sourceMappingURL=streaming-worker.js.map"));
-	const workerMap = document(
-		JSON.parse(
-			await readFile(join(dist, "web/streaming-worker.js.map"), "utf8"),
-		),
-	);
-	assert.equal(workerMap.version, 3);
-	assert(Array.isArray(workerMap.sources) && workerMap.sources.length > 0);
 	assert(!names.some((name) => /background|manifest/.test(name)));
 	assert(names.some((name) => /^assets\/.*\.js$/.test(name)));
 	assert(names.some((name) => /^assets\/.*\.css$/.test(name)));
@@ -46,15 +36,20 @@ test("web build contains only its entry page and bundled assets", async () => {
 				name === "index.html" ||
 				name === "favicon.ico" ||
 				name === "streaming-worker.js" ||
-				name === "streaming-worker.js.map" ||
-				/^assets\/[^/]+\.(js|css)(\.map)?$/.test(name),
+				/^assets\/[^/]+\.(js|css)$/.test(name),
 		),
 	);
-	for (const name of names.filter((name) => name.endsWith(".map"))) {
-		assert(
-			names.includes(name.slice(0, -4)),
-			`Source map has no generated asset: ${name}`,
+	for (const name of names.filter((name) => name.endsWith(".js"))) {
+		const script = await readFile(join(dist, "web", name), "utf8");
+		const match = script.match(
+			/\/\/# sourceMappingURL=data:application\/json;charset=utf-8;base64,([A-Za-z0-9+/=]+)/,
 		);
+		assert(match, `Missing inline source map: ${name}`);
+		const map = document(
+			JSON.parse(Buffer.from(match[1], "base64").toString("utf8")),
+		);
+		assert.equal(map.version, 3);
+		assert(Array.isArray(map.sources) && map.sources.length > 0);
 	}
 	const html = await readFile(join(dist, "web/index.html"), "utf8");
 	for (const [, asset] of html.matchAll(/(?:src|href)="\/([^" ]+)"/g)) {

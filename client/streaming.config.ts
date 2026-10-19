@@ -13,7 +13,7 @@ export async function buildStreamingWorker(outDir?: string) {
 			write: outDir !== undefined,
 			emptyOutDir: false,
 			minify: false,
-			sourcemap: outDir !== undefined,
+			sourcemap: outDir !== undefined ? "inline" : false,
 			lib: {
 				entry: fileURLToPath(
 					new URL("./src/lib/streaming/worker.ts", import.meta.url),

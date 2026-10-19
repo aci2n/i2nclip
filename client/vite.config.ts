@@ -60,6 +60,6 @@ export default defineConfig({
 		outDir: "dist/web",
 		minify: false,
 		cssMinify: false,
-		sourcemap: true,
+		sourcemap: "inline",
 	},
 });
