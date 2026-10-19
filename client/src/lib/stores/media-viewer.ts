@@ -18,6 +18,23 @@ export interface ViewerState {
 }
 
 // One direct link owns one item; it never searches or paginates the library.
+interface MediaViewerDependencies {
+	id: string;
+	context: LibraryContext;
+	http: ViewerApi;
+	options: Omit<MediaOptions, "http">;
+	log: ReturnType<typeof createLog>;
+}
+interface MediaViewerRuntime {
+	state: ReturnType<typeof writable<ViewerState>>;
+	controller: AbortController;
+	signal: AbortSignal;
+	item: MediaItem | null;
+	unsubscribe?: () => void;
+	loading: boolean;
+	dispose: () => void;
+}
+
 export function createMediaViewer(
 	id: string,
 	context: LibraryContext,
@@ -26,88 +43,113 @@ export function createMediaViewer(
 		...options
 	}: Omit<MediaOptions, "http"> & { http?: ViewerApi } = {},
 ) {
-	const log = createLog("media-viewer");
-	const state = writable<ViewerState>({
-		media: null,
-		loading: false,
-		error: "",
-	});
+	const deps: MediaViewerDependencies = {
+		id,
+		context,
+		http,
+		options,
+		log: createLog("media-viewer"),
+	};
 	const controller = new AbortController();
-	const signal = AbortSignal.any([controller.signal, context.signal]);
-	let item: MediaItem | null = null;
-	let unsubscribe: (() => void) | undefined;
-	let loading = false;
-	async function load() {
-		if (signal.aborted || loading) {
-			return false;
+	const runtime: MediaViewerRuntime = {
+		state: writable<ViewerState>({
+			media: null,
+			loading: false,
+			error: "",
+		}),
+		controller,
+		signal: AbortSignal.any([controller.signal, context.signal]),
+		item: null,
+		loading: false,
+		dispose: () => disposeViewer(deps, runtime),
+	};
+	runtime.signal.addEventListener("abort", runtime.dispose, { once: true });
+	void loadViewer(deps, runtime);
+
+	return {
+		subscribe: runtime.state.subscribe,
+		retry: loadViewer.bind(null, deps, runtime),
+		download: () => runtime.item?.download() ?? Promise.resolve(false),
+		dispose: runtime.dispose,
+	};
+}
+
+async function loadViewer(
+	deps: MediaViewerDependencies,
+	runtime: MediaViewerRuntime,
+) {
+	if (runtime.signal.aborted || runtime.loading) {
+		return false;
+	}
+	const operation = deps.log.operation();
+	deps.log.debug("load-started", { operation });
+	runtime.loading = true;
+	runtime.state.update((value) => ({ ...value, loading: true, error: "" }));
+	try {
+		if (!/^[0-9a-f]{64}$/.test(deps.id)) {
+			throw new Error("Invalid media link.");
 		}
-		const operation = log.operation();
-		log.debug("load-started", { operation });
-		loading = true;
-		state.update((value) => ({ ...value, loading: true, error: "" }));
-		try {
-			if (!/^[0-9a-f]{64}$/.test(id)) {
-				throw new Error("Invalid media link.");
+		if (!runtime.item) {
+			const media = await deps.http.getMedia({
+				...deps.context,
+				id: deps.id,
+				signal: runtime.signal,
+			});
+			runtime.signal.throwIfAborted();
+			if (!media.metadata) {
+				throw new Error("File metadata is unavailable.");
 			}
-			if (!item) {
-				const media = await http.getMedia({ ...context, id, signal });
-				signal.throwIfAborted();
-				if (!media.metadata) {
-					throw new Error("File metadata is unavailable.");
-				}
-				item = createMediaItem(media, context, {
-					http: { ...api, ...http },
-					...options,
-				});
-				unsubscribe = item.subscribe((media) =>
-					state.update((value) => ({ ...value, media })),
-				);
-			}
-			const ok = Boolean(await item.reveal(signal));
-			log.debug(signal.aborted ? "load-cancelled" : "load-completed", {
+			runtime.item = createMediaItem(media, deps.context, {
+				http: { ...api, ...deps.http },
+				...deps.options,
+			});
+			runtime.unsubscribe = runtime.item.subscribe((media) =>
+				runtime.state.update((value) => ({ ...value, media })),
+			);
+		}
+		const ok = Boolean(await runtime.item.reveal(runtime.signal));
+		deps.log.debug(
+			runtime.signal.aborted ? "load-cancelled" : "load-completed",
+			{
 				operation,
 				ok,
-			});
-			return ok;
-		} catch (error) {
-			if (signal.aborted) {
-				log.debug("load-cancelled", { operation });
-			} else {
-				log.error("load-failed", { operation, ...failureFields(error) });
-			}
-			if (!signal.aborted) {
-				const message =
-					error &&
-					typeof error === "object" &&
-					"status" in error &&
-					error.status === 404
-						? "File not found in this library."
-						: errorMessage(error);
-				state.update((value) => ({ ...value, error: message }));
-			}
-			return false;
-		} finally {
-			loading = false;
-			if (!signal.aborted) {
-				state.update((value) => ({ ...value, loading: false }));
-			}
+			},
+		);
+		return ok;
+	} catch (error) {
+		if (runtime.signal.aborted) {
+			deps.log.debug("load-cancelled", { operation });
+		} else {
+			deps.log.error("load-failed", { operation, ...failureFields(error) });
+		}
+		if (!runtime.signal.aborted) {
+			const message =
+				error &&
+				typeof error === "object" &&
+				"status" in error &&
+				error.status === 404
+					? "File not found in this library."
+					: errorMessage(error);
+			runtime.state.update((value) => ({ ...value, error: message }));
+		}
+		return false;
+	} finally {
+		runtime.loading = false;
+		if (!runtime.signal.aborted) {
+			runtime.state.update((value) => ({ ...value, loading: false }));
 		}
 	}
-	function dispose() {
-		log.debug("disposed");
-		signal.removeEventListener("abort", dispose);
-		controller.abort();
-		unsubscribe?.();
-		item?.dispose();
-		item = null;
-		state.set({ media: null, loading: false, error: "" });
-	}
-	signal.addEventListener("abort", dispose, { once: true });
-	void load();
-	return {
-		subscribe: state.subscribe,
-		retry: load,
-		download: () => item?.download() ?? Promise.resolve(false),
-		dispose,
-	};
+}
+
+function disposeViewer(
+	deps: MediaViewerDependencies,
+	runtime: MediaViewerRuntime,
+) {
+	deps.log.debug("disposed");
+	runtime.signal.removeEventListener("abort", runtime.dispose);
+	runtime.controller.abort();
+	runtime.unsubscribe?.();
+	runtime.item?.dispose();
+	runtime.item = null;
+	runtime.state.set({ media: null, loading: false, error: "" });
 }

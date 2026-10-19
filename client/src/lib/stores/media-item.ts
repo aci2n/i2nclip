@@ -36,6 +36,25 @@ export interface MediaOptions {
 }
 export type MediaItem = ReturnType<typeof createMediaItem>;
 
+interface MediaItemDependencies {
+	initial: api.Media;
+	context: LibraryContext;
+	http: MediaApi;
+	urls: ObjectUrls;
+	download: (url: string, filename: string) => unknown;
+	streams?: ContentStreams;
+	log: ReturnType<typeof createLog>;
+}
+interface MediaItemRuntime {
+	state: ReturnType<typeof writable<MediaState>>;
+	controller: AbortController;
+	signal: AbortSignal;
+	ownedUrls: Set<string>;
+	previewLease: Awaited<ReturnType<ContentStreams["open"]>> | null;
+	activeLoad: AbortSignal | null;
+	onAbort: () => void;
+}
+
 export function createMediaItem(
 	initial: api.Media,
 	context: LibraryContext,
@@ -46,289 +65,406 @@ export function createMediaItem(
 		streams,
 	}: MediaOptions = {},
 ) {
-	const log = createLog("media");
-	const state = writable<MediaState>({
-		...initial,
-		ready: false,
-		busy: false,
-		deleted: false,
-		url: "",
-		preview: "",
-		text: null,
-		textTruncated: false,
-		message: "",
-		error: false,
-	});
+	const deps: MediaItemDependencies = {
+		initial,
+		context,
+		http,
+		urls,
+		download,
+		streams,
+		log: createLog("media"),
+	};
 	const controller = new AbortController();
-	const signal = AbortSignal.any([controller.signal, context.signal]);
-	const ownedUrls = new Set<string>();
-	let previewLease: Awaited<ReturnType<ContentStreams["open"]>> | null = null;
-	let activeLoad: AbortSignal | null = null;
-	function makeUrl(blob: Blob) {
-		const url = urls.createObjectURL(blob);
-		ownedUrls.add(url);
-		return url;
-	}
-	function dispose() {
-		if (controller.signal.aborted) {
-			return;
-		}
-		log.debug("disposed", { urlCount: ownedUrls.size });
-		controller.abort();
-		for (const url of ownedUrls) {
-			urls.revokeObjectURL(url);
-		}
-		ownedUrls.clear();
-		previewLease?.dispose();
-		previewLease = null;
-		state.update((v) => ({
-			...v,
+	const runtime: MediaItemRuntime = {
+		state: writable<MediaState>({
+			...initial,
 			ready: false,
+			busy: false,
+			deleted: false,
 			url: "",
 			preview: "",
 			text: null,
 			textTruncated: false,
-			busy: false,
-		}));
+			message: "",
+			error: false,
+		}),
+		controller,
+		signal: AbortSignal.any([controller.signal, context.signal]),
+		ownedUrls: new Set(),
+		previewLease: null,
+		activeLoad: null,
+		onAbort: () => disposeMedia(deps, runtime),
+	};
+	runtime.signal.addEventListener("abort", runtime.onAbort, { once: true });
+	initializeThumbnail(deps, runtime);
+
+	return {
+		subscribe: runtime.state.subscribe,
+		reveal: revealMedia.bind(null, deps, runtime),
+		download: downloadMedia.bind(null, deps, runtime),
+		updateMetadata: updateMediaMetadata.bind(null, deps, runtime),
+		remove: removeMedia.bind(null, deps, runtime),
+		dispose: releaseMedia.bind(null, deps, runtime),
+	};
+}
+
+function makeMediaUrl(
+	deps: MediaItemDependencies,
+	runtime: MediaItemRuntime,
+	blob: Blob,
+) {
+	const url = deps.urls.createObjectURL(blob);
+	runtime.ownedUrls.add(url);
+	return url;
+}
+
+function disposeMedia(deps: MediaItemDependencies, runtime: MediaItemRuntime) {
+	if (runtime.controller.signal.aborted) {
+		return;
 	}
-	const onAbort = () => dispose();
-	signal.addEventListener("abort", onAbort, { once: true });
-	const thumb = initial.thumb;
-	if (thumb?.length && !signal.aborted) {
-		const preview = makeUrl(new Blob([thumb], { type: "image/webp" }));
-		state.update((value) => ({ ...value, preview }));
+	deps.log.debug("disposed", { urlCount: runtime.ownedUrls.size });
+	runtime.controller.abort();
+	for (const url of runtime.ownedUrls) {
+		deps.urls.revokeObjectURL(url);
 	}
-	// Mutations only need the item's lifetime and its ordinary busy guard.
-	async function mutate(action: string, work: () => Promise<boolean>) {
-		if (signal.aborted || get(state).busy || get(state).deleted) {
-			log.debug("mutation-rejected", { action, reason: "unavailable" });
-			return false;
+	runtime.ownedUrls.clear();
+	runtime.previewLease?.dispose();
+	runtime.previewLease = null;
+	runtime.state.update((v) => ({
+		...v,
+		ready: false,
+		url: "",
+		preview: "",
+		text: null,
+		textTruncated: false,
+		busy: false,
+	}));
+}
+
+// Mutations only need the item's lifetime and its ordinary busy guard.
+async function mutateMedia(
+	deps: MediaItemDependencies,
+	runtime: MediaItemRuntime,
+	action: string,
+	work: () => Promise<boolean>,
+) {
+	if (
+		runtime.signal.aborted ||
+		get(runtime.state).busy ||
+		get(runtime.state).deleted
+	) {
+		deps.log.debug("mutation-rejected", { action, reason: "unavailable" });
+		return false;
+	}
+	const operation = deps.log.operation();
+	deps.log.info("mutation-started", { action, operation });
+	runtime.state.update((v) => ({
+		...v,
+		busy: true,
+		message: "",
+		error: false,
+	}));
+	try {
+		const ok = await work();
+		if (ok) {
+			deps.log.info("mutation-completed", { action, operation });
+		} else {
+			deps.log.debug("mutation-cancelled", { action, operation });
 		}
-		const operation = log.operation();
-		log.info("mutation-started", { action, operation });
-		state.update((v) => ({ ...v, busy: true, message: "", error: false }));
-		try {
-			const ok = await work();
-			if (ok) {
-				log.info("mutation-completed", { action, operation });
-			} else {
-				log.debug("mutation-cancelled", { action, operation });
-			}
-			return ok;
-		} catch (error) {
-			if (signal.aborted) {
-				log.debug("mutation-cancelled", { action, operation });
-			} else {
-				log.error("mutation-failed", {
-					action,
-					operation,
-					...failureFields(error),
-				});
-			}
-			if (!signal.aborted) {
-				state.update((v) => ({
-					...v,
-					message: errorMessage(error),
-					error: true,
-				}));
-			}
-			return false;
-		} finally {
-			if (!signal.aborted) {
-				state.update((v) => ({ ...v, busy: false }));
-			}
+		return ok;
+	} catch (error) {
+		if (runtime.signal.aborted) {
+			deps.log.debug("mutation-cancelled", { action, operation });
+		} else {
+			deps.log.error("mutation-failed", {
+				action,
+				operation,
+				...failureFields(error),
+			});
+		}
+		if (!runtime.signal.aborted) {
+			runtime.state.update((v) => ({
+				...v,
+				message: errorMessage(error),
+				error: true,
+			}));
+		}
+		return false;
+	} finally {
+		if (!runtime.signal.aborted) {
+			runtime.state.update((v) => ({ ...v, busy: false }));
 		}
 	}
-	function source(): ContentSource {
-		const value = get(state);
-		const content = value.content;
-		if (!content) {
-			throw new Error("File content descriptor is unavailable.");
-		}
-		return {
-			id: content.id,
-			size: content.size,
-			name: downloadName(
-				value.metadata?.name || value.id,
-				value.metadata?.content_type || "",
-			),
-			type: value.metadata?.content_type || "application/octet-stream",
-			read: (start, end, request) =>
-				http.readContentRange({
-					...context,
-					content,
-					start,
-					end,
-					signal: AbortSignal.any([context.signal, request]),
-				}),
-		};
-	}
-	async function reveal(callerSignal?: AbortSignal) {
-		if (
-			signal.aborted ||
-			callerSignal?.aborted ||
-			get(state).busy ||
-			get(state).deleted
-		) {
-			return false;
-		}
-		if (get(state).ready) {
-			state.update((v) => ({ ...v, message: "", error: false }));
-			return true;
-		}
-		const request = AbortSignal.any(
-			callerSignal ? [signal, callerSignal] : [signal],
-		);
-		activeLoad = request;
-		const release = () => {
-			if (activeLoad === request) {
-				activeLoad = null;
-				state.update((v) => ({ ...v, busy: false }));
-			}
-		};
-		request.addEventListener("abort", release, { once: true });
-		state.update((v) => ({ ...v, busy: true, message: "", error: false }));
-		try {
-			const content = source();
-			const value = get(state);
-			if (isText(content.type, value.metadata?.name)) {
-				const bytes = await content.read(
-					0,
-					Math.min(content.size, TEXT_PREVIEW_BYTES),
-					request,
-				);
-				request.throwIfAborted();
-				const textTruncated = content.size > TEXT_PREVIEW_BYTES;
-				state.update((v) => ({
-					...v,
-					text: decodeTextPreview(bytes, textTruncated),
-					textTruncated,
-					ready: true,
-				}));
-			} else if (/^(image|audio|video)\//.test(content.type)) {
-				if (!streams) {
-					throw new Error("Streaming is unavailable.");
-				}
-				const lease = await streams.open(
-					{
-						...content,
-						async read(start, end, readSignal) {
-							try {
-								return await content.read(start, end, readSignal);
-							} catch (error) {
-								if (!request.aborted && !readSignal.aborted) {
-									state.update((v) => ({
-										...v,
-										ready: false,
-										error: true,
-										message: errorMessage(error),
-									}));
-								}
-								throw error;
-							}
-						},
-					},
-					request,
-				);
-				request.throwIfAborted();
-				previewLease?.dispose();
-				previewLease = lease;
-				state.update((v) => ({ ...v, url: lease.url, ready: true }));
-				request.addEventListener(
-					"abort",
-					() => {
-						if (previewLease === lease) {
-							previewLease = null;
-							state.update((v) => ({ ...v, url: "", ready: false }));
-						}
-					},
-					{ once: true },
-				);
-			} else {
-				state.update((v) => ({ ...v, ready: true }));
-			}
-			return true;
-		} catch (error) {
-			if (!request.aborted) {
-				state.update((v) => ({
-					...v,
-					message: errorMessage(error),
-					error: true,
-				}));
-			}
-			return false;
-		} finally {
-			request.removeEventListener("abort", release);
-			release();
-		}
+}
+
+function mediaSource(
+	deps: MediaItemDependencies,
+	runtime: MediaItemRuntime,
+): ContentSource {
+	const value = get(runtime.state);
+	const content = value.content;
+	if (!content) {
+		throw new Error("File content descriptor is unavailable.");
 	}
 	return {
-		subscribe: state.subscribe,
-		reveal,
-		download: () =>
-			mutate("download", async () => {
-				if (!streams) {
-					throw new Error("Streaming is unavailable.");
-				}
-				const content = source();
-				// Session ownership lets native downloads continue across navigation.
-				await streams.download(content, (url) => download(url, content.name));
-				return true;
+		id: content.id,
+		size: content.size,
+		name: downloadName(
+			value.metadata?.name || value.id,
+			value.metadata?.content_type || "",
+		),
+		type: value.metadata?.content_type || "application/octet-stream",
+		read: (start, end, request) =>
+			deps.http.readContentRange({
+				...deps.context,
+				content,
+				start,
+				end,
+				signal: AbortSignal.any([deps.context.signal, request]),
 			}),
-		updateMetadata: (patch: Metadata) =>
-			mutate("metadata", async () => {
-				const value = get(state);
-				if (!value.metadata) {
-					throw new Error("File metadata is unavailable.");
-				}
-				const metadata = { ...value.metadata, ...patch };
-				if (Object.hasOwn(patch, "tags")) {
-					metadata.tags = uniqueTags(patch.tags);
-				}
-				const result = await http.updateMetadata({
-					...context,
-					id: value.id,
-					metadata,
-					thumb: value.thumb,
-					prevMetaHash: value.metaHash,
-					signal,
-				});
-				if (signal.aborted) {
-					return false;
-				}
-				if (result.conflict) {
-					log.warn("metadata-conflict");
-					state.update((v) => ({ ...v, ...result.item }));
-					throw new Error(
-						"Metadata changed on another device. Review the current metadata and retry.",
-					);
-				}
-				state.update((v) => ({ ...v, ...result, metadata }));
-				return true;
-			}),
-		remove: () =>
-			mutate("remove", async () => {
-				await http.remove({
-					...context,
-					id: initial.id,
-					signal,
-				});
-				if (signal.aborted) {
-					return false;
-				}
-				streams?.invalidate(initial.id);
-				dispose();
-				state.update((v) => ({ ...v, deleted: true }));
-				return true;
-			}),
-		dispose() {
-			signal.removeEventListener("abort", onAbort);
-			dispose();
-		},
 	};
+}
+
+async function revealMedia(
+	deps: MediaItemDependencies,
+	runtime: MediaItemRuntime,
+	callerSignal?: AbortSignal,
+) {
+	if (
+		runtime.signal.aborted ||
+		callerSignal?.aborted ||
+		get(runtime.state).busy ||
+		get(runtime.state).deleted
+	) {
+		return false;
+	}
+	if (get(runtime.state).ready) {
+		runtime.state.update((v) => ({ ...v, message: "", error: false }));
+		return true;
+	}
+	const request = AbortSignal.any(
+		callerSignal ? [runtime.signal, callerSignal] : [runtime.signal],
+	);
+	runtime.activeLoad = request;
+	const release = () => releaseLoad(runtime, request);
+	request.addEventListener("abort", release, { once: true });
+	runtime.state.update((v) => ({
+		...v,
+		busy: true,
+		message: "",
+		error: false,
+	}));
+	try {
+		const content = mediaSource(deps, runtime);
+		const value = get(runtime.state);
+		if (isText(content.type, value.metadata?.name)) {
+			const bytes = await content.read(
+				0,
+				Math.min(content.size, TEXT_PREVIEW_BYTES),
+				request,
+			);
+			request.throwIfAborted();
+			const textTruncated = content.size > TEXT_PREVIEW_BYTES;
+			runtime.state.update((v) => ({
+				...v,
+				text: decodeTextPreview(bytes, textTruncated),
+				textTruncated,
+				ready: true,
+			}));
+		} else if (/^(image|audio|video)\//.test(content.type)) {
+			if (!deps.streams) {
+				throw new Error("Streaming is unavailable.");
+			}
+			const lease = await deps.streams.open(
+				{
+					...content,
+					read: (start, end, readSignal) =>
+						readPreview(
+							runtime.state,
+							content,
+							request,
+							start,
+							end,
+							readSignal,
+						),
+				},
+				request,
+			);
+			request.throwIfAborted();
+			runtime.previewLease?.dispose();
+			runtime.previewLease = lease;
+			runtime.state.update((v) => ({ ...v, url: lease.url, ready: true }));
+			request.addEventListener("abort", () => clearPreview(runtime, lease), {
+				once: true,
+			});
+		} else {
+			runtime.state.update((v) => ({ ...v, ready: true }));
+		}
+		return true;
+	} catch (error) {
+		if (!request.aborted) {
+			runtime.state.update((v) => ({
+				...v,
+				message: errorMessage(error),
+				error: true,
+			}));
+		}
+		return false;
+	} finally {
+		request.removeEventListener("abort", release);
+		release();
+	}
+}
+
+function downloadMedia(deps: MediaItemDependencies, runtime: MediaItemRuntime) {
+	return mutateMedia(deps, runtime, "download", () =>
+		performDownload(deps, runtime),
+	);
+}
+
+function updateMediaMetadata(
+	deps: MediaItemDependencies,
+	runtime: MediaItemRuntime,
+	patch: Metadata,
+) {
+	return mutateMedia(deps, runtime, "metadata", () =>
+		performMetadataUpdate(deps, runtime, patch),
+	);
+}
+
+function removeMedia(deps: MediaItemDependencies, runtime: MediaItemRuntime) {
+	return mutateMedia(deps, runtime, "remove", () =>
+		performRemoval(deps, runtime),
+	);
+}
+
+function releaseMedia(deps: MediaItemDependencies, runtime: MediaItemRuntime) {
+	runtime.signal.removeEventListener("abort", runtime.onAbort);
+	disposeMedia(deps, runtime);
 }
 export function saveDownload(url: string, _filename: string) {
 	const anchor = document.createElement("a");
 	anchor.href = url;
 	anchor.click();
+}
+
+function initializeThumbnail(
+	deps: MediaItemDependencies,
+	runtime: MediaItemRuntime,
+) {
+	const thumb = deps.initial.thumb;
+	if (thumb?.length && !runtime.signal.aborted) {
+		const preview = makeMediaUrl(
+			deps,
+			runtime,
+			new Blob([thumb], { type: "image/webp" }),
+		);
+		runtime.state.update((value) => ({ ...value, preview }));
+	}
+}
+
+async function performDownload(
+	deps: MediaItemDependencies,
+	runtime: MediaItemRuntime,
+) {
+	if (!deps.streams) {
+		throw new Error("Streaming is unavailable.");
+	}
+	const content = mediaSource(deps, runtime);
+	// Session ownership lets native downloads continue across navigation.
+	await deps.streams.download(content, (url) =>
+		deps.download(url, content.name),
+	);
+	return true;
+}
+
+async function performMetadataUpdate(
+	deps: MediaItemDependencies,
+	runtime: MediaItemRuntime,
+	patch: Metadata,
+) {
+	const value = get(runtime.state);
+	if (!value.metadata) {
+		throw new Error("File metadata is unavailable.");
+	}
+	const metadata = { ...value.metadata, ...patch };
+	if (Object.hasOwn(patch, "tags")) {
+		metadata.tags = uniqueTags(patch.tags);
+	}
+	const result = await deps.http.updateMetadata({
+		...deps.context,
+		id: value.id,
+		metadata,
+		thumb: value.thumb,
+		prevMetaHash: value.metaHash,
+		signal: runtime.signal,
+	});
+	if (runtime.signal.aborted) {
+		return false;
+	}
+	if (result.conflict) {
+		deps.log.warn("metadata-conflict");
+		runtime.state.update((v) => ({ ...v, ...result.item }));
+		throw new Error(
+			"Metadata changed on another device. Review the current metadata and retry.",
+		);
+	}
+	runtime.state.update((v) => ({ ...v, ...result, metadata }));
+	return true;
+}
+
+async function performRemoval(
+	deps: MediaItemDependencies,
+	runtime: MediaItemRuntime,
+) {
+	await deps.http.remove({
+		...deps.context,
+		id: deps.initial.id,
+		signal: runtime.signal,
+	});
+	if (runtime.signal.aborted) {
+		return false;
+	}
+	deps.streams?.invalidate(deps.initial.id);
+	disposeMedia(deps, runtime);
+	runtime.state.update((v) => ({ ...v, deleted: true }));
+	return true;
+}
+
+function releaseLoad(runtime: MediaItemRuntime, request: AbortSignal) {
+	if (runtime.activeLoad === request) {
+		runtime.activeLoad = null;
+		runtime.state.update((v) => ({ ...v, busy: false }));
+	}
+}
+function clearPreview(
+	runtime: MediaItemRuntime,
+	lease: NonNullable<MediaItemRuntime["previewLease"]>,
+) {
+	if (runtime.previewLease === lease) {
+		runtime.previewLease = null;
+		runtime.state.update((v) => ({ ...v, url: "", ready: false }));
+	}
+}
+async function readPreview(
+	state: MediaItemRuntime["state"],
+	content: ContentSource,
+	request: AbortSignal,
+	start: number,
+	end: number,
+	readSignal: AbortSignal,
+) {
+	try {
+		return await content.read(start, end, readSignal);
+	} catch (error) {
+		if (!request.aborted && !readSignal.aborted) {
+			state.update((v) => ({
+				...v,
+				ready: false,
+				error: true,
+				message: errorMessage(error),
+			}));
+		}
+		throw error;
+	}
 }
