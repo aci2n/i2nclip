@@ -97,7 +97,7 @@ test("file encryption separates IDs, purposes and identities and rejects tamperi
 	const id = vectors.media_id;
 	const anotherId = "ab".repeat(32);
 	const plain = utf8("same plaintext");
-	const nonce = hexToBytes(vectors.nonce_hex);
+	const nonce = new Uint8Array(12).fill(0x99);
 	const metadata = await withNonce(t, nonce, () =>
 		sealMetadata(key.fileKeyMaterial, id, plain),
 	);

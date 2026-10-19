@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import { decode } from "../src/lib/protocol/msgpack.ts";
+import { document } from "../src/lib/protocol/value.ts";
 import {
 	createLibrary,
 	expect,
@@ -56,7 +58,14 @@ test("restored file and tag keys support edited metadata, search and content dow
 			exact: true,
 		});
 		await search.fill("Fresh");
+		const searching = restored.waitForResponse((response) => {
+			const url = new URL(response.url());
+			return url.pathname === "/api/media" && url.searchParams.has("tag");
+		});
 		await search.press("Enter");
+		const response = await searching;
+		expect(response.status()).toBe(200);
+		expect(document(decode(await response.body())).media).toHaveLength(1);
 		const card = restored.getByRole("article");
 		await expect(card).toHaveCount(1);
 		await expect(
