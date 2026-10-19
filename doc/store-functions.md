@@ -60,3 +60,36 @@ Use Node from `client/.nvmrc`; final checks are `make test`, `make test-build`, 
 contexts. Review all stores for remaining nested workflows. Acceptance requires
 short assembly factories, explicit substantive-helper dependencies, unchanged
 public interfaces, and passing checks without warnings.
+
+## Verification
+
+All six stages passed their focused tests, client checks, and web builds. Final
+review found only trivial adapters, state updates, and Promise settlement wiring
+nested inside workflows.
+State records use Svelte's `Writable` type directly; operation records remain
+private to their owning store modules.
+
+Added public-interface regressions for independent quota instances sharing an API,
+concurrent stream requests and queued-read cancellation, and synchronous
+application initialization (including channel setup failure) and navigation cleanup.
+
+`make test` passed the client suites and checks, 42 Rust library tests and five
+configuration tests. `make test-build` passed web/extension build verification.
+The final fixture-only adjustments also passed their focused tests and client
+checks with zero Svelte errors or warnings.
+
+An initial browser run was invalidated when an active Playwright download and
+Rust test helpers disappeared (`ENOENT`). Verification was repeated with isolated,
+ignored build and temporary directories, using the same real-server tests:
+
+```sh
+mkdir -p client/dist/store-browser-tmp
+CARGO_TARGET_DIR="$PWD/client/dist/store-test-target" \
+TMPDIR="$PWD/client/dist/store-browser-tmp" make test-e2e
+```
+
+The isolated full browser run passed 127 cases, with the existing Firefox-only
+worker-termination skip. Both browsers verified native seeking, cancellation,
+worker/session lifetimes, byte-exact downloads above 1 GiB, and encrypted uploads
+above 1 GiB surviving navigation. Playwright emitted its existing
+`NO_COLOR`/`FORCE_COLOR` environment notices.
