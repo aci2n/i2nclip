@@ -1,5 +1,6 @@
 import {
 	BRIDGE_TIMEOUT_MS,
+	HEARTBEAT_MS,
 	type PageMessage,
 	STREAM_PREFIX,
 	STREAM_READ_BYTES,
@@ -78,8 +79,10 @@ export function createContentStreams(sessionSignal: AbortSignal) {
 			port.close();
 			return;
 		}
-		entry.started?.();
 		const downloadRequest = event.data.download === true;
+		if (downloadRequest) {
+			entry.started?.();
+		}
 		const operation = new AbortController();
 		const request = AbortSignal.any([
 			signal,
@@ -88,6 +91,8 @@ export function createContentStreams(sessionSignal: AbortSignal) {
 		]);
 		let closed = false;
 		let busy = false;
+		let heartbeat: ReturnType<typeof setInterval> | undefined;
+		let deadline: ReturnType<typeof setTimeout> | undefined;
 		const send = (message: PageMessage, transfer: Transferable[] = []) =>
 			port.postMessage(message, transfer);
 		const close = (error?: Error) => {
@@ -95,6 +100,8 @@ export function createContentStreams(sessionSignal: AbortSignal) {
 				return;
 			}
 			closed = true;
+			clearInterval(heartbeat);
+			clearTimeout(deadline);
 			if (error) {
 				send({ kind: "error", message: error.message });
 			}
@@ -112,6 +119,14 @@ export function createContentStreams(sessionSignal: AbortSignal) {
 		request.addEventListener("abort", abort, { once: true });
 		requests.add(abort);
 		port.onmessage = async (message: MessageEvent<WorkerMessage>) => {
+			if (closed) {
+				return;
+			}
+			if (message.data.kind === "pong") {
+				clearTimeout(deadline);
+				deadline = undefined;
+				return;
+			}
 			if (message.data.kind === "complete") {
 				close();
 				return;
@@ -163,6 +178,19 @@ export function createContentStreams(sessionSignal: AbortSignal) {
 				}
 			}
 		};
+		if (downloadRequest) {
+			heartbeat = setInterval(() => {
+				if (deadline !== undefined) {
+					return;
+				}
+				deadline = setTimeout(
+					() =>
+						close(new Error("Download connection lost. Retry the download.")),
+					BRIDGE_TIMEOUT_MS,
+				);
+				send({ kind: "ping" });
+			}, HEARTBEAT_MS);
+		}
 		const { size, type, name } = entry.source;
 		send({ kind: "description", value: { size, type, name } });
 	}

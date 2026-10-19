@@ -80,6 +80,10 @@ async function serve(request: Request, url: URL): Promise<Response> {
 		port.close();
 	};
 	port.onmessage = (event: MessageEvent<PageMessage>) => {
+		if (event.data.kind === "ping") {
+			send({ kind: "pong" });
+			return;
+		}
 		const waiter = pending;
 		pending = null;
 		if (event.data.kind === "error") {

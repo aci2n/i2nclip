@@ -146,3 +146,57 @@ test("cancellation aborts an owned read and permits a fresh download", async (t)
 		next.send({ kind: "complete" });
 	});
 });
+
+test("lost workers time out and release downloads for a fresh attempt", async (t) => {
+	const f = fixture(t);
+	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+	const opened = deferred();
+	let peer: ReturnType<typeof f.connect> | undefined;
+	const downloading = f.streams.download(f.source, (url) => {
+		peer = f.connect(url);
+		opened.resolve();
+	});
+	const rejected = assert.rejects(downloading, /connection lost.*Retry/);
+	await opened.promise;
+	assert(peer);
+	await peer.description;
+	peer.port.close();
+	t.mock.timers.tick(10_000);
+	t.mock.timers.tick(30_000);
+	await rejected;
+	await f.streams.download(f.source, (url) => {
+		f.connect(url).send({ kind: "complete" });
+	});
+	t.mock.timers.tick(120_000);
+});
+
+test("answering heartbeats preserves idle downloads and content messages", async (t) => {
+	const f = fixture(t);
+	t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+	const opened = deferred();
+	let peer: ReturnType<typeof f.connect> | undefined;
+	const downloading = f.streams.download(f.source, (url) => {
+		peer = f.connect(url);
+		opened.resolve();
+	});
+	await opened.promise;
+	assert(peer);
+	await peer.description;
+	for (let index = 0; index < 5; index++) {
+		const bytes = deferred();
+		peer.port.onmessage = (event: MessageEvent<PageMessage>) => {
+			if (event.data.kind === "ping") {
+				peer?.send({ kind: "pong" });
+				peer?.send({ kind: "read", start: 0, end: 4 });
+			} else if (event.data.kind === "bytes") {
+				assert.equal(event.data.value.byteLength, 4);
+				bytes.resolve();
+			}
+		};
+		t.mock.timers.tick(10_000);
+		await bytes.promise;
+	}
+	peer.send({ kind: "complete" });
+	await downloading;
+	t.mock.timers.tick(120_000);
+});

@@ -392,3 +392,59 @@ test("fresh worker instances retain virtual URLs while closing the owning tab en
 		await remaining.close();
 	}
 });
+
+test("worker termination fails an active download and permits a fresh attempt", async ({
+	page,
+	context,
+	browserName,
+	streamingOrigin,
+}) => {
+	test.skip(
+		browserName !== "chromium",
+		"Worker termination requires Chromium CDP.",
+	);
+	await page.goto(streamingOrigin);
+	await page.waitForFunction(() => Boolean(window.streamingProof));
+	const source = await page.evaluate(() =>
+		window.streamingProof.generated(4 * 1024 ** 3, 250),
+	);
+	await page.evaluate(
+		(key) => window.streamingProof.beginDownload(key),
+		source.key,
+	);
+	const started = page.waitForEvent("download");
+	await page.getByRole("link", { name: "Download generated file" }).click();
+	const download = await started;
+	await expect
+		.poll(() => page.evaluate(() => window.streamingProof.metrics.reads.length))
+		.toBeGreaterThan(0);
+	const protocol = await context.newCDPSession(page);
+	try {
+		await protocol.send("ServiceWorker.enable");
+		await protocol.send("ServiceWorker.stopAllWorkers");
+	} finally {
+		await protocol.detach();
+	}
+	const error = await page.evaluate(async () => {
+		try {
+			await window.streamingProof.downloadDone();
+			return "";
+		} catch (error) {
+			return error instanceof Error ? error.message : String(error);
+		}
+	});
+	expect(error).toMatch(/connection lost.*Retry/);
+	expect(await download.failure()).not.toBeNull();
+	await page
+		.getByRole("link", { name: "Download generated file" })
+		.evaluate((link) => link.remove());
+	const fresh = await page.evaluate(() => window.streamingProof.generated(123));
+	await page.evaluate(
+		(key) => window.streamingProof.beginDownload(key),
+		fresh.key,
+	);
+	const restarted = page.waitForEvent("download");
+	await page.getByRole("link", { name: "Download generated file" }).click();
+	expect(await (await restarted).failure()).toBeNull();
+	await page.evaluate(() => window.streamingProof.downloadDone());
+});
