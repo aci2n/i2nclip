@@ -12,25 +12,31 @@ import {
 } from "../src/lib/protocol/content.ts";
 import { bodyHash, loadKey } from "../src/lib/protocol/crypto.ts";
 import { decode } from "../src/lib/protocol/msgpack.ts";
+import { withNonce } from "./random.ts";
+
 import vectors from "./test-vectors.json" with { type: "json" };
 
-const key = await loadKey(decode(hexToBytes(vectors.private_key_hex)));
-
-test("independent chunks and immutable descriptors match Rust vectors", async () => {
+test("independent chunks and immutable descriptors match Rust vectors", async (t) => {
+	const key = await loadKey(decode(hexToBytes(vectors.private_key_hex)));
 	const v = vectors.chunk_v2;
 	for (const size of [v.size, 0]) {
-		const { descriptor, content } = await sealDescriptor(
-			key,
-			v.id,
-			size,
-			hexToBytes(v.key_hex),
+		const id = size ? v.id : v.empty_id;
+		const { descriptor, content } = await withNonce(
+			t,
 			hexToBytes(v.nonce_hex),
+			() =>
+				sealDescriptor(
+					key,
+					id,
+					size,
+					hexToBytes(size ? v.key_hex : v.empty_key_hex),
+				),
 		);
 		assert.equal(
 			bytesToHex(descriptor),
 			size ? v.descriptor_hex : v.empty_descriptor_hex,
 		);
-		const opened = await openDescriptor(key, v.id, descriptor);
+		const opened = await openDescriptor(key, id, descriptor);
 		assert.equal(opened.key.extractable, false);
 		const index = size ? 1 : 0;
 		const plain = size ? utf8("abc") : new Uint8Array();
@@ -53,6 +59,7 @@ test("independent chunks and immutable descriptors match Rust vectors", async ()
 });
 
 test("chunks bind file, position, dimensions and key before releasing plaintext", async () => {
+	const key = await loadKey(decode(hexToBytes(vectors.private_key_hex)));
 	const { content, descriptor } = await createContent(key, CHUNK_BYTES * 2);
 	const sealed = await encryptChunk(content, 0, new Uint8Array(CHUNK_BYTES));
 	for (const altered of [

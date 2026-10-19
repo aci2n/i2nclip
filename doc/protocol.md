@@ -158,7 +158,9 @@ different ciphertext at the same position returns `409`. Editing metadata leaves
 the descriptor unchanged. Deletion releases the full reservation atomically.
 
 Each upload attempt creates a random ID and AES-256-GCM content key. The immutable
-descriptor wraps that key and exact dimensions using the library encryption key.
+descriptor wraps that key and exact dimensions using a descriptor key derived
+from the identity seed, descriptor purpose, and file ID. Metadata has a separate
+per-file key; tag labels and search tokens each have separate library-wide keys.
 See [cryptography](crypto.md) for the precise descriptor and chunk format.
 Complete authenticated chunks are decrypted before any plaintext is exposed.
 Readers validate descriptor dimensions, expected chunk count and encrypted byte

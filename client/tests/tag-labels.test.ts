@@ -7,28 +7,23 @@ import {
 	hexToBytes,
 	utf8,
 } from "../src/lib/protocol/bytes.ts";
-import { encrypt, loadKey, tagToken } from "../src/lib/protocol/crypto.ts";
+import { loadKey, sealTagLabel, tagToken } from "../src/lib/protocol/crypto.ts";
 import { decode } from "../src/lib/protocol/msgpack.ts";
-import {
-	openTag,
-	sealTags,
-	tagLabelAad,
-} from "../src/lib/protocol/tag-labels.ts";
+import { openTag, sealTags } from "../src/lib/protocol/tag-labels.ts";
 import { bytes as binary, document } from "../src/lib/protocol/value.ts";
 import { documentResponse } from "./msgpack-response.ts";
 
+import { withNonce } from "./random.ts";
+
 import vectors from "./test-vectors.json" with { type: "json" };
 
-test("tag labels share Rust vectors and bind ciphertext to the token", async () => {
+test("tag labels share Rust vectors and bind ciphertext to the token", async (t) => {
 	const key = await loadKey(decode(hexToBytes(vectors.private_key_hex)));
-	const aad = tagLabelAad(vectors.token);
-	assert.equal(new TextDecoder().decode(aad), vectors.tag_label_aad);
-	const sealed = await encrypt(
-		key,
-		aad,
-		utf8("Vacation"),
-		hexToBytes(vectors.nonce_hex),
+	const [tag] = await withNonce(t, hexToBytes(vectors.nonce_hex), () =>
+		sealTags(key, ["Vacation"]),
 	);
+	const sealed = tag.label;
+
 	assert.equal(bytesToHex(sealed), vectors.tag_label_hex);
 	const pair = { token: b64urlToBytes(vectors.token), label: sealed };
 	assert.equal(await openTag(key, pair), "Vacation");
@@ -40,7 +35,11 @@ test("tag labels share Rust vectors and bind ciphertext to the token", async () 
 	);
 	sealed[sealed.length - 1] ^= 1;
 	await assert.rejects(openTag(key, { ...pair, label: sealed }));
-	const mismatch = await encrypt(key, aad, utf8("Other"));
+	const mismatch = await sealTagLabel(
+		key.tagLabelKey,
+		vectors.token,
+		utf8("Other"),
+	);
 	await assert.rejects(
 		openTag(key, { ...pair, label: mismatch }),
 		/does not match/,
@@ -81,7 +80,7 @@ test("catalog isolates damaged entries and seals at most 64 distinct tags", asyn
 test("upload labels and encrypted metadata contain the same ordinary tags", async (t) => {
 	const { upload } = await import("../src/lib/api.ts");
 	const { decodeMetaPlain } = await import("../src/lib/protocol/meta-plain.ts");
-	const { decrypt, metaAad } = await import("../src/lib/protocol/crypto.ts");
+	const { openMetadata } = await import("../src/lib/protocol/crypto.ts");
 	const key = await loadKey(decode(hexToBytes(vectors.private_key_hex)));
 	let frame: unknown;
 	t.mock.method(
@@ -109,7 +108,9 @@ test("upload labels and encrypted metadata contain the same ordinary tags", asyn
 	const id = String(packet.id);
 	const tags = packet.tags;
 	assert(Array.isArray(tags));
-	const opened = decodeMetaPlain(await decrypt(key, metaAad(id), metadata));
+	const opened = decodeMetaPlain(
+		await openMetadata(key.fileKeyMaterial, id, metadata),
+	);
 	assert.deepEqual(opened.metadata.tags, ["text", "txt", "summer", "holiday"]);
 	assert.deepEqual(
 		await Promise.all(tags.map((tag: unknown) => openTag(key, tag))),

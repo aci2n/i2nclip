@@ -4,21 +4,41 @@ The browser implements client cryptography in `client/src/lib/protocol/crypto.ts
 
 ## Identity and keys
 
-A private-key document is a MessagePack map `{v: 1, seed: bin, public_key: bin}`. The seed and public key are each 32 raw bytes. The containing identity is `{server_url: string, private_key: key-document}`. Key loading copies owned buffers before wiping temporary seeds. The seed is a randomly generated Ed25519 secret seed, not a password. The public key is derived from it. The browser checks their correspondence by signing and verifying a fixed probe message when loading the identity. The unlocked session retains non-extractable signing, encryption and tag keys for API calls; lock/disposal releases their references.
+A private-key document is a MessagePack map `{v: 1, seed: bin, public_key: bin}`. The seed and public key are each 32 raw bytes. The containing identity is `{server_url: string, private_key: key-document}`. Key loading copies owned buffers before wiping temporary seeds. The seed is a randomly generated Ed25519 secret seed, not a password. The public key is derived from it. The browser checks their correspondence by signing and verifying a fixed probe message when loading the identity. The unlocked session retains non-extractable signing, HKDF, tag-label encryption and tag-token keys for API calls; lock/disposal releases their references.
 
 The same seed is the input key material for HKDF-SHA256:
 
 ```text
-PRK   = HKDF-Extract(salt = UTF8("i2nclip"), IKM = seed)
-K_enc = HKDF-Expand(PRK, info = UTF8("enc"), length = 32)
-K_tag = HKDF-Expand(PRK, info = UTF8("tag"), length = 32)
+PRK = HKDF-Extract(salt = UTF8("i2nclip"), IKM = seed)
+K_meta(id) = HKDF-Expand(PRK, UTF8("i2nclip/keys/v1/metadata/" + id), 32)
+K_desc(id) = HKDF-Expand(PRK, UTF8("i2nclip/keys/v1/descriptor/" + id), 32)
+K_label = HKDF-Expand(PRK, UTF8("i2nclip/keys/v1/tag-label"), 32)
+K_token = HKDF-Expand(PRK, UTF8("i2nclip/keys/v1/tag-token"), 32)
 ```
 
-These fixed labels separate encryption and search keys. The signing key uses the seed directly through standard Ed25519 seed expansion. Each upload has an independent content key wrapped by the library key. There is no library-key rotation, forward secrecy, or independent recovery of signing/encryption capability. Losing the seed loses access; exposing it compromises all three uses, including previously stored ciphertext. Public-key disclosure does not reveal these secret keys.
+File IDs must be exactly 64 lowercase hexadecimal characters. Purpose-specific
+operations select the key context and AAD internally. The session retains a
+non-extractable HKDF handle and derives non-extractable AES/HMAC keys directly
+with WebCrypto `deriveKey`, without exporting raw derived keys. Temporary seed
+and PKCS#8 buffers are wiped even on failure. There is no derived-key cache.
+
+The signing key uses the seed directly through standard Ed25519 seed expansion.
+Each upload has an independent content key wrapped by its file's descriptor key.
+There is no key rotation, forward secrecy, or independent recovery of signing and
+encryption capability. Losing the seed loses access; exposing it compromises all
+uses, including previously stored ciphertext. The session HKDF handle can derive
+all file keys; non-extractability does not isolate them from compromised client
+code. Public-key disclosure does not reveal secret keys.
+
+Only this key schedule is supported. Existing version fields and identity/recovery
+formats are unchanged, but old ciphertext and tag indexes are incompatible.
+Restoring an identity does not migrate data. Databases are never automatically
+cleared and there are no compatibility readers.
 
 ## Content and metadata encryption
 
-Descriptors and editable metadata use AES-256-GCM with `K_enc`, independently
+Descriptors and editable metadata use AES-256-GCM with `K_desc(id)` and
+`K_meta(id)` respectively, independently
 sampled random 12-byte IVs, full 16-byte tags, and the existing envelope:
 
 ```text
@@ -49,9 +69,19 @@ exact length checks and GCM authentication replace a complete-file hash check.
 Authenticate each full chunk before exposing any of its plaintext. Never reuse an
 ID/key pair for a restarted upload or encrypt new bytes at an existing position.
 
-Every encryption under this library key shares one nonce collision domain, including metadata edits, descriptor creation, and all browsers restoring the same identity. AAD does **not** make nonce reuse safe. Random 96-bit nonces have approximate collision probability `q(q-1)/2^97` after `q` encryptions. NIST SP 800-38D §8.3 caps invocations at `2^32` per key for this random-IV construction across devices; this is an outer limit, not a recommended application target. The project has no tracked key-use budget or rotation procedure. See [NIST SP 800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf).
+Each file and purpose has its own nonce collision domain. Metadata edits for
+one file share that file's metadata key across all browsers restoring the same
+identity; tag labels share a library-wide key. AAD does **not** make nonce reuse
+safe. Random 96-bit nonces have approximate collision probability
+`q(q-1)/2^97` after `q` encryptions under one key. NIST SP 800-38D §8.3 caps
+invocations at `2^32` per key for this random-IV construction across devices;
+this is an outer limit, not a recommended application target. There is no tracked
+key-use budget or rotation procedure. See [NIST SP 800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf).
 
-Production paths generate fresh nonces. Rust's test-only `encrypt_with_nonce` and JavaScript's optional nonce parameter exist for deterministic tests and permit unsafe reuse by callers. The shared fixture reuses a test key/nonce across content and metadata; those public fixture values must never be used for actual data.
+Production envelope operations generate fresh nonces internally and expose no
+nonce override. Rust's test-only reference helpers accept deterministic nonces;
+JavaScript tests temporarily mock randomness with automatic cleanup. Public
+fixture seeds, keys, and nonces must never be used for actual data.
 
 Current metadata plaintext is one MessagePack map:
 
@@ -72,12 +102,17 @@ MessagePack plaintext, its envelope, and the complete upload document.
 
 ```text
 normalized = lowercase(NFC(trim(tag)))
-token = b64url(HMAC-SHA256(K_tag, UTF8("tag\n" + normalized)))
+token = b64url(HMAC-SHA256(K_token, UTF8("tag\n" + normalized)))
 ```
+
+Readable tag labels use AES-256-GCM with `K_label`, fresh 12-byte nonces, and
+AAD UTF8("i2nclip/v1 tag " + token). Opening a label checks that its normalized
+text reproduces the supplied token. Labels are separate from per-file metadata,
+which also contains readable tags.
 
 Normalization rejects empty output, more than 64 Unicode scalar values, commas, CR, and LF. It is lowercase conversion, not full Unicode case folding, and NFC happens before lowercasing. Rust and JavaScript use their runtime Unicode and whitespace rules; they are not identical for every possible character. A client should preserve the first readable spelling when deduplicating normalized tags.
 
-The server stores tokens for equality matching and AND queries. Without `K_tag`, it cannot directly enumerate a dictionary of candidate tags. It still learns repetition, frequencies, tag co-occurrence, query/access patterns, and relationships within a library. Reusing the same seed on different servers produces the same tokens and public key, allowing correlation. A server can alter the token index or omit results; the GCM tag does not authenticate that index or the completeness of a list.
+The server stores tokens for equality matching and AND queries. Without `K_token`, it cannot directly enumerate a dictionary of candidate tags. It still learns repetition, frequencies, tag co-occurrence, query/access patterns, and relationships within a library. Reusing the same seed on different servers produces the same tokens and public key, allowing correlation. A server can alter the token index or omit results; the GCM tag does not authenticate that index or the completeness of a list.
 
 ## Signed requests
 

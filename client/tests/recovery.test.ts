@@ -2,10 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { utf8 } from "../src/lib/protocol/bytes.ts";
 import {
-	contentAad,
-	decrypt,
-	encrypt,
+	createContent,
+	decryptChunk,
+	encryptChunk,
+	openDescriptor,
+} from "../src/lib/protocol/content.ts";
+import {
 	loadKey,
+	openMetadata,
+	sealMetadata,
 	tagToken,
 } from "../src/lib/protocol/crypto.ts";
 import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
@@ -38,10 +43,21 @@ test("portable recovery preserves content decryption, normalized tags and public
 		await tagToken(restored, "vacation"),
 		await tagToken(original, "vacation"),
 	);
-	const aad = contentAad();
-	const ciphertext = await encrypt(original, aad, utf8("original upload"));
+	const plain = utf8("original upload");
+	const { descriptor, content } = await createContent(original, plain.length);
+	const chunk = await encryptChunk(content, 0, plain);
+	const reopened = await openDescriptor(restored, content.id, descriptor);
+	assert.deepEqual(await decryptChunk(reopened, 0, chunk), plain);
+	const id = content.id;
+	const ciphertext = await sealMetadata(
+		original.fileKeyMaterial,
+		id,
+		utf8("original upload"),
+	);
 	assert.equal(
-		new TextDecoder().decode(await decrypt(restored, aad, ciphertext)),
+		new TextDecoder().decode(
+			await openMetadata(restored.fileKeyMaterial, id, ciphertext),
+		),
 		"original upload",
 	);
 	for (const changed of [

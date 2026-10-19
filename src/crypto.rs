@@ -171,21 +171,16 @@ mod tests {
     fn roundtrip_rejects_wrong_key_aad_and_tamper() {
         let id = from_seed([9u8; 32]);
         let plain = b"i2nclip-plaintext-marker-9f3c";
-        let aad = content_aad();
-        let mut blob = encrypt(&id.seed, &aad, plain).unwrap();
+        let file_id = "33".repeat(32);
+        let mut blob = seal_metadata(&id.seed, &file_id, plain).unwrap();
         // The plaintext bytes must not appear as a contiguous slice. This is
         // the property the HTTP tests also check on disk.
         assert!(!blob.windows(plain.len()).any(|window| window == plain));
-        assert_eq!(decrypt(&id.seed, &aad, &blob).unwrap(), plain);
-        assert!(decrypt(
-            &id.seed,
-            &meta_aad("11111111-1111-4111-8111-111111111111"),
-            &blob
-        )
-        .is_err());
-        assert!(decrypt(&[8u8; 32], &aad, &blob).is_err());
+        assert_eq!(open_metadata(&id.seed, &file_id, &blob).unwrap(), plain);
+        assert!(open_metadata(&id.seed, &"11".repeat(32), &blob).is_err());
+        assert!(open_metadata(&[8u8; 32], &file_id, &blob).is_err());
         blob[20] ^= 0x01;
-        assert!(decrypt(&id.seed, &aad, &blob).is_err());
+        assert!(open_metadata(&id.seed, &file_id, &blob).is_err());
         assert!(!looks_sealed(b"\xff\xd8\xff", 100));
         assert!(!looks_sealed(b"short", 100));
     }
@@ -254,22 +249,17 @@ mod tests {
         let seed = [0x11u8; 32];
         let id = from_seed(seed);
         let nonce = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-        let aad = content_aad();
-        let plain = b"PLAINTEXT-MARKER-i2nclip";
-        let ciphertext = encrypt_with_nonce(&seed, &aad, plain, &nonce).unwrap();
-        let media_id = body_hash(&ciphertext);
-        let meta_json = r#"{"name":"vacation-photo.jpg","content_type":"image/jpeg","size":12,"tags":["vacation","dog"],"image":{"width":32,"height":16,"taken_at":"2020:01:02 03:04:05","make":"Canon"}}"#;
-        let meta_aad = meta_aad(&media_id);
+        let media_id = "33".repeat(32);
+        let meta_json = r#"{"name":"vacation-photo.jpg","content_type":"image/jpeg","size":4194307,"tags":["vacation","dog"],"image":{"width":32,"height":16,"taken_at":"2020:01:02 03:04:05","make":"Canon"}}"#;
         let meta_plain = codec::encode(&serde_json::json!({
             "metadata": serde_json::from_str::<serde_json::Value>(meta_json).unwrap(),
             "thumb": null,
         }))
         .unwrap();
-        let meta_ct = encrypt_with_nonce(&seed, &meta_aad, &meta_plain, &nonce).unwrap();
+        let meta_ct = metadata_with_nonce(&seed, &media_id, &meta_plain, &nonce).unwrap();
         let token = tag_token(&seed, "Vacation").unwrap();
         let tag_label_aad = format!("i2nclip/v1 tag {token}");
-        let tag_label =
-            encrypt_with_nonce(&seed, tag_label_aad.as_bytes(), b"Vacation", &nonce).unwrap();
+        let tag_label = tag_label_with_nonce(&seed, &token, b"Vacation", &nonce).unwrap();
         let cafe = tag_token(&seed, "Café").unwrap();
         let sign_nonce_raw = [0x22u8; 16];
         let sign_nonce = URL_SAFE_NO_PAD.encode(sign_nonce_raw);
@@ -293,7 +283,14 @@ mod tests {
             "/api/media",
             sign_body.as_bytes(),
         );
-        let frame = encode_upload(&meta_ct, &ciphertext, &fixture_tag_labels(&token));
+        let descriptor = content_descriptor(&seed, &media_id, 4194307, &[0x44; 32], &[0x55; 12]);
+        let frame = encode_create(
+            &media_id,
+            4194307,
+            &descriptor,
+            &meta_ct,
+            &codec::encode(&Vec::<u8>::new()).unwrap(),
+        );
         #[derive(Serialize)]
         struct PrivateKey<'a> {
             v: u8,
@@ -321,10 +318,6 @@ mod tests {
             cafe_token: cafe,
             media_id: media_id.to_string(),
             nonce_hex: hex(&nonce),
-            aad: String::from_utf8(aad).unwrap(),
-            meta_aad: String::from_utf8(meta_aad).unwrap(),
-            plaintext_utf8: String::from_utf8(plain.to_vec()).unwrap(),
-            ciphertext_hex: hex(&ciphertext),
             meta_json: meta_json.to_string(),
             meta_plaintext_hex: hex(&meta_plain),
             meta_ciphertext_hex: hex(&meta_ct),
@@ -367,10 +360,6 @@ mod tests {
         cafe_token: String,
         media_id: String,
         nonce_hex: String,
-        aad: String,
-        meta_aad: String,
-        plaintext_utf8: String,
-        ciphertext_hex: String,
         meta_json: String,
         meta_plaintext_hex: String,
         meta_ciphertext_hex: String,

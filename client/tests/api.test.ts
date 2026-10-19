@@ -23,10 +23,9 @@ import {
 import {
 	authorizationHeader,
 	bodyHash,
-	decrypt,
-	encrypt,
 	loadKey,
-	metaAad,
+	openMetadata,
+	sealMetadata,
 } from "../src/lib/protocol/crypto.ts";
 import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
 import {
@@ -90,9 +89,9 @@ test("metadata list and update sign their routes and preserve decrypted fields",
 	};
 	const thumb = new Uint8Array([1, 2, 3]);
 	const renamed = { ...metadata, name: "Renamed photo — Córdoba.png" };
-	const meta = await encrypt(
-		key,
-		metaAad(id),
+	const meta = await sealMetadata(
+		key.fileKeyMaterial,
+		id,
 		encodeMetaPlain(metadata, thumb),
 	);
 	const controller = new AbortController();
@@ -132,7 +131,7 @@ test("metadata list and update sign their routes and preserve decrypted fields",
 				);
 				const sealed = binary(packet.meta);
 				assert.deepEqual(
-					decodeMetaPlain(await decrypt(key, metaAad(id), sealed)),
+					decodeMetaPlain(await openMetadata(key.fileKeyMaterial, id, sealed)),
 					{ metadata: renamed, thumb },
 				);
 				assert(!new TextDecoder().decode(body).includes(renamed.name));
@@ -377,9 +376,9 @@ test("direct metadata reads use signed empty GETs, decrypt summaries, and reject
 			assert.equal(options.body, undefined);
 			assert.equal(options.signal, controller.signal);
 			assert(new Headers(options.headers).get("authorization"));
-			const meta = await encrypt(
-				key,
-				metaAad(responseId),
+			const meta = await sealMetadata(
+				key.fileKeyMaterial,
+				responseId,
 				encodeMetaPlain(
 					{ name: "Portrait.png", content_type: "image/png" },
 					new Uint8Array([1, 2]),

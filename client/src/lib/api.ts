@@ -16,10 +16,9 @@ import type { LoadedKey } from "./protocol/crypto.ts";
 import {
 	authorizationHeader,
 	bodyHash,
-	decrypt,
-	encrypt,
 	freshNonce,
-	metaAad,
+	openMetadata,
+	sealMetadata,
 	tagTokens,
 } from "./protocol/crypto.ts";
 import { encodeMeta, encodeUpload } from "./protocol/frame.ts";
@@ -551,7 +550,7 @@ async function openMeta(key: LoadedKey, input: unknown): Promise<Media> {
 		) {
 			throw new Error("Invalid media dimensions.");
 		}
-		const plain = await decrypt(key, metaAad(id), encrypted);
+		const plain = await openMetadata(key.fileKeyMaterial, id, encrypted);
 		const { metadata, thumb } = decodeMetaPlain(plain);
 		return {
 			id,
@@ -598,7 +597,10 @@ async function sealedMetadata(
 		storedThumb = null;
 		plain = encodeMetaPlain(metadata, null);
 	}
-	return { meta: await encrypt(key, metaAad(id), plain), storedThumb };
+	return {
+		meta: await sealMetadata(key.fileKeyMaterial, id, plain),
+		storedThumb,
+	};
 }
 
 async function responseDocument(response: Response) {

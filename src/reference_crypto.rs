@@ -52,36 +52,69 @@ pub fn from_seed(seed: [u8; 32]) -> Identity {
     Identity { seed, public }
 }
 
-/// Content AAD is fixed: its ciphertext hash is computed after encryption.
-pub fn content_aad() -> Vec<u8> {
-    b"i2nclip/v1 content".to_vec()
+fn file_key(seed: &[u8; 32], purpose: &str, id: &str) -> Result<[u8; 32], Error> {
+    if id.len() != 64
+        || !id
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    {
+        return Err(Error::Crypto);
+    }
+    Ok(derive_key(
+        seed,
+        format!("i2nclip/keys/v1/{purpose}/{id}").as_bytes(),
+    ))
 }
 
-/// Bind metadata to the complete sealed-content hash, with domain separation.
-pub fn meta_aad(id: &str) -> Vec<u8> {
-    format!("i2nclip/v1 meta {id}").into_bytes()
-}
-
-/// Encrypt `plaintext`. A fresh random nonce is chosen inside.
-pub fn encrypt(seed: &[u8; 32], aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, Error> {
-    let mut nonce = [0u8; NONCE_LEN];
+pub fn seal_metadata(seed: &[u8; 32], id: &str, plain: &[u8]) -> Result<Vec<u8>, Error> {
+    let mut nonce = [0; NONCE_LEN];
     getrandom::getrandom(&mut nonce).expect("operating system random source");
-    encrypt_with_nonce(seed, aad, plaintext, &nonce)
+    metadata_with_nonce(seed, id, plain, &nonce)
 }
 
-/// Same as [`encrypt`], but the nonce is supplied. Tests use this so the
-/// JavaScript client can be checked against exact bytes. Randomized test uploads
-/// use [`encrypt`], because a repeated nonce under the same key breaks GCM.
-pub fn encrypt_with_nonce(
+pub fn metadata_with_nonce(
     seed: &[u8; 32],
+    id: &str,
+    plain: &[u8],
+    nonce: &[u8; NONCE_LEN],
+) -> Result<Vec<u8>, Error> {
+    encrypt_with_nonce(
+        &file_key(seed, "metadata", id)?,
+        format!("i2nclip/v1 meta {id}").as_bytes(),
+        plain,
+        nonce,
+    )
+}
+
+pub fn open_metadata(seed: &[u8; 32], id: &str, blob: &[u8]) -> Result<Vec<u8>, Error> {
+    decrypt(
+        &file_key(seed, "metadata", id)?,
+        format!("i2nclip/v1 meta {id}").as_bytes(),
+        blob,
+    )
+}
+
+pub fn tag_label_with_nonce(
+    seed: &[u8; 32],
+    token: &str,
+    plain: &[u8],
+    nonce: &[u8; NONCE_LEN],
+) -> Result<Vec<u8>, Error> {
+    encrypt_with_nonce(
+        &derive_key(seed, b"i2nclip/keys/v1/tag-label"),
+        format!("i2nclip/v1 tag {token}").as_bytes(),
+        plain,
+        nonce,
+    )
+}
+
+fn encrypt_with_nonce(
+    key: &[u8; 32],
     aad: &[u8],
     plaintext: &[u8],
     nonce: &[u8; NONCE_LEN],
 ) -> Result<Vec<u8>, Error> {
-    let key = derive_key(seed, b"enc");
-    let cipher = Aes256Gcm::new_from_slice(&key).expect("AES-256 key is 32 bytes");
-    // `Payload` carries the plaintext and the associated data together.
-    // Only `msg` is encrypted. `aad` is authenticated and stays outside.
+    let cipher = Aes256Gcm::new_from_slice(key).expect("AES-256 key is 32 bytes");
     let ciphertext = cipher
         .encrypt(
             Nonce::from_slice(nonce),
@@ -98,22 +131,17 @@ pub fn encrypt_with_nonce(
     })
 }
 
-/// Inverse of [`encrypt`]. Fails closed: wrong key, wrong id, or any tampering
-/// all return [`Error::Crypto`] with no partial plaintext.
-pub fn decrypt(seed: &[u8; 32], aad: &[u8], blob: &[u8]) -> Result<Vec<u8>, Error> {
+fn decrypt(key: &[u8; 32], aad: &[u8], blob: &[u8]) -> Result<Vec<u8>, Error> {
     if !looks_sealed(blob, usize::MAX) {
         return Err(Error::Crypto);
     }
     let sealed: Sealed<'_> = codec::decode(blob)?;
-    let nonce = sealed.iv;
-    let ciphertext = sealed.ct;
-    let key = derive_key(seed, b"enc");
-    let cipher = Aes256Gcm::new_from_slice(&key).expect("AES-256 key is 32 bytes");
-    cipher
+    Aes256Gcm::new_from_slice(key)
+        .expect("AES-256 key is 32 bytes")
         .decrypt(
-            Nonce::from_slice(nonce),
+            Nonce::from_slice(sealed.iv),
             Payload {
-                msg: ciphertext,
+                msg: sealed.ct,
                 aad,
             },
         )
@@ -129,10 +157,10 @@ pub fn decrypt(seed: &[u8; 32], aad: &[u8], blob: &[u8]) -> Result<Vec<u8>, Erro
 /// person's search does not hit another person's rows.
 ///
 /// Normalization is `trim`, then Unicode NFC, then lowercase. `Vacation` and
-/// `vacation` match. The rules are the same in `client/src/lib/protocol/crypto.js`.
+/// `vacation` match. The rules are the same in `client/src/lib/protocol/crypto.ts`.
 pub fn tag_token(seed: &[u8; 32], tag: &str) -> Result<String, Error> {
     let normalized = normalize_tag(tag)?;
-    let key = derive_key(seed, b"tag");
+    let key = derive_key(seed, b"i2nclip/keys/v1/tag-token");
     let mut mac = <HmacSha256 as Mac>::new_from_slice(&key).expect("HMAC key");
     mac.update(b"tag\n");
     mac.update(normalized.as_bytes());
@@ -150,7 +178,7 @@ pub fn normalize_tag(tag: &str) -> Result<String, Error> {
     Ok(text)
 }
 
-/// Derive independent 32-byte keys with salt `i2nclip` and info `enc` or `tag`.
+/// Derive independent 32-byte keys using the specified purpose/file context.
 fn derive_key(seed: &[u8; 32], info: &[u8]) -> [u8; 32] {
     let hk = Hkdf::<Sha256>::new(Some(HKDF_SALT), seed);
     let mut out = [0u8; 32];
@@ -214,22 +242,6 @@ struct TagDocument {
     label: Vec<u8>,
 }
 
-pub fn encode_upload(meta: &[u8], content: &[u8], tags: &[u8]) -> Vec<u8> {
-    #[derive(serde::Serialize)]
-    struct Document<'a> {
-        #[serde(with = "serde_bytes")]
-        meta: &'a [u8],
-        #[serde(with = "serde_bytes")]
-        content: &'a [u8],
-        tags: Vec<TagDocument>,
-    }
-    codec::encode(&Document {
-        meta,
-        content,
-        tags: codec::decode(tags).unwrap(),
-    })
-    .unwrap()
-}
 pub fn encode_meta(prev_meta_hash: &[u8; 32], meta: &[u8], tags: &[u8]) -> Vec<u8> {
     #[derive(serde::Serialize)]
     struct Document<'a> {
@@ -375,7 +387,7 @@ pub fn content_descriptor(
     })
     .unwrap();
     encrypt_with_nonce(
-        seed,
+        &file_key(seed, "descriptor", id).unwrap(),
         format!("i2nclip/v2 descriptor {id}").as_bytes(),
         &plain,
         nonce,
@@ -407,6 +419,7 @@ pub fn chunk_vectors() -> serde_json::Value {
     let key = [0x44; 32];
     let id = "33".repeat(32);
     let nonce = [0x55; 12];
+    let empty_id = "66".repeat(32);
     serde_json::json!({
         "id": id,
         "key_hex": "44".repeat(32),
@@ -415,20 +428,15 @@ pub fn chunk_vectors() -> serde_json::Value {
         "descriptor_hex": hex_bytes(&content_descriptor(&seed, &id, 4194307, &key, &nonce)),
         "final_hex": hex_bytes(&encrypt_chunk(&key, &id, 4194307, 1, b"abc")),
         "full_hash": body_hash(&encrypt_chunk(&key, &id, 4194307, 0, &vec![0x5a; 4194304])),
-        "empty_descriptor_hex": hex_bytes(&content_descriptor(&seed, &id, 0, &key, &nonce)),
-        "empty_hex": hex_bytes(&encrypt_chunk(&key, &id, 0, 0, b"")),
+        "empty_id": empty_id,
+        "empty_key_hex": "77".repeat(32),
+        "empty_descriptor_hex": hex_bytes(&content_descriptor(&seed, &empty_id, 0, &[0x77; 32], &nonce)),
+        "empty_hex": hex_bytes(&encrypt_chunk(&[0x77; 32], &empty_id, 0, 0, b"")),
     })
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-#[test]
-fn chunk_reference_matches_published_vectors() {
-    let published: serde_json::Value =
-        serde_json::from_str(include_str!("../client/tests/test-vectors.json")).unwrap();
-    assert_eq!(chunk_vectors(), published["chunk_v2"]);
 }
 
 pub fn encode_create(

@@ -14,10 +14,9 @@ import {
 import type { LoadedKey } from "../src/lib/protocol/crypto.ts";
 import {
 	authorizationHeader,
-	encrypt,
 	freshNonce,
 	loadKey,
-	metaAad,
+	sealMetadata,
 } from "../src/lib/protocol/crypto.ts";
 import { encodeUpload } from "../src/lib/protocol/frame.ts";
 import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
@@ -167,9 +166,9 @@ async function download(key: LoadedKey, id: string, index = 0) {
 }
 async function prepared(key: LoadedKey, fill: number) {
 	const { descriptor, content } = await createContent(key, 32 * 1024 * 1024);
-	const meta = await encrypt(
-		key,
-		metaAad(content.id),
+	const meta = await sealMetadata(
+		key.fileKeyMaterial,
+		content.id,
 		new Uint8Array(65536 - 43),
 	);
 	const chunks: Uint8Array<ArrayBuffer>[] = [];

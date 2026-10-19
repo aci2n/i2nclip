@@ -11,8 +11,9 @@ import { normalizeTag, parseTagList } from "./tags.ts";
 import { bytes, document } from "./value.ts";
 export interface LoadedKey {
 	readonly privateCryptoKey: CryptoKey;
-	readonly encryptionKey: CryptoKey;
-	readonly tagKey: CryptoKey;
+	readonly fileKeyMaterial: CryptoKey;
+	readonly tagLabelKey: CryptoKey;
+	readonly tagTokenKey: CryptoKey;
 	readonly publicKey: Uint8Array<ArrayBuffer>;
 	readonly registrationKey: string;
 }
@@ -27,31 +28,68 @@ interface RequestMessage extends RequestContext {
 	hash: string;
 }
 
-// Encryption and request signatures. Must match src/crypto.rs byte for byte.
-// The lock is client/tests/test-vectors.json, produced by the Rust tests.
-//
-// The secret is the 32-byte seed in a library identity. From it:
-//
-// - Ed25519 signs HTTP requests. The server only has the public key.
-// - HKDF-SHA256 with salt "i2nclip" and info "enc" is the AES-256-GCM key.
-// - The same HKDF with info "tag" is the HMAC key for tag fingerprints.
-//
-// Those are two keys on purpose. A bug in tag search must not decrypt a file.
-
+// Shared protocol vectors are produced by the test-only Rust reference client.
 const PKCS8_PREFIX = hexToBytes("302e020100300506032b657004220420");
 
-export function contentAad() {
-	return utf8("i2nclip/v1 content");
+function fileContext(purpose: "metadata" | "descriptor", id: string) {
+	if (!/^[0-9a-f]{64}$/.test(id)) {
+		throw new Error("Invalid content identifier.");
+	}
+	return `i2nclip/keys/v1/${purpose}/${id}`;
 }
 
-export function metaAad(id: string) {
-	return utf8(`i2nclip/v1 meta ${id}`);
+export async function sealMetadata(
+	material: CryptoKey,
+	id: string,
+	plain: Uint8Array<ArrayBuffer>,
+) {
+	const key = await deriveAes(material, fileContext("metadata", id));
+	return encrypt(key, utf8(`i2nclip/v1 meta ${id}`), plain);
+}
+
+export async function openMetadata(
+	material: CryptoKey,
+	id: string,
+	blob: Uint8Array,
+) {
+	const key = await deriveAes(material, fileContext("metadata", id));
+	return decrypt(key, utf8(`i2nclip/v1 meta ${id}`), blob);
+}
+
+export async function sealDescriptorBytes(
+	material: CryptoKey,
+	id: string,
+	plain: Uint8Array<ArrayBuffer>,
+) {
+	const key = await deriveAes(material, fileContext("descriptor", id));
+	return encrypt(key, utf8(`i2nclip/v2 descriptor ${id}`), plain);
+}
+
+export async function openDescriptorBytes(
+	material: CryptoKey,
+	id: string,
+	blob: Uint8Array,
+) {
+	const key = await deriveAes(material, fileContext("descriptor", id));
+	return decrypt(key, utf8(`i2nclip/v2 descriptor ${id}`), blob);
+}
+
+export function sealTagLabel(
+	key: CryptoKey,
+	token: string,
+	plain: Uint8Array<ArrayBuffer>,
+) {
+	return encrypt(key, utf8(`i2nclip/v1 tag ${token}`), plain);
+}
+
+export function openTagLabel(key: CryptoKey, token: string, blob: Uint8Array) {
+	return decrypt(key, utf8(`i2nclip/v1 tag ${token}`), blob);
 }
 
 /**
  * Load an internal library identity document.
  * Returns the public key to register on the server, plus handles the
- * page can pass back into encrypt/sign without parsing again.
+ * protocol operations can use without parsing again.
  */
 export async function loadKey(privateKey: unknown): Promise<LoadedKey> {
 	const parsed = parsePrivateKey(privateKey);
@@ -60,24 +98,29 @@ export async function loadKey(privateKey: unknown): Promise<LoadedKey> {
 			parsed.seed,
 			parsed.publicKey,
 		);
-		const encryptionKey = await crypto.subtle.importKey(
+		const fileKeyMaterial = await crypto.subtle.importKey(
 			"raw",
-			await hkdf(parsed.seed, "enc"),
-			"AES-GCM",
+			parsed.seed,
+			"HKDF",
 			false,
-			["encrypt", "decrypt"],
+			["deriveKey"],
 		);
-		const tagKey = await crypto.subtle.importKey(
-			"raw",
-			await hkdf(parsed.seed, "tag"),
-			{ name: "HMAC", hash: "SHA-256" },
+		const tagLabelKey = await deriveAes(
+			fileKeyMaterial,
+			"i2nclip/keys/v1/tag-label",
+		);
+		const tagTokenKey = await crypto.subtle.deriveKey(
+			hkdf("i2nclip/keys/v1/tag-token"),
+			fileKeyMaterial,
+			{ name: "HMAC", hash: "SHA-256", length: 256 },
 			false,
 			["sign"],
 		);
 		return Object.freeze({
 			privateCryptoKey,
-			encryptionKey,
-			tagKey,
+			fileKeyMaterial,
+			tagLabelKey,
+			tagTokenKey,
 			publicKey: parsed.publicKey,
 			registrationKey: bytesToB64url(parsed.publicKey),
 		});
@@ -90,7 +133,7 @@ export async function tagToken(key: LoadedKey, tag: string) {
 	const raw = new Uint8Array(
 		await crypto.subtle.sign(
 			"HMAC",
-			key.tagKey,
+			key.tagTokenKey,
 			utf8(`tag\n${normalizeTag(tag)}`),
 		),
 	);
@@ -109,25 +152,24 @@ export async function tagTokens(key: LoadedKey, tags: unknown) {
 }
 
 /** MessagePack envelope with version, nonce and authenticated ciphertext. */
-export async function encrypt(
-	key: LoadedKey,
+async function encrypt(
+	key: CryptoKey,
 	aad: Uint8Array<ArrayBuffer>,
 	plaintext: Uint8Array<ArrayBuffer>,
-	nonce?: Uint8Array<ArrayBuffer>,
 ) {
-	const iv = nonce ?? crypto.getRandomValues(new Uint8Array(12));
+	const iv = crypto.getRandomValues(new Uint8Array(12));
 	const ct = new Uint8Array(
 		await crypto.subtle.encrypt(
 			{ name: "AES-GCM", iv, additionalData: aad },
-			key.encryptionKey,
+			key,
 			plaintext,
 		),
 	);
 	return encode({ v: 1, iv, ct });
 }
 
-export async function decrypt(
-	key: LoadedKey,
+async function decrypt(
+	key: CryptoKey,
 	aad: Uint8Array<ArrayBuffer>,
 	blob: Uint8Array,
 ) {
@@ -144,7 +186,7 @@ export async function decrypt(
 	return new Uint8Array(
 		await crypto.subtle.decrypt(
 			{ name: "AES-GCM", iv: bytes(iv), additionalData: aad },
-			key.encryptionKey,
+			key,
 			bytes(ct),
 		),
 	);
@@ -205,13 +247,19 @@ async function materialFromSeed(
 	// Firefox can sign with that key, then refuses to export it as a JWK, so
 	// the public key comes from the identity document and is checked with a signature.
 	const pkcs8 = concat([PKCS8_PREFIX, seed]);
-	const privateCryptoKey = await crypto.subtle.importKey(
-		"pkcs8",
-		pkcs8,
-		{ name: "Ed25519" },
-		false,
-		["sign"],
-	);
+	let privateCryptoKey: CryptoKey;
+	try {
+		privateCryptoKey = await crypto.subtle.importKey(
+			"pkcs8",
+			pkcs8,
+			{ name: "Ed25519" },
+			false,
+			["sign"],
+		);
+	} finally {
+		pkcs8.fill(0);
+	}
+
 	const probe = utf8("i2nclip");
 	const signature = await crypto.subtle.sign(
 		{ name: "Ed25519" },
@@ -237,20 +285,21 @@ async function materialFromSeed(
 	return { privateCryptoKey, publicKey };
 }
 
-async function hkdf(seed: Uint8Array<ArrayBuffer>, info: string) {
-	const base = await crypto.subtle.importKey("raw", seed, "HKDF", false, [
-		"deriveBits",
-	]);
-	return new Uint8Array(
-		await crypto.subtle.deriveBits(
-			{
-				name: "HKDF",
-				hash: "SHA-256",
-				salt: utf8("i2nclip"),
-				info: utf8(info),
-			},
-			base,
-			256,
-		),
+function hkdf(info: string): HkdfParams {
+	return {
+		name: "HKDF",
+		hash: "SHA-256",
+		salt: utf8("i2nclip"),
+		info: utf8(info),
+	};
+}
+
+function deriveAes(material: CryptoKey, info: string) {
+	return crypto.subtle.deriveKey(
+		hkdf(info),
+		material,
+		{ name: "AES-GCM", length: 256 },
+		false,
+		["encrypt", "decrypt"],
 	);
 }

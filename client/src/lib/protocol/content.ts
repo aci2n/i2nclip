@@ -1,5 +1,9 @@
 import { bytesToHex, utf8 } from "./bytes.ts";
-import { decrypt, encrypt, type LoadedKey } from "./crypto.ts";
+import {
+	type LoadedKey,
+	openDescriptorBytes,
+	sealDescriptorBytes,
+} from "./crypto.ts";
 import { decode, encode } from "./msgpack.ts";
 import { bytes, document, number } from "./value.ts";
 
@@ -34,13 +38,6 @@ export function chunkLength(
 	return Math.min(CHUNK_BYTES, file.size - index * CHUNK_BYTES);
 }
 
-function descriptorAad(id: string) {
-	if (!/^[0-9a-f]{64}$/.test(id)) {
-		throw new Error("Invalid content identifier.");
-	}
-	return utf8(`i2nclip/v2 descriptor ${id}`);
-}
-
 async function importContentKey(raw: Uint8Array<ArrayBuffer>) {
 	if (raw.length !== 32) {
 		throw new Error("Invalid content key.");
@@ -51,14 +48,13 @@ async function importContentKey(raw: Uint8Array<ArrayBuffer>) {
 	]);
 }
 
-// Supplied raw key/nonce support the shared deterministic reference vectors.
+// Supplied raw content keys support the shared reference vectors.
 // Production creates fresh random material for every upload attempt.
 export async function sealDescriptor(
 	library: LoadedKey,
 	id: string,
 	size: number,
 	raw: Uint8Array<ArrayBuffer>,
-	nonce?: Uint8Array<ArrayBuffer>,
 ) {
 	const { chunks } = contentShape(size);
 	const key = await importContentKey(raw);
@@ -70,7 +66,11 @@ export async function sealDescriptor(
 		chunk_count: chunks,
 	});
 	try {
-		const descriptor = await encrypt(library, descriptorAad(id), plain, nonce);
+		const descriptor = await sealDescriptorBytes(
+			library.fileKeyMaterial,
+			id,
+			plain,
+		);
 		return {
 			descriptor,
 			content: { id, size, chunks, key } satisfies ContentFile,
@@ -95,7 +95,11 @@ export async function openDescriptor(
 	id: string,
 	descriptor: Uint8Array<ArrayBuffer>,
 ): Promise<ContentFile> {
-	const plain = await decrypt(library, descriptorAad(id), descriptor);
+	const plain = await openDescriptorBytes(
+		library.fileKeyMaterial,
+		id,
+		descriptor,
+	);
 	try {
 		const value = document(decode(plain));
 		const size = number(value.plaintext_bytes);

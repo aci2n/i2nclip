@@ -427,10 +427,12 @@ async fn rejects_bad_signature_replay_and_raw_jpeg() {
     );
 
     let id = "3333333333333333333333333333333333333333333333333333333333333333";
-    let meta = client_crypto::encrypt(&key.seed, &client_crypto::meta_aad(id), b"{}").unwrap();
-    let body = client_crypto::encode_upload(
-        &meta,
+    let meta = client_crypto::seal_metadata(&key.seed, id, b"{}").unwrap();
+    let body = client_crypto::encode_create(
+        id,
+        0,
         b"\xff\xd8\xff\xd8not-encrypted",
+        &meta,
         &fixture_tag_labels("not-a-token"),
     );
     let (status, _) = call(&app, &key, "POST", "/api/media", body).await;
@@ -799,12 +801,7 @@ fn upload_fixture(owner: &Identity, size: usize, tags: &str) -> UploadFixture {
     let id = crypto::body_hash(client_crypto::fresh_nonce().as_bytes());
     let descriptor =
         client_crypto::content_descriptor(&owner.seed, &id, size as u64, &[0x44; 32], &[0x55; 12]);
-    let meta = client_crypto::encrypt(
-        &owner.seed,
-        &client_crypto::meta_aad(&id),
-        b"encrypted filename",
-    )
-    .unwrap();
+    let meta = client_crypto::seal_metadata(&owner.seed, &id, b"encrypted filename").unwrap();
     let encrypted = (0..size.div_ceil(4194304).max(1))
         .map(|index| {
             let length = (size - index * 4194304).min(4194304);
@@ -943,12 +940,7 @@ async fn pending_chunk_roundtrip_authenticates_metadata_and_publishes_complete_i
     let doc = client_crypto::document_json(&summary);
     assert_eq!(doc["bytes"], 4194339);
     assert_eq!(
-        client_crypto::decrypt(
-            &owner.seed,
-            &client_crypto::meta_aad(&upload.id),
-            &upload.meta
-        )
-        .unwrap(),
+        client_crypto::open_metadata(&owner.seed, &upload.id, &upload.meta).unwrap(),
         b"encrypted filename"
     );
     let catalog =
