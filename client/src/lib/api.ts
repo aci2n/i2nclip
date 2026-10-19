@@ -412,14 +412,7 @@ export async function readContentRange({
 		const encrypted = new Uint8Array(
 			chunkLength(content, index) + CHUNK_TAG_BYTES,
 		);
-		await readContentChunk(
-			response,
-			encrypted,
-			0,
-			encrypted.length - 1,
-			undefined,
-			signal,
-		);
+		await readContentChunk(response, encrypted, signal);
 		const plain = await decryptChunk(content, index, encrypted);
 		try {
 			signal?.throwIfAborted();
@@ -630,12 +623,9 @@ async function responseError(
 async function readContentChunk(
 	response: Response,
 	destination: Uint8Array<ArrayBuffer>,
-	start: number,
-	end: number,
-	onProgress?: Progress,
 	signal?: AbortSignal,
 ) {
-	const length = end - start + 1;
+	const length = destination.length;
 	const contentLength = response.headers.get("content-length");
 	if (
 		response.status !== 200 ||
@@ -662,14 +652,8 @@ async function readContentChunk(
 			if (received + value.length > length) {
 				throw new Error("Downloaded content exceeds its expected size.");
 			}
-			destination.set(value, start + received);
+			destination.set(value, received);
 			received += value.length;
-			onProgress?.(
-				Math.min(
-					99,
-					Math.floor(((start + received) / destination.length) * 100),
-				),
-			);
 		}
 		if (received !== length) {
 			throw new Error("Downloaded content is shorter than its expected size.");

@@ -55,3 +55,23 @@ Preserve chunk size/authentication and truncated/oversized response tests.
 Run make test-all and the container build after refactoring; inspect Firefox
 screenshots for both themes and narrow layouts. Tests own and clean up their
 ports, browser contexts, databases and build artifacts on success and failure.
+
+## Verification results
+
+- Client unit suite: 192 tests passed. Biome, TypeScript, Svelte checking, Rust
+  Clippy/formatting and all three web/extension artifact checks passed.
+- PostgreSQL-enabled Rust suites passed: 56 library tests, five configuration
+  tests and 18 signed API tests, with isolated databases.
+- `make test-all` reached all 126 browser cases: 124 passed, one Chromium-only
+  termination case was intentionally skipped in Firefox, and the new Firefox
+  preview regression initially checked the original tab after opening a popup.
+  Corrected that test to navigate to the link in its current tab; its Firefox
+  and Chromium rerun both passed. All 125 applicable browser cases are therefore
+  verified across the full run and focused rerun, including gigabyte transfers.
+- Worker termination during an active native download failed promptly and a fresh
+  attempt succeeded. Vite worker delivery/registration passed in both browsers.
+- Final container image built successfully; an isolated, network-disabled
+  container confirmed the worker and favicon are present.
+- Inspected Firefox screenshots of loading, loaded landscape/portrait/panorama
+  previews, audio, long filenames and errors, in light/dark themes including
+  320/360-pixel widths. Loaded previews remain visible after downloading.

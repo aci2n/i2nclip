@@ -80,11 +80,7 @@ const text = $derived(selected?.text);
 		{#if selected.busy}
 			<div class="status stack" role="status">
 				<p>{name}</p>
-				<p>
-					{selected.progress === null
-						? "Loading…"
-						: `Loading ${selected.progress}%`}
-				</p>
+				<p>Loading…</p>
 			</div>
 		{:else if selected.error}
 			<div class="status stack">

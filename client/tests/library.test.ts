@@ -396,7 +396,7 @@ test("library previews use view-owned leases and close without reopening", async
 	assert.equal(await f.library.reveal("image"), true);
 	assert.equal(streaming.previews.length, 2);
 });
-test("rapid preview changes abort old loads and ignore their progress, results, errors and cleanup", async (t) => {
+test("rapid preview changes abort old loads and ignore their results, errors and cleanup", async (t) => {
 	const loads: (ContentRequest & {
 		done: PromiseWithResolvers<Uint8Array<ArrayBuffer>>;
 	})[] = [];
@@ -443,7 +443,6 @@ test("rapid preview changes abort old loads and ignore their progress, results, 
 	const second = f.library.reveal("b");
 	assert.equal(assertPresent(loads[0].signal).aborted, true);
 	assert.equal(assertPresent(card("a")).busy, false);
-	assert.equal(assertPresent(card("a")).progress, null);
 	assert.equal(assertPresent(get(f.library).selected).id, "b");
 	const latest = f.library.reveal("a");
 	assert.equal(assertPresent(loads[1].signal).aborted, true);

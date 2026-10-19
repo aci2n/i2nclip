@@ -66,9 +66,6 @@ const summary = $derived(
 		{:else}
 			<span class="file-type">{fileType(type)}</span>
 		{/if}
-		{#if media.progress !== null}
-			<span class="pct">{media.progress}%</span>
-		{/if}
 	</div>
 	<FilenameEditor
 		{name}
@@ -212,14 +209,7 @@ const summary = $derived(
 	left: 0.75rem;
 	font-size: 0.8rem;
 }
-.pct {
-	position: absolute;
-	inset: 0;
-	display: grid;
-	place-items: center;
-	background: #0006;
-	color: white;
-}
+
 .card-details {
 	margin: 0;
 	color: var(--muted);

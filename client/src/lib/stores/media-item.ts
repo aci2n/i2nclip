@@ -23,7 +23,6 @@ export interface MediaState extends api.Media {
 	textTruncated: boolean;
 	message: string;
 	error: boolean;
-	progress: number | null;
 }
 export interface ObjectUrls {
 	createObjectURL(blob: Blob): string;
@@ -59,7 +58,6 @@ export function createMediaItem(
 		textTruncated: false,
 		message: "",
 		error: false,
-		progress: null,
 	});
 	const controller = new AbortController();
 	const signal = AbortSignal.any([controller.signal, context.signal]);
@@ -91,7 +89,6 @@ export function createMediaItem(
 			text: null,
 			textTruncated: false,
 			busy: false,
-			progress: null,
 		}));
 	}
 	const onAbort = () => dispose();

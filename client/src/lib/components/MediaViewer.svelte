@@ -32,18 +32,10 @@ const ready = $derived(!value.loading && !error && Boolean(media?.ready));
 		<div class="status stack" role="status">
 			{#if !media}
 				<p>Loading metadata…</p>
-			{:else if media.progress === 100}
-				<p>Preparing…</p>
 			{:else}
-				<p>
-					{media.progress === null ? "Loading…" : `Loading ${media.progress}%`}
-				</p>
+				<p>Loading…</p>
 			{/if}
-			<progress
-				max="100"
-				value={media?.progress ?? undefined}
-				aria-label="Download progress"
-			></progress>
+			<progress max="100" aria-label="Download progress"></progress>
 		</div>
 	{:else if error}
 		<div class="status stack">
