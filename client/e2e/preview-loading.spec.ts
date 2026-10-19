@@ -158,3 +158,36 @@ test("preview opens immediately and arrows, keys, swipes and close cancel stalle
 		await page.unrouteAll({ behavior: "wait" });
 	}
 });
+
+test("loaded direct previews remain loaded across download busy-state changes", async ({
+	page,
+	app,
+}) => {
+	await createLibrary(page, app);
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	await page
+		.getByLabel("Upload", { exact: true })
+		.setInputFiles([await imageFixture(page, "Landscape.png", 960, 540)]);
+	const card = page.getByRole("article");
+	await expect(card).toHaveCount(1);
+	const href = await card
+		.getByRole("link", { name: /^Link to / })
+		.getAttribute("href");
+	await page.goto(new URL(assertPresent(href), page.url()).href);
+	const image = page.locator('img[src^="/__content/"]');
+	await expect(image).toBeVisible();
+	await expect(page.getByRole("status")).toHaveCount(0);
+	const src = await image.getAttribute("src");
+	const button = page.getByRole("button", { name: "Download", exact: true });
+	const started = page.waitForEvent("download");
+	await button.click();
+	expect(await (await started).failure()).toBeNull();
+	await expect(button).toBeEnabled();
+	await expect(page.getByRole("status")).toHaveCount(0);
+	await expect(image).toBeVisible();
+	await expect(image).toHaveAttribute("src", assertPresent(src));
+	for (const width of [1100, 320, 360]) {
+		await page.setViewportSize({ width, height: 800 });
+		await shot(page, `loaded-after-download-${width}`);
+	}
+});

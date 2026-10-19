@@ -11,6 +11,7 @@ const type = $derived(
 	media.metadata?.content_type || "application/octet-stream",
 );
 const text = $derived(media.text);
+const url = $derived(media.url);
 const autoplay = $derived(presentation === "dialog");
 let player = $state<HTMLMediaElement>();
 let failed = $state(false);
@@ -20,7 +21,7 @@ $effect(() => {
 	return () => current?.pause();
 });
 $effect(() => {
-	loading = Boolean(media.url) && /^(image|audio|video)\//.test(type);
+	loading = Boolean(url) && /^(image|audio|video)\//.test(type);
 	failed = false;
 });
 </script>
