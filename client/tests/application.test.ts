@@ -17,6 +17,14 @@ test("application initializes before synchronous subscriptions and detaches navi
 	for (const [name, value] of [
 		["window", browser],
 		[
+			"BroadcastChannel",
+			class {
+				constructor() {
+					throw new Error("Session sharing unavailable.");
+				}
+			},
+		],
+		[
 			"localStorage",
 			{
 				getItem: (key: string) => storage.get(key) ?? null,
@@ -39,6 +47,7 @@ test("application initializes before synchronous subscriptions and detaches navi
 	t.after(app.dispose);
 	assert.equal(get(app.routing).page, "settings");
 	assert.equal(get(app.session).status, "new");
+	assert.equal(get(app.session).checking, false);
 	assert.deepEqual(get(app), { workspace: null, streams: null });
 	assert.equal(app.canDropFiles(), false);
 	app.routing.navigate({ page: "library" }, true);

@@ -8,7 +8,7 @@ import type {
 	PageMessage,
 	WorkerMessage,
 } from "../src/lib/streaming/messages.ts";
-import { deferred } from "./helpers.ts";
+import { deferred, tick } from "./helpers.ts";
 
 function fixture(t: test.TestContext) {
 	const lifetime = new AbortController();
@@ -240,6 +240,8 @@ test("concurrent requests keep cancellation separate and release read capacity",
 	peers[1].send({ kind: "read", start: 0, end: 4 });
 	const second = await started[1].promise;
 	peers[2].send({ kind: "read", start: 0, end: 4 });
+	await tick();
+	assert.equal(count, 2);
 	peers[0].send({ kind: "cancel" });
 	const third = await started[2].promise;
 	assert.equal(first.aborted, true);
