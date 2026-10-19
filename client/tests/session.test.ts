@@ -240,3 +240,87 @@ test("paired imports validate keys and respect caller cancellation", async (t) =
 	);
 	assert.deepEqual(f.session.identity().privateKey, privateKey);
 });
+
+test("Create recovers a lost reply or storage failure without spending another invitation", async (t) => {
+	for (const failure of ["reply", "storage"]) {
+		await t.test(failure, async (t) => {
+			let enrolled = "";
+			let registrations = 0;
+			const f = await fixture(t, {
+				registerKey: async ({ key }) => {
+					enrolled = key.registrationKey;
+					registrations++;
+					if (failure === "reply") {
+						throw new Error("Lost reply");
+					}
+				},
+				isKeyRegistered: async ({ key }) => key.registrationKey === enrolled,
+			});
+			const write = f.local.setItem;
+			if (failure === "storage") {
+				f.local.setItem = () => {
+					throw new Error("Storage unavailable");
+				};
+			}
+			assert.equal(await f.session.create({ serverUrl, otc: "spent" }), false);
+			assert.equal(get(f.session).configured, false);
+			assert.match(get(f.session).error, /Retry Create in this tab/);
+			f.local.setItem = write;
+			assert.equal(
+				await f.session.create({ serverUrl: `${serverUrl}/`, otc: "spent" }),
+				true,
+			);
+			assert.equal(f.session.identity().publicKey, enrolled);
+			assert.equal(registrations, 1);
+		});
+	}
+});
+
+test("Create preserves its candidate across failed checks, rejected invitations and failed Restore", async (t) => {
+	const keys: string[] = [];
+	let checkFails = true;
+	let checks = 0;
+	const f = await fixture(t, {
+		registerKey: async ({ key, otc }) => {
+			keys.push(key.registrationKey);
+			if (otc !== "valid") {
+				throw new Error("Invalid invitation");
+			}
+		},
+		isKeyRegistered: async () => {
+			checks++;
+			if (checkFails) {
+				throw new Error("Offline");
+			}
+			return false;
+		},
+	});
+	assert.equal(await f.session.create({ serverUrl, otc: "invalid" }), false);
+	assert.equal(await f.session.restore(new Blob(["bad"]), password), false);
+	assert.equal(await f.session.create({ serverUrl, otc: "valid" }), false);
+	assert.equal(keys.length, 1, "a failed check must not submit registration");
+	checkFails = false;
+	assert.equal(await f.session.create({ serverUrl, otc: "valid" }), true);
+	assert.equal(checks, 2);
+	assert.equal(keys[0], keys[1]);
+	assert.equal(f.session.identity().publicKey, keys[0]);
+});
+
+test("Create replaces its candidate on server or saved-record changes", async (t) => {
+	const keys: string[] = [];
+	const f = await fixture(t, {
+		registerKey: async ({ key }) => {
+			keys.push(key.registrationKey);
+			throw new Error("Lost reply");
+		},
+		isKeyRegistered: async () => false,
+	});
+	await f.session.create({ serverUrl, otc: "invite" });
+	await f.session.create({ serverUrl: "https://other.example", otc: "invite" });
+	assert.notEqual(keys[0], keys[1]);
+	f.local.removeItem(IDENTITY_STORAGE_KEY);
+	f.events.dispatchEvent(storageEvent(f.local));
+	assert.equal(await f.session.initialize(password), true);
+	await f.session.create({ serverUrl: "https://other.example", otc: "invite" });
+	assert.notEqual(keys[1], keys[2]);
+});

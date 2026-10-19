@@ -67,6 +67,7 @@ interface SessionRuntime {
 	saved: SavedIdentity | null;
 	key: CryptoKey | null;
 	library: LoadedIdentity | null;
+	candidate: LoadedIdentity | null;
 	lifetime: AbortController;
 	command: AbortController | null;
 	disposed: boolean;
@@ -116,6 +117,7 @@ export function createSession({
 		saved: null,
 		key: null,
 		library: null,
+		candidate: null,
 		lifetime,
 		command: null,
 		disposed: false,
@@ -169,6 +171,7 @@ function endSessionLifetime(
 	runtime.lifetime = new AbortController();
 	runtime.key = null;
 	runtime.library = null;
+	runtime.candidate = null;
 }
 
 function installSession(
@@ -185,6 +188,7 @@ function installSession(
 	runtime.saved = next;
 	runtime.key = wrapping;
 	runtime.library = identity;
+	runtime.candidate = null;
 	const context = identity
 		? Object.freeze({
 				serverUrl: identity.identity.server_url,
@@ -595,19 +599,36 @@ async function performCreateIdentity(
 ) {
 	requireSessionSetup(runtime);
 	checkServer(serverUrl);
-	const { privateKey } = await generatePrivateKey();
-	const next = await validateIdentity({
-		server_url: serverUrl,
-		private_key: privateKey,
-	});
-	signal.throwIfAborted();
-	await deps.http.registerKey({
-		serverUrl: next.identity.server_url,
-		key: next.key,
-		otc,
-		signal,
-	});
-	await applyIdentity(deps, runtime, next, signal);
+	const origin = new URL(serverUrl).origin;
+	const retry = runtime.candidate?.identity.server_url === origin;
+	if (!retry) {
+		runtime.candidate = null;
+		const { privateKey } = await generatePrivateKey();
+		const candidate = await validateIdentity({
+			server_url: origin,
+			private_key: privateKey,
+		});
+		signal.throwIfAborted();
+		runtime.candidate = candidate;
+	}
+	const next = runtime.candidate;
+	if (!next) {
+		throw new Error("Registration identity is unavailable.");
+	}
+	try {
+		const credentials = { serverUrl: origin, key: next.key, signal };
+		if (!retry || !(await deps.http.isKeyRegistered(credentials))) {
+			signal.throwIfAborted();
+			await deps.http.registerKey({ ...credentials, otc });
+		}
+		signal.throwIfAborted();
+		await applyIdentity(deps, runtime, next, signal);
+	} catch (error) {
+		signal.throwIfAborted();
+		throw new Error(
+			`${errorMessage(error)} Retry Create in this tab; keep it open until the library is saved.`,
+		);
+	}
 }
 
 async function performRestoreIdentity(
