@@ -1,7 +1,7 @@
 import { contentShape } from "../protocol/content.ts";
 import { compressImage } from "./image.ts";
 
-// Optional preparation may buffer the source; chunk transport never does.
+// Image/audio preparation is bounded; native video thumbnails use the File.
 export const PREPARATION_BYTES = 32 * 1024 * 1024;
 
 interface PreparationRequest {
@@ -20,9 +20,11 @@ export async function prepareFile({
 	signal.throwIfAborted();
 	contentShape(file.size);
 	if (file.size > PREPARATION_BYTES) {
-		onNotice?.(
-			"Uploading original file; compression and thumbnail preparation are skipped above 32 MiB.",
-		);
+		if (!file.type.startsWith("video/")) {
+			onNotice?.(
+				"Uploading original file; image compression and image/audio thumbnail preparation are skipped above 32 MiB.",
+			);
+		}
 		return file;
 	}
 	if (compressImages) {

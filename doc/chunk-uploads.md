@@ -159,7 +159,9 @@ whole-file buffering. Keep the visible file-ID deeplink shape unchanged.
 
 Replace API whole-file Uint8Array interfaces with Blob/File upload sources and
 bounded chunk/range readers. Sniff types using a bounded prefix. For files above
-32 MiB skip optional conversion/thumbnail/artwork preparation with a notice;
+32 MiB skip image conversion/thumbnails and audio artwork extraction with a notice;
+video thumbnails use a native File URL at any size with an eight-second deadline
+(see [large video thumbnails](large-video-thumbnails.md));
 this is a preparation threshold, not an upload limit. Text previews read only
 enough chunks for the existing 256 KiB display limit. Native image/media decoding
 can still consume memory independently of application transfer buffers.
@@ -249,7 +251,7 @@ cargo run --features test-containers --example postgres-tests -- \
   File/chunk creation, publication, retries, quotas, deletion and idle cleanup are
   implemented and verified by PostgreSQL and signed API integration tests.
 - The web app uploads Blob/File slices and removes per-file limits throughout
-  quota/CLI/client interfaces. Optional preparation is skipped above 32 MiB.
+  quota/CLI/client interfaces. Image preparation and audio artwork are skipped above 32 MiB; native video thumbnails remain best effort at any size.
 - A session-owned stream store supplies library/deeplink native previews and
   downloads, with bounded text prefixes, preview cancellation, deletion
   invalidation, view-independent downloads and context teardown.

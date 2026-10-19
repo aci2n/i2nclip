@@ -1,7 +1,7 @@
 import type { Credentials, Progress } from "../api.ts";
 import { upload } from "../api.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
-import { PREPARATION_BYTES, prepareFile } from "./prepare.ts";
+import { prepareFile } from "./prepare.ts";
 import { thumbnail } from "./thumbnail.ts";
 export interface SendOptions {
 	file: File;
@@ -35,10 +35,7 @@ export async function sendUpload({
 	signal.throwIfAborted();
 	onPrepared?.(file.name);
 	signal.throwIfAborted();
-	const preview =
-		file.size <= PREPARATION_BYTES
-			? await thumbnail(file, new Uint8Array(await file.arrayBuffer()), signal)
-			: null;
+	const preview = await thumbnail(file, signal);
 	signal.throwIfAborted();
 	onProgress?.(0);
 	return upload({

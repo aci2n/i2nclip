@@ -130,8 +130,9 @@ uploads immediately, snapshotting the preference for the sequential batch.
 JPEG/PNG/BMP inputs compress to WebP at quality 85 before encryption without
 resizing. Only smaller output replaces the original; unsupported, failed or larger
 output keeps the original with a notice. Other formats, including videos, remain
-unchanged. Files above 32 MiB bypass optional compression, thumbnail and artwork
-preparation with a notice. Transport reads/encrypts sequential 4 MiB slices.
+unchanged. Files above 32 MiB bypass image compression, image thumbnails and audio
+artwork extraction with a notice. Video thumbnails use the original File and native
+browser decoder at any size, with an eight-second deadline and cancellation. Transport reads/encrypts sequential 4 MiB slices.
 There is no per-file quota policy.
 
 The store shows preparing/uploading phases and actual selected filenames, ignores

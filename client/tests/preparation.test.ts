@@ -95,3 +95,19 @@ test("videos and disabled images preserve their original file without decoding",
 	}
 	assert.equal(decoded(), 0);
 });
+
+test("large videos retain the original without a skipped-thumbnail notice", async () => {
+	const file = new File([], "huge.mp4", { type: "video/mp4" });
+	Object.defineProperty(file, "size", { value: PREPARATION_BYTES + 1 });
+	const notices: string[] = [];
+	assert.equal(
+		await prepareFile({
+			file,
+			signal: new AbortController().signal,
+			compressImages: true,
+			onNotice: (message) => notices.push(message),
+		}),
+		file,
+	);
+	assert.deepEqual(notices, []);
+});

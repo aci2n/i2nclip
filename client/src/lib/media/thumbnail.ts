@@ -1,4 +1,5 @@
 import { audioArt } from "./audio-art.ts";
+import { PREPARATION_BYTES } from "./prepare.ts";
 
 interface Preview {
 	thumb: Uint8Array<ArrayBuffer>;
@@ -12,22 +13,24 @@ interface Preview {
 
 const EDGE = 320;
 
-export async function thumbnail(
-	blob: Blob,
-	bytes: Uint8Array<ArrayBuffer>,
-	signal?: AbortSignal,
-) {
+export async function thumbnail(blob: Blob, signal?: AbortSignal) {
 	const type = blob.type || "";
 	try {
+		signal?.throwIfAborted();
+		if (type.startsWith("video/")) {
+			return await fromVideo(blob, signal);
+		}
+		if (blob.size > PREPARATION_BYTES) {
+			return null;
+		}
 		if (type.startsWith("audio/")) {
+			const bytes = new Uint8Array(await blob.arrayBuffer());
+			signal?.throwIfAborted();
 			const art = audioArt(bytes);
 			if (!art) {
 				return null;
 			}
 			return await fromBitmap(new Blob([art]), signal);
-		}
-		if (type.startsWith("video/")) {
-			return await fromVideo(blob, signal);
 		}
 		return await fromBitmap(blob, signal);
 	} catch {
@@ -92,6 +95,8 @@ function fromVideo(blob: Blob, signal?: AbortSignal) {
 			}
 			settled = true;
 			clearTimeout(timer);
+			video.removeEventListener("error", failed);
+			video.removeEventListener("loadeddata", loaded);
 			signal?.removeEventListener("abort", abort);
 			URL.revokeObjectURL(url);
 			video.removeAttribute("src");
@@ -105,8 +110,13 @@ function fromVideo(blob: Blob, signal?: AbortSignal) {
 			finish(null);
 			return;
 		}
-		video.addEventListener("error", () => finish(null));
-		video.addEventListener("loadeddata", async () => {
+		function failed() {
+			finish(null);
+		}
+		async function loaded() {
+			if (settled) {
+				return;
+			}
 			try {
 				const thumb = await webp(video);
 				finish(
@@ -120,7 +130,9 @@ function fromVideo(blob: Blob, signal?: AbortSignal) {
 			} catch {
 				finish(null);
 			}
-		});
+		}
+		video.addEventListener("error", failed);
+		video.addEventListener("loadeddata", loaded, { once: true });
 		video.src = url;
 	});
 }

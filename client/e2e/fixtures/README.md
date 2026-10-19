@@ -8,3 +8,8 @@ Regenerate with FFmpeg (only needed to replace the checked-in fixture):
 ```sh
 ffmpeg -f lavfi -i testsrc=size=320x180:rate=10 -t 2 -c:v libvpx-vp9 -b:v 100k -pix_fmt yuv420p -an -y client/e2e/fixtures/clip.mp4
 ```
+
+The large-video-thumbnail browser test generates isolated sparse files with 64 MiB
+of container padding. MP4 uses a `free` box before `moov`; WebM extends the existing
+eight-byte Segment size and appends a valid EBML Void. Neither changes sample
+offsets or requires FFmpeg at test time. Test cleanup removes the generated files.

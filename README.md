@@ -99,7 +99,8 @@ and derived content sizes must fit JavaScript's safe integer range
 (0–9007199254740991). Lowering quota below current usage is rejected.
 
 The client reads and encrypts 4 MiB slices sequentially. Files above 32 MiB skip
-optional image compression and thumbnail/artwork preparation. Each upload reserves
+image compression, image thumbnails and audio artwork extraction. Video thumbnails
+use the native browser decoder at any file size, with an eight-second deadline. Each upload reserves
 its complete encrypted size and a file slot before sending chunks. A file appears
 only when all chunks arrive. Failures restart with a fresh ID/key; abandoned
 partial uploads expire after 24 idle hours during hourly maintenance.
