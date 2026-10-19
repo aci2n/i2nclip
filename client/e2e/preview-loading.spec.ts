@@ -117,36 +117,40 @@ test("preview opens immediately and arrows, keys, swipes and close cancel stalle
 		await next.click();
 		await loading(secondName, 4);
 		await swipe(100, 0);
+		await loading(firstName, 5);
+		held[4].gate.resolve(undefined);
 		await expect(dialog.getByRole("status")).toHaveCount(0);
 		await expect(
 			dialog.getByRole("img", { name: firstName, exact: true }),
 		).toBeVisible();
 		await expect.poll(() => failed.has(held[3].request)).toBe(true);
 		await next.click();
-		await loading(secondName, 5);
+		await loading(secondName, 6);
 		await close.click();
 		await expect(dialog).not.toBeVisible();
 		await expect(openers.first()).toBeFocused();
-		await expect.poll(() => failed.has(held[4].request)).toBe(true);
-		await openers.last().click();
-		await loading(secondName, 6);
-		await swipe(0, -100);
-		await expect(dialog).not.toBeVisible();
-		await expect(openers.last()).toBeFocused();
 		await expect.poll(() => failed.has(held[5].request)).toBe(true);
 		await openers.last().click();
 		await loading(secondName, 7);
-		held[6].gate.resolve("error");
+		await swipe(0, -100);
+		await expect(dialog).not.toBeVisible();
+		await expect(openers.last()).toBeFocused();
+		await expect.poll(() => failed.has(held[6].request)).toBe(true);
+		await openers.last().click();
+		await loading(secondName, 8);
+		held[7].gate.resolve("error");
 		await expect(dialog.getByRole("alert")).toHaveText("Preview unavailable");
 		await expect(previous).toBeEnabled();
 		await dialog.getByRole("button", { name: "Retry", exact: true }).click();
-		await loading(secondName, 8);
-		held[7].gate.resolve(undefined);
+		await loading(secondName, 9);
+		held[8].gate.resolve(undefined);
 		await expect(dialog.getByRole("status")).toHaveCount(0);
 		await close.click();
 		await openers.first().click();
+		await loading(firstName, 10);
+		held[9].gate.resolve(undefined);
 		await expect(dialog.getByRole("status")).toHaveCount(0);
-		expect(held.length).toBe(8);
+		expect(held.length).toBe(10);
 	} finally {
 		for (const entry of held) {
 			entry.gate.resolve(undefined);

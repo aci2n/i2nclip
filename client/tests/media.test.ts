@@ -138,3 +138,21 @@ test("ordinary files need no content reads, deletion invalidates all session str
 	assert.deepEqual(f.invalidated, ["a".repeat(64)]);
 	assert.equal(get(f.media).deleted, true);
 });
+
+test("stream read failures remain local to the current preview and permit retry", async (t) => {
+	const f = fixture(t, undefined, {
+		readContentRange: async () => {
+			throw new Error("Transfer unavailable");
+		},
+	});
+	await f.media.reveal();
+	await assert.rejects(
+		f.previews[0].source.read(0, 3, new AbortController().signal),
+		/Transfer unavailable/,
+	);
+	assert.equal(get(f.media).message, "Transfer unavailable");
+	assert.equal(get(f.media).ready, false);
+	assert.equal(await f.media.reveal(), true);
+	assert.equal(f.previews[0].disposed, true);
+	assert.equal(get(f.media).error, false);
+});

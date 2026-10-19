@@ -211,7 +211,27 @@ export function createMediaItem(
 				if (!streams) {
 					throw new Error("Streaming is unavailable.");
 				}
-				const lease = await streams.open(content, request);
+				const lease = await streams.open(
+					{
+						...content,
+						async read(start, end, readSignal) {
+							try {
+								return await content.read(start, end, readSignal);
+							} catch (error) {
+								if (!request.aborted && !readSignal.aborted) {
+									state.update((v) => ({
+										...v,
+										ready: false,
+										error: true,
+										message: errorMessage(error),
+									}));
+								}
+								throw error;
+							}
+						},
+					},
+					request,
+				);
 				request.throwIfAborted();
 				previewLease?.dispose();
 				previewLease = lease;

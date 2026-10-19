@@ -14,12 +14,13 @@ const text = $derived(media.text);
 const autoplay = $derived(presentation === "dialog");
 let player = $state<HTMLMediaElement>();
 let failed = $state(false);
+let loading = $state(false);
 $effect(() => {
 	const current = player;
 	return () => current?.pause();
 });
 $effect(() => {
-	void media.url;
+	loading = Boolean(media.url) && /^(image|audio|video)\//.test(type);
 	failed = false;
 });
 </script>
@@ -38,17 +39,33 @@ $effect(() => {
 				{/if}
 			</section>
 		{:else if type.startsWith("image/") && (media.url || media.preview)}
-			<img
-				src={media.url || media.preview}
-				alt={name}
-				onerror={() => (failed = true)}
-			>
+			{#if media.url}
+				{#if loading && media.preview}
+					<img src={media.preview} alt={name}>
+				{/if}
+				<img
+					class:pending={loading && Boolean(media.preview)}
+					src={media.url}
+					alt={loading && media.preview ? "" : name}
+					onload={() => (loading = false)}
+					onerror={() => {
+						failed = true;
+						loading = false;
+					}}
+				>
+			{:else if media.preview}
+				<img src={media.preview} alt={name}>
+			{/if}
 		{:else if type.startsWith("video/") && media.url}
 			<video
 				bind:this={player}
+				onloadeddata={() => (loading = false)}
 				src={media.url}
 				aria-label={name}
-				onerror={() => (failed = true)}
+				onerror={() => {
+					failed = true;
+					loading = false;
+				}}
 				controls
 				{autoplay}
 				playsinline
@@ -63,9 +80,13 @@ $effect(() => {
 				<p>{name}</p>
 				<audio
 					bind:this={player}
+					onloadeddata={() => (loading = false)}
 					src={media.url}
 					aria-label={name}
-					onerror={() => (failed = true)}
+					onerror={() => {
+						failed = true;
+						loading = false;
+					}}
 					controls
 					{autoplay}
 				></audio>
@@ -76,11 +97,34 @@ $effect(() => {
 			<p>This file is ready to download.</p>
 		{/if}
 	{/key}
-	{#if failed}
+	{#if loading && !media.error}
+		<div class="loading stack" role="status">
+			<p>{name}</p>
+			<p>Loading…</p>
+		</div>
+	{/if}
+	{#if failed && !media.error}
 		<p class="error" role="alert">This browser could not display the file.</p>
 	{/if}
 </div>
 <style>
+img.pending {
+	position: absolute;
+	visibility: hidden;
+}
+
+.loading {
+	position: fixed;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	max-width: min(22rem, calc(100vw - 2rem));
+	overflow-wrap: anywhere;
+	padding: 1rem;
+	background: var(--paper);
+	border-radius: 0.5rem;
+}
+
 .text-preview {
 	width: min(60rem, 95vw);
 	max-height: 95vh;
