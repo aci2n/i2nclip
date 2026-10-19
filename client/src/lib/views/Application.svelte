@@ -67,7 +67,6 @@ function pasteFiles(event: ClipboardEvent) {
 		{/if}
 	{:else}
 		<header>
-			<a class="brand" href={routeHref({ page: "library" })}>i2nclip</a>
 			<nav aria-label="Main navigation">
 				<a
 					href={routeHref({ page: "library" })}
@@ -120,20 +119,11 @@ main.media {
 	padding: 1rem;
 }
 header {
-	display: grid;
-	grid-template-columns: auto 1fr;
-	align-items: center;
-	gap: 1rem;
+	display: flex;
+	justify-content: center;
 	margin-bottom: 2rem;
 }
-.brand {
-	font-size: 1.35rem;
-	font-weight: 700;
-	text-decoration: none;
-	color: inherit;
-}
 nav {
-	justify-self: center;
 	display: flex;
 	align-items: center;
 	flex-wrap: wrap;
@@ -154,9 +144,7 @@ nav a[aria-current] {
 		margin-bottom: 1.5rem;
 	}
 	nav {
-		grid-column: 1 / -1;
-		grid-row: 2;
-		justify-self: start;
+		justify-content: center;
 		gap: 1.5rem;
 	}
 	nav a {
