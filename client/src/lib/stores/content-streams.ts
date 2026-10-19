@@ -90,28 +90,29 @@ export function createContentStreams(sessionSignal: AbortSignal) {
 		let busy = false;
 		const send = (message: PageMessage, transfer: Transferable[] = []) =>
 			port.postMessage(message, transfer);
-		const close = (error = new Error("The file session has ended.")) => {
+		const close = (error?: Error) => {
 			if (closed) {
 				return;
 			}
 			closed = true;
-			send({ kind: "error", message: "The file session has ended." });
+			if (error) {
+				send({ kind: "error", message: error.message });
+			}
 			operation.abort();
 			requests.delete(abort);
 			request.removeEventListener("abort", abort);
 			port.close();
 			if (downloadRequest) {
-				entry.finished?.(error);
+				const finished = entry.finished;
+				entry.finished = undefined;
+				finished?.(error);
 			}
 		};
-		const abort = () => close();
+		const abort = () => close(new Error("The file session has ended."));
 		request.addEventListener("abort", abort, { once: true });
 		requests.add(abort);
 		port.onmessage = async (message: MessageEvent<WorkerMessage>) => {
 			if (message.data.kind === "complete") {
-				if (downloadRequest) {
-					entry.finished?.();
-				}
 				close();
 				return;
 			}
@@ -132,7 +133,7 @@ export function createContentStreams(sessionSignal: AbortSignal) {
 				end > entry.source.size ||
 				end - start > STREAM_READ_BYTES
 			) {
-				close();
+				close(new Error("Invalid content read request."));
 				return;
 			}
 			busy = true;
@@ -281,9 +282,14 @@ export function createContentStreams(sessionSignal: AbortSignal) {
 			controller: new AbortController(),
 			finished,
 			dispose() {
+				if (entry.controller.signal.aborted) {
+					return;
+				}
 				lifetime?.removeEventListener("abort", entry.dispose);
 				entry.controller.abort();
-				entry.finished?.(new Error("The file session has ended."));
+				const finished = entry.finished;
+				entry.finished = undefined;
+				finished?.(new Error("The file session has ended."));
 				entries.delete(token);
 			},
 		};
