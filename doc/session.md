@@ -66,20 +66,13 @@ stop a batch; only failure names/messages remain for manual resubmission through
 Upload. Progress and completion notices are transient. Identity changes and
 root disposal cancel batches and clear their state; navigation does not.
 
-Media items own requests, cached full-content Blob URLs, previews, and mutation
-busy state. Decrypted arrays are local to URL/artwork creation. Playback,
-full-resolution images, and saving reuse the content URL. Disposal aborts requests
-and revokes URLs; stale results cannot create previews or save dialogs. Deleted
-cards remain inactive until a new search replaces them. Only content loading
-accepts preview cancellation; mutations use their ordinary item busy guard. Abort
-checks prevent stale content/text publication, and active-load identity guards
-progress and cleanup. Cancellation releases busy/progress immediately without
-reporting an error or clearing a newer operation. Completed content stays cached.
-
-Content requests fetch sequential stable 4 MiB ciphertext chunk URLs using the native
-HTTP cache. The API assembles one full ciphertext buffer, bounds every streamed
-chunk, verifies the complete hash, and decrypts before publishing content. Aborting
-a media item cancels the active chunk request and prevents subsequent requests.
+Media items own preview leases, small thumbnail URLs, bounded text and mutation
+busy state. Session-owned streams retain download sources independently of views.
+Disposal aborts previews and revokes thumbnails; stale results cannot publish text
+or leases. Cancellation releases busy state without clearing a newer operation.
+The API authenticates complete 4 MiB + tag chunks before exposing requested
+plaintext ranges of at most 4 MiB. Native HTTP caching retains ciphertext;
+the application never caches complete decrypted files.
 
 Metadata updates merge name/tag patches while retaining unrelated metadata and
 thumbnails. Conflicts load current metadata and leave failed editor drafts for
@@ -90,21 +83,21 @@ tags by protocol normalization while keeping their first spelling.
 The preview dialog uses native image/audio/video elements. Navigation follows
 loaded result order, skips deleted items and ordinary files, and stops at loaded
 boundaries without wrapping or fetching pages. Close the preview and choose More
-to load another page. Selection immediately displays the new item's cached content,
+to load another page. Selection immediately displays the new item's streaming URL,
 thumbnail, or filename placeholder; failures offer Retry. Navigation and close
 cancel pending preview downloads, and late results cannot reopen the dialog.
 The library owns one preview cancellation controller, aborted on switching, close,
 search replacement, leaving Library, and session disposal. Explicit downloads
-remain independently owned by media items. Navigation works during loading, and
+remain independently owned by the session. Navigation works during loading, and
 card/dialog always share progress. Unknown progress displays “Loading…”. Players pause
 on navigation or close; focus returns to the opening control when available.
 
 ## Direct media links
 
-Fresh `#/media/<content hash>` tabs reuse session sharing but do not create
+Fresh `#/media/<file id>` tabs reuse session sharing but do not create
 the browsing workspace or request lists/tags. A viewer store reads one encrypted
 metadata summary, owns one media-item store, and releases it on navigation or
-context changes. Explicit downloads reuse its verified/decrypted content. Native
+context changes. Explicit downloads have independent session-owned sources. Native
 players start on user action. Text remains escaped and bounded; other files offer
 Download. The app URL stays stable. Setup can complete inline without losing the
 target. Navigating to Library lazily creates the workspace, which then retains its
@@ -115,12 +108,11 @@ ordinary root-owned lifetime. See [deeplinks](deeplinks.md).
 The workspace owns its quota store and starts its initial read independently of
 Settings. Navigation preserves it; ending the workspace disposes it. Reads are
 deduplicated, aborted on identity/server/session changes, and protected from stale
-completion. Uploads use `max_file_plaintext_bytes`, or 32 MiB while quota is
-unavailable; zero blocks uploads. Usage also refreshes on entering configured
+completion. Upload size is governed by remaining total storage capacity. Usage also refreshes on entering configured
 Settings, after session mutations, and after upload batches finish while Settings
 is open. The application forwards quota and uploads directly to Settings;
 Settings never receives its owning workspace. Settings shows the CLI-compatible base64url public
-key and file limit. Errors and Retry appear beside usage; there is no
+key and total usage. Errors and Retry appear beside usage; there is no
 polling or persistent quota cache.
 
 The pairing store owns one isolated attempt, relay requests, expiry, approval,
@@ -138,11 +130,9 @@ uploads immediately, snapshotting the preference for the sequential batch.
 JPEG/PNG/BMP inputs compress to WebP at quality 85 before encryption without
 resizing. Only smaller output replaces the original; unsupported, failed or larger
 output keeps the original with a notice. Other formats, including videos, remain
-unchanged. Source eligibility and selected-output size checks belong to preparation;
-image encoding, transport and store workflows remain separate. Eligible oversized
-images may compress first, but selected output must fit the current file quota
-before its bytes are read for upload. Disabled/ineligible oversized inputs reject
-before decoding. Extension handoff shares the same policy.
+unchanged. Files above 32 MiB bypass optional compression, thumbnail and artwork
+preparation with a notice. Transport reads/encrypts sequential 4 MiB slices.
+There is no per-file quota policy.
 
 The store shows preparing/uploading phases and actual selected filenames, ignores
 late or invalid progress, and clamps percentages. Root-owned work survives navigation;
@@ -154,10 +144,10 @@ not stop the batch. See [upload simplification](upload-simplification.md).
 
 Text MIME types, JSON/XML and common text/code filename extensions open in the
 media dialog as escaped read-only text. Existing image/audio/video types retain
-their native viewers. The item owns its downloaded Blob and a UTF-8 preview of
-at most 256 KiB, decoded only after the complete download passes hash verification
-and decryption. Truncated previews are labeled; Download always saves the full
-file. Disposal clears text, releases the Blob and revokes its URL.
+their native viewers. The item owns an escaped UTF-8 prefix of at most 256 KiB,
+read from authenticated chunks without downloading the remainder. Truncated
+previews are labeled. Download streams the complete file independently. Disposal
+clears text and releases the preview lease.
 
 ## Search and upload controls
 
@@ -182,3 +172,13 @@ visible; successful filenames live in a disclosure and completion can be dismiss
 Settings sections are native disclosures; only the library/setup section opens
 by default. Image compression and size policy share one preparation interface.
 See [upload refinements](upload-polish.md).
+
+## Chunk content resources
+
+The unlocked application context owns the content-stream store even on a fresh
+deeplink route without a workspace. Views receive it explicitly. Preview leases
+end when their owning item/caller ends; native downloads retain their own source
+until completion/cancellation and survive view navigation. Context changes dispose
+all streams and abort bounded chunk reads. Deletion invalidates every stream for
+that file. Neither keys nor authenticated requests run in the service worker; it
+bridges bounded plaintext ranges to the owning page through MessageChannels.

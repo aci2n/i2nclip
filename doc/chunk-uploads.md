@@ -23,7 +23,9 @@ must receive sufficient capacity for gigabyte files.
 Explicit exclusions: backward compatibility, storage conversion, persisted upload
 workflows, resume across reloads, background transfers after the owning tab closes
 or locks, parallel upload batches, automatic retries, media transcoding changes,
-adaptive streaming, application-managed plaintext caches, and new dependencies.
+adaptive streaming, application-managed plaintext caches, extension capture transport redesign, and new dependencies.
+The existing extension public-media fetch remains bounded at 32 MiB because its
+handoff buffers a complete File; large local files use the chunked web upload.
 
 The user's explicit consolidation instruction overrides the ordinary rule to
 preserve applied migrations: replace sql/001_init.sql with the final schema and
@@ -153,7 +155,7 @@ Build the worker at a stable root URL with no-cache and register root scope to c
 the virtual URL namespace. Wait for activation before offering stream URLs; a directly opened
 media link must work on its first visit. HTTPS or secure localhost is required.
 Show an actionable error if service workers are unavailable; do not fall back to
-whole-file buffering. Keep the visible public hash deeplink unchanged.
+whole-file buffering. Keep the visible file-ID deeplink shape unchanged.
 
 Replace API whole-file Uint8Array interfaces with Blob/File upload sources and
 bounded chunk/range readers. Sniff types using a bounded prefix. For files above
@@ -179,7 +181,7 @@ Then verify:
   deletion/maintenance races, expiry boundaries and reservation invariants.
 - Client: sequential slicing, bounded buffers, progress, preprocessing notices,
   batch continuation, cancellation and no stale URLs/save actions after disposal.
-- Browsers: generated multi-gigabyte upload/download with complete byte checks;
+- Browsers: gigabyte-scale upload/download with complete byte checks;
   audio/video start before complete download, forward/backward seeking including
   tail-indexed MP4, direct links and navigation during downloads.
 - Build/hosting: worker emitted and served with correct type/scope/cache policy;
@@ -200,8 +202,7 @@ Then verify:
 ### Browser feasibility evidence
 
 The initial transport is implemented as a standalone classic worker plus a
-session-owned content-stream store. It is deliberately not wired to the current
-whole-file API or media views yet: production crypto/storage remain unchanged.
+session-owned content-stream store. It is now wired to the chunk API and both library and deeplink media views.
 The proof builds a dedicated page and the actual worker and serves them through
 the real Rust listener, with a separate database and browser context per test.
 
@@ -239,13 +240,22 @@ cargo run --features test-containers --example postgres-tests -- \
   npm --prefix client exec -- playwright test --config client/playwright.config.ts streaming.spec.ts
 ```
 
-Remaining: encrypted descriptor/chunk vectors, SQL consolidation and chunk storage,
-API lifecycle/maintenance, removal of per-file limits, real upload and viewer
-integration (including deeplinks), worker-restart/closed-tab and tail-indexed MP4
-coverage, and process/browser resource profiling. No database-format change has
-been applied in this first milestone.
+### Integrated implementation
 
-Milestone checks: make test, make lint, make format-check, make test-build, and
-12 isolated Firefox/Chromium browser proofs passed. The full existing database
-and browser suites and resource profile are reserved for the actual protocol/
-storage integration.
+- Chunk crypto and Rust/JavaScript vectors are implemented. The immutable sealed
+  descriptor contains the per-file key and authenticated dimensions; each raw
+  chunk independently authenticates its file, index, size and count.
+- `sql/001_init.sql` contains the complete schema; migration 002 is removed.
+  File/chunk creation, publication, retries, quotas, deletion and idle cleanup are
+  implemented and verified by PostgreSQL and signed API integration tests.
+- The web app uploads Blob/File slices and removes per-file limits throughout
+  quota/CLI/client interfaces. Optional preparation is skipped above 32 MiB.
+- A session-owned stream store supplies library/deeplink native previews and
+  downloads, with bounded text prefixes, preview cancellation, deletion
+  invalidation, view-independent downloads and context teardown.
+- Native loading feedback stays beside the preview; chunk failures offer retry.
+
+Verification evidence is updated after final regression/resource runs. The
+cutover requires a fresh database and matching client/server; SQLx still owns
+startup migration application. The ordinary future-migration policy resumes
+with the next numbered SQL file.

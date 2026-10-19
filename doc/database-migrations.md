@@ -2,16 +2,13 @@
 
 Startup owns schema initialization through `Database::initialize`, before HTTP
 requests are accepted. The baseline schema is defined in `sql/001_init.sql`.
-`sql/002_max_file_plaintext_bytes.sql` adds the per-file plaintext quota to keys
-and invitations (default 33,554,432 bytes; range 0–536,870,912), preserving existing
-data and increasing the encrypted-content ceiling to 536,870,976 bytes.
-
-The fresh-database rebuild consolidated the former migrations 001–004 into this
-baseline. Databases from before that rebuild must be dropped and recreated;
-changing or deleting their SQLx history does not rebuild their schema.
-There are no legacy-schema readers, empty-label placeholders or backfills.
-Tag labels are required, without a default. Metadata/content have a 42-byte
-minimum; nonempty tag envelopes have a 43-byte minimum and a 1024-byte maximum.
+The chunk-content cutover consolidates all tables into this one migration,
+including `files`, `chunks`, quotas and tags. The explicit greenfield storage
+change replaces the previous baseline and removes migration 002. Existing
+databases must be recreated; editing their migration ledger cannot rebuild data.
+Descriptors use the sealed-envelope format; chunk ciphertext is raw with a
+16-byte minimum and a 4,194,320-byte maximum. Chunk rows and file format fields
+are immutable. Tags and chunks cascade from files.
 
 SQLx acquires a PostgreSQL advisory lock, validates recorded checksums, and runs
 pending migrations in version order. Each migration commits its SQL and history
@@ -19,7 +16,7 @@ entry transactionally. `_sqlx_migrations` persists versions and checksums, so
 restarts preserve data and skip applied SQL. Concurrent starters wait for the
 lock. The runner applies both the baseline and subsequent migrations. The SQL itself
 uses ordinary CREATE statements and does not adopt untracked existing tables.
-Content storage is declared EXTERNAL directly on its column; there is no
+Chunk ciphertext storage is declared EXTERNAL directly on its column; there is no
 follow-up ALTER step.
 
 A migration error prevents startup. Transactional changes roll back on failure
@@ -51,7 +48,7 @@ Execute each command only after the previous command succeeds. If recreation or
 startup fails, keep the application stopped and inspect the failure. Dropping
 cannot be rolled back. The server initializes the fresh database automatically;
 do not manually run the SQL outside SQLx or copy the old ledger. Check service
-health and successful version-1 and version-2 ledger entries after startup. Reissue
+health and a successful version-1 ledger entry after startup. Reissue
 invitations and use the client's reset/setup flow to create a fresh identity;
 old browser identities remain stored locally but are no longer registered.
 

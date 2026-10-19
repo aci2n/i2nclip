@@ -14,28 +14,42 @@ K_enc = HKDF-Expand(PRK, info = UTF8("enc"), length = 32)
 K_tag = HKDF-Expand(PRK, info = UTF8("tag"), length = 32)
 ```
 
-These fixed labels separate encryption and search keys. The signing key uses the seed directly through standard Ed25519 seed expansion. There is no per-file key, key rotation, forward secrecy, or independent recovery of signing/encryption capability. Losing the seed loses access; exposing it compromises all three uses, including previously stored ciphertext. Public-key disclosure does not reveal these secret keys.
+These fixed labels separate encryption and search keys. The signing key uses the seed directly through standard Ed25519 seed expansion. Each upload has an independent content key wrapped by the library key. There is no library-key rotation, forward secrecy, or independent recovery of signing/encryption capability. Losing the seed loses access; exposing it compromises all three uses, including previously stored ciphertext. Public-key disclosure does not reveal these secret keys.
 
 ## Content and metadata encryption
 
-Both use AES-256-GCM with `K_enc`, independently sampled 12-byte CSPRNG nonces, and full 16-byte authentication tags:
+Descriptors and editable metadata use AES-256-GCM with `K_enc`, independently
+sampled random 12-byte IVs, full 16-byte tags, and the existing envelope:
 
 ```text
 MessagePack({v: 1, iv: nonce[12] as bin, ct: ciphertext || authentication_tag[16] as bin})
+descriptor AAD: UTF8("i2nclip/v2 descriptor " + file_id)
+metadata AAD:   UTF8("i2nclip/v1 meta " + file_id)
 ```
 
-The encoded overhead is 42–45 bytes, depending on the ciphertext length prefix. Rust uses `aes-gcm`; the browser uses WebCrypto. The associated data is exactly:
+The immutable descriptor plaintext is MessagePack
+`{v: 2, key: bin[32], plaintext_bytes: integer, chunk_bytes: 4194304, chunk_count: integer}`.
+Each upload attempt samples a new random file ID and 256-bit content key. IDs are
+64 lowercase hexadecimal characters, independent of ciphertext. Unwrapped content
+keys are imported nonextractably; temporary raw-key/plain descriptor buffers are
+wiped. Metadata can change without replacing this descriptor.
+
+Chunks contain raw AES-256-GCM ciphertext plus the 16-byte tag under the content
+key. Their IV is four zero bytes followed by the zero-based unsigned chunk index
+encoded as eight big-endian bytes. AAD is exactly:
 
 ```text
-content:  UTF8("i2nclip/v1 content")
-metadata: UTF8("i2nclip/v1 meta " + ciphertext_sha256)
+i2nclip/v2 chunk\nFILE_ID\nINDEX\nCHUNK_COUNT\nPLAINTEXT_BYTES\n
 ```
 
-No newline or NUL is appended. Associated data is authenticated but not stored in the blob. Content uses fixed purpose AAD to avoid a circular dependency between its ciphertext and its hash. Its AAD does not include the owner public key: content encryption already uses `K_enc` derived from that owner's secret seed, so another identity has a different key. The server cannot verify the GCM tag and therefore cannot use this AAD to enforce ownership at upload time.
+Numbers use canonical decimal text; `\n` is one LF, including the final LF.
+Chunk count is `max(1, ceil(size/4194304))`. Every nonfinal plaintext chunk is
+4 MiB; empty content has one empty chunk. File/key/position/dimension binding,
+exact length checks and GCM authentication replace a complete-file hash check.
+Authenticate each full chunk before exposing any of its plaintext. Never reuse an
+ID/key pair for a restarted upload or encrypt new bytes at an existing position.
 
-The complete sealed content (version, nonce, ciphertext, tag) is hashed using SHA-256 to form its 64-character lowercase hexadecimal identifier. Clients compare this hash against the requested URL before decrypting. Metadata AAD includes that hash, binding metadata to the exact content and preventing metadata swaps between hashes. Distinct purpose labels prevent content/metadata substitution. The version field is checked by the decoder; the version/purpose are also represented in the AAD. Decryption authenticates before returning plaintext.
-
-Every encryption under this library key shares one nonce collision domain, including metadata edits, content uploads, and all browsers restoring the same identity. AAD does **not** make nonce reuse safe. Random 96-bit nonces have approximate collision probability `q(q-1)/2^97` after `q` encryptions. NIST SP 800-38D §8.3 caps invocations at `2^32` per key for this random-IV construction across devices; this is an outer limit, not a recommended application target. The project has no tracked key-use budget or rotation procedure. See [NIST SP 800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf).
+Every encryption under this library key shares one nonce collision domain, including metadata edits, descriptor creation, and all browsers restoring the same identity. AAD does **not** make nonce reuse safe. Random 96-bit nonces have approximate collision probability `q(q-1)/2^97` after `q` encryptions. NIST SP 800-38D §8.3 caps invocations at `2^32` per key for this random-IV construction across devices; this is an outer limit, not a recommended application target. The project has no tracked key-use budget or rotation procedure. See [NIST SP 800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf).
 
 Production paths generate fresh nonces. Rust's test-only `encrypt_with_nonce` and JavaScript's optional nonce parameter exist for deterministic tests and permit unsafe reuse by callers. The shared fixture reuses a test key/nonce across content and metadata; those public fixture values must never be used for actual data.
 
@@ -81,6 +95,6 @@ Passwords and library seeds never reach the server. Encryption at rest does not 
 
 ## Guarantees and exclusions
 
-The server cannot decrypt content, filenames, readable tags, or thumbnails using its stored public keys. It observes owners, ciphertext hashes, ciphertext lengths, upload times, tag equality and access patterns. There is no size padding. Server-side `looks_sealed` only checks framing; it cannot prove that a submitted blob is encrypted.
+The server cannot decrypt content, filenames, readable tags, or thumbnails using its stored public keys. It observes owners, random IDs, ciphertext lengths, upload times, tag equality and access patterns. There is no size padding. Server-side `looks_sealed` only checks framing; it cannot prove that a submitted blob is encrypted.
 
-GCM detects modified ciphertext and wrong keys/purposes; the content hash check additionally ties bytes to the requested URL. An old valid metadata blob for the same content hash still authenticates, so metadata rollback remains possible. The protocol has no authenticated revision counter, rollback detection, list completeness proof, or binding of server `created_at`/`bytes` fields and search tokens to the current encrypted metadata. TLS authenticates the transport endpoint and protects registration codes, metadata traffic patterns on the wire, and responses from network attackers. Encryption and request signatures do not replace TLS or make a malicious server honest.
+GCM detects modified ciphertext and wrong keys/purposes/positions; descriptor AAD binds the content key and dimensions to the file ID. An old valid metadata blob for the same file ID still authenticates, so metadata rollback remains possible. The protocol has no authenticated revision counter, rollback detection, list completeness proof, or binding of server `created_at`/`bytes` fields and search tokens to the current encrypted metadata. TLS authenticates the transport endpoint and protects registration codes, metadata traffic patterns on the wire, and responses from network attackers. Encryption and request signatures do not replace TLS or make a malicious server honest.

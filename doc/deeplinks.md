@@ -36,13 +36,14 @@ URL. If no library is configured, show normal setup inline and resume once a
 configured context exists. Malformed links display an actionable error without
 requests. No new persisted state or session coordination is introduced.
 
-After metadata resolves, download the complete content, verify its sealed-content
-hash, and decrypt through existing code. Show Loading metadata, Loading N% when
-known, Loading otherwise, and Preparing once download reaches 100% while work is
-still pending. Display content only after preparation finishes. Playback starts
-on user action. Ordinary files are not automatically saved; Download is explicit
-and uses the existing filename logic. Unknown or damaged metadata fails with Retry.
-Missing/other-owner/deleted files show a not-found message and Library action.
+After metadata resolves, open a view-owned streaming lease using the application
+context's stream store. Native elements request bounded decrypted ranges through
+the service worker; text reads an authenticated prefix of at most 256 KiB.
+Loading feedback appears while native content buffers. Explicit native downloads
+have session-owned sources and continue across view navigation. Playback starts
+on user action. Ordinary files need no content read until Download. The owning
+tab must remain open and unlocked.
+
 Network/content/decode failures appear beside Retry/Download. HTML/XML/code is
 escaped text; SVG stays an image. Unsupported native codecs offer Download.
 

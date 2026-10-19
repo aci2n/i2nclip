@@ -1,5 +1,7 @@
 # Configurable per-file quota
 
+Historical specification, superseded by [chunk uploads](chunk-uploads.md).
+
 ## Goal and scope
 
 Expose `max_file_plaintext_bytes` through persisted key quotas, invitations,

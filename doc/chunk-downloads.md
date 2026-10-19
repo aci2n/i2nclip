@@ -1,5 +1,7 @@
 # Cacheable encrypted content chunks
 
+Historical specification, superseded by [chunk uploads](chunk-uploads.md).
+
 ## Goal and scope
 
 Replace full-file server buffering with stable chunk URLs returning ordinary,

@@ -12,7 +12,7 @@ To connect another device, open **Connect another device** in Settings on the un
 
 Each browser profile saves one password-protected library identity in localStorage. Unlock once while using the app: other tabs inherit access from an unlocked tab through an in-memory channel. Closing all app tabs ends access; the next visit requires the master password. Password or saved-identity changes cancel active work in every tab, and tabs reconnect automatically when current unlocked access is available. **Forget library** removes the local identity while keeping the master password; resetting a locked client removes all its saved state. Neither action deletes server files.
 
-Each file has an **Link** link at `?page=media&id=<content hash>`. Bookmark or copy that app URL to open the file directly on a device connected to the same library. The viewer inherits unlocked access from another tab or asks for your master password. Images, audio and video use native browser elements; text is shown safely as text, and other files offer Download. The URL contains no keys and grants no access by itself. See [private media deeplinks](doc/deeplinks.md).
+Each file has an **Link** link at `?page=media&id=<file id>`. Bookmark or copy that app URL to open the file directly on a device connected to the same library. The viewer inherits unlocked access from another tab or asks for your master password. Images, audio and video use native browser elements; text is shown safely as text, and other files offer Download. The URL contains no keys and grants no access by itself. See [private media deeplinks](doc/deeplinks.md).
 
 The server allows one active upload and two active content chunk requests per library
 key, alongside global limits of four uploads and sixteen chunk requests per server
@@ -83,33 +83,35 @@ Administrators issue invitations with the Rust executable:
 ```sh
 i2nclip otc issue
 i2nclip otc issue --ttl-secs 3600
-i2nclip otc issue --max-bytes 1073741824 --max-files 20000 --max-file-plaintext-bytes 67108864
-i2nclip key set-limits PUBLIC_KEY --max-bytes 536870912 --max-files 10000 --max-file-plaintext-bytes 33554432
+i2nclip otc issue --max-bytes 2147483648 --max-files 20000
+i2nclip key set-limits PUBLIC_KEY --max-bytes 536870912 --max-files 10000
 podman exec i2nclip i2nclip otc issue
 ```
 
 Settings → **Your library** shows the base64url public key (usable as PUBLIC_KEY
-in the CLI), storage and file usage, and the maximum file size. Quota loads when
-the workspace starts, refreshes when Settings opens and after upload batches finish
-while Settings is open; failed reads offer Retry. The web client uses the returned
-per-file limit, falling back to 32 MiB when quota is unavailable.
+in the CLI) and storage/file usage, including reservations for pending uploads.
+Quota loads with the workspace and refreshes in Settings; failed reads offer Retry.
 
-Each key defaults to 512 MiB (536,870,912 bytes of encrypted content) and 10,000
-files, with a 32 MiB (33,554,432 plaintext bytes) per-file limit.
-`--max-file-plaintext-bytes` accepts 0–536870912 (512 MiB); zero blocks all uploads,
-including empty files. The client checks original file size before reading or
-image compression and checks prepared bytes before encryption. The server checks
-the ciphertext's plaintext length, excluding encryption overhead. Uploads remain
-buffered. Downloads use stable, privately cacheable 4 MiB chunk URLs; the browser
-assembles and verifies the complete ciphertext in memory before decryption.
-Invitations carry their chosen limits to newly registered keys. Registering
-an existing key again preserves its limits. All three limit flags are required for
-`key set-limits`. Total storage and file counts accept nonnegative decimal integers
-up to 9223372036854775807. The invitation file limit defaults to 32 MiB.
-Zero blocks uploads. Paired devices share one key and quota. Lowering a quota
-below current total storage/file usage is rejected without changing limits or files.
-The per-file limit may be lowered below existing file sizes; it applies to future
-uploads. Downloads, metadata edits, and deletion remain available; deletion frees capacity automatically.
+Each key defaults to 512 MiB (536,870,912 encrypted-content bytes) and 10,000
+files. Increase total storage capacity to support gigabyte files. There is no
+per-file size policy. Both quota flags are required for `key set-limits`; values
+and derived content sizes must fit JavaScript's safe integer range
+(0–9007199254740991). Lowering quota below current usage is rejected.
+
+The client reads and encrypts 4 MiB slices sequentially. Files above 32 MiB skip
+optional image compression and thumbnail/artwork preparation. Each upload reserves
+its complete encrypted size and a file slot before sending chunks. A file appears
+only when all chunks arrive. Failures restart with a fresh ID/key; abandoned
+partial uploads expire after 24 idle hours during hourly maintenance.
+
+Downloads and native image/audio/video previews use a service worker on the app
+origin (HTTPS or localhost), decrypting authenticated chunks in the owning page.
+Library and deeplink viewers share this path. The owning tab must remain open
+and unlocked; downloads survive view navigation. Inline range responses are bounded
+at 4 MiB. Native browser decoders may need their own media memory, especially for
+large images. Ciphertext remains privately HTTP-cacheable; plaintext is not saved
+in application caches. Deletion frees capacity automatically.
+
 Database checks enforce used bytes and file count at or below their limits.
 Limits and current usage live in a separate `key_quotas` row per public key;
 `registered_keys` remains key-only. Uploads reserve bytes and a file slot, and
