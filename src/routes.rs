@@ -11,7 +11,7 @@ use axum::{
     Router,
 };
 use http_body_util::BodyExt;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 #[cfg(test)]
 use serde_json::json;
 use tower_http::{
@@ -21,7 +21,7 @@ use tower_http::{
 
 use crate::{
     auth::{RegistrationRequest, SignedRequest},
-    codec, media, pairing, AppState, Error, MAX_REGISTER_BODY,
+    chain_routes, codec, media, pairing, AppState, Error, MAX_REGISTER_BODY,
 };
 
 pub(crate) const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
@@ -31,6 +31,7 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/ping", get(ping))
         .route("/api/register-key", post(register_key))
+        .merge(chain_routes::router())
         .merge(media::router())
         .merge(pairing::router())
         .layer(
@@ -97,11 +98,6 @@ async fn ping(request: SignedRequest) -> Response {
     }
 }
 
-#[derive(Deserialize)]
-struct RegisterKeyDocument {
-    otc: String,
-}
-
 async fn register_key(
     State(state): State<AppState>,
     RegistrationRequest(request): RegistrationRequest,
@@ -120,11 +116,11 @@ async fn register_key(
 }
 
 async fn register_key_body(state: &AppState, signer: [u8; 32], body: &[u8]) -> Result<(), Error> {
-    let payload: RegisterKeyDocument = codec::decode(body)?;
-    if payload.otc.len() > 512 {
+    let (otc,): (String,) = codec::decode(body)?;
+    if otc.len() > 512 {
         return Err(Error::BadRequest("invalid registration payload".into()));
     }
-    state.db.consume_code(&payload.otc, &signer).await
+    state.db.consume_code(&otc, &signer).await
 }
 
 pub(crate) fn document_response(status: StatusCode, body: impl Serialize) -> Response {

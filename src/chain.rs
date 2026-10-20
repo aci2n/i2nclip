@@ -30,6 +30,24 @@ pub fn digest(bytes: &[u8]) -> Hash {
     Sha256::digest(bytes).into()
 }
 
+pub fn parse_hash(text: &str) -> Result<Hash, Error> {
+    if text.len() != 64
+        || !text
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(Error::BadRequest(
+            "hash must be 64 lowercase hexadecimal digits".into(),
+        ));
+    }
+    let mut result = [0; 32];
+    for (index, pair) in text.as_bytes().as_chunks::<2>().0.iter().enumerate() {
+        result[index] = u8::from_str_radix(std::str::from_utf8(pair).map_err(|_| invalid())?, 16)
+            .map_err(|_| invalid())?;
+    }
+    Ok(result)
+}
+
 /// Genesis is fixed by the initial public key; it confers no permanent privilege.
 pub fn genesis(initial: &Hash) -> Result<Hash, Error> {
     validate_public_key(initial)?;

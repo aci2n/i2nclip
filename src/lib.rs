@@ -8,6 +8,7 @@
 
 mod auth;
 pub mod chain;
+mod chain_routes;
 pub mod codec;
 mod db;
 mod error;

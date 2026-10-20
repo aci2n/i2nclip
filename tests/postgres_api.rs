@@ -17,6 +17,135 @@ pub mod reference_crypto;
 
 static N: AtomicU64 = AtomicU64::new(0);
 
+fn signed_membership_record(
+    identity: &Identity,
+    library: i2nclip::chain::Hash,
+    previous: i2nclip::chain::Hash,
+    sequence: u64,
+    target: &Identity,
+) -> Vec<u8> {
+    use ed25519_dalek::{Signer, SigningKey};
+    use i2nclip::chain::{Body as BlockBody, Effects, Kind, SIGN_DOMAIN};
+    use serde_bytes::ByteBuf;
+    let body = BlockBody {
+        version: 1,
+        library,
+        sequence,
+        previous,
+        epoch: 1,
+        signer: identity.public,
+        kind: Kind::Enroll,
+        effects: Effects::Device((ByteBuf::from(target.public.to_vec()),)),
+        salt: None,
+        nonce: None,
+        encrypted: None,
+    };
+    let signed = body.encode().unwrap();
+    let signature =
+        SigningKey::from_bytes(&identity.seed).sign(&[SIGN_DOMAIN, signed.as_slice()].concat());
+    rmp_serde::to_vec(&(
+        ByteBuf::from(signed),
+        ByteBuf::from(signature.to_bytes().to_vec()),
+    ))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn chain_http_registration_paging_append_and_membership_admission() {
+    use serde_bytes::ByteBuf;
+    let initial = new_identity();
+    let second = new_identity();
+    let third = new_identity();
+    let (db, app) = app(&[]).await;
+    let code = i2nclip::issue_registration_otc(&db.0, 3600, i2nclip::StorageLimits::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            &initial,
+            "POST",
+            "/api/register-key",
+            codec::encode(&(code,)).unwrap()
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let library = i2nclip::chain::genesis(&initial.public).unwrap();
+    let hex = library
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let path = format!("/api/blocks?after={hex}");
+    let (status, bytes) = call(&app, &initial, "GET", &path, vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let (head, sequence, records, next): (ByteBuf, u64, Vec<ByteBuf>, Option<ByteBuf>) =
+        codec::decode(&bytes).unwrap();
+    assert_eq!(head.as_ref(), library);
+    assert_eq!(sequence, 0);
+    assert!(records.is_empty());
+    assert!(next.is_none());
+    let record = signed_membership_record(&initial, library, library, 1, &second);
+    for _ in 0..2 {
+        assert_eq!(
+            call(&app, &initial, "POST", "/api/blocks", record.clone())
+                .await
+                .0,
+            StatusCode::OK
+        );
+    }
+    let (status, bytes) = call(&app, &second, "GET", &path, vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, sequence, records, _): (ByteBuf, u64, Vec<ByteBuf>, Option<ByteBuf>) =
+        codec::decode(&bytes).unwrap();
+    assert_eq!(sequence, 1);
+    assert_eq!(records[0].as_ref(), record);
+    let conflict = signed_membership_record(&initial, library, library, 1, &third);
+    assert_eq!(
+        call(&app, &initial, "POST", "/api/blocks", conflict)
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        call(&app, &second, "POST", "/api/blocks", record).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&app, &third, "GET", &path, vec![]).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&app, &second, "GET", "/api/blocks", vec![]).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &app,
+            &second,
+            "GET",
+            &format!("/api/blocks?after={}", "00".repeat(32)),
+            vec![]
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        call(
+            &app,
+            &second,
+            "POST",
+            "/api/blocks",
+            vec![0; i2nclip::chain::MAX_BLOCK_BYTES + 1]
+        )
+        .await
+        .0,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+}
+
 #[tokio::test]
 async fn authenticated_ping_checks_registered_signatures_empty_bodies_and_replay() {
     let owner = new_identity();
