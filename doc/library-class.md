@@ -11,8 +11,9 @@ normalization as a module-level pure helper. No base classes or shared framework
 
 Preserve `createLibrary(context, options)`, its exported structural Library type,
 state shape, subscription contract, commands, arguments and return values. The
-factory returns a private implementation class. Public commands are stable arrow
-fields so detached callbacks retain their receiver; internal workflows are private
+factory returns a private implementation class. Public commands are bound once in
+a grouped section above the constructor so detached callbacks retain their
+receiver. All command implementations and internal workflows use ordinary private
 methods. Keep the writable, resources and dependencies private, injecting services
 once through the constructor. Initialize all fields before starting the existing
 initial search. Workspace retains ownership across navigation; media items retain

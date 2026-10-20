@@ -63,6 +63,21 @@ class LibraryStore {
 	private searchController?: AbortController;
 	private previewController: AbortController | null = null;
 
+	readonly subscribe = this.state.subscribe;
+	readonly editDraft = this.editSearchDraft.bind(this);
+	readonly addTag = this.addSearchTag.bind(this);
+	readonly removeTag = this.removeSearchTag.bind(this);
+	readonly clearSearch = this.clearLibrarySearch.bind(this);
+	readonly more = this.loadMore.bind(this);
+	readonly refresh = this.refreshLibrary.bind(this);
+	readonly search = this.searchLibrary.bind(this);
+	readonly reveal = this.revealMedia.bind(this);
+	readonly closePreview = this.closeMediaPreview.bind(this);
+	readonly download = this.downloadMedia.bind(this);
+	readonly updateMetadata = this.updateMediaMetadata.bind(this);
+	readonly remove = this.removeMedia.bind(this);
+	readonly dispose = this.disposeLibrary.bind(this);
+
 	constructor(
 		context: LibraryContext,
 		{
@@ -77,19 +92,36 @@ class LibraryStore {
 		this.mediaOptions = mediaOptions;
 		this.onChange = onChange;
 		this.confirm = confirm;
-		void this.search();
+		void this.searchLibrary();
 	}
 
-	readonly subscribe = this.state.subscribe;
-	readonly editDraft = (searchDraft: string) =>
+	private editSearchDraft(searchDraft: string) {
 		this.state.update((v) => ({ ...v, searchDraft }));
-	readonly addTag = (tag: string) =>
-		this.search([...get(this.state).query, tag], { clearDraft: true });
-	readonly removeTag = (tag: string) =>
-		this.search(get(this.state).query.filter((existing) => existing !== tag));
-	readonly clearSearch = () => this.search([], { clearDraft: true });
-	readonly more = () => this.search(get(this.state).query, { more: true });
-	readonly refresh = () => this.search(get(this.state).query);
+	}
+
+	private addSearchTag(tag: string) {
+		return this.searchLibrary([...get(this.state).query, tag], {
+			clearDraft: true,
+		});
+	}
+
+	private removeSearchTag(tag: string) {
+		return this.searchLibrary(
+			get(this.state).query.filter((existing) => existing !== tag),
+		);
+	}
+
+	private clearLibrarySearch() {
+		return this.searchLibrary([], { clearDraft: true });
+	}
+
+	private loadMore() {
+		return this.searchLibrary(get(this.state).query, { more: true });
+	}
+
+	private refreshLibrary() {
+		return this.searchLibrary(get(this.state).query);
+	}
 
 	private publishCards() {
 		this.state.update((v) => ({
@@ -120,14 +152,14 @@ class LibraryStore {
 		row.unsubscribe = media.subscribe((value) => this.updateCard(row, value));
 	}
 
-	readonly closePreview = () => {
+	private closeMediaPreview() {
 		this.previewController?.abort();
 		this.previewController = null;
 		this.state.update((v) => ({ ...v, selected: null }));
-	};
+	}
 
 	private reset() {
-		this.closePreview();
+		this.closeMediaPreview();
 		this.searchController?.abort();
 		this.clearCards();
 		this.state.update((v) => ({
@@ -142,10 +174,10 @@ class LibraryStore {
 		}));
 	}
 
-	readonly search = async (
+	private async searchLibrary(
 		query = get(this.state).query,
 		{ more = false, clearDraft = false } = {},
-	) => {
+	) {
 		if (this.disposed || this.context.signal.aborted) {
 			this.log.debug("search-rejected", { reason: "disposed" });
 			return false;
@@ -178,7 +210,7 @@ class LibraryStore {
 			this.context.signal,
 		]);
 		if (!more) {
-			this.closePreview();
+			this.closeMediaPreview();
 			this.clearCards();
 		}
 		this.state.update((v) => ({
@@ -231,9 +263,9 @@ class LibraryStore {
 				this.state.update((v) => ({ ...v, loading: false }));
 			}
 		}
-	};
+	}
 
-	readonly reveal = async (id: string, opener?: HTMLElement) => {
+	private async revealMedia(id: string, opener?: HTMLElement) {
 		const row = this.cards.get(id);
 		if (
 			!row ||
@@ -253,14 +285,14 @@ class LibraryStore {
 			selected: { id, opener: v.selected?.opener || opener },
 		}));
 		return row.media.reveal(this.previewController.signal).then(Boolean);
-	};
+	}
 
-	readonly download = async (id: string) => {
+	private async downloadMedia(id: string) {
 		const row = this.cards.get(id);
 		return row ? row.media.download() : false;
-	};
+	}
 
-	readonly updateMetadata = async (id: string, patch: Metadata) => {
+	private async updateMediaMetadata(id: string, patch: Metadata) {
 		const row = this.cards.get(id);
 		if (!row) {
 			return false;
@@ -270,9 +302,9 @@ class LibraryStore {
 			void this.onChange();
 		}
 		return saved;
-	};
+	}
 
-	readonly remove = async (id: string) => {
+	private async removeMedia(id: string) {
 		const row = this.cards.get(id);
 		if (
 			!row ||
@@ -286,17 +318,17 @@ class LibraryStore {
 		}
 		if (await row.media.remove()) {
 			void this.onChange();
-			this.closePreview();
+			this.closeMediaPreview();
 			return true;
 		}
 		return false;
-	};
+	}
 
-	readonly dispose = () => {
+	private disposeLibrary() {
 		this.log.debug("disposed");
 		this.disposed = true;
 		this.reset();
-	};
+	}
 
 	private updateCard(row: LibraryCard, value: MediaState) {
 		row.value = value;
