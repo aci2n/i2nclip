@@ -1,6 +1,5 @@
 import { type Writable, writable } from "svelte/store";
 import { createLog } from "../log.ts";
-
 import {
 	parseRoute,
 	type ResolvedRoute,
@@ -12,73 +11,73 @@ type RoutingBrowser = Pick<
 	Window,
 	"location" | "history" | "addEventListener" | "removeEventListener"
 >;
-interface RoutingDependencies {
-	browser: RoutingBrowser;
-	log: ReturnType<typeof createLog>;
-}
-interface RoutingRuntime {
-	current: ResolvedRoute;
-	state: Writable<ResolvedRoute>;
-	disposed: boolean;
-	syncLocation: () => void;
-}
-
 export function createRouting(
 	browser: Pick<
 		Window,
 		"location" | "history" | "addEventListener" | "removeEventListener"
 	> = window,
-) {
-	const deps: RoutingDependencies = { browser, log: createLog("routing") };
-	const current = parseRoute(browser.location.hash);
-	const runtime: RoutingRuntime = {
-		current,
-		state: writable(current),
-		disposed: false,
-		syncLocation: () => syncLocation(deps, runtime),
-	};
-	deps.log.debug("initialized", { page: current.page });
-	browser.addEventListener("hashchange", runtime.syncLocation);
-
-	return {
-		subscribe: runtime.state.subscribe,
-		navigate: navigate.bind(null, deps, runtime),
-		dispose: disposeRouting.bind(null, deps, runtime),
-	};
+): Pick<RoutingStoreImpl, keyof RoutingStoreImpl> {
+	return new RoutingStoreImpl(browser);
 }
 
-function syncLocation(deps: RoutingDependencies, runtime: RoutingRuntime) {
-	const next = parseRoute(deps.browser.location.hash);
-	if (routeHref(next) !== routeHref(runtime.current)) {
-		deps.log.debug("changed", { from: runtime.current.page, to: next.page });
-		runtime.current = next;
-		runtime.state.set(next);
-	}
-}
+class RoutingStoreImpl {
+	private readonly browser: RoutingBrowser;
+	private readonly log: ReturnType<typeof createLog>;
+	private current: ResolvedRoute;
+	private state: Writable<ResolvedRoute>;
+	private disposed: boolean;
+	private syncLocation: () => void;
 
-function navigate(
-	deps: RoutingDependencies,
-	runtime: RoutingRuntime,
-	route: Route,
-	replace = false,
-) {
-	if (runtime.disposed) {
-		return;
+	readonly subscribe: Writable<ResolvedRoute>["subscribe"];
+	readonly navigate = this.navigateRoute.bind(this);
+	readonly dispose = this.disposeRouting.bind(this);
+
+	constructor(
+		browser: Pick<
+			Window,
+			"location" | "history" | "addEventListener" | "removeEventListener"
+		> = window,
+	) {
+		this.browser = browser;
+		this.log = createLog("routing");
+		const current = parseRoute(browser.location.hash);
+		this.current = current;
+		this.state = writable(current);
+		this.subscribe = this.state.subscribe;
+		this.disposed = false;
+		this.syncLocation = this.syncRoute.bind(this);
+		this.log.debug("initialized", { page: current.page });
+		browser.addEventListener("hashchange", this.syncLocation);
 	}
-	deps.log.debug("navigate", { page: route.page, replace });
-	const href = routeHref(route);
-	if (href !== routeHref(parseRoute(deps.browser.location.hash))) {
-		if (replace) {
-			deps.browser.history.replaceState({}, "", href);
-		} else {
-			deps.browser.location.hash = href;
+
+	private syncRoute() {
+		const next = parseRoute(this.browser.location.hash);
+		if (routeHref(next) !== routeHref(this.current)) {
+			this.log.debug("changed", { from: this.current.page, to: next.page });
+			this.current = next;
+			this.state.set(next);
 		}
 	}
-	syncLocation(deps, runtime);
-}
 
-function disposeRouting(deps: RoutingDependencies, runtime: RoutingRuntime) {
-	deps.log.debug("disposed");
-	runtime.disposed = true;
-	deps.browser.removeEventListener("hashchange", runtime.syncLocation);
+	private navigateRoute(route: Route, replace = false) {
+		if (this.disposed) {
+			return;
+		}
+		this.log.debug("navigate", { page: route.page, replace });
+		const href = routeHref(route);
+		if (href !== routeHref(parseRoute(this.browser.location.hash))) {
+			if (replace) {
+				this.browser.history.replaceState({}, "", href);
+			} else {
+				this.browser.location.hash = href;
+			}
+		}
+		this.syncRoute();
+	}
+
+	private disposeRouting() {
+		this.log.debug("disposed");
+		this.disposed = true;
+		this.browser.removeEventListener("hashchange", this.syncLocation);
+	}
 }
