@@ -1,0 +1,260 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { bytesToHex } from "../src/lib/protocol/bytes.ts";
+import {
+	type BlockHeader,
+	type Bytes,
+	createRecord,
+	decryptOperation,
+	type StorageEffect,
+} from "../src/lib/protocol/chain.ts";
+import {
+	type ChainState,
+	decodeOperation,
+	encodeOperation,
+	type FileOperation,
+	initialChainState,
+	reduceBlock,
+} from "../src/lib/protocol/chain-state.ts";
+import { loadKey } from "../src/lib/protocol/crypto.ts";
+import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
+import { encode } from "../src/lib/protocol/msgpack.ts";
+
+const filled = (value: number): Bytes => new Uint8Array(32).fill(value);
+const reference = (value: number) => ({
+	hash: filled(value),
+	key: filled(value + 1),
+});
+async function device() {
+	return loadKey((await generatePrivateKey()).privateKey);
+}
+async function fixture() {
+	const first = await device();
+	const secret = filled(9);
+	const initial = await initialChainState(first.publicKey);
+	function header(state: ChainState, signer = first): BlockHeader {
+		return {
+			library: state.library,
+			sequence: state.sequence + 1,
+			previous: state.head,
+			epoch: state.epoch,
+			signer: signer.publicKey,
+			kind: "data",
+			effects: [],
+		};
+	}
+	async function data(
+		state: ChainState,
+		operation: FileOperation,
+		effects: readonly StorageEffect[] = [],
+		signer = first,
+	) {
+		const plaintext = encodeOperation(operation);
+		const block = await createRecord(
+			{ ...header(state, signer), effects },
+			signer.privateCryptoKey,
+			{ secret, plaintext },
+		);
+		return { block, plaintext, state: reduceBlock(state, block, plaintext) };
+	}
+	async function admin(
+		state: ChainState,
+		kind: "enroll" | "revoke" | "rotate",
+		target: Bytes,
+		signer = first,
+		epoch = state.epoch + 1,
+	) {
+		return createRecord(
+			{
+				...header(state, signer),
+				kind,
+				effects: kind === "rotate" ? [epoch, target] : [target],
+			},
+			signer.privateCryptoKey,
+		);
+	}
+	return { first, secret, initial, header, data, admin };
+}
+
+test("file operations deterministically replay without fetching objects or mutating prior states", async () => {
+	const f = await fixture();
+	const id = filled(1);
+	const added = await f.data(
+		f.initial,
+		{ kind: "AddFile", id, manifest: reference(2), metadata: reference(4) },
+		[["publish", id, filled(6)]],
+	);
+	const updated = await f.data(
+		added.state,
+		{ kind: "ReplaceMetadata", id, metadata: reference(7) },
+		[["commit", id, [filled(7)]]],
+	);
+	const deleted = await f.data(updated.state, { kind: "DeleteFile", id });
+	const restored = await f.data(deleted.state, { kind: "RestoreFile", id });
+	const deletedAgain = await f.data(restored.state, { kind: "DeleteFile", id });
+	const purged = await f.data(
+		deletedAgain.state,
+		{ kind: "PurgeFiles", ids: [id] },
+		[["purge", [id]]],
+	);
+	const key = bytesToHex(id);
+	assert.equal(f.initial.files.size, 0);
+	assert.deepEqual(added.state.files.get(key)?.metadata.hash, filled(4));
+	assert.equal(updated.state.files.get(key)?.deleted, false);
+	assert.equal(deleted.state.files.get(key)?.deleted, true);
+	assert.equal(purged.state.files.get(key)?.purged, true);
+	let replay = await initialChainState(f.first.publicKey);
+	for (const item of [
+		added,
+		updated,
+		deleted,
+		restored,
+		deletedAgain,
+		purged,
+	]) {
+		replay = reduceBlock(
+			replay,
+			item.block,
+			await decryptOperation(item.block, f.secret),
+		);
+	}
+	assert.deepEqual(replay, purged.state);
+	await assert.rejects(
+		f.data(purged.state, { kind: "RestoreFile", id }),
+		/lifecycle/,
+	);
+	await assert.rejects(
+		f.data(
+			purged.state,
+			{ kind: "AddFile", id, manifest: reference(2), metadata: reference(4) },
+			[["publish", id, filled(6)]],
+		),
+		/publication/,
+	);
+});
+
+test("invalid storage effects and lifecycle transitions leave the accepted state unchanged", async () => {
+	const f = await fixture();
+	const id = filled(1);
+	const added = await f.data(
+		f.initial,
+		{ kind: "AddFile", id, manifest: reference(2), metadata: reference(4) },
+		[["publish", id, filled(6)]],
+	);
+	await assert.rejects(
+		f.data(added.state, { kind: "PurgeFiles", ids: [id] }, [["purge", [id]]]),
+		/lifecycle/,
+	);
+	await assert.rejects(
+		f.data(
+			added.state,
+			{ kind: "ReplaceMetadata", id, metadata: reference(8) },
+			[["commit", id, [filled(9)]]],
+		),
+		/commitment/,
+	);
+	await assert.rejects(
+		f.data(added.state, { kind: "DeleteFile", id }, [["purge", [id]]]),
+		/storage effect/,
+	);
+	const deleted = await f.data(added.state, { kind: "DeleteFile", id });
+	await assert.rejects(
+		f.data(
+			deleted.state,
+			{ kind: "ReplaceMetadata", id, metadata: reference(8) },
+			[["commit", id, [filled(8)]]],
+		),
+		/lifecycle/,
+	);
+	await assert.rejects(
+		f.data(deleted.state, { kind: "PurgeFiles", ids: [id, filled(2)] }, [
+			["purge", [id, filled(2)]],
+		]),
+		/lifecycle/,
+	);
+	assert.equal(deleted.state.files.get(bytesToHex(id))?.purged, false);
+	assert.equal(deleted.state.sequence, 2);
+});
+
+test("membership is checked before each operation and rotation replaces all active keys", async () => {
+	const f = await fixture();
+	const second = await device();
+	const replacement = await device();
+	const enroll = await f.admin(f.initial, "enroll", second.publicKey);
+	const enrolled = reduceBlock(f.initial, enroll);
+	const revoke = await f.admin(enrolled, "revoke", f.first.publicKey, second);
+	const revoked = reduceBlock(enrolled, revoke);
+	assert.equal(
+		revoked.devices.get(bytesToHex(f.first.publicKey))?.revokedAt,
+		2,
+	);
+	const oldSigner = await f.admin(revoked, "enroll", replacement.publicKey);
+	assert.throws(() => reduceBlock(revoked, oldSigner), /unauthorized/);
+	const reuse = await f.admin(revoked, "enroll", f.first.publicKey, second);
+	assert.throws(() => reduceBlock(revoked, reuse), /already used/);
+	const last = await f.admin(revoked, "revoke", second.publicKey, second);
+	assert.throws(() => reduceBlock(revoked, last), /surviving/);
+	const rotate = await f.admin(
+		revoked,
+		"rotate",
+		replacement.publicKey,
+		second,
+	);
+	const rotated = reduceBlock(revoked, rotate);
+	assert.equal(rotated.epoch, 2);
+	assert.deepEqual(
+		[...rotated.devices.values()]
+			.filter((d) => d.revokedAt === null)
+			.map((d) => d.publicKey),
+		[replacement.publicKey],
+	);
+	assert.equal(
+		enrolled.devices.get(bytesToHex(f.first.publicKey))?.revokedAt,
+		null,
+	);
+	const wrongEpoch = await f.admin(
+		revoked,
+		"rotate",
+		replacement.publicKey,
+		second,
+		3,
+	);
+	assert.throws(() => reduceBlock(revoked, wrongEpoch), /advance by one/);
+});
+
+test("forks, gaps, wrong libraries, wrong epochs and unauthorized valid signatures are rejected", async () => {
+	const f = await fixture();
+	const second = await device();
+	for (const changes of [
+		{ previous: filled(0) },
+		{ sequence: 2 },
+		{ library: filled(0) },
+		{ epoch: 2 },
+		{ signer: second.publicKey },
+	]) {
+		const signer = changes.signer ? second : f.first;
+		const block = await createRecord(
+			{
+				...f.header(f.initial),
+				kind: "enroll",
+				effects: [second.publicKey],
+				...changes,
+			},
+			signer.privateCryptoKey,
+		);
+		assert.throws(() => reduceBlock(f.initial, block));
+	}
+});
+
+test("private operations require compact canonical arrays and sorted unique purge IDs", () => {
+	for (const operation of [
+		{ kind: "DeleteFile", id: filled(1) },
+		["DeleteFile", filled(1), "extra"],
+		["PurgeFiles", []],
+		["PurgeFiles", [filled(2), filled(1)]],
+		["PurgeFiles", [filled(1), filled(1)]],
+		["unknown", filled(1)],
+	]) {
+		assert.throws(() => decodeOperation(encode(operation)));
+	}
+});
