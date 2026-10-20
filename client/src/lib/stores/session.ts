@@ -440,7 +440,12 @@ function resetSession(deps: SessionDependencies, runtime: SessionRuntime) {
 		endSessionLifetime(deps, runtime);
 		runtime.saved = null;
 		runtime.loaded = true;
-		publishSession(runtime, { storageError: false, notice: "" });
+		publishSession(runtime, {
+			storageError: false,
+			notice: "",
+			lockFailed: false,
+			checking: false,
+		});
 		lockedState(deps, runtime);
 	});
 }

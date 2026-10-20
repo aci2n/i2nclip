@@ -98,6 +98,8 @@ function pasteFiles(event: ClipboardEvent) {
 				uploads={workspace?.uploads ?? null}
 				{preferences}
 			/>
+		{:else if $session.configured && $preferences.loading}
+			<p role="status">Loading library…</p>
 		{:else if workspace}
 			<Library
 				{session}

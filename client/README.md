@@ -39,7 +39,7 @@ Pairing uses isolated OPAQUE attempts, explicit verification, and the relay API.
 
 Production and development builds write structured events to the browser console:
 `[i2nclip] pairing.started` followed by an expandable object. Filter for
-`[i2nclip]` or a scope such as `pairing.` or `session-sharing.`. Enable Debug in
+`[i2nclip]` or a scope such as `pairing.` or `session.`. Enable Debug in
 Firefox or Verbose in Chromium to see intermediate steps, retries, cancellations,
 and stale results. Info shows major actions/outcomes; warnings show recoverable
 problems and errors show terminal failures. Instance identifiers distinguish

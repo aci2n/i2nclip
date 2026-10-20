@@ -147,6 +147,11 @@ section {
 	align-items: center;
 	gap: 0.5rem;
 }
+@media (max-width: 32rem), (pointer: coarse) {
+	.remember {
+		min-height: 3rem;
+	}
+}
 .remember input {
 	width: auto;
 	flex: none;

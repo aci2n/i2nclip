@@ -431,3 +431,81 @@ test("Create preserves its candidate across failed checks, rejected invitations 
 	assert.equal(keys[0], keys[1]);
 	assert.equal(f.session.identity().publicKey, keys[0]);
 });
+
+for (const action of ["lock", "dispose"] as const) {
+	test(`${action} during remember persistence cannot leave a new stored key`, async (t) => {
+		const f = await fixture(t);
+		const persistence = createPersistence(f.storage.connect());
+		const second = createSession({ persistence });
+		t.after(second.dispose);
+		await second.loaded;
+		const entered = deferred();
+		const release = deferred();
+		t.after(() => release.resolve());
+		const remember = persistence.remember;
+		t.mock.method(
+			persistence,
+			"remember",
+			async (...args: Parameters<typeof remember>) => {
+				entered.resolve();
+				await release.promise;
+				return remember(...args);
+			},
+		);
+		const unlocking = second.unlock(password, true);
+		await entered.promise;
+		await second[action]();
+		release.resolve();
+		assert.equal(await unlocking, false);
+		assert.equal(get(second).unlocked, false);
+		assert.equal(get(await f.reopen()).status, "locked");
+	});
+}
+
+test("setup remembers only when persistence succeeds and otherwise remains locally usable", async (t) => {
+	const storage = memoryStorage();
+	const persistence = createPersistence(storage.connect());
+	t.mock.method(persistence, "remember", async () => {
+		throw new Error("Cannot store keys.");
+	});
+	const session = createSession({ persistence });
+	t.after(session.dispose);
+	await session.loaded;
+	assert.equal(await session.initialize(password, true), true);
+	assert.equal(get(session).unlocked, true);
+	assert.match(get(session).notice, /could not be remembered/);
+	const second = createSession({
+		persistence: createPersistence(storage.connect()),
+	});
+	t.after(second.dispose);
+	await second.loaded;
+	assert.equal(get(second).status, "locked");
+	assert.equal(await second.unlock(password), true);
+});
+
+test("simultaneous setup commits one identity and rejects the competing write", async (t) => {
+	const storage = memoryStorage();
+	const first = createSession({
+		persistence: createPersistence(storage.connect()),
+	});
+	const second = createSession({
+		persistence: createPersistence(storage.connect()),
+	});
+	t.after(first.dispose);
+	t.after(second.dispose);
+	await Promise.all([first.loaded, second.loaded]);
+	const results = await Promise.all([
+		first.initialize(password, true),
+		second.initialize("other-password", true),
+	]);
+	assert.equal(results.filter(Boolean).length, 1);
+	const loser = results[0] ? second : first;
+	assert.equal(get(loser).unlocked, false);
+	assert.match(get(loser).error, /Refresh/);
+	const third = createSession({
+		persistence: createPersistence(storage.connect()),
+	});
+	t.after(third.dispose);
+	await third.loaded;
+	assert.equal(get(third).unlocked, true);
+});

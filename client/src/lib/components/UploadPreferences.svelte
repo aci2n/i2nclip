@@ -23,6 +23,9 @@ let { compressImages, error, busy, onchange }: Props = $props();
 			Replaces JPEG, PNG, and BMP originals when WebP is smaller. Keeps their
 			dimensions. This setting applies only to this device.
 		</p>
+		{#if busy}
+			<p role="status">Saving upload preference…</p>
+		{/if}
 		{#if error}
 			<p class="error" role="alert">{error}</p>
 		{/if}

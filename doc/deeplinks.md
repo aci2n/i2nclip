@@ -31,7 +31,7 @@ survive. Viewer stores end on navigation, ID/context changes, and disposal.
 
 ## Persistence and lifecycle
 
-Use the existing shared unlock flow with password fallback, retaining the target
+Load the tab session from IndexedDB with password fallback, retaining the target
 URL. If no library is configured, show normal setup inline and resume once a
 configured context exists. Malformed links display an actionable error without
 requests. No new persisted state or session coordination is introduced.
@@ -58,7 +58,7 @@ workspace. Back/Forward resolves the current URL and cancels superseded viewers.
 API tests cover authentication, owner isolation, empty bodies, ID validation,
 not-found/deletion and encrypted response shape. Client tests cover metadata
 opening, error propagation, invalid IDs, progress/retry, supersession, session
-abort, late results and URL disposal. Real Firefox/Chromium tests cover inherited
+abort, late results and URL disposal. Real Firefox/Chromium tests cover remembered
 unlock and password fallback, stable reload/Back/Forward, direct item reads without
 list/tag queries, image/audio/video/text/files, explicit downloads, failure/retry,
 missing IDs, and identity invalidation during loading. Inspect actual Firefox

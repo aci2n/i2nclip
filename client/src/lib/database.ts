@@ -25,6 +25,10 @@ export function createDatabase(
 				const request = factory.open(name, 1);
 				let blocked = false;
 				request.onupgradeneeded = () => {
+					if (disposed || blocked) {
+						request.transaction?.abort();
+						return;
+					}
 					request.result.createObjectStore("state");
 				};
 				request.onerror = () => reject(request.error);
@@ -119,6 +123,9 @@ export function createDatabase(
 		read: (key, signal) => transaction(key, signal),
 		update: (key, change, signal) => transaction(key, signal, change),
 		dispose() {
+			if (disposed) {
+				return;
+			}
 			disposed = true;
 			for (const tx of transactions) {
 				tx.abort();
