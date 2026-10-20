@@ -10,7 +10,7 @@ export interface Metadata {
 	source_url?: string;
 	source_title?: string;
 }
-function parseMetadata(input: unknown): Metadata {
+export function parseMetadata(input: unknown): Metadata {
 	const value = document(input);
 	const result: Metadata = { ...value };
 	for (const key of [

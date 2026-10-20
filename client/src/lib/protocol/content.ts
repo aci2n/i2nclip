@@ -38,7 +38,7 @@ export function chunkLength(
 	return Math.min(CHUNK_BYTES, file.size - index * CHUNK_BYTES);
 }
 
-async function importContentKey(raw: Uint8Array<ArrayBuffer>) {
+export async function importContentKey(raw: Uint8Array<ArrayBuffer>) {
 	if (raw.length !== 32) {
 		throw new Error("Invalid content key.");
 	}

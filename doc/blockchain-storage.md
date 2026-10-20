@@ -285,6 +285,14 @@ ID and content key per upload, index-derived IV, and file/position/dimension AAD
 The containing manifest is bound to the library and file. Verify hash, exact
 length, and AEAD authentication before exposing a complete chunk's plaintext.
 
+The manifest frame is `[1, plaintext_size, chunk_size, chunk_count,
+raw_content_key, ordered_chunk_hashes]`, with a fixed 4 MiB chunk size. Calculate
+its encoded size before reading the source using the fixed binary hash widths
+and the MessagePack array-header width, without allocating placeholder hashes
+for an already oversized file. The metadata frame is
+`[1, extensible_attributes_map, thumbnail_reference_or_null]`; a thumbnail
+reference is `[ciphertext_hash, object_key]`. Do not embed thumbnail bytes in it.
+
 Metadata contains name, readable tags, other extensible attributes, and an
 optional thumbnail reference. Preserve existing tag normalization and first
 spelling on deduplication; remove HMAC search tokens and separately encrypted tag
