@@ -12,6 +12,7 @@
 - [Improvement priorities](priorities.md): open topics requiring separate specifications.
 - [Chunk uploads specification](chunk-uploads.md): independently encrypted chunks and browser streaming; implemented.
 - [Transfer and shutdown deadlines](transfer-shutdown-proposal.md): implemented resource and shutdown limits.
+- [Blockchain storage specification](blockchain-storage.md): proposed encrypted operation chain, equal-authority devices, deletable blobs, and implementation commits; not yet implemented.
 
 Current behavior is documented separately from proposed work. The Rust server is
 in `src/`; the web app and extension are in `client/`. Historical change specifications remain in this directory and Git history;
