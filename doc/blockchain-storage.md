@@ -418,6 +418,13 @@ callbacks. No HTML IDs. Navigation preserves root-owned operations; locking,
 identity changes, successful rotation, and disposal invalidate old contexts and
 cancel their resources.
 
+Implement stateful stores and resource-owning storage/transport services with
+private TypeScript classes, structural factories, bound public commands, and
+ordinary private workflows, following `doc/store-classes.md`. Keep instance
+resources out of factory closures. Stateless protocol transformations remain
+functions; operation-local callbacks and promise handlers may capture their
+operation's data.
+
 ### Selected materialized view as the rendering contract
 
 The chain-backed UI is a function of the selected materialized view state at all
@@ -688,7 +695,25 @@ make an intermediate branch independently deployable.
 | 13 | Add device listing/revocation and crash-safe epoch rotation with pending backups | Membership, rotation, outcome reconciliation, and session lifecycle tests |
 | 14 | Add deleted-file browsing, explicit restore, purge UI, and quota/history explanations | Lifecycle, stream invalidation, and relevant store tests; frontend checker/build |
 | 15 | Add read-only time-travel selection through the existing materialized-view/UI path | Historical replay, selection changes, lazy old metadata, purge availability, and stale-parent rejection tests; frontend checker/build |
-| 16 | Finish protocol/session/migration/test documentation, update browser fixtures, remove superseded helpers, and validate integration | Full portable suite once; inspect final Firefox screenshots |
+| 16 | After the chain features are complete, perform the dedicated legacy cleanup described below | Reference/import audit and smallest affected tests/checks; keep builds warning-free |
+| 17 | Finish current protocol/session/migration/test documentation and browser fixtures, then validate integration | Full portable suite once; inspect final Firefox screenshots |
+
+### Final legacy cleanup phase
+
+Once initialization, chain replay, blob workflows, pairing, rotation, deletion,
+and read-only time travel work, perform a distinct cleanup commit before final
+integration verification. Remove obsolete server media/tag routes and queries,
+server-search tokens/index helpers, seed-derived metadata/descriptor formats,
+old identity/recovery/pairing adapters, superseded client workflows, unused
+constants/types, stale test fixtures, and outdated documentation or scripts.
+Do not retain a legacy path for compatibility or add flags to select old behavior.
+
+Cutover commits may remove unreachable code earlier when necessary to keep builds
+clean. This final phase audits the completed design for remnants rather than
+delaying required removals until the end. Preserve the deliberately retained v2
+content-chunk AEAD, HTTP request-signature construction, password protection,
+OPAQUE primitives, and their meaningful regression coverage. Search for obsolete
+endpoints/formats/imports and confirm every remaining match has a current use.
 
 Do not implement the old owner/recovery-envelope/permission proposals along the
 way. The runtime and test reference crypto remain separate: production Rust
