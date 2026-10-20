@@ -25,21 +25,6 @@ interface Entry {
 	dispose(): void;
 }
 
-interface ContentStreamsDependencies {
-	sessionSignal: AbortSignal;
-}
-interface ContentStreamsRuntime {
-	controller: AbortController;
-	signal: AbortSignal;
-	entries: Map<string, Entry>;
-	requests: Set<() => void>;
-	waiting: Set<() => void>;
-	reading: number;
-	initialization?: Promise<string>;
-	onMessage: (event: MessageEvent<WorkerMessage>) => void;
-	dispose: () => void;
-}
-
 interface StreamRequest {
 	port: MessagePort;
 	entry: Entry;
@@ -88,343 +73,12 @@ interface DownloadCompletion {
 	reject: (error: Error) => void;
 }
 
-// Owned by the unlocked application session, independently of workspace/views.
-// The worker transports plaintext only; keys and authenticated workflows stay here.
-export function createContentStreams(sessionSignal: AbortSignal) {
-	const deps: ContentStreamsDependencies = { sessionSignal };
-	const controller = new AbortController();
-	const runtime: ContentStreamsRuntime = {
-		controller,
-		signal: AbortSignal.any([controller.signal, sessionSignal]),
-		entries: new Map(),
-		requests: new Set(),
-		waiting: new Set(),
-		reading: 0,
-		onMessage: (event) => openRequest(runtime, event),
-		dispose: () => disposeStreams(deps, runtime),
-	};
-	sessionSignal.addEventListener("abort", runtime.dispose, { once: true });
-
-	return {
-		open: openContent.bind(null, runtime),
-		download: downloadContent.bind(null, runtime),
-		invalidate: invalidateContent.bind(null, runtime),
-		dispose: runtime.dispose,
-	};
-}
-
-async function acquireRead(
-	runtime: ContentStreamsRuntime,
-	request: AbortSignal,
-) {
-	while (runtime.reading >= 2) {
-		await new Promise<void>((resolve, reject) =>
-			waitForRead(runtime.waiting, request, resolve, reject),
-		);
-	}
-	request.throwIfAborted();
-	runtime.reading++;
-}
-
-function openRequest(
-	runtime: ContentStreamsRuntime,
-	event: MessageEvent<WorkerMessage>,
-) {
-	if (
-		event.source !== navigator.serviceWorker.controller ||
-		event.data?.kind !== "open"
-	) {
-		return;
-	}
-	const port = event.ports[0];
-	if (!port) {
-		return;
-	}
-	const entry = runtime.entries.get(event.data.token);
-	if (!entry || runtime.signal.aborted) {
-		port.postMessage({
-			kind: "error",
-			message: "The file session has ended.",
-		} satisfies PageMessage);
-		port.close();
-		return;
-	}
-	const downloadRequest = event.data.download === true;
-	if (downloadRequest) {
-		entry.started?.();
-	}
-	const operation = new AbortController();
-	const request = AbortSignal.any([
-		runtime.signal,
-		entry.controller.signal,
-		operation.signal,
-	]);
-	const current: StreamRequest = {
-		port,
-		entry,
-		downloadRequest,
-		operation,
-		request,
-		closed: false,
-		busy: false,
-		abort: () =>
-			closeRequest(runtime, current, new Error("The file session has ended.")),
-	};
-	request.addEventListener("abort", current.abort, { once: true });
-	runtime.requests.add(current.abort);
-	port.onmessage = (message) => readRequest(runtime, current, message);
-	if (downloadRequest) {
-		current.heartbeat = setInterval(
-			() => pingRequest(runtime, current),
-			HEARTBEAT_MS,
-		);
-	}
-	const { size, type, name } = entry.source;
-	sendRequest(current, { kind: "description", value: { size, type, name } });
-}
-
 function sendRequest(
 	current: Pick<StreamRequest, "port">,
 	message: PageMessage,
 	transfer: Transferable[] = [],
 ) {
 	current.port.postMessage(message, transfer);
-}
-
-function closeRequest(
-	runtime: ContentStreamsRuntime,
-	current: StreamRequest,
-	error?: Error,
-) {
-	if (current.closed) {
-		return;
-	}
-	current.closed = true;
-	clearInterval(current.heartbeat);
-	clearTimeout(current.deadline);
-	if (error) {
-		sendRequest(current, { kind: "error", message: error.message });
-	}
-	current.operation.abort();
-	runtime.requests.delete(current.abort);
-	current.request.removeEventListener("abort", current.abort);
-	current.port.close();
-	if (current.downloadRequest) {
-		const finished = current.entry.finished;
-		current.entry.finished = undefined;
-		finished?.(error);
-	}
-}
-
-async function readRequest(
-	runtime: ContentStreamsRuntime,
-	current: StreamRequest,
-	message: MessageEvent<WorkerMessage>,
-) {
-	if (current.closed) {
-		return;
-	}
-	if (message.data.kind === "pong") {
-		clearTimeout(current.deadline);
-		current.deadline = undefined;
-		return;
-	}
-	if (message.data.kind === "complete") {
-		closeRequest(runtime, current);
-		return;
-	}
-	if (message.data.kind === "cancel") {
-		closeRequest(runtime, current, new Error("Download cancelled."));
-		return;
-	}
-	if (message.data.kind !== "read" || current.closed) {
-		return;
-	}
-	const { start, end } = message.data;
-	if (
-		current.busy ||
-		!Number.isSafeInteger(start) ||
-		!Number.isSafeInteger(end) ||
-		start < 0 ||
-		end <= start ||
-		end > current.entry.source.size ||
-		end - start > STREAM_READ_BYTES
-	) {
-		closeRequest(runtime, current, new Error("Invalid content read request."));
-		return;
-	}
-	current.busy = true;
-	let acquired = false;
-	try {
-		await acquireRead(runtime, current.request);
-		acquired = true;
-		const bytes = await current.entry.source.read(start, end, current.request);
-		current.request.throwIfAborted();
-		if (bytes.byteLength !== end - start) {
-			throw new Error("Invalid plaintext range length.");
-		}
-		const value =
-			bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
-				? bytes.buffer
-				: bytes.slice().buffer;
-		sendRequest(current, { kind: "bytes", value }, [value]);
-	} catch (error) {
-		closeRequest(
-			runtime,
-			current,
-			error instanceof Error ? error : new Error("Content read failed."),
-		);
-	} finally {
-		current.busy = false;
-		if (acquired) {
-			runtime.reading--;
-			runtime.waiting.values().next().value?.();
-		}
-	}
-}
-
-function pingRequest(runtime: ContentStreamsRuntime, current: StreamRequest) {
-	if (current.deadline !== undefined) {
-		return;
-	}
-	current.deadline = setTimeout(
-		() =>
-			closeRequest(
-				runtime,
-				current,
-				new Error("Download connection lost. Retry the download."),
-			),
-		BRIDGE_TIMEOUT_MS,
-	);
-	sendRequest(current, { kind: "ping" });
-}
-
-async function initializeStreams(runtime: ContentStreamsRuntime) {
-	runtime.signal.throwIfAborted();
-	if (!window.isSecureContext || !("serviceWorker" in navigator)) {
-		throw new Error(
-			"Streaming requires service workers on HTTPS or localhost.",
-		);
-	}
-	navigator.serviceWorker.addEventListener("message", runtime.onMessage);
-	const registration = await navigator.serviceWorker.register(
-		"/streaming-worker.js",
-		{
-			scope: "/",
-		},
-	);
-	registration.active?.postMessage({ kind: "claim" });
-	runtime.signal.throwIfAborted();
-	await new Promise<void>((resolve, reject) =>
-		waitForController(runtime.signal, resolve, reject),
-	);
-	const client = await new Promise<string>((resolve, reject) =>
-		requestClient(runtime.signal, resolve, reject),
-	);
-	runtime.signal.throwIfAborted();
-	return client;
-}
-
-function disposeStreams(
-	deps: ContentStreamsDependencies,
-	runtime: ContentStreamsRuntime,
-) {
-	runtime.controller.abort();
-	deps.sessionSignal.removeEventListener("abort", runtime.dispose);
-	if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
-		navigator.serviceWorker.removeEventListener("message", runtime.onMessage);
-	}
-	for (const close of runtime.requests) {
-		close();
-	}
-	for (const entry of runtime.entries.values()) {
-		entry.dispose();
-	}
-	runtime.entries.clear();
-}
-
-async function openStream(
-	runtime: ContentStreamsRuntime,
-	source: ContentSource,
-	lifetime?: AbortSignal,
-	finished?: (error?: Error) => void,
-) {
-	runtime.signal.throwIfAborted();
-	lifetime?.throwIfAborted();
-	if (!Number.isSafeInteger(source.size) || source.size < 0) {
-		throw new Error("Invalid plaintext size.");
-	}
-	runtime.initialization ??= initializeStreams(runtime).catch((error) =>
-		initializationFailed(runtime, error),
-	);
-	const client = await runtime.initialization;
-	runtime.signal.throwIfAborted();
-	lifetime?.throwIfAborted();
-	const token = crypto.randomUUID();
-	const entry: Entry = {
-		source,
-		controller: new AbortController(),
-		finished,
-		dispose: () => disposeEntry(runtime.entries, entry, token, lifetime),
-	};
-	runtime.entries.set(token, entry);
-	lifetime?.addEventListener("abort", entry.dispose, { once: true });
-	const base = `${STREAM_PREFIX}${client}/${token}`;
-	return {
-		url: `${base}/inline`,
-		downloadUrl: `${base}/download`,
-		dispose: entry.dispose,
-		entry,
-	};
-}
-
-async function openContent(
-	runtime: ContentStreamsRuntime,
-	source: ContentSource,
-	lifetime?: AbortSignal,
-) {
-	const { entry: _entry, ...lease } = await openStream(
-		runtime,
-		source,
-		lifetime,
-	);
-	return lease;
-}
-
-async function downloadContent(
-	runtime: ContentStreamsRuntime,
-	source: ContentSource,
-	start: (url: string) => unknown,
-) {
-	let finish: (error?: Error) => void = () => {};
-	const done = new Promise<void>((resolve, reject) => {
-		const completion: DownloadCompletion = { finished: false, resolve, reject };
-		finish = (error) => finishDownload(completion, error);
-	});
-	// Observe rejection before waiting for initialization or a browser request.
-	void done.catch(() => {});
-	const lease = await openStream(runtime, source, undefined, finish);
-	const timer = setTimeout(
-		() => finish(new Error("The browser did not start the download.")),
-		BRIDGE_TIMEOUT_MS,
-	);
-	lease.entry.started = () => clearTimeout(timer);
-	try {
-		runtime.signal.throwIfAborted();
-		await start(lease.downloadUrl);
-		await done;
-	} finally {
-		clearTimeout(timer);
-		lease.dispose();
-	}
-}
-
-function invalidateContent(runtime: ContentStreamsRuntime, id: string) {
-	for (const entry of runtime.entries.values()) {
-		if (entry.source.id === id) {
-			entry.dispose();
-		}
-	}
 }
 
 function disposeEntry(
@@ -574,11 +228,331 @@ function finishDownload(completion: DownloadCompletion, error?: Error) {
 		completion.resolve();
 	}
 }
+export function createContentStreams(
+	sessionSignal: AbortSignal,
+): Pick<ContentStreamsStoreImpl, keyof ContentStreamsStoreImpl> {
+	return new ContentStreamsStoreImpl(sessionSignal);
+}
 
-function initializationFailed(
-	runtime: Pick<ContentStreamsRuntime, "initialization">,
-	error: unknown,
-): never {
-	runtime.initialization = undefined;
-	throw error;
+class ContentStreamsStoreImpl {
+	private readonly sessionSignal: AbortSignal;
+	private controller: AbortController;
+	private signal: AbortSignal;
+	private entries: Map<string, Entry>;
+	private requests: Set<() => void>;
+	private waiting: Set<() => void>;
+	private reading: number;
+	private initialization?: Promise<string>;
+	private onMessage: (event: MessageEvent<WorkerMessage>) => void;
+
+	readonly open = this.openContent.bind(this);
+	readonly download = this.downloadContent.bind(this);
+	readonly invalidate = this.invalidateContent.bind(this);
+	readonly dispose = this.disposeStreams.bind(this);
+
+	constructor(sessionSignal: AbortSignal) {
+		this.sessionSignal = sessionSignal;
+		const controller = new AbortController();
+		this.controller = controller;
+		this.signal = AbortSignal.any([controller.signal, sessionSignal]);
+		this.entries = new Map();
+		this.requests = new Set();
+		this.waiting = new Set();
+		this.reading = 0;
+		this.onMessage = this.openRequest.bind(this);
+		sessionSignal.addEventListener("abort", this.dispose, { once: true });
+	}
+
+	private async acquireRead(request: AbortSignal) {
+		while (this.reading >= 2) {
+			await new Promise<void>((resolve, reject) =>
+				waitForRead(this.waiting, request, resolve, reject),
+			);
+		}
+		request.throwIfAborted();
+		this.reading++;
+	}
+
+	private openRequest(event: MessageEvent<WorkerMessage>) {
+		if (
+			event.source !== navigator.serviceWorker.controller ||
+			event.data?.kind !== "open"
+		) {
+			return;
+		}
+		const port = event.ports[0];
+		if (!port) {
+			return;
+		}
+		const entry = this.entries.get(event.data.token);
+		if (!entry || this.signal.aborted) {
+			port.postMessage({
+				kind: "error",
+				message: "The file session has ended.",
+			} satisfies PageMessage);
+			port.close();
+			return;
+		}
+		const downloadRequest = event.data.download === true;
+		if (downloadRequest) {
+			entry.started?.();
+		}
+		const operation = new AbortController();
+		const request = AbortSignal.any([
+			this.signal,
+			entry.controller.signal,
+			operation.signal,
+		]);
+		const current: StreamRequest = {
+			port,
+			entry,
+			downloadRequest,
+			operation,
+			request,
+			closed: false,
+			busy: false,
+			abort: () =>
+				this.closeRequest(current, new Error("The file session has ended.")),
+		};
+		request.addEventListener("abort", current.abort, { once: true });
+		this.requests.add(current.abort);
+		port.onmessage = (message) => this.readRequest(current, message);
+		if (downloadRequest) {
+			current.heartbeat = setInterval(
+				() => this.pingRequest(current),
+				HEARTBEAT_MS,
+			);
+		}
+		const { size, type, name } = entry.source;
+		sendRequest(current, { kind: "description", value: { size, type, name } });
+	}
+
+	private closeRequest(current: StreamRequest, error?: Error) {
+		if (current.closed) {
+			return;
+		}
+		current.closed = true;
+		clearInterval(current.heartbeat);
+		clearTimeout(current.deadline);
+		if (error) {
+			sendRequest(current, { kind: "error", message: error.message });
+		}
+		current.operation.abort();
+		this.requests.delete(current.abort);
+		current.request.removeEventListener("abort", current.abort);
+		current.port.close();
+		if (current.downloadRequest) {
+			const finished = current.entry.finished;
+			current.entry.finished = undefined;
+			finished?.(error);
+		}
+	}
+
+	private async readRequest(
+		current: StreamRequest,
+		message: MessageEvent<WorkerMessage>,
+	) {
+		if (current.closed) {
+			return;
+		}
+		if (message.data.kind === "pong") {
+			clearTimeout(current.deadline);
+			current.deadline = undefined;
+			return;
+		}
+		if (message.data.kind === "complete") {
+			this.closeRequest(current);
+			return;
+		}
+		if (message.data.kind === "cancel") {
+			this.closeRequest(current, new Error("Download cancelled."));
+			return;
+		}
+		if (message.data.kind !== "read" || current.closed) {
+			return;
+		}
+		const { start, end } = message.data;
+		if (
+			current.busy ||
+			!Number.isSafeInteger(start) ||
+			!Number.isSafeInteger(end) ||
+			start < 0 ||
+			end <= start ||
+			end > current.entry.source.size ||
+			end - start > STREAM_READ_BYTES
+		) {
+			this.closeRequest(current, new Error("Invalid content read request."));
+			return;
+		}
+		current.busy = true;
+		let acquired = false;
+		try {
+			await this.acquireRead(current.request);
+			acquired = true;
+			const bytes = await current.entry.source.read(
+				start,
+				end,
+				current.request,
+			);
+			current.request.throwIfAborted();
+			if (bytes.byteLength !== end - start) {
+				throw new Error("Invalid plaintext range length.");
+			}
+			const value =
+				bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+					? bytes.buffer
+					: bytes.slice().buffer;
+			sendRequest(current, { kind: "bytes", value }, [value]);
+		} catch (error) {
+			this.closeRequest(
+				current,
+				error instanceof Error ? error : new Error("Content read failed."),
+			);
+		} finally {
+			current.busy = false;
+			if (acquired) {
+				this.reading--;
+				this.waiting.values().next().value?.();
+			}
+		}
+	}
+
+	private pingRequest(current: StreamRequest) {
+		if (current.deadline !== undefined) {
+			return;
+		}
+		current.deadline = setTimeout(
+			() =>
+				this.closeRequest(
+					current,
+					new Error("Download connection lost. Retry the download."),
+				),
+			BRIDGE_TIMEOUT_MS,
+		);
+		sendRequest(current, { kind: "ping" });
+	}
+
+	private async initializeStreams() {
+		this.signal.throwIfAborted();
+		if (!window.isSecureContext || !("serviceWorker" in navigator)) {
+			throw new Error(
+				"Streaming requires service workers on HTTPS or localhost.",
+			);
+		}
+		navigator.serviceWorker.addEventListener("message", this.onMessage);
+		const registration = await navigator.serviceWorker.register(
+			"/streaming-worker.js",
+			{
+				scope: "/",
+			},
+		);
+		registration.active?.postMessage({ kind: "claim" });
+		this.signal.throwIfAborted();
+		await new Promise<void>((resolve, reject) =>
+			waitForController(this.signal, resolve, reject),
+		);
+		const client = await new Promise<string>((resolve, reject) =>
+			requestClient(this.signal, resolve, reject),
+		);
+		this.signal.throwIfAborted();
+		return client;
+	}
+
+	private disposeStreams() {
+		this.controller.abort();
+		this.sessionSignal.removeEventListener("abort", this.dispose);
+		if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+			navigator.serviceWorker.removeEventListener("message", this.onMessage);
+		}
+		for (const close of this.requests) {
+			close();
+		}
+		for (const entry of this.entries.values()) {
+			entry.dispose();
+		}
+		this.entries.clear();
+	}
+
+	private async openStream(
+		source: ContentSource,
+		lifetime?: AbortSignal,
+		finished?: (error?: Error) => void,
+	) {
+		this.signal.throwIfAborted();
+		lifetime?.throwIfAborted();
+		if (!Number.isSafeInteger(source.size) || source.size < 0) {
+			throw new Error("Invalid plaintext size.");
+		}
+		this.initialization ??= this.initializeStreams().catch((error) =>
+			this.initializationFailed(error),
+		);
+		const client = await this.initialization;
+		this.signal.throwIfAborted();
+		lifetime?.throwIfAborted();
+		const token = crypto.randomUUID();
+		const entry: Entry = {
+			source,
+			controller: new AbortController(),
+			finished,
+			dispose: () => disposeEntry(this.entries, entry, token, lifetime),
+		};
+		this.entries.set(token, entry);
+		lifetime?.addEventListener("abort", entry.dispose, { once: true });
+		const base = `${STREAM_PREFIX}${client}/${token}`;
+		return {
+			url: `${base}/inline`,
+			downloadUrl: `${base}/download`,
+			dispose: entry.dispose,
+			entry,
+		};
+	}
+
+	private async openContent(source: ContentSource, lifetime?: AbortSignal) {
+		const { entry: _entry, ...lease } = await this.openStream(source, lifetime);
+		return lease;
+	}
+
+	private async downloadContent(
+		source: ContentSource,
+		start: (url: string) => unknown,
+	) {
+		let finish: (error?: Error) => void = () => {};
+		const done = new Promise<void>((resolve, reject) => {
+			const completion: DownloadCompletion = {
+				finished: false,
+				resolve,
+				reject,
+			};
+			finish = (error) => finishDownload(completion, error);
+		});
+		// Observe rejection before waiting for initialization or a browser request.
+		void done.catch(() => {});
+		const lease = await this.openStream(source, undefined, finish);
+		const timer = setTimeout(
+			() => finish(new Error("The browser did not start the download.")),
+			BRIDGE_TIMEOUT_MS,
+		);
+		lease.entry.started = () => clearTimeout(timer);
+		try {
+			this.signal.throwIfAborted();
+			await start(lease.downloadUrl);
+			await done;
+		} finally {
+			clearTimeout(timer);
+			lease.dispose();
+		}
+	}
+
+	private invalidateContent(id: string) {
+		for (const entry of this.entries.values()) {
+			if (entry.source.id === id) {
+				entry.dispose();
+			}
+		}
+	}
+
+	private initializationFailed(error: unknown): never {
+		this.initialization = undefined;
+		throw error;
+	}
 }
