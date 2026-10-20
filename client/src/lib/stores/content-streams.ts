@@ -72,162 +72,6 @@ interface DownloadCompletion {
 	resolve: () => void;
 	reject: (error: Error) => void;
 }
-
-function sendRequest(
-	current: Pick<StreamRequest, "port">,
-	message: PageMessage,
-	transfer: Transferable[] = [],
-) {
-	current.port.postMessage(message, transfer);
-}
-
-function disposeEntry(
-	entries: Map<string, Entry>,
-	entry: Entry,
-	token: string,
-	lifetime?: AbortSignal,
-) {
-	if (entry.controller.signal.aborted) {
-		return;
-	}
-	lifetime?.removeEventListener("abort", entry.dispose);
-	entry.controller.abort();
-	const finished = entry.finished;
-	entry.finished = undefined;
-	finished?.(new Error("The file session has ended."));
-	entries.delete(token);
-}
-
-function waitForRead(
-	waiting: Set<() => void>,
-	signal: AbortSignal,
-	resolve: () => void,
-	reject: (error: unknown) => void,
-) {
-	const wait: ReadWait = {
-		waiting,
-		signal,
-		resolve,
-		reject,
-		ready: () => finishReadWait(wait),
-		abort: () => finishReadWait(wait, true),
-	};
-	waiting.add(wait.ready);
-	signal.addEventListener("abort", wait.abort, { once: true });
-	if (signal.aborted) {
-		wait.abort();
-	}
-}
-
-function finishReadWait(wait: ReadWait, aborted = false) {
-	wait.waiting.delete(wait.ready);
-	wait.signal.removeEventListener("abort", wait.abort);
-	if (aborted) {
-		wait.reject(wait.signal.reason);
-	} else {
-		wait.resolve();
-	}
-}
-
-function waitForController(
-	signal: AbortSignal,
-	resolve: () => void,
-	reject: (error: unknown) => void,
-) {
-	const wait: ControllerWait = {
-		signal,
-		resolve,
-		reject,
-		changed: () => controllerChanged(wait),
-		abort: () => finishControllerWait(wait, signal.reason),
-	};
-	wait.timer = setTimeout(
-		() =>
-			finishControllerWait(
-				wait,
-				new Error("Streaming worker did not activate."),
-			),
-		BRIDGE_TIMEOUT_MS,
-	);
-	navigator.serviceWorker.addEventListener("controllerchange", wait.changed);
-	signal.addEventListener("abort", wait.abort, { once: true });
-	wait.changed();
-	if (signal.aborted) {
-		wait.abort();
-	}
-}
-
-function controllerChanged(wait: ControllerWait) {
-	if (navigator.serviceWorker.controller) {
-		finishControllerWait(wait);
-	}
-}
-
-function finishControllerWait(wait: ControllerWait, error?: unknown) {
-	clearTimeout(wait.timer);
-	navigator.serviceWorker.removeEventListener("controllerchange", wait.changed);
-	wait.signal.removeEventListener("abort", wait.abort);
-	if (error !== undefined) {
-		wait.reject(error);
-	} else {
-		wait.resolve();
-	}
-}
-
-function requestClient(
-	signal: AbortSignal,
-	resolve: (client: string) => void,
-	reject: (error: unknown) => void,
-) {
-	const wait: ClientWait = {
-		signal,
-		resolve,
-		reject,
-		channel: new MessageChannel(),
-		abort: () => failClientWait(wait, signal.reason),
-	};
-	wait.timer = setTimeout(
-		() => failClientWait(wait, new Error("Streaming worker did not respond.")),
-		BRIDGE_TIMEOUT_MS,
-	);
-	wait.channel.port1.onmessage = (event: MessageEvent<{ client: string }>) =>
-		receiveClient(wait, event.data.client);
-	signal.addEventListener("abort", wait.abort, { once: true });
-	navigator.serviceWorker.controller?.postMessage({ kind: "client" }, [
-		wait.channel.port2,
-	]);
-	if (signal.aborted) {
-		wait.abort();
-	}
-}
-
-function closeClientWait(wait: ClientWait) {
-	clearTimeout(wait.timer);
-	wait.channel.port1.close();
-	wait.signal.removeEventListener("abort", wait.abort);
-}
-
-function receiveClient(wait: ClientWait, client: string) {
-	closeClientWait(wait);
-	wait.resolve(client);
-}
-
-function failClientWait(wait: ClientWait, error: unknown) {
-	closeClientWait(wait);
-	wait.reject(error);
-}
-
-function finishDownload(completion: DownloadCompletion, error?: Error) {
-	if (completion.finished) {
-		return;
-	}
-	completion.finished = true;
-	if (error) {
-		completion.reject(error);
-	} else {
-		completion.resolve();
-	}
-}
 export function createContentStreams(
 	sessionSignal: AbortSignal,
 ): Pick<ContentStreamsStoreImpl, keyof ContentStreamsStoreImpl> {
@@ -236,11 +80,11 @@ export function createContentStreams(
 
 class ContentStreamsStoreImpl {
 	private readonly sessionSignal: AbortSignal;
-	private controller: AbortController;
-	private signal: AbortSignal;
-	private entries: Map<string, Entry>;
-	private requests: Set<() => void>;
-	private waiting: Set<() => void>;
+	private readonly controller: AbortController;
+	private readonly signal: AbortSignal;
+	private readonly entries: Map<string, Entry>;
+	private readonly requests: Set<() => void>;
+	private readonly waiting: Set<() => void>;
 	private reading: number;
 	private initialization?: Promise<string>;
 	private onMessage: (event: MessageEvent<WorkerMessage>) => void;
@@ -260,7 +104,11 @@ class ContentStreamsStoreImpl {
 		this.waiting = new Set();
 		this.reading = 0;
 		this.onMessage = this.openRequest.bind(this);
-		sessionSignal.addEventListener("abort", this.dispose, { once: true });
+		if (sessionSignal.aborted) {
+			this.disposeStreams();
+		} else {
+			sessionSignal.addEventListener("abort", this.dispose, { once: true });
+		}
 	}
 
 	private async acquireRead(request: AbortSignal) {
@@ -554,5 +402,161 @@ class ContentStreamsStoreImpl {
 	private initializationFailed(error: unknown): never {
 		this.initialization = undefined;
 		throw error;
+	}
+}
+
+function sendRequest(
+	current: Pick<StreamRequest, "port">,
+	message: PageMessage,
+	transfer: Transferable[] = [],
+) {
+	current.port.postMessage(message, transfer);
+}
+
+function disposeEntry(
+	entries: Map<string, Entry>,
+	entry: Entry,
+	token: string,
+	lifetime?: AbortSignal,
+) {
+	if (entry.controller.signal.aborted) {
+		return;
+	}
+	lifetime?.removeEventListener("abort", entry.dispose);
+	entry.controller.abort();
+	const finished = entry.finished;
+	entry.finished = undefined;
+	finished?.(new Error("The file session has ended."));
+	entries.delete(token);
+}
+
+function waitForRead(
+	waiting: Set<() => void>,
+	signal: AbortSignal,
+	resolve: () => void,
+	reject: (error: unknown) => void,
+) {
+	const wait: ReadWait = {
+		waiting,
+		signal,
+		resolve,
+		reject,
+		ready: () => finishReadWait(wait),
+		abort: () => finishReadWait(wait, true),
+	};
+	waiting.add(wait.ready);
+	signal.addEventListener("abort", wait.abort, { once: true });
+	if (signal.aborted) {
+		wait.abort();
+	}
+}
+
+function finishReadWait(wait: ReadWait, aborted = false) {
+	wait.waiting.delete(wait.ready);
+	wait.signal.removeEventListener("abort", wait.abort);
+	if (aborted) {
+		wait.reject(wait.signal.reason);
+	} else {
+		wait.resolve();
+	}
+}
+
+function waitForController(
+	signal: AbortSignal,
+	resolve: () => void,
+	reject: (error: unknown) => void,
+) {
+	const wait: ControllerWait = {
+		signal,
+		resolve,
+		reject,
+		changed: () => controllerChanged(wait),
+		abort: () => finishControllerWait(wait, signal.reason),
+	};
+	wait.timer = setTimeout(
+		() =>
+			finishControllerWait(
+				wait,
+				new Error("Streaming worker did not activate."),
+			),
+		BRIDGE_TIMEOUT_MS,
+	);
+	navigator.serviceWorker.addEventListener("controllerchange", wait.changed);
+	signal.addEventListener("abort", wait.abort, { once: true });
+	wait.changed();
+	if (signal.aborted) {
+		wait.abort();
+	}
+}
+
+function controllerChanged(wait: ControllerWait) {
+	if (navigator.serviceWorker.controller) {
+		finishControllerWait(wait);
+	}
+}
+
+function finishControllerWait(wait: ControllerWait, error?: unknown) {
+	clearTimeout(wait.timer);
+	navigator.serviceWorker.removeEventListener("controllerchange", wait.changed);
+	wait.signal.removeEventListener("abort", wait.abort);
+	if (error !== undefined) {
+		wait.reject(error);
+	} else {
+		wait.resolve();
+	}
+}
+
+function requestClient(
+	signal: AbortSignal,
+	resolve: (client: string) => void,
+	reject: (error: unknown) => void,
+) {
+	const wait: ClientWait = {
+		signal,
+		resolve,
+		reject,
+		channel: new MessageChannel(),
+		abort: () => failClientWait(wait, signal.reason),
+	};
+	wait.timer = setTimeout(
+		() => failClientWait(wait, new Error("Streaming worker did not respond.")),
+		BRIDGE_TIMEOUT_MS,
+	);
+	wait.channel.port1.onmessage = (event: MessageEvent<{ client: string }>) =>
+		receiveClient(wait, event.data.client);
+	signal.addEventListener("abort", wait.abort, { once: true });
+	navigator.serviceWorker.controller?.postMessage({ kind: "client" }, [
+		wait.channel.port2,
+	]);
+	if (signal.aborted) {
+		wait.abort();
+	}
+}
+
+function closeClientWait(wait: ClientWait) {
+	clearTimeout(wait.timer);
+	wait.channel.port1.close();
+	wait.signal.removeEventListener("abort", wait.abort);
+}
+
+function receiveClient(wait: ClientWait, client: string) {
+	closeClientWait(wait);
+	wait.resolve(client);
+}
+
+function failClientWait(wait: ClientWait, error: unknown) {
+	closeClientWait(wait);
+	wait.reject(error);
+}
+
+function finishDownload(completion: DownloadCompletion, error?: Error) {
+	if (completion.finished) {
+		return;
+	}
+	completion.finished = true;
+	if (error) {
+		completion.reject(error);
+	} else {
+		completion.resolve();
 	}
 }

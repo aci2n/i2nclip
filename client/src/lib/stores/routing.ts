@@ -24,7 +24,7 @@ class RoutingStoreImpl {
 	private readonly browser: RoutingBrowser;
 	private readonly log: ReturnType<typeof createLog>;
 	private current: ResolvedRoute;
-	private state: Writable<ResolvedRoute>;
+	private readonly state: Writable<ResolvedRoute>;
 	private disposed: boolean;
 	private syncLocation: () => void;
 

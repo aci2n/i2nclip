@@ -59,8 +59,8 @@ class UploadsStoreImpl {
 	private readonly onComplete: () => unknown;
 	private readonly preferences?: Readable<{ compressImages: boolean }>;
 	private readonly log: ReturnType<typeof createLog>;
-	private state: Writable<UploadState>;
-	private controller: AbortController;
+	private readonly state: Writable<UploadState>;
+	private readonly controller: AbortController;
 	private activeFiles: File[];
 
 	readonly subscribe: Writable<UploadState>["subscribe"];

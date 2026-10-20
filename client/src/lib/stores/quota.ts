@@ -23,7 +23,7 @@ class QuotaStoreImpl {
 	private readonly context: LibraryContext;
 	private readonly http: QuotaApi;
 	private readonly log: ReturnType<typeof createLog>;
-	private state: Writable<ReturnType<typeof empty>>;
+	private readonly state: Writable<ReturnType<typeof empty>>;
 	private controller?: AbortController;
 	private disposed: boolean;
 
