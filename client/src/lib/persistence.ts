@@ -6,7 +6,6 @@ import {
 	sealBytes,
 	wrappingKey,
 } from "./protocol/password.ts";
-import type { Identity } from "./protocol/recovery.ts";
 
 export interface SavedIdentity {
 	readonly revision: string;
@@ -17,20 +16,27 @@ export interface SavedIdentity {
 }
 const SESSION = "session";
 const PURPOSE = "i2nclip/local-identity/1";
-
-export function createPersistence(database: Database = createDatabase()) {
-	function unchanged(
-		current: SavedIdentity | undefined,
-		expected: SavedIdentity | null,
-	) {
-		if ((current?.revision ?? null) !== (expected?.revision ?? null)) {
-			throw new Error(
-				"Saved session changed in another tab. Refresh this client and try again.",
-			);
-		}
+export function createPersistence(
+	database: Database = createDatabase(),
+): Pick<PersistenceImpl, keyof PersistenceImpl> {
+	return new PersistenceImpl(database);
+}
+class PersistenceImpl {
+	private readonly database: Database;
+	readonly read = this.readSaved.bind(this);
+	readonly open = this.openSaved.bind(this);
+	readonly passwordKey = this.derivePasswordKey.bind(this);
+	readonly protect = this.protectIdentity.bind(this);
+	readonly save = this.saveIdentity.bind(this);
+	readonly remember = this.rememberKey.bind(this);
+	readonly lock = this.lockIdentity.bind(this);
+	readonly reset = this.resetIdentity.bind(this);
+	readonly dispose = this.disposePersistence.bind(this);
+	constructor(database: Database) {
+		this.database = database;
 	}
-	async function read(signal: AbortSignal): Promise<SavedIdentity | null> {
-		const value = await database.read<SavedIdentity>(SESSION, signal);
+	private async readSaved(signal: AbortSignal): Promise<SavedIdentity | null> {
+		const value = await this.database.read<SavedIdentity>(SESSION, signal);
 		if (value === undefined) {
 			return null;
 		}
@@ -41,26 +47,30 @@ export function createPersistence(database: Database = createDatabase()) {
 			value.salt.length !== 16
 		) {
 			throw new Error(
-				"Invalid saved identity. Reset this client or restore a recovery file.",
+				"Invalid saved identity. Reset this client or restore a device backup.",
 			);
 		}
 		return value;
 	}
-	async function open(
+	private async openSaved(
 		saved: SavedIdentity,
 		key: CryptoKey,
 		signal: AbortSignal,
 	) {
+		let plaintext: Uint8Array<ArrayBuffer> | undefined;
 		try {
-			const identity = decode(await openBytes(key, saved.encrypted, PURPOSE));
+			plaintext = await openBytes(key, saved.encrypted, PURPOSE);
+			const identity: unknown = structuredClone(decode(plaintext));
 			signal.throwIfAborted();
 			return identity;
 		} catch {
 			signal.throwIfAborted();
 			throw new Error("Wrong password or damaged saved identity.");
+		} finally {
+			plaintext?.fill(0);
 		}
 	}
-	async function passwordKey(
+	private async derivePasswordKey(
 		saved: SavedIdentity,
 		password: string,
 		signal: AbortSignal,
@@ -69,111 +79,122 @@ export function createPersistence(database: Database = createDatabase()) {
 		signal.throwIfAborted();
 		return key;
 	}
-	async function replace(
+	private async replace(
 		expected: SavedIdentity | null,
 		next: SavedIdentity | undefined,
 		signal: AbortSignal,
 	) {
-		await database.update<SavedIdentity>(
+		await this.database.update<SavedIdentity>(
 			SESSION,
 			(current) => {
-				unchanged(current, expected);
+				if ((current?.revision ?? null) !== (expected?.revision ?? null)) {
+					throw new Error(
+						"Saved session changed in another tab. Refresh this client and try again.",
+					);
+				}
 				return next;
 			},
 			signal,
 		);
 	}
-	async function write(
+	private async write(
 		expected: SavedIdentity | null,
 		salt: Uint8Array<ArrayBuffer>,
 		key: CryptoKey,
-		identity: Identity | null,
+		identity: unknown,
 		signal: AbortSignal,
 		remember: boolean,
 	) {
-		const encrypted = await sealBytes(key, encode(identity), PURPOSE);
-		signal.throwIfAborted();
-		const saved: SavedIdentity = {
-			revision: crypto.randomUUID(),
-			salt,
-			iterations: PBKDF2_ITERATIONS,
-			encrypted,
-			...(remember ? { key } : {}),
-		};
-		await replace(expected, saved, signal);
-		return saved;
-	}
-	return {
-		read,
-		open,
-		passwordKey,
-		async protect(
-			expected: SavedIdentity | null,
-			password: string,
-			identity: Identity | null,
-			signal: AbortSignal,
-			remember = false,
-		) {
-			if (password.length < 8) {
-				throw new Error("Master password must be at least 8 characters.");
-			}
-			const salt = crypto.getRandomValues(new Uint8Array(16));
-			const key = await wrappingKey(password, salt, PBKDF2_ITERATIONS);
+		const plaintext = encode(identity);
+		try {
+			const encrypted = await sealBytes(key, plaintext, PURPOSE);
 			signal.throwIfAborted();
-			return {
-				saved: await write(expected, salt, key, identity, signal, remember),
-				key,
-			};
-		},
-		save: (
-			saved: SavedIdentity,
-			key: CryptoKey,
-			identity: Identity | null,
-			signal: AbortSignal,
-		) =>
-			write(
-				saved,
-				saved.salt,
-				key,
-				identity,
-				signal,
-				identity !== null && Boolean(saved.key),
-			),
-		async remember(
-			saved: SavedIdentity,
-			key: CryptoKey | null,
-			signal: AbortSignal,
-		) {
-			const next: SavedIdentity = {
+			const saved: SavedIdentity = {
 				revision: crypto.randomUUID(),
-				salt: saved.salt,
-				iterations: saved.iterations,
-				encrypted: saved.encrypted,
-				...(key ? { key } : {}),
+				salt,
+				iterations: PBKDF2_ITERATIONS,
+				encrypted,
+				...(remember ? { key } : {}),
 			};
-			await replace(saved, next, signal);
-			return next;
-		},
-		async lock(signal: AbortSignal) {
-			// Lock always clears the current remembered key, even for an older tab.
-			return (
-				(await database.update<SavedIdentity>(
-					SESSION,
-					(saved) =>
-						saved
-							? {
-									revision: crypto.randomUUID(),
-									salt: saved.salt,
-									iterations: saved.iterations,
-									encrypted: saved.encrypted,
-								}
-							: undefined,
-					signal,
-				)) ?? null
-			);
-		},
-		reset: (signal: AbortSignal) =>
-			database.update<SavedIdentity>(SESSION, () => undefined, signal),
-		dispose: database.dispose,
-	};
+			await this.replace(expected, saved, signal);
+			return saved;
+		} finally {
+			plaintext.fill(0);
+		}
+	}
+	private async protectIdentity(
+		expected: SavedIdentity | null,
+		password: string,
+		identity: unknown,
+		signal: AbortSignal,
+		remember = false,
+	) {
+		if (password.length < 8) {
+			throw new Error("Master password must be at least 8 characters.");
+		}
+		const salt = crypto.getRandomValues(new Uint8Array(16));
+		const key = await wrappingKey(password, salt, PBKDF2_ITERATIONS);
+		signal.throwIfAborted();
+		return {
+			saved: await this.write(expected, salt, key, identity, signal, remember),
+			key,
+		};
+	}
+	private saveIdentity(
+		saved: SavedIdentity,
+		key: CryptoKey,
+		identity: unknown,
+		signal: AbortSignal,
+	) {
+		return this.write(
+			saved,
+			saved.salt,
+			key,
+			identity,
+			signal,
+			identity !== null && Boolean(saved.key),
+		);
+	}
+	private async rememberKey(
+		saved: SavedIdentity,
+		key: CryptoKey | null,
+		signal: AbortSignal,
+	) {
+		const next: SavedIdentity = {
+			revision: crypto.randomUUID(),
+			salt: saved.salt,
+			iterations: saved.iterations,
+			encrypted: saved.encrypted,
+			...(key ? { key } : {}),
+		};
+		await this.replace(saved, next, signal);
+		return next;
+	}
+	private async lockIdentity(signal: AbortSignal) {
+		return (
+			(await this.database.update<SavedIdentity>(
+				SESSION,
+				(saved) =>
+					saved
+						? {
+								revision: crypto.randomUUID(),
+								salt: saved.salt,
+								iterations: saved.iterations,
+								encrypted: saved.encrypted,
+							}
+						: undefined,
+				signal,
+			)) ?? null
+		);
+	}
+	private resetIdentity(signal: AbortSignal) {
+		return this.database.update<SavedIdentity>(
+			SESSION,
+			() => undefined,
+			signal,
+		);
+	}
+	private disposePersistence() {
+		this.database.dispose();
+	}
 }
