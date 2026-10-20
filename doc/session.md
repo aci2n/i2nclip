@@ -39,8 +39,9 @@ a missing workspace; navigation never disposes an existing workspace.
 Session privately owns the wrapping key, decrypted identity and loaded keys.
 Persistence has no secret cache or cancellation generation: it reads, decrypts,
 encrypts and conditionally writes snapshots under the caller's signal. Commands
-reject overlap. Their own successful commit ends the old workspace without
-canceling their success result; local Lock and disposal cancel commands.
+reject overlap. Identity/password commits end the old workspace without canceling
+their success result. Remembering access during unlock preserves pending work for
+the same saved record; local Lock and disposal cancel commands.
 Async work still checks cancellation before publication or resource creation.
 
 One transactional IndexedDB session record holds the encrypted identity/server,

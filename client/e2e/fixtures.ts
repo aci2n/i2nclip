@@ -33,8 +33,11 @@ export const test = base.extend<{
 	},
 });
 export { expect };
-export async function master(page: Page) {
+export async function master(page: Page, remember = false) {
 	await page.getByLabel("Master password", { exact: true }).fill(PASSWORD);
+	if (remember) {
+		await page.getByRole("checkbox", { name: "Remember this device" }).check();
+	}
 	const confirmation = page.getByLabel("Confirm master password", {
 		exact: true,
 	});
@@ -50,9 +53,14 @@ export async function master(page: Page) {
 		page.getByRole("navigation", { name: "Main navigation" }),
 	).toBeVisible();
 }
-export async function createLibrary(page: Page, app: App, maxBytes?: number) {
+export async function createLibrary(
+	page: Page,
+	app: App,
+	maxBytes?: number,
+	remember = false,
+) {
 	await page.goto(`${app.origin}/#/settings`);
-	await master(page);
+	await master(page, remember);
 	await expect(page.getByLabel("Library name", { exact: true })).toHaveCount(0);
 	await page
 		.getByLabel("Invitation code", { exact: true })

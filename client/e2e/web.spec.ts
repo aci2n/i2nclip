@@ -144,8 +144,19 @@ test("encrypted singleton recovery, password change, reload, and forget", async 
 }) => {
 	await createLibrary(page, app);
 	const bytes = await recovery(page);
-	const saved = await page.evaluate(() =>
-		localStorage.getItem("i2nclip.identity"),
+	const saved = await page.evaluate(
+		() =>
+			new Promise<string>((resolve, reject) => {
+				const request = indexedDB.open("i2nclip", 1);
+				request.onerror = () => reject(request.error);
+				request.onsuccess = () => {
+					const db = request.result;
+					const tx = db.transaction("state", "readonly");
+					const read = tx.objectStore("state").get("session");
+					read.onsuccess = () => resolve(JSON.stringify(read.result));
+					tx.oncomplete = () => db.close();
+				};
+			}),
 	);
 	expect(saved).not.toContain("privateKey");
 	expect(saved).not.toContain(PASSWORD);
@@ -192,7 +203,7 @@ test("encrypted singleton recovery, password change, reload, and forget", async 
 		await context.close();
 	}
 });
-test("tabs inherit access, reconnect after password changes, and forget together", async ({
+test("tabs unlock independently and retain loaded access after another tab changes the password", async ({
 	page,
 	app,
 }) => {
@@ -200,12 +211,7 @@ test("tabs inherit access, reconnect after password changes, and forget together
 	const second = await page.context().newPage();
 	try {
 		await second.goto(`${app.origin}/#/settings`);
-		await expect(
-			second.getByRole("heading", { name: "Your library", exact: true }),
-		).toBeVisible();
-		await expect(
-			second.getByRole("button", { name: "Unlock", exact: true }),
-		).toHaveCount(0);
+		await master(second);
 		await page.getByText("Change master password", { exact: true }).click();
 		await page
 			.getByLabel("Current master password", { exact: true })
@@ -216,11 +222,6 @@ test("tabs inherit access, reconnect after password changes, and forget together
 		await page
 			.getByLabel("Confirm new master password", { exact: true })
 			.fill("changed-password");
-		const reconnected = second.waitForResponse(
-			(response) =>
-				response.url().endsWith("/api/quota") &&
-				response.request().method() === "GET",
-		);
 		await page
 			.getByRole("button", { name: "Change password", exact: true })
 			.click();
@@ -230,37 +231,30 @@ test("tabs inherit access, reconnect after password changes, and forget together
 		await expect(
 			second.getByRole("heading", { name: "Your library", exact: true }),
 		).toBeVisible();
-		await reconnected;
-		// The inherited wrapping key must support identity mutations after donor closure.
-		await page.goto("about:blank");
+		await second.getByRole("link", { name: "Library", exact: true }).click();
+		await expect(
+			second.getByRole("heading", {
+				name: "Your library is empty",
+				exact: true,
+			}),
+		).toBeVisible();
+		await second.getByRole("link", { name: "Settings", exact: true }).click();
 		await second.getByText("Forget this library", { exact: true }).click();
 		second.once("dialog", (dialog) => dialog.accept());
 		await second
 			.getByRole("button", { name: "Forget library", exact: true })
 			.click();
-		await expect(
-			second.getByRole("button", { name: "Create library", exact: true }),
-		).toBeVisible();
-		await page.goto(`${app.origin}/#/settings`);
-		await expect(
-			page.getByRole("button", { name: "Create library", exact: true }),
-		).toBeVisible();
-		await second.close();
-		await page.reload();
-		await expect(
-			page.getByRole("button", { name: "Unlock", exact: true }),
-		).toBeVisible();
-		await page
+		await expect(second.getByRole("alert")).toContainText("Refresh");
+		await second.reload();
+		await second
 			.getByLabel("Master password", { exact: true })
 			.fill("changed-password");
-		await page.getByRole("button", { name: "Unlock", exact: true }).click();
+		await second.getByRole("button", { name: "Unlock", exact: true }).click();
 		await expect(
-			page.getByRole("button", { name: "Create library", exact: true }),
+			second.getByRole("heading", { name: "Your library", exact: true }),
 		).toBeVisible();
 	} finally {
-		if (!second.isClosed()) {
-			await second.close();
-		}
+		await second.close();
 	}
 });
 test("upload failures survive navigation and files can be selected again", async ({

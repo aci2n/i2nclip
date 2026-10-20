@@ -46,14 +46,45 @@ function pasteFiles(event: ClipboardEvent) {
 
 <main class:media={$routing.page === "media" && Boolean($session.context)}>
 	{#if $session.unlocked}
-		<div class="session-controls">
-			<button type="button" class="secondary" onclick={() => session.lock()}>
-				Lock
-			</button>
-			{#if $session.notice}
-				<p class="error" role="alert">{$session.notice}</p>
+		<header class:media-header={$routing.page === "media"}>
+			{#if $routing.page !== "media"}
+				<nav aria-label="Main navigation">
+					<a
+						href={routeHref({ page: "library" })}
+						aria-current={$routing.page === "library" ? "page" : undefined}
+						>Library</a
+					>
+					<a
+						href={routeHref({ page: "settings" })}
+						aria-current={$routing.page === "settings" ? "page" : undefined}
+						>Settings</a
+					>
+				</nav>
 			{/if}
-		</div>
+			<button
+				type="button"
+				class="secondary lock-control"
+				aria-label="Lock"
+				title="Lock"
+				onclick={() => session.lock()}
+			>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
+					<rect x="5" y="10" width="14" height="11" rx="2" />
+					<path d="M8 10V7a4 4 0 0 1 8 0v3" />
+				</svg>
+			</button>
+		</header>
+		{#if $session.notice}
+			<p class="error session-notice" role="alert">{$session.notice}</p>
+		{/if}
 	{/if}
 	{#if $routing.page === "media" && !/^[0-9a-f]{64}$/.test($routing.id)}
 		<section class="panel stack">
@@ -76,20 +107,6 @@ function pasteFiles(event: ClipboardEvent) {
 			<Setup {session} {pairing} />
 		{/if}
 	{:else}
-		<header>
-			<nav aria-label="Main navigation">
-				<a
-					href={routeHref({ page: "library" })}
-					aria-current={$routing.page === "library" ? "page" : undefined}
-					>Library</a
-				>
-				<a
-					href={routeHref({ page: "settings" })}
-					aria-current={$routing.page === "settings" ? "page" : undefined}
-					>Settings</a
-				>
-			</nav>
-		</header>
 		{#if $routing.page === "settings"}
 			<Settings
 				{session}
@@ -121,12 +138,21 @@ function pasteFiles(event: ClipboardEvent) {
 	{/if}
 </main>
 <style>
-.session-controls {
-	display: flex;
-	justify-content: flex-end;
+.lock-control {
+	grid-column: 3;
+	justify-self: end;
+	display: inline-flex;
 	align-items: center;
-	flex-wrap: wrap;
-	gap: 0.5rem;
+	justify-content: center;
+	width: 3rem;
+	height: 3rem;
+	padding: 0.5rem;
+}
+.lock-control svg {
+	width: 1.25rem;
+	height: 1.25rem;
+}
+.session-notice {
 	margin-bottom: 1rem;
 }
 main {
@@ -139,11 +165,17 @@ main.media {
 	padding: 1rem;
 }
 header {
-	display: flex;
-	justify-content: center;
+	display: grid;
+	grid-template-columns: minmax(3rem, 1fr) auto minmax(3rem, 1fr);
+	align-items: center;
+	gap: 0.5rem;
 	margin-bottom: 2rem;
 }
+header.media-header {
+	margin-bottom: 1rem;
+}
 nav {
+	grid-column: 2;
 	display: flex;
 	align-items: center;
 	flex-wrap: wrap;
@@ -159,8 +191,6 @@ nav a[aria-current] {
 }
 @media (max-width: 32rem) {
 	header {
-		grid-template-columns: 1fr;
-		gap: 0.5rem;
 		margin-bottom: 1.5rem;
 	}
 	nav {

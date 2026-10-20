@@ -23,11 +23,11 @@ async function linkFor(page: Page, name: string) {
 	return { link, href };
 }
 
-test("private links inherit access and show native media, escaped text and explicit file downloads without browsing queries", async ({
+test("private links restore remembered access and show native media, escaped text and explicit file downloads without browsing queries", async ({
 	page,
 	app,
 }) => {
-	await createLibrary(page, app);
+	await createLibrary(page, app, undefined, true);
 	await openUploadPreferences(page);
 	await page
 		.getByRole("checkbox", { name: "Compress images to WebP" })
@@ -275,7 +275,7 @@ test("invalid, missing and failed file links offer local errors and retry", asyn
 	page,
 	app,
 }) => {
-	await createLibrary(page, app);
+	await createLibrary(page, app, undefined, true);
 	await openUploadPreferences(page);
 	await page
 		.getByRole("checkbox", { name: "Compress images to WebP" })
@@ -325,11 +325,11 @@ test("invalid, missing and failed file links offer local errors and retry", asyn
 	}
 });
 
-test("forgetting the identity cancels a loading viewer and ignores its late content", async ({
+test("Lock cancels a loading viewer locally and ignores its late content", async ({
 	page,
 	app,
 }) => {
-	await createLibrary(page, app);
+	await createLibrary(page, app, undefined, true);
 	await openUploadPreferences(page);
 	await page
 		.getByRole("checkbox", { name: "Compress images to WebP" })
@@ -365,15 +365,11 @@ test("forgetting the identity cancels a loading viewer and ignores its late cont
 			await viewer.setViewportSize({ width, height: 800 });
 			await shot(viewer, `viewer-loading-${width}`, { fullPage: false });
 		}
-		await page.getByRole("link", { name: "Settings", exact: true }).click();
-		await page.getByText("Forget this library", { exact: true }).click();
-		page.once("dialog", (dialog) => dialog.accept());
-		await page
-			.getByRole("button", { name: "Forget library", exact: true })
-			.click();
+		await viewer.getByRole("button", { name: "Lock", exact: true }).click();
 		await expect(
-			viewer.getByRole("heading", { name: "Your encrypted library" }),
+			viewer.getByRole("button", { name: "Unlock", exact: true }),
 		).toBeVisible();
+		await expect(page.getByRole("searchbox")).toBeVisible();
 		release.resolve();
 		await finished.promise;
 		await expect(

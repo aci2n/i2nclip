@@ -128,7 +128,7 @@ test("app receives captures through its public event interface and uploads after
 		page.getByRole("navigation", { name: "Main navigation" }),
 	).toHaveCount(0);
 	await expect(page.getByText(image.name, { exact: true })).toHaveCount(0);
-	await master(page);
+	await master(page, true);
 	const card = page.getByRole("article");
 	await expect(card).toHaveCount(1);
 	await expect(
@@ -154,6 +154,9 @@ test("app receives captures through its public event interface and uploads after
 	await expect(page.getByRole("searchbox")).toBeVisible();
 	await expect(page.getByRole("article")).toHaveCount(2);
 
+	// Clear remembered access before exercising memory-only reload behavior.
+	await page.getByRole("button", { name: "Lock", exact: true }).click();
+	await master(page);
 	await page.reload();
 	await expect(
 		page.getByRole("button", { name: "Unlock", exact: true }),
@@ -164,10 +167,11 @@ test("app receives captures through its public event interface and uploads after
 	await master(page);
 	await expect(page.getByRole("article")).toHaveCount(2);
 
-	// Each tab owns its receiver and inherits unlocked access.
+	// Each tab owns its receiver and unlocks independently.
 	const other = await context.newPage();
 	try {
 		await other.goto(app.origin);
+		await master(other);
 		await expect(
 			other.getByRole("navigation", { name: "Main navigation" }),
 		).toBeVisible();

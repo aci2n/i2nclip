@@ -509,3 +509,14 @@ test("simultaneous setup commits one identity and rejects the competing write", 
 	await third.loaded;
 	assert.equal(get(third).unlocked, true);
 });
+
+test("remembering during unlock preserves pending work for the same saved record", async (t) => {
+	const f = await fixture(t);
+	await f.session.create({ serverUrl, otc: "invite" });
+	const second = await f.reopen();
+	const pendingLifetime = get(second).signal;
+	assert.equal(await second.unlock(password, true), true);
+	assert.equal(get(second).signal, pendingLifetime);
+	assert.equal(pendingLifetime.aborted, false);
+	assert.equal(get(await f.reopen()).unlocked, true);
+});

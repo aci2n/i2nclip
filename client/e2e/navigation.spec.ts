@@ -1,5 +1,6 @@
+import { assertPresent } from "../tests/assert.ts";
 import { deferred } from "../tests/helpers.ts";
-import { createLibrary, expect, shot, test } from "./fixtures.ts";
+import { createLibrary, expect, master, shot, test } from "./fixtures.ts";
 
 test("navigation contains views and About remains in Settings", async ({
 	page,
@@ -11,7 +12,10 @@ test("navigation contains views and About remains in Settings", async ({
 	await expect(nav.getByRole("button")).toHaveCount(0);
 	await expect(
 		page.getByRole("button", { name: "Lock", exact: true }),
-	).toHaveCount(0);
+	).toBeVisible();
+	const lock = page.getByRole("button", { name: "Lock", exact: true });
+	await expect(lock).toHaveText("");
+	await expect(lock.locator("svg")).toHaveCount(1);
 	const about = page.getByRole("button", { name: "About", exact: true });
 	await expect(about).toBeVisible();
 	await about.click();
@@ -23,6 +27,14 @@ test("navigation contains views and About remains in Settings", async ({
 	for (const width of [1100, 360, 320]) {
 		await page.setViewportSize({ width, height: 800 });
 		await nav.scrollIntoViewIfNeeded();
+		const tabs = assertPresent(await nav.boundingBox());
+		const icon = assertPresent(await lock.boundingBox());
+		expect(Math.abs(tabs.x + tabs.width / 2 - width / 2)).toBeLessThanOrEqual(
+			1,
+		);
+		expect(
+			Math.abs(tabs.y + tabs.height / 2 - icon.y - icon.height / 2),
+		).toBeLessThanOrEqual(1);
 		expect(
 			await page.evaluate(
 				() => document.documentElement.scrollWidth <= innerWidth,
@@ -126,6 +138,7 @@ test("modified hash-link clicks open an independent tab and preserve the current
 	const other = await opened;
 	try {
 		await expect(other).toHaveURL(`${app.origin}/#/settings`);
+		await master(other);
 		await expect(
 			other.getByRole("heading", { name: "Your library", exact: true }),
 		).toBeVisible();

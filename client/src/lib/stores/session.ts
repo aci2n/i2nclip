@@ -158,8 +158,10 @@ function installSession(
 	next: SavedIdentity,
 	wrapping: CryptoKey,
 	identity: LoadedIdentity | null,
+	openedRevision = next.revision,
 ) {
-	if (runtime.saved?.revision !== next.revision) {
+	// Remembering changes the transaction revision, not the unlocked record lifetime.
+	if (runtime.saved?.revision !== openedRevision) {
 		endSessionLifetime(deps, runtime);
 	}
 	deps.log.info("installed", { configured: Boolean(identity) });
@@ -599,7 +601,7 @@ async function rememberSession(
 		notice = `Unlocked only in this tab: access could not be remembered. ${errorMessage(error)}`;
 	}
 	signal.throwIfAborted();
-	installSession(deps, runtime, next, key, identity);
+	installSession(deps, runtime, next, key, identity, saved.revision);
 	publishSession(runtime, { notice });
 }
 

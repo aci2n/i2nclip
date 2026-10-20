@@ -40,8 +40,10 @@ own session changes, refresh, or closure. Navigation preserves root-owned work.
 
 Lock removes remembered access transactionally and ends only the invoking tab's
 session, aborting owned work. Other open tabs retain loaded access. A fresh tab or
-refresh needs the password after Lock. Lock is available on all unlocked routes,
-including media/setup; unlocking preserves the route. Disposal releases resources
+refresh needs the password after Lock. Lock is an accessible icon button on all
+unlocked routes, including media/setup. On Library and Settings it shares the
+navigation row at the right edge; equal-width side columns keep the tabs centered
+independently of the icon. Unlocking preserves the route. Disposal releases resources
 without deleting remembered access. Close owned connections and abort transactions.
 
 ## Failures and cancellation

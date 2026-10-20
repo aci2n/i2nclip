@@ -1,6 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { setKeyLimits } from "../tests/process.ts";
-import { createLibrary, expect, master, shot, test } from "./fixtures.ts";
+import {
+	createLibrary,
+	expect,
+	master,
+	PASSWORD,
+	shot,
+	test,
+} from "./fixtures.ts";
 
 test("Your library shows usage, refreshes after media changes, and retries offline errors", async ({
 	page,
@@ -102,6 +109,8 @@ test("files above 32 MiB stream through library and deeplink downloads after quo
 		.click();
 	const linked = await opened;
 	try {
+		await linked.getByLabel("Master password", { exact: true }).fill(PASSWORD);
+		await linked.getByRole("button", { name: "Unlock", exact: true }).click();
 		await expect(
 			linked.getByRole("heading", {
 				name: "Above the former fixed limit.bin",

@@ -46,6 +46,7 @@ test("default compression updates saved format and device preference preserves o
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await openUploadPreferences(page);
 	await setting.uncheck();
+	await expect(setting).toBeEnabled();
 	await page.reload();
 	await master(page);
 	await openUploadPreferences(page);
