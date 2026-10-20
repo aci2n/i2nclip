@@ -59,6 +59,7 @@ export interface ChainMutation {
 	readonly kind: BlockKind;
 	readonly effects: Effects;
 	readonly plaintext?: Bytes;
+	readonly signal?: AbortSignal;
 }
 export function stateCheckpoint(state: ChainState): Checkpoint {
 	return { sequence: state.sequence, hash: bytesToHex(state.head) };
@@ -323,6 +324,10 @@ class ChainStoreImpl {
 	}
 	private async appendMutation(mutation: ChainMutation): Promise<ChainState> {
 		this.check();
+		const signal = mutation.signal
+			? AbortSignal.any([this.signal, mutation.signal])
+			: this.signal;
+		signal.throwIfAborted();
 		if (this.mutating) {
 			throw new Error("A chain mutation is already in progress.");
 		}
@@ -330,6 +335,7 @@ class ChainStoreImpl {
 		this.update({ mutating: true, error: "" });
 		try {
 			const state = await this.runSync();
+			signal.throwIfAborted();
 			const parent = stateCheckpoint(state);
 			if (!equalCheckpoint(parent, mutation.expected)) {
 				throw new Error("The library changed. Review your draft and retry.");
@@ -353,13 +359,16 @@ class ChainStoreImpl {
 					: undefined,
 			);
 			const candidate = (await this.apply(state, record.bytes)).next;
+			signal.throwIfAborted();
 			try {
-				const receipt = await this.transport.append(record.bytes, this.signal);
+				const receipt = await this.transport.append(record.bytes, signal);
+				signal.throwIfAborted();
 				this.check();
 				if (!equalCheckpoint(receipt.accepted, stateCheckpoint(candidate))) {
 					throw new Error("Server acknowledged a different chain record.");
 				}
 			} catch (error) {
+				signal.throwIfAborted();
 				this.check();
 				// Reconcile an uncertain outcome by locating this exact signed record.
 				try {
@@ -374,7 +383,7 @@ class ChainStoreImpl {
 				throw error;
 			}
 			await this.durable(() =>
-				this.storage.append(parent, parent, [cached(record)], this.signal),
+				this.storage.append(parent, parent, [cached(record)], signal),
 			);
 			this.update({ live: candidate, storageError: "" });
 			return candidate;
