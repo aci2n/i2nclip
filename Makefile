@@ -30,6 +30,7 @@ endif
 .PHONY: dev dev-db dev-down dev-otc test test-client test-build
 .PHONY: test-db test-profile test-e2e test-all
 .PHONY: lint format-check format-write pre-commit audit
+.PHONY: lint-rust lint-client format-write-rust format-write-client test-hooks
 .PHONY: container push
 
 build: client
@@ -107,23 +108,33 @@ test-all:
 	$(MAKE) test-e2e
 
 # Rust/TypeScript static analysis and all formatting checks.
-lint:
+lint: lint-rust lint-client
+
+lint-rust:
 	cargo clippy --all-targets --all-features -- -D warnings
+
+lint-client:
 	$(MAKE) -C client check
 
 # Check Rust formatting; Biome formatting and imports are covered by lint.
 format-check:
 	cargo fmt --all -- --check --config $(RUSTFMT_CONFIG)
 
-# Apply Rust and client formatting, then run the repository lint checks.
-format-write:
+# Apply formatting explicitly; hooks check staged subsystems without rewriting.
+format-write: format-write-rust format-write-client
+
+format-write-rust:
 	cargo fmt --all -- --config $(RUSTFMT_CONFIG)
+
+format-write-client:
 	$(MAKE) -C client fix
 
-# Run before committing: format files, apply Biome fixes, then check lint and formatting.
+# Check only staged subsystems. Hooks never rewrite the working tree.
 pre-commit:
-	$(MAKE) format-write
-	$(MAKE) lint
+	sh .githooks/check-staged.sh
+
+test-hooks:
+	sh .githooks/tests/check-staged.sh
 
 # Fetch Cargo vulnerability advisories; optional security check, outside test-all.
 # Requires cargo-audit and external network access.

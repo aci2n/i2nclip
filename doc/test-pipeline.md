@@ -4,6 +4,21 @@ Tests run from a fresh clone with the documented toolchains and system prerequis
 
 ## Preparation and commands
 
+After each change, run only the affected tests and subsystem checks. Backend-only
+work uses filtered Rust/database tests; frontend-only work uses selected client
+tests. Shared protocol changes check both implementations. Documentation-only
+changes need no application tests. Run browser suites and required screenshot
+review at final integration, and run `make test-all` once rather than after each
+commit, unless a particular failure requires a focused rerun.
+
+`make pre-commit` checks staged paths without rewriting the working tree. Rust,
+SQL, and Cargo changes select `make format-check lint-rust`; client changes
+select `make lint-client`; shared vectors and root build configuration select
+both. Markdown changes select neither. `make test-hooks` verifies this dispatch
+in an isolated Git repository with a fake checker, without compiling applications.
+Explicit formatting targets are `make format-write-rust` and
+`make format-write-client`; `make format-write` still runs both.
+
 The client Makefile installs locked npm dependencies when `node_modules/.package-lock.json` is absent or older than the package files. Node is resolved from PATH; Makefile targets check the exact version pinned in `.nvmrc` before installing dependencies or running client commands. Builds, static checks and unit tests depend on this preparation.
 
 `make test` runs client unit tests, Biome/TypeScript/Svelte checks, and Rust unit/configuration tests. `make test-db` provisions PostgreSQL or uses an explicitly supplied disposable administrator connection. `make test-e2e` prepares dependencies, installs Firefox/Chromium, builds the web client and all helper executables, and runs browser tests. `make test-all` runs portable checks, build-output checks, database tests, and browser tests sequentially. The Linux/Podman process profile is separately requested with `make test-profile`.
