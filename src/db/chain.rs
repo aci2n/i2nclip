@@ -224,9 +224,10 @@ async fn storage_effect(
     match effect {
         StorageEffect::Publish { file, inventory } => {
             let status: Option<String> =
-                sqlx::query_scalar("SELECT status FROM files WHERE library_id=$1 AND file_id=$2")
+                sqlx::query_scalar("SELECT status FROM files WHERE library_id=$1 AND file_id=$2 AND staging_expires_at>$3")
                     .bind(library.as_slice())
                     .bind(file.as_slice())
+                    .bind(crate::crypto::now_secs() as i64)
                     .fetch_optional(&mut **tx)
                     .await?;
             if status.as_deref() != Some("staging") {
@@ -262,8 +263,8 @@ async fn storage_effect(
                 return Err(Error::Conflict);
             }
             for hash in hashes {
-                let updated=sqlx::query("UPDATE blobs SET committed_at_sequence=$4,staging_expires_at=NULL WHERE library_id=$1 AND file_id=$2 AND hash=$3 AND committed_at_sequence IS NULL")
-                    .bind(library.as_slice()).bind(file.as_slice()).bind(hash.as_slice()).bind(sequence).execute(&mut **tx).await?;
+                let updated=sqlx::query("UPDATE blobs SET committed_at_sequence=$4,staging_expires_at=NULL WHERE library_id=$1 AND file_id=$2 AND hash=$3 AND committed_at_sequence IS NULL AND staging_expires_at>$5")
+                    .bind(library.as_slice()).bind(file.as_slice()).bind(hash.as_slice()).bind(sequence).bind(crate::crypto::now_secs() as i64).execute(&mut **tx).await?;
                 if updated.rows_affected() != 1 {
                     return Err(Error::Conflict);
                 }

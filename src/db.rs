@@ -13,6 +13,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::Serialize;
 use sqlx::{postgres::PgPoolOptions, PgPool, Postgres, Row, Transaction};
 
+mod blobs;
 mod chain;
 
 use crate::{
@@ -379,7 +380,6 @@ impl Database {
         sqlx::query_as("SELECT id, meta, descriptor, expected_chunk_count, content_bytes AS bytes, created_at FROM files WHERE owner = $1 AND id = $2 AND current_chunk_count = expected_chunk_count")
             .bind(owner.as_slice()).bind(id).fetch_optional(&self.pool).await?.ok_or(Error::NotFound)
     }
-
     /// Sending a response never retains a database connection or transaction.
     pub(crate) async fn content_chunk(
         &self,
@@ -452,47 +452,6 @@ impl Database {
             .bind(owner.as_slice()).bind(bytes).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(Some(bytes))
-    }
-
-    pub(crate) async fn maintain(&self, now: i64) -> Result<(u64, u64, u64, i64), Error> {
-        let mut tx = self.pool.begin().await?;
-        let nonces = sqlx::query("DELETE FROM nonces WHERE expires < $1")
-            .bind(now)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        let codes = sqlx::query("DELETE FROM registration_codes WHERE expires_at <= $1")
-            .bind(now)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        tx.commit().await?;
-        let mut partials = 0;
-        let mut reclaimed_bytes: i64 = 0;
-        let cutoff = now.saturating_sub(86400);
-        loop {
-            let candidates = sqlx::query("SELECT id, owner FROM files WHERE current_chunk_count < expected_chunk_count AND last_progress_at <= $1 ORDER BY last_progress_at, id LIMIT 100")
-                .bind(cutoff).fetch_all(&self.pool).await?;
-            if candidates.is_empty() {
-                break;
-            }
-            for candidate in candidates {
-                let id: String = candidate.try_get("id")?;
-                let owner: Vec<u8> = candidate.try_get("owner")?;
-                if let Some(bytes) = self
-                    .remove_file(
-                        owner.try_into().expect("owner length constrained"),
-                        &id,
-                        Some(cutoff),
-                    )
-                    .await?
-                {
-                    partials += 1;
-                    reclaimed_bytes = reclaimed_bytes.saturating_add(bytes);
-                }
-            }
-        }
-        Ok((nonces, codes, partials, reclaimed_bytes))
     }
 }
 
@@ -1024,6 +983,263 @@ mod tests {
             db.consume_code("unused", &first.public).await,
             Err(Error::RegistrationFailed)
         ));
+        dispose(db, admin, guard).await;
+    }
+
+    fn storage_record(
+        identity: &crate::reference_crypto::Identity,
+        library: crate::chain::Hash,
+        sequence: u64,
+        previous: crate::chain::Hash,
+        effect: crate::chain::StorageEffect,
+    ) -> Vec<u8> {
+        use serde_bytes::ByteBuf;
+
+        use crate::chain::{Effects, Kind};
+        // The server validates public effects; private AEAD validity is client-owned.
+        let mut body = membership_body(
+            library,
+            identity,
+            sequence,
+            previous,
+            Kind::Data,
+            Effects::Storage(vec![effect]),
+        );
+        body.salt = Some(ByteBuf::from(vec![1; 32]));
+        body.nonce = Some(ByteBuf::from(vec![2; 12]));
+        body.encrypted = Some(ByteBuf::from(vec![3; 16]));
+        signed_chain(&body, identity)
+    }
+
+    #[tokio::test]
+    async fn chain_blobs_publish_versions_and_purge_all_bytes_atomically() {
+        use crate::chain::{inventory_digest, verify_record, StorageEffect};
+        let (db, admin, guard, identity, library) = chain_fixture().await;
+        let file = [5; 32];
+        let first = db
+            .stage_blob(identity.public, file, &[1; 16])
+            .await
+            .unwrap();
+        let second = db
+            .stage_blob(identity.public, file, &[2; 17])
+            .await
+            .unwrap();
+        db.stage_blob(identity.public, file, &[1; 16])
+            .await
+            .unwrap();
+        let quota = db.quota(identity.public).await.unwrap();
+        assert_eq!((quota.used_content_bytes, quota.file_count), (33, 1));
+        assert!(matches!(
+            db.read_blob(identity.public, file, first).await,
+            Err(Error::NotFound)
+        ));
+        let wrong = storage_record(
+            &identity,
+            library,
+            1,
+            library,
+            StorageEffect::Publish {
+                file,
+                inventory: [0; 32],
+            },
+        );
+        assert!(matches!(
+            db.append_record(identity.public, &wrong).await,
+            Err(Error::Conflict)
+        ));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM blocks")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap(),
+            0
+        );
+        let inventory = inventory_digest(&library, &file, &[(first, 16), (second, 17)]).unwrap();
+        let publish = storage_record(
+            &identity,
+            library,
+            1,
+            library,
+            StorageEffect::Publish { file, inventory },
+        );
+        db.append_record(identity.public, &publish).await.unwrap();
+        assert_eq!(
+            db.read_blob(identity.public, file, first).await.unwrap(),
+            [1; 16]
+        );
+        let third = db
+            .stage_blob(identity.public, file, &[3; 18])
+            .await
+            .unwrap();
+        let commit = storage_record(
+            &identity,
+            library,
+            2,
+            verify_record(&publish).unwrap().hash,
+            StorageEffect::Commit {
+                file,
+                hashes: vec![third],
+            },
+        );
+        db.append_record(identity.public, &commit).await.unwrap();
+        db.stage_blob(identity.public, file, &[4; 19])
+            .await
+            .unwrap();
+        let purge = storage_record(
+            &identity,
+            library,
+            3,
+            verify_record(&commit).unwrap().hash,
+            StorageEffect::Purge { files: vec![file] },
+        );
+        db.append_record(identity.public, &purge).await.unwrap();
+        db.append_record(identity.public, &purge).await.unwrap();
+        let quota = db.quota(identity.public).await.unwrap();
+        assert_eq!((quota.used_content_bytes, quota.file_count), (0, 0));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM blobs")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT status FROM files")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap(),
+            "purged"
+        );
+        assert!(matches!(
+            db.stage_blob(identity.public, file, &[1; 16]).await,
+            Err(Error::Conflict)
+        ));
+        assert!(db.log_bytes(identity.public).await.unwrap() > 0);
+        dispose(db, admin, guard).await;
+    }
+
+    #[tokio::test]
+    async fn chain_blobs_expiry_preserves_active_uploads_and_committed_history() {
+        use crate::chain::{inventory_digest, StorageEffect};
+        let (db, admin, guard, identity, library) = chain_fixture().await;
+        let now = crypto::now_secs() as i64;
+        let file = [5; 32];
+        let hash = db
+            .stage_blob(identity.public, file, &[1; 16])
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blobs SET staging_expires_at=0")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(db.maintain(now).await.unwrap().3, 0);
+        assert!(db.stage_blob(identity.public, file, &[1; 16]).await.is_ok());
+        let before: i64 = sqlx::query_scalar("SELECT staging_expires_at FROM files")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        db.stage_blob(identity.public, file, &[1; 16])
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT staging_expires_at FROM files")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap(),
+            before
+        );
+        let publish = storage_record(
+            &identity,
+            library,
+            1,
+            library,
+            StorageEffect::Publish {
+                file,
+                inventory: inventory_digest(&library, &file, &[(hash, 16)]).unwrap(),
+            },
+        );
+        db.append_record(identity.public, &publish).await.unwrap();
+        db.stage_blob(identity.public, file, &[2; 17])
+            .await
+            .unwrap();
+        db.stage_blob(identity.public, [6; 32], &[3; 18])
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blobs SET staging_expires_at=0 WHERE committed_at_sequence IS NULL")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE files SET staging_expires_at=0 WHERE status='staging'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            db.stage_blob(identity.public, [6; 32], &[3; 18]).await,
+            Err(Error::Conflict)
+        ));
+        assert_eq!(db.maintain(now).await.unwrap(), (0, 0, 1, 35));
+        assert_eq!(
+            db.read_blob(identity.public, file, hash).await.unwrap(),
+            [1; 16]
+        );
+        let quota = db.quota(identity.public).await.unwrap();
+        assert_eq!((quota.used_content_bytes, quota.file_count), (16, 1));
+        assert_eq!(db.maintain(now).await.unwrap(), (0, 0, 0, 0));
+        dispose(db, admin, guard).await;
+    }
+
+    #[tokio::test]
+    async fn chain_blobs_quota_races_and_busy_cleanup_are_bounded() {
+        let (db, admin, guard, identity, library) = chain_fixture().await;
+        db.set_limits(
+            &identity.public,
+            StorageLimits {
+                max_content_bytes: 16,
+                max_files: 1,
+            },
+        )
+        .await
+        .unwrap();
+        let (left, right) = tokio::join!(
+            db.stage_blob(identity.public, [5; 32], &[1; 16]),
+            db.stage_blob(identity.public, [6; 32], &[2; 16])
+        );
+        assert!(matches!(
+            (&left, &right),
+            (Ok(_), Err(Error::StorageLimit)) | (Err(Error::StorageLimit), Ok(_))
+        ));
+        let quota = db.quota(identity.public).await.unwrap();
+        assert_eq!((quota.used_content_bytes, quota.file_count), (16, 1));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM files")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap(),
+            1
+        );
+        sqlx::query("UPDATE files SET staging_expires_at=0")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let mut lock = db.pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM libraries WHERE id=$1 FOR UPDATE")
+            .bind(library.as_slice())
+            .fetch_one(&mut *lock)
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                db.maintain(crypto::now_secs() as i64)
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .3,
+            0
+        );
+        lock.rollback().await.unwrap();
+        assert_eq!(db.maintain(crypto::now_secs() as i64).await.unwrap().3, 16);
         dispose(db, admin, guard).await;
     }
 

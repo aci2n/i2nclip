@@ -21,7 +21,7 @@ use tower_http::{
 
 use crate::{
     auth::{RegistrationRequest, SignedRequest},
-    chain_routes, codec, media, pairing, AppState, Error, MAX_REGISTER_BODY,
+    blob_routes, chain_routes, codec, media, pairing, AppState, Error, MAX_REGISTER_BODY,
 };
 
 pub(crate) const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
@@ -32,6 +32,7 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/api/ping", get(ping))
         .route("/api/register-key", post(register_key))
         .merge(chain_routes::router())
+        .merge(blob_routes::router())
         .merge(media::router())
         .merge(pairing::router())
         .layer(

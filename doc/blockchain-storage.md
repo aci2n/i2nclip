@@ -369,6 +369,7 @@ outside an existing library. Normal device enrollment occurs in the chain.
 | `GET /api/blocks?after=HASH&until=HASH` | Bounded contiguous page `[target_head, target_sequence, blocks, next_after]` |
 | `POST /api/blobs` | MessagePack `[file_id, ciphertext]`; returns independently checked `[hash]` |
 | `GET /api/blobs/{file_id}/{hash}` | Raw committed ciphertext, bounded while streaming |
+| `GET /api/quota` | Live `[max_blob_bytes, max_files, used_blob_bytes, retained_files, log_bytes]`; log bytes count stored signed bodies and signatures |
 
 `after` is required and may be genesis. The first request omits `until` and pins
 the server's selected current head; subsequent pages use that same target. Reject

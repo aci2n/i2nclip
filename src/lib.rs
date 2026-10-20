@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+mod blob_routes;
 pub mod chain;
 mod chain_routes;
 pub mod codec;

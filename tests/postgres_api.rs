@@ -24,8 +24,7 @@ fn signed_membership_record(
     sequence: u64,
     target: &Identity,
 ) -> Vec<u8> {
-    use ed25519_dalek::{Signer, SigningKey};
-    use i2nclip::chain::{Body as BlockBody, Effects, Kind, SIGN_DOMAIN};
+    use i2nclip::chain::{Body as BlockBody, Effects, Kind};
     use serde_bytes::ByteBuf;
     let body = BlockBody {
         version: 1,
@@ -40,6 +39,13 @@ fn signed_membership_record(
         nonce: None,
         encrypted: None,
     };
+    sign_public_record(identity, &body)
+}
+
+fn sign_public_record(identity: &Identity, body: &i2nclip::chain::Body) -> Vec<u8> {
+    use ed25519_dalek::{Signer, SigningKey};
+    use i2nclip::chain::SIGN_DOMAIN;
+    use serde_bytes::ByteBuf;
     let signed = body.encode().unwrap();
     let signature =
         SigningKey::from_bytes(&identity.seed).sign(&[SIGN_DOMAIN, signed.as_slice()].concat());
@@ -144,6 +150,94 @@ async fn chain_http_registration_paging_append_and_membership_admission() {
         .0,
         StatusCode::PAYLOAD_TOO_LARGE
     );
+}
+
+#[tokio::test]
+async fn chain_http_blob_staging_publication_and_live_quota_frames() {
+    use i2nclip::chain::{Body as BlockBody, Effects, Kind, StorageEffect};
+    use serde_bytes::ByteBuf;
+    let initial = new_identity();
+    let (db, app) = app(&[]).await;
+    let code = i2nclip::issue_registration_otc(&db.0, 3600, i2nclip::StorageLimits::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            &initial,
+            "POST",
+            "/api/register-key",
+            codec::encode(&(code,)).unwrap()
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let library = i2nclip::chain::genesis(&initial.public).unwrap();
+    let file = [7u8; 32];
+    let ciphertext = vec![9u8; 16];
+    let request = codec::encode(&(
+        ByteBuf::from(file.to_vec()),
+        ByteBuf::from(ciphertext.clone()),
+    ))
+    .unwrap();
+    let (status, bytes) = call(&app, &initial, "POST", "/api/blobs", request.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    let (hash,): (ByteBuf,) = codec::decode(&bytes).unwrap();
+    assert_eq!(hash.as_ref(), i2nclip::chain::digest(&ciphertext));
+    assert_eq!(
+        call(&app, &initial, "POST", "/api/blobs", request).await.0,
+        StatusCode::OK
+    );
+    let hex = |value: &[u8]| value.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let path = format!("/api/blobs/{}/{}", hex(&file), hex(&hash));
+    assert_eq!(
+        call(&app, &initial, "GET", &path, vec![]).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let body = BlockBody {
+        version: 1,
+        library,
+        sequence: 1,
+        previous: library,
+        epoch: 1,
+        signer: initial.public,
+        kind: Kind::Data,
+        effects: Effects::Storage(vec![StorageEffect::Publish {
+            file,
+            inventory: i2nclip::chain::inventory_digest(
+                &library,
+                &file,
+                &[(i2nclip::chain::digest(&ciphertext), 16)],
+            )
+            .unwrap(),
+        }]),
+        salt: Some(ByteBuf::from(vec![1; 32])),
+        nonce: Some(ByteBuf::from(vec![2; 12])),
+        encrypted: Some(ByteBuf::from(vec![3; 16])),
+    };
+    assert_eq!(
+        call(
+            &app,
+            &initial,
+            "POST",
+            "/api/blocks",
+            sign_public_record(&initial, &body)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&app, &initial, "GET", &path, vec![]).await,
+        (StatusCode::OK, ciphertext)
+    );
+    let (status, bytes) = call(&app, &initial, "GET", "/api/quota", vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let (limit, files, used, count, log): (i64, i64, i64, i64, i64) =
+        codec::decode(&bytes).unwrap();
+    assert_eq!((limit, files, used, count), (536870912, 10000, 16, 1));
+    assert!(log > 0);
 }
 
 #[tokio::test]
