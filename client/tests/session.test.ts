@@ -28,14 +28,14 @@ async function fixture(
 		http: { ...api, registerKey: async () => {}, ...http },
 	});
 	t.after(session.dispose);
-	await session.loaded;
+	await session.load();
 	assert.equal(await session.initialize(password, remember), true);
 	async function reopen() {
 		const next = createSession({
 			persistence: createPersistence(storage.connect()),
 		});
 		t.after(next.dispose);
-		await next.loaded;
+		await next.load();
 		return next;
 	}
 	return { storage, database, persistence, session, reopen };
@@ -162,7 +162,7 @@ test("remember failure still unlocks locally and reports that access was not rem
 	const persistence = createPersistence(f.storage.connect());
 	const failing = createSession({ persistence });
 	t.after(failing.dispose);
-	await failing.loaded;
+	await failing.load();
 	t.mock.method(persistence, "remember", async () => {
 		throw new Error("Storage unavailable.");
 	});
@@ -205,7 +205,7 @@ test("startup storage failure offers retry and cannot be mistaken for empty setu
 	});
 	const session = createSession({ persistence: createPersistence(db) });
 	t.after(session.dispose);
-	await session.loaded;
+	await session.load();
 	assert.equal(get(session).storageError, true);
 	assert.match(get(session).error, /access denied/);
 	assert.equal(await session.initialize(password), false);
@@ -222,7 +222,7 @@ test("damaged session reports an error and explicit Reset permits new setup", as
 		persistence: createPersistence(storage.connect()),
 	});
 	t.after(session.dispose);
-	await session.loaded;
+	await session.load();
 	assert.equal(get(session).storageError, true);
 	assert.equal(await session.reset(), true);
 	assert.equal(await session.initialize(password), true);
@@ -234,7 +234,7 @@ for (const action of ["lock", "dispose"] as const) {
 		const persistence = createPersistence(f.storage.connect());
 		const second = createSession({ persistence });
 		t.after(second.dispose);
-		await second.loaded;
+		await second.load();
 		const entered = deferred();
 		const release = deferred();
 		t.after(() => release.resolve());
@@ -295,10 +295,11 @@ test("late startup read cannot restore remembered access after Lock", async (t) 
 	});
 	const second = createSession({ persistence: createPersistence(db) });
 	t.after(second.dispose);
+	void second.load();
 	await entered.promise;
 	await second.lock();
 	release.resolve();
-	await second.loaded;
+	await second.load();
 	assert.equal(get(second).status, "locked");
 	assert.equal(get(await f.reopen()).status, "locked");
 });
@@ -438,7 +439,7 @@ for (const action of ["lock", "dispose"] as const) {
 		const persistence = createPersistence(f.storage.connect());
 		const second = createSession({ persistence });
 		t.after(second.dispose);
-		await second.loaded;
+		await second.load();
 		const entered = deferred();
 		const release = deferred();
 		t.after(() => release.resolve());
@@ -470,7 +471,7 @@ test("setup remembers only when persistence succeeds and otherwise remains local
 	});
 	const session = createSession({ persistence });
 	t.after(session.dispose);
-	await session.loaded;
+	await session.load();
 	assert.equal(await session.initialize(password, true), true);
 	assert.equal(get(session).unlocked, true);
 	assert.match(get(session).notice, /could not be remembered/);
@@ -478,7 +479,7 @@ test("setup remembers only when persistence succeeds and otherwise remains local
 		persistence: createPersistence(storage.connect()),
 	});
 	t.after(second.dispose);
-	await second.loaded;
+	await second.load();
 	assert.equal(get(second).status, "locked");
 	assert.equal(await second.unlock(password), true);
 });
@@ -493,7 +494,7 @@ test("simultaneous setup commits one identity and rejects the competing write", 
 	});
 	t.after(first.dispose);
 	t.after(second.dispose);
-	await Promise.all([first.loaded, second.loaded]);
+	await Promise.all([first.load(), second.load()]);
 	const results = await Promise.all([
 		first.initialize(password, true),
 		second.initialize("other-password", true),
@@ -506,7 +507,7 @@ test("simultaneous setup commits one identity and rejects the competing write", 
 		persistence: createPersistence(storage.connect()),
 	});
 	t.after(third.dispose);
-	await third.loaded;
+	await third.load();
 	assert.equal(get(third).unlocked, true);
 });
 

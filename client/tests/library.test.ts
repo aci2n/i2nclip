@@ -43,6 +43,7 @@ function fixture(
 		http: { ...api, ...options.http },
 	});
 	t.after(library.dispose);
+	void library.search();
 	owner.signal.addEventListener("abort", library.dispose, { once: true });
 	return { owner, library };
 }

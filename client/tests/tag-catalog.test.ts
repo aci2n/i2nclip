@@ -34,6 +34,7 @@ function fixture(t: test.TestContext) {
 		},
 	});
 	t.after(catalog.dispose);
+	void catalog.refresh();
 	controller.signal.addEventListener("abort", catalog.dispose, { once: true });
 	return { end: () => controller.abort(), catalog, calls };
 }

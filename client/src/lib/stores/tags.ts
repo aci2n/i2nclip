@@ -14,83 +14,88 @@ const empty = (): {
 
 // Application owns the catalog for the unlocked identity, independently of pages.
 export type Tags = ReturnType<typeof createTags>;
-
-interface TagsDependencies {
-	context: LibraryContext;
-	http: TagApi;
-	log: ReturnType<typeof createLog>;
-}
-interface TagsRuntime {
-	state: Writable<ReturnType<typeof empty>>;
-	controller?: AbortController;
-	disposed: boolean;
-}
-
 export function createTags(
 	context: LibraryContext,
-	{ http = api }: { http?: TagApi } = {},
-) {
-	const deps: TagsDependencies = { context, http, log: createLog("tags") };
-	const runtime: TagsRuntime = { state: writable(empty()), disposed: false };
-	void refreshTags(deps, runtime);
-
-	return {
-		subscribe: runtime.state.subscribe,
-		refresh: refreshTags.bind(null, deps, runtime),
-		dispose: disposeTags.bind(null, deps, runtime),
-	};
+	options: { http?: TagApi } = {},
+): Pick<TagsStoreImpl, keyof TagsStoreImpl> {
+	return new TagsStoreImpl(context, options);
 }
 
-async function refreshTags(deps: TagsDependencies, runtime: TagsRuntime) {
-	if (runtime.disposed || deps.context.signal.aborted) {
-		return false;
+class TagsStoreImpl {
+	private readonly context: LibraryContext;
+	private readonly http: TagApi;
+	private readonly log: ReturnType<typeof createLog>;
+	private readonly state: Writable<ReturnType<typeof empty>>;
+	private controller?: AbortController;
+	private disposed: boolean;
+
+	readonly subscribe: Writable<ReturnType<typeof empty>>["subscribe"];
+	readonly refresh = this.refreshTags.bind(this);
+	readonly dispose = this.disposeTags.bind(this);
+
+	constructor(context: LibraryContext, { http = api }: { http?: TagApi } = {}) {
+		this.context = context;
+		this.http = http;
+		this.log = createLog("tags");
+		this.state = writable(empty());
+		this.subscribe = this.state.subscribe;
+		this.disposed = false;
 	}
-	runtime.controller?.abort();
-	runtime.controller = new AbortController();
-	const operation = deps.log.operation();
-	deps.log.debug("refresh-started", { operation });
-	const signal = AbortSignal.any([
-		runtime.controller.signal,
-		deps.context.signal,
-	]);
-	runtime.state.update((v) => ({ ...v, loading: true, error: "" }));
-	try {
-		const result = await deps.http.getTags({ ...deps.context, signal });
-		if (signal.aborted) {
-			deps.log.debug("refresh-stale", { operation });
+
+	private async refreshTags() {
+		if (this.disposed || this.context.signal.aborted) {
 			return false;
 		}
-		deps.log.debug("refresh-completed", { operation });
-		if (result.invalid) {
-			deps.log.warn("partial-catalog", { operation, invalid: result.invalid });
-		}
-		runtime.state.set({
-			tags: result.tags,
-			loading: false,
-			error: "",
-			warning: result.invalid ? "Some tag suggestions are unavailable." : "",
-		});
-		return true;
-	} catch (error) {
-		if (signal.aborted) {
-			deps.log.debug("refresh-cancelled", { operation });
-		} else {
-			deps.log.warn("refresh-failed", { operation, ...failureFields(error) });
-		}
-		if (!signal.aborted) {
-			runtime.state.update((v) => ({
-				...v,
+		this.controller?.abort();
+		this.controller = new AbortController();
+		const operation = this.log.operation();
+		this.log.debug("refresh-started", { operation });
+		const signal = AbortSignal.any([
+			this.controller.signal,
+			this.context.signal,
+		]);
+		this.state.update((v) => ({ ...v, loading: true, error: "" }));
+		try {
+			const result = await this.http.getTags({ ...this.context, signal });
+			if (signal.aborted) {
+				this.log.debug("refresh-stale", { operation });
+				return false;
+			}
+			this.log.debug("refresh-completed", { operation });
+			if (result.invalid) {
+				this.log.warn("partial-catalog", {
+					operation,
+					invalid: result.invalid,
+				});
+			}
+			this.state.set({
+				tags: result.tags,
 				loading: false,
-				error: errorMessage(error),
-			}));
+				error: "",
+				warning: result.invalid ? "Some tag suggestions are unavailable." : "",
+			});
+			return true;
+		} catch (error) {
+			if (signal.aborted) {
+				this.log.debug("refresh-cancelled", { operation });
+			} else {
+				this.log.warn("refresh-failed", { operation, ...failureFields(error) });
+			}
+			if (!signal.aborted) {
+				this.state.update((v) => ({
+					...v,
+					loading: false,
+					error: errorMessage(error),
+				}));
+			}
+			return false;
 		}
-		return false;
 	}
-}
 
-function disposeTags(deps: TagsDependencies, runtime: TagsRuntime) {
-	deps.log.debug("disposed");
-	runtime.disposed = true;
-	runtime.controller?.abort();
-	runtime.state.set(empty());
+	private disposeTags() {
+		this.log.debug("disposed");
+		this.disposed = true;
+		this.controller?.abort();
+		this.state.set(empty());
+	}
 }

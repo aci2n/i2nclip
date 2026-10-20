@@ -1,5 +1,8 @@
 # Explicit store workflow dependencies
 
+Historical specification. Store structure and startup are superseded by
+[Store classes and explicit initial reads](store-classes.md).
+
 ## Goal and scope
 
 Refactor every module in `client/src/lib/stores` so substantive functions live at

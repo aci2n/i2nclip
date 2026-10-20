@@ -12,6 +12,7 @@ const application = createApplication();
 const { session, preferences, pairing, routing } = application;
 const workspace = $derived($application.workspace);
 onDestroy(application.dispose);
+application.start();
 function dragFiles(event: DragEvent) {
 	if (!event.dataTransfer?.types.includes("Files")) {
 		return;

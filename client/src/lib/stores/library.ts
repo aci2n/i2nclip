@@ -92,7 +92,6 @@ class LibraryStore {
 		this.mediaOptions = mediaOptions;
 		this.onChange = onChange;
 		this.confirm = confirm;
-		void this.searchLibrary();
 	}
 
 	private editSearchDraft(searchDraft: string) {

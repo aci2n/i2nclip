@@ -1,5 +1,8 @@
 # Library store class trial
 
+Historical specification. Store structure and startup are superseded by
+[Store classes and explicit initial reads](store-classes.md).
+
 ## Goal and scope
 
 Convert only Library's instance workflows to a class so private state and injected

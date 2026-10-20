@@ -1,5 +1,18 @@
 # Client session ownership
 
+## Construction and initial reads
+
+Store factories return private classes with private state and grouped, bound public
+commands. Constructors perform cheap synchronous setup, including listeners and
+thumbnail URLs; they do not start network or storage reads. Application.start()
+installs coordination and launches Session.load()/Preferences.load(). Workspace.start()
+launches quota.refresh(), tags.refresh() and library.search(). Both start methods
+are idempotent and cannot restart disposed instances. Media views explicitly call
+viewer.retry() after construction. Session/Preferences load() returns the cached
+initial completion promise; Session.retry() explicitly retries a failed read.
+Session.initialize(password, rememberDevice) still configures the master password.
+
+
 Each tab loads its saved session once from IndexedDB at startup. A remembered
 non-extractable wrapping key decrypts and validates the encrypted identity; without
 one, the tab requires the master password. Remember this device is optional and

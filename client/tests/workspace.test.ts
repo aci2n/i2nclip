@@ -32,7 +32,7 @@ test("workspace loads quota without Settings, survives subscriber changes, and r
 	});
 	const preferences = createPreferences(memoryStorage().connect());
 	t.after(preferences.dispose);
-	await preferences.loaded;
+	await preferences.load();
 	const workspace = createWorkspace(
 		{
 			serverUrl: "https://clip.example",
@@ -42,6 +42,10 @@ test("workspace loads quota without Settings, survives subscriber changes, and r
 		preferences,
 	);
 	t.after(workspace.dispose);
+	assert.equal(calls, 0);
+	const { start } = workspace;
+	start();
+	start();
 	assert.equal(get(workspace.quota).loading, true);
 
 	await started.promise;
@@ -77,7 +81,7 @@ test("ending a workspace cancels quota reads and ignores late success", async (t
 	);
 	const preferences = createPreferences(memoryStorage().connect());
 	t.after(preferences.dispose);
-	await preferences.loaded;
+	await preferences.load();
 	const workspace = createWorkspace(
 		{
 			serverUrl: "https://clip.example",
@@ -87,6 +91,7 @@ test("ending a workspace cancels quota reads and ignores late success", async (t
 		preferences,
 	);
 	t.after(workspace.dispose);
+	workspace.start();
 	const signal = await started.promise;
 	controller.abort();
 	assert.equal(signal.aborted, true);
@@ -95,3 +100,36 @@ test("ending a workspace cancels quota reads and ignores late success", async (t
 	assert.equal(get(workspace.quota).value, null);
 	assert.equal(await workspace.quota.refresh(), false);
 });
+
+for (const ending of ["dispose", "abort", "already-aborted"] as const) {
+	test(`workspace cannot start requests after ${ending}`, (t) => {
+		const fetch = t.mock.method(globalThis, "fetch", async () => {
+			throw new Error("Unexpected request");
+		});
+		const controller = new AbortController();
+		if (ending === "already-aborted") {
+			controller.abort();
+		}
+		const preferences = createPreferences(memoryStorage().connect());
+		t.after(preferences.dispose);
+		const workspace = createWorkspace(
+			{
+				serverUrl: "https://clip.example",
+				key: testKey(),
+				signal: controller.signal,
+			},
+			preferences,
+		);
+		t.after(workspace.dispose);
+		if (ending === "dispose") {
+			workspace.dispose();
+		}
+		if (ending === "abort") {
+			controller.abort();
+		}
+		workspace.start();
+		assert.equal(fetch.mock.callCount(), 0);
+		assert.equal(get(workspace.quota).loading, false);
+		assert.equal(get(workspace.library).loading, false);
+	});
+}

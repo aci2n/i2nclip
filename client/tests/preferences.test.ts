@@ -10,12 +10,12 @@ test("compression defaults on and persists independently of identity", async (t)
 	storage.values.set("session", "untouched");
 	const preferences = createPreferences(storage.connect());
 	t.after(preferences.dispose);
-	await preferences.loaded;
+	await preferences.load();
 	assert.equal(get(preferences).compressImages, true);
 	await preferences.setCompression(false);
 	const restored = createPreferences(storage.connect());
 	t.after(restored.dispose);
-	await restored.loaded;
+	await restored.load();
 	assert.equal(get(restored).compressImages, false);
 	assert.equal(storage.values.get("session"), "untouched");
 	await preferences.setCompression(true);
@@ -32,7 +32,7 @@ test("storage failures retain the preference and report feedback", async (t) => 
 	});
 	const preferences = createPreferences(db);
 	t.after(preferences.dispose);
-	await preferences.loaded;
+	await preferences.load();
 	assert.equal(get(preferences).compressImages, true);
 	assert.match(get(preferences).error, /read/);
 	await preferences.setCompression(false);
@@ -46,7 +46,7 @@ for (const saved of ["corrupt", null, { enabled: false }]) {
 		storage.values.set("compressImages", saved);
 		const preferences = createPreferences(storage.connect());
 		t.after(preferences.dispose);
-		await preferences.loaded;
+		await preferences.load();
 		assert.equal(get(preferences).compressImages, true);
 		assert.match(get(preferences).error, /read/);
 	});
@@ -59,6 +59,7 @@ test("save waits for startup, rejects overlap, and disposal suppresses late publ
 	t.after(() => pending.resolve(true));
 	t.mock.method(db, "read", async () => pending.promise);
 	const preferences = createPreferences(db);
+	void preferences.load();
 	const saving = preferences.setCompression(false);
 	await preferences.setCompression(true);
 	pending.resolve(true);
@@ -76,9 +77,10 @@ test("disposal during startup ignores the late stored preference", async (t) => 
 	t.after(() => pending.resolve(false));
 	t.mock.method(db, "read", async () => pending.promise);
 	const preferences = createPreferences(db);
+	void preferences.load();
 	preferences.dispose();
 	const before = get(preferences);
 	pending.resolve(false);
-	await preferences.loaded;
+	await preferences.load();
 	assert.equal(get(preferences), before);
 });
