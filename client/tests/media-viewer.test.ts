@@ -46,6 +46,7 @@ function fixture(t: test.TestContext, http: Partial<ViewerApi> = {}) {
 		},
 	);
 	t.after(viewer.dispose);
+	void viewer.retry();
 	t.after(() => lifetime.abort());
 	return { viewer, lifetime, created, revoked, downloads };
 }
@@ -229,6 +230,7 @@ test("invalid links and undecryptable metadata do not request content", async (t
 		},
 	);
 	t.after(viewer.dispose);
+	void viewer.retry();
 	await settled(t, viewer);
 	assert.equal(get(viewer).error, "Invalid media link.");
 	assert.equal(reads, 0);

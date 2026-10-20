@@ -14,6 +14,7 @@ let viewer = $state.raw<ReturnType<typeof createMediaViewer> | null>(null);
 $effect(() => {
 	const current = createMediaViewer(id, context, { streams });
 	viewer = current;
+	void current.retry();
 	return () => current.dispose();
 });
 </script>

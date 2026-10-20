@@ -16,140 +16,138 @@ export interface ViewerState {
 	loading: boolean;
 	error: string;
 }
-
-interface MediaViewerDependencies {
-	id: string;
-	context: LibraryContext;
-	http: ViewerApi;
-	options: Omit<MediaOptions, "http">;
-	log: ReturnType<typeof createLog>;
-}
-interface MediaViewerRuntime {
-	state: Writable<ViewerState>;
-	controller: AbortController;
-	signal: AbortSignal;
-	item: MediaItem | null;
-	unsubscribe?: () => void;
-	loading: boolean;
-	dispose: () => void;
-}
-
-// One direct link owns one item; it never searches or paginates the library.
 export function createMediaViewer(
 	id: string,
 	context: LibraryContext,
-	{
-		http = api,
-		...options
-	}: Omit<MediaOptions, "http"> & { http?: ViewerApi } = {},
-) {
-	const deps: MediaViewerDependencies = {
-		id,
-		context,
-		http,
-		options,
-		log: createLog("media-viewer"),
-	};
-	const controller = new AbortController();
-	const runtime: MediaViewerRuntime = {
-		state: writable<ViewerState>({
+	options: Omit<MediaOptions, "http"> & { http?: ViewerApi } = {},
+): Pick<MediaViewerStoreImpl, keyof MediaViewerStoreImpl> {
+	return new MediaViewerStoreImpl(id, context, options);
+}
+
+class MediaViewerStoreImpl {
+	private readonly id: string;
+	private readonly context: LibraryContext;
+	private readonly http: ViewerApi;
+	private readonly options: Omit<MediaOptions, "http">;
+	private readonly log: ReturnType<typeof createLog>;
+	private readonly state: Writable<ViewerState>;
+	private readonly controller: AbortController;
+	private readonly signal: AbortSignal;
+	private item: MediaItem | null;
+	private unsubscribe?: () => void;
+	private loading: boolean;
+
+	readonly subscribe: Writable<ViewerState>["subscribe"];
+	readonly retry = this.loadViewer.bind(this);
+	readonly download = this.downloadCommand.bind(this);
+	readonly dispose = this.disposeViewer.bind(this);
+
+	constructor(
+		id: string,
+		context: LibraryContext,
+		{
+			http = api,
+			...options
+		}: Omit<MediaOptions, "http"> & { http?: ViewerApi } = {},
+	) {
+		this.id = id;
+		this.context = context;
+		this.http = http;
+		this.options = options;
+		this.log = createLog("media-viewer");
+		const controller = new AbortController();
+		this.state = writable<ViewerState>({
 			media: null,
 			loading: false,
 			error: "",
-		}),
-		controller,
-		signal: AbortSignal.any([controller.signal, context.signal]),
-		item: null,
-		loading: false,
-		dispose: () => disposeViewer(deps, runtime),
-	};
-	runtime.signal.addEventListener("abort", runtime.dispose, { once: true });
-	void loadViewer(deps, runtime);
-
-	return {
-		subscribe: runtime.state.subscribe,
-		retry: loadViewer.bind(null, deps, runtime),
-		download: () => runtime.item?.download() ?? Promise.resolve(false),
-		dispose: runtime.dispose,
-	};
-}
-
-async function loadViewer(
-	deps: MediaViewerDependencies,
-	runtime: MediaViewerRuntime,
-) {
-	if (runtime.signal.aborted || runtime.loading) {
-		return false;
-	}
-	const operation = deps.log.operation();
-	deps.log.debug("load-started", { operation });
-	runtime.loading = true;
-	runtime.state.update((value) => ({ ...value, loading: true, error: "" }));
-	try {
-		if (!/^[0-9a-f]{64}$/.test(deps.id)) {
-			throw new Error("Invalid media link.");
-		}
-		if (!runtime.item) {
-			const media = await deps.http.getMedia({
-				...deps.context,
-				id: deps.id,
-				signal: runtime.signal,
-			});
-			runtime.signal.throwIfAborted();
-			if (!media.metadata) {
-				throw new Error("File metadata is unavailable.");
-			}
-			runtime.item = createMediaItem(media, deps.context, {
-				http: { ...api, ...deps.http },
-				...deps.options,
-			});
-			runtime.unsubscribe = runtime.item.subscribe((media) =>
-				runtime.state.update((value) => ({ ...value, media })),
-			);
-		}
-		const ok = Boolean(await runtime.item.reveal(runtime.signal));
-		deps.log.debug(
-			runtime.signal.aborted ? "load-cancelled" : "load-completed",
-			{
-				operation,
-				ok,
-			},
-		);
-		return ok;
-	} catch (error) {
-		if (runtime.signal.aborted) {
-			deps.log.debug("load-cancelled", { operation });
+		});
+		this.subscribe = this.state.subscribe;
+		this.controller = controller;
+		this.signal = AbortSignal.any([controller.signal, context.signal]);
+		this.item = null;
+		this.loading = false;
+		if (this.signal.aborted) {
+			this.disposeViewer();
 		} else {
-			deps.log.error("load-failed", { operation, ...failureFields(error) });
-		}
-		if (!runtime.signal.aborted) {
-			const message =
-				error &&
-				typeof error === "object" &&
-				"status" in error &&
-				error.status === 404
-					? "File not found in this library."
-					: errorMessage(error);
-			runtime.state.update((value) => ({ ...value, error: message }));
-		}
-		return false;
-	} finally {
-		runtime.loading = false;
-		if (!runtime.signal.aborted) {
-			runtime.state.update((value) => ({ ...value, loading: false }));
+			this.signal.addEventListener("abort", this.dispose, { once: true });
 		}
 	}
-}
 
-function disposeViewer(
-	deps: MediaViewerDependencies,
-	runtime: MediaViewerRuntime,
-) {
-	deps.log.debug("disposed");
-	runtime.signal.removeEventListener("abort", runtime.dispose);
-	runtime.controller.abort();
-	runtime.unsubscribe?.();
-	runtime.item?.dispose();
-	runtime.item = null;
-	runtime.state.set({ media: null, loading: false, error: "" });
+	private downloadCommand() {
+		return this.item?.download() ?? Promise.resolve(false);
+	}
+
+	private async loadViewer() {
+		if (this.signal.aborted || this.loading) {
+			return false;
+		}
+		const operation = this.log.operation();
+		this.log.debug("load-started", { operation });
+		this.loading = true;
+		this.state.update((value) => ({ ...value, loading: true, error: "" }));
+		try {
+			if (!/^[0-9a-f]{64}$/.test(this.id)) {
+				throw new Error("Invalid media link.");
+			}
+			if (!this.item) {
+				const media = await this.http.getMedia({
+					...this.context,
+					id: this.id,
+					signal: this.signal,
+				});
+				this.signal.throwIfAborted();
+				if (!media.metadata) {
+					throw new Error("File metadata is unavailable.");
+				}
+				this.item = createMediaItem(media, this.context, {
+					http: { ...api, ...this.http },
+					...this.options,
+				});
+				this.unsubscribe = this.item.subscribe((media) =>
+					this.state.update((value) => ({ ...value, media })),
+				);
+			}
+			const ok = Boolean(await this.item.reveal(this.signal));
+			this.log.debug(
+				this.signal.aborted ? "load-cancelled" : "load-completed",
+				{
+					operation,
+					ok,
+				},
+			);
+			return ok;
+		} catch (error) {
+			if (this.signal.aborted) {
+				this.log.debug("load-cancelled", { operation });
+			} else {
+				this.log.error("load-failed", { operation, ...failureFields(error) });
+			}
+			if (!this.signal.aborted) {
+				const message =
+					error &&
+					typeof error === "object" &&
+					"status" in error &&
+					error.status === 404
+						? "File not found in this library."
+						: errorMessage(error);
+				this.state.update((value) => ({ ...value, error: message }));
+			}
+			return false;
+		} finally {
+			this.loading = false;
+			if (!this.signal.aborted) {
+				this.state.update((value) => ({ ...value, loading: false }));
+			}
+		}
+	}
+
+	private disposeViewer() {
+		this.log.debug("disposed");
+		this.signal.removeEventListener("abort", this.dispose);
+		this.controller.abort();
+		this.unsubscribe?.();
+		this.item?.dispose();
+		this.item = null;
+		this.state.set({ media: null, loading: false, error: "" });
+	}
 }
