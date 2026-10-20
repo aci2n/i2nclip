@@ -52,7 +52,7 @@ direction and protocol step. MessagePack packets contain `v: 1`, binary `iv`, an
 The identity plaintext map contains `v`, `server_url`, `private_key` (a key
 document), and binary `public_key`; the acknowledgment contains `v: 1, saved: true`.
 
-The receiver validates the identity and selected server, checks that no library is configured, and saves the encrypted identity to localStorage before acknowledgment. The master password is never transferred. Session and pairing stores own operation handles and cancellation. Locking, forgetting, replacement, and disposal end the attempt; stale transfers and acknowledgments are rejected. Closing the page ends pairing. Expiry and bounded relay retries remain enforced.
+The receiver validates the identity and selected server, checks that no library is configured, and saves the encrypted identity to IndexedDB before acknowledgment. The master password is never transferred. Session and pairing stores own operation handles and cancellation. Locking, forgetting, replacement, and disposal end the attempt; stale transfers and acknowledgments are rejected. Closing the page ends pairing. Expiry and bounded relay retries remain enforced.
 
 Relay request/response bodies use `application/msgpack`. Messages are opaque
 MessagePack bin values. At the OPAQUE adapter boundary, library-owned string

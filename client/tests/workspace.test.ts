@@ -4,6 +4,7 @@ import { get } from "svelte/store";
 import { createPreferences } from "../src/lib/stores/preferences.ts";
 import { createWorkspace } from "../src/lib/stores/workspace.ts";
 import { deferred, testKey, tick } from "./helpers.ts";
+import { memoryStorage } from "./memory-database.ts";
 import { documentResponse } from "./msgpack-response.ts";
 
 const usage = {
@@ -29,7 +30,9 @@ test("workspace loads quota without Settings, survives subscriber changes, and r
 		}
 		return documentResponse({ media: [], next: null });
 	});
-	const preferences = createPreferences({ getItem: () => null, setItem() {} });
+	const preferences = createPreferences(memoryStorage().connect());
+	t.after(preferences.dispose);
+	await preferences.loaded;
 	const workspace = createWorkspace(
 		{
 			serverUrl: "https://clip.example",
@@ -72,13 +75,16 @@ test("ending a workspace cancels quota reads and ignores late success", async (t
 			return documentResponse({ tags: [], media: [], next: null });
 		},
 	);
+	const preferences = createPreferences(memoryStorage().connect());
+	t.after(preferences.dispose);
+	await preferences.loaded;
 	const workspace = createWorkspace(
 		{
 			serverUrl: "https://clip.example",
 			key: testKey(),
 			signal: controller.signal,
 		},
-		createPreferences({ getItem: () => null, setItem() {} }),
+		preferences,
 	);
 	t.after(workspace.dispose);
 	const signal = await started.promise;

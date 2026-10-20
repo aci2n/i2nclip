@@ -2,7 +2,8 @@
 
 - [Protocol](protocol.md): HTTP API, signatures, frames, quotas, concurrency, and transfer limits.
 - [Cryptography](crypto.md): keys, encrypted formats, and security boundaries.
-- [Client ownership](session.md): stores, shared unlocked access, uploads, previews, and disposal.
+- [Client ownership](session.md): stores, independent tab sessions, uploads, previews, and disposal.
+- [IndexedDB sessions](indexeddb-session.md): browser storage, remembered access, and local Lock.
 - [Firefox extension](extension-bridge.md): setup, capture, File handoff, and lifecycle.
 - [Device pairing](pairing.md): verification, identity transfer, and the relay API.
 - [Database migrations](database-migrations.md): startup, migration history, and adding schema changes.

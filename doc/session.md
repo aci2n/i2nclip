@@ -1,19 +1,18 @@
 # Client session ownership
 
-Tabs share unlocked access through an in-memory BroadcastChannel. A tab requests
-access for its exact encrypted saved record; an unlocked tab supplies the
-non-extractable wrapping CryptoKey. The recipient decrypts and validates its own
-saved record, rechecks storage, then installs access through the same path as
-password unlock. No password or plaintext identity is broadcast or newly persisted.
-Recipients can become donors. Closing all app tabs ends live access. There is no
-Lock action, timer, polling, leader election, or cross-tab mutation lock.
+Each tab loads its saved session once from IndexedDB at startup. A remembered
+non-extractable wrapping key decrypts and validates the encrypted identity; without
+one, the tab requires the master password. Remember this device is optional and
+initially unchecked. Unremembered access exists only in that tab's memory.
+There is no session-sharing channel, polling, storage listener, or focus check.
 
-Session owns one saved-record lifetime and a separate local command lifetime.
-Storage events invalidate old access on password/identity changes and Reset.
-Every committed record change ends old work in the writer too. The writer installs
-new access and announces availability; other tabs can reconnect automatically.
-Late grants cannot restore old access. A missing or failed channel uses password
-unlock. See [shared-session specification](shared-session.md).
+Lock clears remembered access and cancels work only in the invoking tab. Other
+open tabs retain their loaded access until refresh or closure. Password/identity
+changes and Reset also leave other tabs' live work alone. Their later session
+writes are conditional transactions and reject stale snapshots with a refresh
+message. Navigation preserves the local session; disposal ends work and closes
+owned database connections without clearing remembered access. See the
+[IndexedDB session specification](indexeddb-session.md).
 
 The root application owns a workspace for the fixed LibraryContext (server URL,
 loaded key and lifetime signal). It contains library, tags, quota and uploads stores,
@@ -41,15 +40,16 @@ Session privately owns the wrapping key, decrypted identity and loaded keys.
 Persistence has no secret cache or cancellation generation: it reads, decrypts,
 encrypts and conditionally writes snapshots under the caller's signal. Commands
 reject overlap. Their own successful commit ends the old workspace without
-canceling their success result; external changes and disposal cancel commands.
+canceling their success result; local Lock and disposal cancel commands.
 Async work still checks cancellation before publication or resource creation.
 
-One atomic base64-wrapped MessagePack localStorage record holds the encrypted identity/server and password
-derivation material. Failed writes preserve the previous record and identity.
+One transactional IndexedDB session record holds the encrypted identity/server,
+password derivation material, revision, and optional remembered wrapping key. Failed writes preserve the previous record and identity.
 Recovery independently encrypts one identity and is validated before saving.
 Recovery files use `.msgpack`; imports read bytes after checking file size.
-Compression preferences are also base64-wrapped MessagePack booleans.
-There are no migrations or unlock caches in sessionStorage.
+Compression is a separate IndexedDB boolean. Old localStorage records are not
+read or migrated: existing installations reconnect through recovery or pairing.
+Passwords and plaintext identities are never persisted.
 
 Setup offers Create, Restore, and Pair device. Create and Pair use a view-local
 server draft in a disclosure, defaulting to the app origin. Restore uses the
@@ -59,8 +59,8 @@ Retrying Create for the same normalized server origin checks its signed registra
 first: a registered candidate is saved without spending another invitation; a
 definitively unregistered candidate uses the currently submitted invitation. Failed
 checks do not submit registration. Registration/storage failures and failed Restore
-attempts retain the candidate. Successful installation, saved-record invalidation,
-Reset, disposal, or Create selecting another origin clears it. No invitation or
+attempts retain the candidate. Successful installation, local session replacement,
+Lock, Reset, disposal, or Create selecting another origin clears it. No invitation or
 pending enrollment is persisted; reload/closure can lose an uncertain registration.
 Keep the tab open and retry Create until the identity is saved.
 
@@ -103,7 +103,7 @@ on navigation or close; focus returns to the opening control when available.
 
 ## Direct media links
 
-Fresh `#/media/<file id>` tabs reuse session sharing but do not create
+Fresh `#/media/<file id>` tabs load their own session but do not create
 the browsing workspace or request lists/tags. A viewer store reads one encrypted
 metadata summary, owns one media-item store, and releases it on navigation or
 context changes. Explicit downloads have independent session-owned sources. Native
@@ -131,8 +131,8 @@ disposal ends the attempt. See [pairing](pairing.md) for protocol details.
 
 ## Upload compression
 
-A root-owned preferences store saves the device-local `compressImages` boolean
-under `i2nclip.compress-images`, separately from identity and excluded from recovery
+A root-owned preferences store asynchronously saves the device-local `compressImages`
+boolean in IndexedDB, separately from identity and excluded from recovery
 and pairing. It defaults to true. Selection, paste, drop and extension handoff start
 uploads immediately, snapshotting the preference for the sequential batch.
 

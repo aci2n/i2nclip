@@ -86,6 +86,7 @@ async function action(
 	{/if}
 	<UploadPreferences
 		compressImages={$preferences.compressImages}
+		busy={$preferences.loading || $preferences.busy}
 		error={$preferences.error}
 		onchange={preferences.setCompression}
 	/>

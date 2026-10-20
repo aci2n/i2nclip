@@ -7,6 +7,7 @@ interface Props {
 let { session }: Props = $props();
 let password = $state("");
 let confirmation = $state("");
+let rememberDevice = $state(false);
 let error = $state("");
 async function submit(event: SubmitEvent) {
 	event.preventDefault();
@@ -17,8 +18,8 @@ async function submit(event: SubmitEvent) {
 	}
 	const success =
 		$session.status === "new"
-			? await session.initialize(password)
-			: await session.unlock(password);
+			? await session.initialize(password, rememberDevice)
+			: await session.unlock(password, rememberDevice);
 	if (success) {
 		password = "";
 		confirmation = "";
@@ -34,11 +35,20 @@ async function submit(event: SubmitEvent) {
 		Your master password protects your saved library identity on this device.
 	</p>
 	<p>
-		Open tabs share unlocked access. Close all app tabs to end access on this
-		device.
+		Each tab keeps its own unlocked access. Remember this device to stay
+		unlocked after refreshes and browser restarts.
 	</p>
 	{#if $session.checking}
-		<p role="status">Checking open tabs…</p>
+		<p role="status">Loading saved access…</p>
+	{:else if $session.storageError}
+		<p class="error" role="alert">{$session.error}</p>
+		<button
+			type="button"
+			disabled={$session.busy}
+			onclick={() => session.retry()}
+		>
+			Retry
+		</button>
 	{:else}
 		<form class="stack" onsubmit={submit}>
 			<label class="field"
@@ -65,6 +75,19 @@ async function submit(event: SubmitEvent) {
 					></label
 				>
 			{/if}
+			<label class="remember">
+				<input
+					type="checkbox"
+					bind:checked={rememberDevice}
+					disabled={$session.busy}
+				>
+				Remember this device
+			</label>
+			<p>
+				When selected, anyone using this browser profile can open your library
+				until you lock it. Other open tabs keep access until closed or
+				refreshed.
+			</p>
 			<button type="submit" disabled={$session.busy}>
 				{$session.busy
 					? "Working…"
@@ -76,6 +99,15 @@ async function submit(event: SubmitEvent) {
 				<p class="error" role="alert">{error || $session.error}</p>
 			{/if}
 		</form>
+		{#if $session.lockFailed}
+			<button
+				type="button"
+				disabled={$session.busy}
+				onclick={() => session.lock()}
+			>
+				Retry Lock
+			</button>
+		{/if}
 	{/if}
 	{#if $session.status === "locked"}
 		<details>
@@ -88,6 +120,7 @@ async function submit(event: SubmitEvent) {
 				<button
 					class="secondary danger"
 					type="button"
+					disabled={$session.busy}
 					onclick={() => {
 						if (confirm("Reset this client and remove its saved identity?")) {
 							session.reset();
@@ -107,5 +140,15 @@ section {
 }
 .reset {
 	margin-top: 1rem;
+}
+
+.remember {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+.remember input {
+	width: auto;
+	flex: none;
 }
 </style>

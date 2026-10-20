@@ -7,7 +7,7 @@ from `extension/` to JavaScript in `dist/extension/`. Installation and configura
 
 ## Ownership
 
-`src/main.ts` mounts the app through a `data-app` element reference. Each tab unlocks independently. Saved identity changes cancel other sessions and require unlocking again; storage events handle invalidation without cross-tab locks.
+`src/main.ts` mounts the app through a `data-app` element reference. Each tab loads its session once at startup. Optional remembered access survives refresh and browser restart; otherwise tabs unlock independently. Lock and local identity changes cancel that tab's work. Other tabs keep their in-memory sessions until refreshed or closed; no storage events, polling, or session-sharing channel are used.
 
 `views/Application.svelte` creates the application store, which owns the session,
 preferences, pairing, extension receiver, routing, and library workspace. The
@@ -29,7 +29,7 @@ is needed, completion notifications, and its saved app URL.
 
 Stores call `lib/api.ts` directly. API and protocol helpers handle encryption, signing, framing, and verification. Session generations and abort signals invalidate stale work. Search revision checks keep pagination tied to the submitted query. Per-item busy state rejects overlapping mutations.
 
-`lib/persistence.ts` atomically saves one JSON record under `i2nclip.identity` in localStorage. A master-password-derived, non-extractable AES-GCM key encrypts the identity and server. Decrypted keys remain in memory. Locking releases references and invalidates work; password changes verify the current password and replace the encrypted record. Storage failures preserve the previous record and are shown beside the action.
+`lib/database.ts` owns native IndexedDB connections and cancelable transactions. `lib/persistence.ts` conditionally replaces one session record containing the encrypted identity/server, revision, derivation material, and optional non-extractable AES-GCM wrapping key. The password and plaintext identity are never persisted. Password changes verify the old password and atomically replace identity encryption and any remembered key. Lock removes remembered access; Forget retains an encrypted empty identity without remembered access; Reset removes the session. Conflicting writes fail with a refresh message. Compression preferences use a separate boolean entry. Session and preference stores close their connections on disposal. Old localStorage data is ignored without migration; reconnect existing setups through recovery or pairing.
 
 The uploads store owns sequential batches and refreshes the submitted library search after completion; only failure messages remain, and users select failed files again through Upload. Progress and completed-file summaries are transient. Uploads, search results, media bytes, and URLs are never persisted. Media items own their requests, decrypted bytes, and URLs and dispose them when deleted, superseded, or locked. Deleted cards remain gray and inactive until a new search.
 

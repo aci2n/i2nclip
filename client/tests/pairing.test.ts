@@ -51,6 +51,9 @@ const sessionSnapshot: Omit<SessionState, "signal"> = {
 	publicKey: "",
 	error: "",
 	checking: false,
+	storageError: false,
+	lockFailed: false,
+	notice: "",
 };
 const room = {
 	v: 1,

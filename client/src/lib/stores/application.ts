@@ -31,16 +31,23 @@ interface ApplicationRuntime {
 interface ApplicationResources {
 	stopSession: () => void;
 	stopRouting: () => void;
+	stopPreferences: () => void;
 	pairing: ReturnType<typeof createPairing>;
 	extension: ReturnType<typeof createExtensionReceiver>;
 }
 
-export function createApplication() {
+export function createApplication({
+	session = createSession(),
+	preferences = createPreferences(),
+}: {
+	session?: ReturnType<typeof createSession>;
+	preferences?: ReturnType<typeof createPreferences>;
+} = {}) {
 	const log = createLog("application");
 	log.debug("created");
 	const deps: ApplicationDependencies = {
-		session: createSession(),
-		preferences: createPreferences(),
+		session,
+		preferences,
 		routing: createRouting(),
 		log,
 	};
@@ -60,6 +67,9 @@ export function createApplication() {
 	const stopRouting = deps.routing.subscribe(() =>
 		syncWorkspace(deps, runtime),
 	);
+	const stopPreferences = deps.preferences.subscribe(() =>
+		syncWorkspace(deps, runtime),
+	);
 	const pairing = createPairing(deps.session);
 	const extension = createExtensionReceiver(
 		deps.session,
@@ -69,6 +79,7 @@ export function createApplication() {
 	const resources: ApplicationResources = {
 		stopSession,
 		stopRouting,
+		stopPreferences,
 		pairing,
 		extension,
 	};
@@ -100,7 +111,12 @@ function syncWorkspace(
 		runtime.workspace.dispose();
 		runtime.workspace = null;
 	}
-	if (context && get(deps.routing).workspace && !runtime.workspace) {
+	if (
+		context &&
+		!get(deps.preferences).loading &&
+		get(deps.routing).workspace &&
+		!runtime.workspace
+	) {
 		deps.log.debug("workspace-created");
 		runtime.workspace = createWorkspace(
 			context,
@@ -151,6 +167,8 @@ function disposeApplication(
 	resources.pairing.dispose();
 	resources.stopSession();
 	resources.stopRouting();
+	resources.stopPreferences();
+	deps.preferences.dispose();
 	deps.routing.dispose();
 	runtime.workspace?.dispose();
 	runtime.workspace = null;

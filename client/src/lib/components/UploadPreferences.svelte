@@ -2,9 +2,10 @@
 interface Props {
 	compressImages: boolean;
 	error: string;
+	busy: boolean;
 	onchange: (value: boolean) => void;
 }
-let { compressImages, error, onchange }: Props = $props();
+let { compressImages, error, busy, onchange }: Props = $props();
 </script>
 <details class="panel">
 	<summary>Uploads</summary>
@@ -12,6 +13,7 @@ let { compressImages, error, onchange }: Props = $props();
 		<label>
 			<input
 				type="checkbox"
+				disabled={busy}
 				checked={compressImages}
 				onchange={(event) => onchange(event.currentTarget.checked)}
 			>

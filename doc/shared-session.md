@@ -1,5 +1,7 @@
 # Shared unlocked sessions
 
+Historical specification, superseded by [IndexedDB sessions](indexeddb-session.md).
+
 ## Goal, scope, and exclusions
 
 Share unlocked access between app tabs without distributing identity-change checks

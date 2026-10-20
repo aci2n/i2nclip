@@ -45,6 +45,16 @@ function pasteFiles(event: ClipboardEvent) {
 <svelte:window ondragover={dragFiles} ondrop={dropFiles} onpaste={pasteFiles} />
 
 <main class:media={$routing.page === "media" && Boolean($session.context)}>
+	{#if $session.unlocked}
+		<div class="session-controls">
+			<button type="button" class="secondary" onclick={() => session.lock()}>
+				Lock
+			</button>
+			{#if $session.notice}
+				<p class="error" role="alert">{$session.notice}</p>
+			{/if}
+		</div>
+	{/if}
 	{#if $routing.page === "media" && !/^[0-9a-f]{64}$/.test($routing.id)}
 		<section class="panel stack">
 			<p class="error" role="alert">Invalid media link.</p>
@@ -109,6 +119,14 @@ function pasteFiles(event: ClipboardEvent) {
 	{/if}
 </main>
 <style>
+.session-controls {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	margin-bottom: 1rem;
+}
 main {
 	max-width: 76rem;
 	padding: 1.5rem;

@@ -4,11 +4,7 @@ import type { Credentials, IdentityApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
-import {
-	createPersistence,
-	IDENTITY_STORAGE_KEY,
-	type SavedIdentity,
-} from "../persistence.ts";
+import { createPersistence, type SavedIdentity } from "../persistence.ts";
 import { bytesToB64url } from "../protocol/bytes.ts";
 import { generatePrivateKey } from "../protocol/identity.ts";
 import type { Identity, LoadedIdentity } from "../protocol/recovery.ts";
@@ -19,10 +15,6 @@ import {
 	validateIdentity,
 } from "../protocol/recovery.ts";
 import { checkServer } from "../protocol/server.ts";
-import {
-	createSessionSharing,
-	type SessionChannel,
-} from "../session-sharing.ts";
 
 // A library consumer never observes changing credentials.
 export interface LibraryContext extends Credentials {
@@ -40,6 +32,9 @@ export interface SessionState extends SessionSnapshot {
 	context: LibraryContext | null;
 	error: string;
 	checking: boolean;
+	storageError: boolean;
+	lockFailed: boolean;
+	notice: string;
 }
 export interface IdentityCredentials extends Credentials {
 	privateKey: Identity["private_key"];
@@ -59,7 +54,6 @@ interface SessionDependencies {
 	persistence: ReturnType<typeof createPersistence>;
 	http: IdentityApi;
 	defaultServerUrl: string;
-	events?: EventTarget;
 	log: ReturnType<typeof createLog>;
 }
 interface SessionRuntime {
@@ -71,34 +65,22 @@ interface SessionRuntime {
 	lifetime: AbortController;
 	command: AbortController | null;
 	disposed: boolean;
-	// Attached before reading saved identity or requesting access. Channel setup
-	// can synchronously report failure through the checking callback.
-	sharing: ReturnType<typeof createSessionSharing> | null;
-	storageChanged: (event: Event) => void;
-}
-interface SharedGrant {
-	record: string;
-	key: CryptoKey;
+	loaded: boolean;
 }
 
 export function createSession({
 	persistence = createPersistence(),
 	http = api,
 	defaultServerUrl = globalThis.location?.origin || "http://localhost:8080",
-	events = typeof window === "undefined" ? undefined : window,
-	channel,
 }: {
 	persistence?: ReturnType<typeof createPersistence>;
 	http?: IdentityApi;
 	defaultServerUrl?: string;
-	events?: EventTarget;
-	channel?: () => SessionChannel | null;
 } = {}) {
 	const deps: SessionDependencies = {
 		persistence,
 		http,
 		defaultServerUrl,
-		events,
 		log: createLog("session"),
 	};
 	const lifetime = new AbortController();
@@ -112,7 +94,10 @@ export function createSession({
 			serverUrl: defaultServerUrl,
 			context: null,
 			error: "",
-			checking: false,
+			checking: true,
+			storageError: false,
+			lockFailed: false,
+			notice: "",
 		}),
 		saved: null,
 		key: null,
@@ -121,22 +106,15 @@ export function createSession({
 		lifetime,
 		command: null,
 		disposed: false,
-		sharing: null,
-		storageChanged: (event) => sessionStorageChanged(deps, runtime, event),
+		loaded: false,
 	};
-	runtime.sharing = createSessionSharing({
-		channel,
-		checking: (value) => sharingChecking(runtime, value),
-		lockedRecord: () => lockedRecord(runtime),
-		current: () => currentGrant(deps, runtime),
-		accept: (grant, signal) => acceptGrant(deps, runtime, grant, signal),
-	});
-	readSavedSession(deps, runtime);
-	events?.addEventListener("storage", runtime.storageChanged);
-	requestSessionAccess(runtime);
+	const loaded = loadSession(deps, runtime);
 
 	return {
 		subscribe: runtime.state.subscribe,
+		loaded,
+		retry: loadSession.bind(null, deps, runtime),
+		lock: lockSession.bind(null, deps, runtime),
 		get ready() {
 			return (
 				!runtime.disposed &&
@@ -181,7 +159,7 @@ function installSession(
 	wrapping: CryptoKey,
 	identity: LoadedIdentity | null,
 ) {
-	if (runtime.saved?.text !== next.text) {
+	if (runtime.saved?.revision !== next.revision) {
 		endSessionLifetime(deps, runtime);
 	}
 	deps.log.info("installed", { configured: Boolean(identity) });
@@ -204,74 +182,75 @@ function installSession(
 		signal: runtime.lifetime.signal,
 		serverUrl: context?.serverUrl || deps.defaultServerUrl,
 		error: "",
+		lockFailed: false,
 	});
 }
 
-function readSavedSession(deps: SessionDependencies, runtime: SessionRuntime) {
-	let error = "";
-	let status: SessionState["status"];
-	try {
-		runtime.saved = deps.persistence.read();
-		status = runtime.saved ? "locked" : "new";
-	} catch (failure) {
-		deps.log.error("read-failed", failureFields(failure));
-		runtime.saved = null;
-		status = "locked";
-		error = errorMessage(failure);
-	}
+function lockedState(deps: SessionDependencies, runtime: SessionRuntime) {
 	publishSession(runtime, {
-		status,
+		status: runtime.saved ? "locked" : "new",
 		unlocked: false,
 		configured: false,
 		context: null,
 		signal: runtime.lifetime.signal,
 		serverUrl: deps.defaultServerUrl,
-		busy: false,
-		error,
 	});
 }
 
-function externalSessionChange(
-	deps: SessionDependencies,
-	runtime: SessionRuntime,
-) {
-	try {
-		if (deps.persistence.text() === (runtime.saved?.text ?? null)) {
-			return;
+function loadSession(deps: SessionDependencies, runtime: SessionRuntime) {
+	return sessionAction(deps, runtime, "load", async (signal) => {
+		publishSession(runtime, { checking: true, storageError: false });
+		try {
+			await readSavedSession(deps, runtime, signal);
+		} finally {
+			if (!signal.aborted) {
+				publishSession(runtime, { checking: false });
+			}
 		}
-	} catch {}
-	deps.log.info("storage-invalidated");
-	runtime.command?.abort();
-	runtime.command = null;
-	endSessionLifetime(deps, runtime);
-	readSavedSession(deps, runtime);
-	requestSessionAccess(runtime);
+	});
 }
 
-function sessionStorageChanged(
+async function readSavedSession(
 	deps: SessionDependencies,
 	runtime: SessionRuntime,
-	event: Event,
+	signal: AbortSignal,
 ) {
-	if (
-		!("key" in event) ||
-		(event.key !== null && event.key !== IDENTITY_STORAGE_KEY)
-	) {
+	try {
+		const saved = await deps.persistence.read(signal);
+		signal.throwIfAborted();
+		runtime.saved = saved;
+		runtime.loaded = true;
+		lockedState(deps, runtime);
+	} catch (error) {
+		signal.throwIfAborted();
+		publishSession(runtime, { status: "locked", storageError: true });
+		throw error;
+	}
+	const saved = runtime.saved;
+	if (!saved?.key) {
 		return;
 	}
 	try {
+		const key = saved.key;
 		if (
-			"storageArea" in event &&
-			!deps.persistence.ownsStorage(event.storageArea)
+			!(key instanceof CryptoKey) ||
+			key.extractable ||
+			key.algorithm.name !== "AES-GCM" ||
+			!key.usages.includes("encrypt") ||
+			!key.usages.includes("decrypt")
 		) {
-			return;
+			throw new Error("Invalid remembered key.");
 		}
-	} catch {}
-	externalSessionChange(deps, runtime);
-}
-
-function requestSessionAccess(runtime: SessionRuntime) {
-	runtime.sharing?.request(runtime.saved?.text ?? null);
+		const identity = await openSessionIdentity(deps, saved, key, signal);
+		signal.throwIfAborted();
+		installSession(deps, runtime, saved, key, identity);
+	} catch {
+		signal.throwIfAborted();
+		publishSession(runtime, {
+			error:
+				"Remembered access could not be restored. Enter your master password.",
+		});
+	}
 }
 
 async function sessionAction(
@@ -289,7 +268,6 @@ async function sessionAction(
 	}
 	const operation = deps.log.operation();
 	deps.log.info("started", { action: name, operation });
-	runtime.sharing?.cancel();
 	const own = new AbortController();
 	runtime.command = own;
 	publishSession(runtime, { busy: true, error: "" });
@@ -317,9 +295,6 @@ async function sessionAction(
 			runtime.command = null;
 			if (!runtime.disposed) {
 				publishSession(runtime, { busy: false });
-				if (runtime.saved && runtime.key) {
-					runtime.sharing?.announce(runtime.saved.text);
-				}
 			}
 		}
 	}
@@ -334,7 +309,6 @@ async function openSessionIdentity(
 	const value = await deps.persistence.open(saved, wrapping, signal);
 	const identity = value ? await validateIdentity(value) : null;
 	signal.throwIfAborted();
-	deps.persistence.unchanged(saved.text);
 	return identity;
 }
 
@@ -387,9 +361,10 @@ function initializeSession(
 	deps: SessionDependencies,
 	runtime: SessionRuntime,
 	password: string,
+	rememberDevice = false,
 ) {
 	return sessionAction(deps, runtime, "initialize", (signal) =>
-		performInitializeSession(deps, runtime, password, signal),
+		performInitializeSession(deps, runtime, password, signal, rememberDevice),
 	);
 }
 
@@ -397,9 +372,10 @@ function unlockSession(
 	deps: SessionDependencies,
 	runtime: SessionRuntime,
 	password: string,
+	rememberDevice = false,
 ) {
 	return sessionAction(deps, runtime, "unlock", (signal) =>
-		performUnlockSession(deps, runtime, password, signal),
+		performUnlockSession(deps, runtime, password, signal, rememberDevice),
 	);
 }
 
@@ -458,22 +434,50 @@ function forgetIdentity(deps: SessionDependencies, runtime: SessionRuntime) {
 }
 
 function resetSession(deps: SessionDependencies, runtime: SessionRuntime) {
-	deps.log.info("reset-requested");
-	if (runtime.disposed || runtime.command) {
-		return false;
-	}
-	try {
-		runtime.sharing?.cancel();
-		deps.persistence.reset(deps.persistence.text());
+	return sessionAction(deps, runtime, "reset", async (signal) => {
+		await deps.persistence.reset(signal);
+		signal.throwIfAborted();
 		endSessionLifetime(deps, runtime);
-		readSavedSession(deps, runtime);
-		deps.log.info("reset-completed");
-		return true;
-	} catch (error) {
-		deps.log.error("reset-failed", failureFields(error));
-		publishSession(runtime, { error: errorMessage(error) });
-		return false;
+		runtime.saved = null;
+		runtime.loaded = true;
+		publishSession(runtime, { storageError: false, notice: "" });
+		lockedState(deps, runtime);
+	});
+}
+
+function lockSession(deps: SessionDependencies, runtime: SessionRuntime) {
+	if (runtime.disposed) {
+		return Promise.resolve(false);
 	}
+	// Lock interrupts local work, including commands still waiting for crypto.
+	runtime.command?.abort();
+	runtime.command = null;
+	endSessionLifetime(deps, runtime);
+	if (runtime.saved) {
+		runtime.saved = { ...runtime.saved, key: undefined };
+	}
+	lockedState(deps, runtime);
+	publishSession(runtime, {
+		notice: "",
+		busy: false,
+		checking: false,
+		lockFailed: false,
+	});
+	return sessionAction(deps, runtime, "lock", async (signal) => {
+		try {
+			const saved = await deps.persistence.lock(signal);
+			signal.throwIfAborted();
+			runtime.saved = saved;
+			runtime.loaded = true;
+			lockedState(deps, runtime);
+		} catch (error) {
+			signal.throwIfAborted();
+			publishSession(runtime, { lockFailed: true });
+			throw new Error(
+				`This tab is locked, but remembered access could not be cleared. Retry Lock. ${errorMessage(error)}`,
+			);
+		}
+	});
 }
 
 function downloadSessionRecovery(
@@ -493,9 +497,9 @@ function disposeSession(deps: SessionDependencies, runtime: SessionRuntime) {
 	deps.log.debug("disposed");
 	runtime.disposed = true;
 	runtime.command?.abort();
-	deps.events?.removeEventListener("storage", runtime.storageChanged);
-	runtime.sharing?.dispose();
+	deps.persistence.dispose();
 	endSessionLifetime(deps, runtime);
+	runtime.saved = null;
 	publishSession(runtime, {
 		status: "locked",
 		unlocked: false,
@@ -506,64 +510,30 @@ function disposeSession(deps: SessionDependencies, runtime: SessionRuntime) {
 	});
 }
 
-function sharingChecking(runtime: SessionRuntime, value: boolean) {
-	if (!runtime.disposed) {
-		publishSession(runtime, { checking: value });
-	}
-}
-
-function lockedRecord(runtime: SessionRuntime) {
-	return !runtime.key && !runtime.command
-		? (runtime.saved?.text ?? null)
-		: null;
-}
-
-function currentGrant(deps: SessionDependencies, runtime: SessionRuntime) {
-	if (!runtime.saved || !runtime.key || runtime.command || runtime.disposed) {
-		return null;
-	}
-	try {
-		deps.persistence.unchanged(runtime.saved.text);
-		return { record: runtime.saved.text, key: runtime.key };
-	} catch {
-		externalSessionChange(deps, runtime);
-		return null;
-	}
-}
-
-async function acceptGrant(
-	deps: SessionDependencies,
-	runtime: SessionRuntime,
-	grant: SharedGrant,
-	signal: AbortSignal,
-) {
-	const current = runtime.saved;
-	if (
-		runtime.key ||
-		runtime.command ||
-		!current ||
-		current.text !== grant.record
-	) {
-		return;
-	}
-	const identity = await openSessionIdentity(deps, current, grant.key, signal);
-	signal.throwIfAborted();
-	runtime.sharing?.cancel();
-	installSession(deps, runtime, current, grant.key, identity);
-	deps.log.info("shared-unlock-completed");
-}
-
 async function performInitializeSession(
 	deps: SessionDependencies,
 	runtime: SessionRuntime,
 	password: string,
 	signal: AbortSignal,
+	rememberDevice: boolean,
 ) {
-	if (deps.persistence.text() !== null) {
+	if (!runtime.loaded) {
+		throw new Error("Wait for browser storage to load, or retry loading it.");
+	}
+	if (runtime.saved !== null) {
 		throw new Error("A master password is already configured.");
 	}
 	const next = await deps.persistence.protect(null, password, null, signal);
-	installSession(deps, runtime, next.saved, next.key, null);
+	signal.throwIfAborted();
+	await rememberSession(
+		deps,
+		runtime,
+		next.saved,
+		next.key,
+		null,
+		rememberDevice,
+		signal,
+	);
 }
 
 async function performUnlockSession(
@@ -571,10 +541,14 @@ async function performUnlockSession(
 	runtime: SessionRuntime,
 	password: string,
 	signal: AbortSignal,
+	rememberDevice: boolean,
 ) {
-	const current = deps.persistence.read();
+	if (!runtime.loaded) {
+		throw new Error("Retry loading browser storage first.");
+	}
+	const current = await deps.persistence.read(signal);
 	if (!current) {
-		throw new Error("Create a master password first.");
+		throw new Error("No saved identity. Refresh this client to set it up.");
 	}
 	const wrapping = await deps.persistence.passwordKey(
 		current,
@@ -582,7 +556,46 @@ async function performUnlockSession(
 		signal,
 	);
 	const identity = await openSessionIdentity(deps, current, wrapping, signal);
-	installSession(deps, runtime, current, wrapping, identity);
+	await rememberSession(
+		deps,
+		runtime,
+		current,
+		wrapping,
+		identity,
+		rememberDevice,
+		signal,
+	);
+}
+
+async function rememberSession(
+	deps: SessionDependencies,
+	runtime: SessionRuntime,
+	saved: SavedIdentity,
+	key: CryptoKey,
+	identity: LoadedIdentity | null,
+	remember: boolean,
+	signal: AbortSignal,
+) {
+	let next = saved;
+	let notice = "";
+	try {
+		if (remember || saved.key) {
+			next = await deps.persistence.remember(
+				saved,
+				remember ? key : null,
+				signal,
+			);
+		}
+	} catch (error) {
+		signal.throwIfAborted();
+		if (!remember) {
+			throw error;
+		}
+		notice = `Unlocked only in this tab: access could not be remembered. ${errorMessage(error)}`;
+	}
+	signal.throwIfAborted();
+	installSession(deps, runtime, next, key, identity);
+	publishSession(runtime, { notice });
 }
 
 async function performCreateIdentity(
@@ -698,11 +711,13 @@ async function performChangeSessionPassword(
 		signal,
 	);
 	const next = await deps.persistence.protect(
-		before.saved.text,
+		before.saved,
 		password,
 		identity?.identity ?? null,
 		signal,
+		Boolean(before.saved.key),
 	);
+	signal.throwIfAborted();
 	installSession(deps, runtime, next.saved, next.key, identity);
 }
 

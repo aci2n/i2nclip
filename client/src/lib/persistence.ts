@@ -1,4 +1,4 @@
-import { b64ToBytes, bytesToB64 } from "./protocol/bytes.ts";
+import { createDatabase, type Database } from "./database.ts";
 import { decode, encode } from "./protocol/msgpack.ts";
 import {
 	openBytes,
@@ -7,40 +7,35 @@ import {
 	wrappingKey,
 } from "./protocol/password.ts";
 import type { Identity } from "./protocol/recovery.ts";
-import { bytes as binary, document } from "./protocol/value.ts";
 
-export interface LocalStorage {
-	getItem(key: string): string | null;
-	setItem(key: string, value: string): void;
-	removeItem(key: string): void;
-}
 export interface SavedIdentity {
-	readonly text: string;
+	readonly revision: string;
 	readonly salt: Uint8Array<ArrayBuffer>;
+	readonly iterations: number;
 	readonly encrypted: unknown;
+	readonly key?: CryptoKey;
 }
-export const IDENTITY_STORAGE_KEY = "i2nclip.identity";
+const SESSION = "session";
 const PURPOSE = "i2nclip/local-identity/1";
 
-// Storage contains ciphertext only. The session owns all live key references.
-export function createPersistence(storage?: LocalStorage) {
-	const local = () => storage ?? globalThis.localStorage;
-	const text = () => local().getItem(IDENTITY_STORAGE_KEY);
-	function unchanged(expected: string | null) {
-		if (text() !== expected) {
+export function createPersistence(database: Database = createDatabase()) {
+	function unchanged(
+		current: SavedIdentity | undefined,
+		expected: SavedIdentity | null,
+	) {
+		if ((current?.revision ?? null) !== (expected?.revision ?? null)) {
 			throw new Error(
-				"Saved identity changed in another tab. Unlock this client again.",
+				"Saved session changed in another tab. Refresh this client and try again.",
 			);
 		}
 	}
-	function read(): SavedIdentity | null {
-		const saved = text();
-		if (saved === null) {
+	async function read(signal: AbortSignal): Promise<SavedIdentity | null> {
+		const value = await database.read<SavedIdentity>(SESSION, signal);
+		if (value === undefined) {
 			return null;
 		}
-		const value = document(decode(b64ToBytes(saved)));
 		if (
-			value.v !== 1 ||
+			typeof value?.revision !== "string" ||
 			value.iterations !== PBKDF2_ITERATIONS ||
 			!(value.salt instanceof Uint8Array) ||
 			value.salt.length !== 16
@@ -49,27 +44,21 @@ export function createPersistence(storage?: LocalStorage) {
 				"Invalid saved identity. Reset this client or restore a recovery file.",
 			);
 		}
-		return {
-			text: saved,
-			salt: binary(value.salt),
-			encrypted: value.encrypted,
-		};
+		return value;
 	}
 	async function open(
 		saved: SavedIdentity,
 		key: CryptoKey,
 		signal: AbortSignal,
 	) {
-		let identity: unknown;
 		try {
-			identity = decode(await openBytes(key, saved.encrypted, PURPOSE));
+			const identity = decode(await openBytes(key, saved.encrypted, PURPOSE));
+			signal.throwIfAborted();
+			return identity;
 		} catch {
 			signal.throwIfAborted();
 			throw new Error("Wrong password or damaged saved identity.");
 		}
-		signal.throwIfAborted();
-		unchanged(saved.text);
-		return identity;
 	}
 	async function passwordKey(
 		saved: SavedIdentity,
@@ -80,54 +69,111 @@ export function createPersistence(storage?: LocalStorage) {
 		signal.throwIfAborted();
 		return key;
 	}
+	async function replace(
+		expected: SavedIdentity | null,
+		next: SavedIdentity | undefined,
+		signal: AbortSignal,
+	) {
+		await database.update<SavedIdentity>(
+			SESSION,
+			(current) => {
+				unchanged(current, expected);
+				return next;
+			},
+			signal,
+		);
+	}
 	async function write(
-		expected: string | null,
+		expected: SavedIdentity | null,
 		salt: Uint8Array<ArrayBuffer>,
 		key: CryptoKey,
 		identity: Identity | null,
 		signal: AbortSignal,
-	): Promise<SavedIdentity> {
+		remember: boolean,
+	) {
 		const encrypted = await sealBytes(key, encode(identity), PURPOSE);
 		signal.throwIfAborted();
-		const saved = bytesToB64(
-			encode({ v: 1, iterations: PBKDF2_ITERATIONS, salt, encrypted }),
-		);
-		unchanged(expected);
-		local().setItem(IDENTITY_STORAGE_KEY, saved);
-		return { text: saved, salt, encrypted };
-	}
-	async function protect(
-		expected: string | null,
-		password: string,
-		identity: Identity | null,
-		signal: AbortSignal,
-	) {
-		if (password.length < 8) {
-			throw new Error("Master password must be at least 8 characters.");
-		}
-		const salt = crypto.getRandomValues(new Uint8Array(16));
-		const key = await wrappingKey(password, salt, PBKDF2_ITERATIONS);
-		signal.throwIfAborted();
-		const saved = await write(expected, salt, key, identity, signal);
-		return { saved, key };
+		const saved: SavedIdentity = {
+			revision: crypto.randomUUID(),
+			salt,
+			iterations: PBKDF2_ITERATIONS,
+			encrypted,
+			...(remember ? { key } : {}),
+		};
+		await replace(expected, saved, signal);
+		return saved;
 	}
 	return {
-		text,
 		read,
-		unchanged,
 		open,
 		passwordKey,
-		protect,
+		async protect(
+			expected: SavedIdentity | null,
+			password: string,
+			identity: Identity | null,
+			signal: AbortSignal,
+			remember = false,
+		) {
+			if (password.length < 8) {
+				throw new Error("Master password must be at least 8 characters.");
+			}
+			const salt = crypto.getRandomValues(new Uint8Array(16));
+			const key = await wrappingKey(password, salt, PBKDF2_ITERATIONS);
+			signal.throwIfAborted();
+			return {
+				saved: await write(expected, salt, key, identity, signal, remember),
+				key,
+			};
+		},
 		save: (
 			saved: SavedIdentity,
 			key: CryptoKey,
 			identity: Identity | null,
 			signal: AbortSignal,
-		) => write(saved.text, saved.salt, key, identity, signal),
-		reset(expected: string | null) {
-			unchanged(expected);
-			local().removeItem(IDENTITY_STORAGE_KEY);
+		) =>
+			write(
+				saved,
+				saved.salt,
+				key,
+				identity,
+				signal,
+				identity !== null && Boolean(saved.key),
+			),
+		async remember(
+			saved: SavedIdentity,
+			key: CryptoKey | null,
+			signal: AbortSignal,
+		) {
+			const next: SavedIdentity = {
+				revision: crypto.randomUUID(),
+				salt: saved.salt,
+				iterations: saved.iterations,
+				encrypted: saved.encrypted,
+				...(key ? { key } : {}),
+			};
+			await replace(saved, next, signal);
+			return next;
 		},
-		ownsStorage: (area: unknown) => area === local(),
+		async lock(signal: AbortSignal) {
+			// Lock always clears the current remembered key, even for an older tab.
+			return (
+				(await database.update<SavedIdentity>(
+					SESSION,
+					(saved) =>
+						saved
+							? {
+									revision: crypto.randomUUID(),
+									salt: saved.salt,
+									iterations: saved.iterations,
+									encrypted: saved.encrypted,
+								}
+							: undefined,
+					signal,
+				)) ?? null
+			);
+		},
+		reset: (signal: AbortSignal) =>
+			database.update<SavedIdentity>(SESSION, () => undefined, signal),
+		dispose: database.dispose,
 	};
 }
