@@ -12,7 +12,6 @@ viewer.retry() after construction. Session/Preferences load() returns the cached
 initial completion promise; Session.retry() explicitly retries a failed read.
 Session.initialize(password, rememberDevice) still configures the master password.
 
-
 Each tab loads its saved session once from IndexedDB at startup. A remembered
 non-extractable wrapping key decrypts and validates the encrypted identity; without
 one, the tab requires the master password. Remember this device is optional and
