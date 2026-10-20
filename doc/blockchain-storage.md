@@ -99,7 +99,10 @@ erased.
 
 ### Encoding and limits
 
-Cryptographic structures use fixed-position MessagePack arrays, minimal integer
+All new fixed protocol structures use compact, fixed-position MessagePack arrays,
+including API request/response frames, cryptographic structures, manifests,
+credentials, backup documents, and pairing control packets. Do not encode their
+fixed fields as key-value maps. Use minimal integer
 encodings, binary values for keys/hashes/ciphertext, and no extension types or
 floating-point fields. Integers are nonnegative JavaScript-safe integers. Decode
 strictly, reject trailing bytes and wrong shapes, and check canonical encoding
@@ -363,8 +366,8 @@ outside an existing library. Normal device enrollment occurs in the chain.
 | Endpoint | Request and result |
 | --- | --- |
 | `POST /api/blocks` | Encoded signed record; returns accepted hash/sequence/head; `409` on stale parent or unavailable inventory |
-| `GET /api/blocks?after=HASH&until=HASH` | Bounded contiguous page `{target_head, target_sequence, blocks, next_after}` |
-| `POST /api/blobs` | MessagePack `{file_id, ciphertext}`; returns independently checked `{hash}` |
+| `GET /api/blocks?after=HASH&until=HASH` | Bounded contiguous page `[target_head, target_sequence, blocks, next_after]` |
+| `POST /api/blobs` | MessagePack `[file_id, ciphertext]`; returns independently checked `[hash]` |
 | `GET /api/blobs/{file_id}/{hash}` | Raw committed ciphertext, bounded while streaming |
 
 `after` is required and may be genesis. The first request omits `until` and pins

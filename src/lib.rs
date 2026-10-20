@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 mod auth;
+pub mod chain;
 pub mod codec;
 mod db;
 mod error;
