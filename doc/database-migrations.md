@@ -2,13 +2,16 @@
 
 Startup owns schema initialization through `Database::initialize`, before HTTP
 requests are accepted. The baseline schema is defined in `sql/001_init.sql`.
-The chunk-content cutover consolidates all tables into this one migration,
-including `files`, `chunks`, quotas and tags. The explicit greenfield storage
-change replaces the previous baseline and removes migration 002. Existing
+The explicitly authorized blockchain cutover replaces this baseline directly:
+libraries, device membership, immutable signed blocks, file storage lifecycle,
+and hash-addressed ciphertext blobs replace the old metadata/chunk/tag tables.
+There is no follow-up conversion migration or compatibility reader. Existing
 databases must be recreated; editing their migration ledger cannot rebuild data.
-Descriptors use the sealed-envelope format; chunk ciphertext is raw with a
-16-byte minimum and a 4,194,320-byte maximum. Chunk rows and file format fields
-are immutable. Tags and chunks cascade from files.
+Blob ciphertext is bounded to 16 through 4,194,368 bytes. Hashes match stored
+ciphertext, published file IDs and device history are permanent, and committed
+blobs can only be deleted after explicit file purge. See the
+[storage specification](blockchain-storage.md) for the coordinated API/client
+cutover and transaction rules.
 
 SQLx acquires a PostgreSQL advisory lock, validates recorded checksums, and runs
 pending migrations in version order. Each migration commits its SQL and history

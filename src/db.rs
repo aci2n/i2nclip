@@ -688,6 +688,127 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chain_schema_initialization_reopens_and_serializes_startup() {
+        let (db, admin, guard) = empty_fixture().await;
+        let (first, second) = tokio::join!(db.initialize(), db.initialize());
+        first.unwrap();
+        second.unwrap();
+        let initial = crate::reference_crypto::from_seed([7; 32]);
+        let library = crate::chain::genesis(&initial.public).unwrap();
+        sqlx::query("INSERT INTO libraries(id,genesis_device_key,head_hash) VALUES($1,$2,$1)")
+            .bind(library.as_slice())
+            .bind(initial.public.as_slice())
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        db.initialize().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM libraries")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        let versions: Vec<i64> =
+            sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(versions, [1]);
+        dispose(db, admin, guard).await;
+    }
+
+    #[tokio::test]
+    async fn chain_schema_preserves_history_addresses_and_purge_tombstones() {
+        let (db, admin, guard) = empty_fixture().await;
+        db.initialize().await.unwrap();
+        let initial = crate::reference_crypto::from_seed([7; 32]);
+        let library = crate::chain::genesis(&initial.public).unwrap();
+        sqlx::query("INSERT INTO libraries(id,genesis_device_key,head_hash) VALUES($1,$2,$1)")
+            .bind(library.as_slice())
+            .bind(initial.public.as_slice())
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO devices(public_key,library_id,authorized_at_sequence) VALUES($1,$2,0)",
+        )
+        .bind(initial.public.as_slice())
+        .bind(library.as_slice())
+        .execute(&db.pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO blocks(library_id,sequence,hash,previous_hash,signer_key,signed_body,signature) VALUES($1,1,$2,$1,$3,$4,$5)")
+            .bind(library.as_slice()).bind([3u8;32].as_slice()).bind(initial.public.as_slice()).bind([1u8].as_slice()).bind([0u8;64].as_slice()).execute(&db.pool).await.unwrap();
+        sqlx::query("INSERT INTO files(library_id,file_id,status,staging_expires_at) VALUES($1,$2,'staging',100)")
+            .bind(library.as_slice()).bind([4u8;32].as_slice()).execute(&db.pool).await.unwrap();
+        let ciphertext = [6u8; 16];
+        let hash = crate::chain::digest(&ciphertext);
+        sqlx::query("INSERT INTO blobs(library_id,file_id,hash,ciphertext,staging_expires_at) VALUES($1,$2,$3,$4,100)")
+            .bind(library.as_slice()).bind([4u8;32].as_slice()).bind(hash.as_slice()).bind(ciphertext.as_slice()).execute(&db.pool).await.unwrap();
+        for query in [
+            "UPDATE blocks SET signed_body = decode('00','hex')",
+            "DELETE FROM blocks",
+            "UPDATE blobs SET ciphertext = decode(repeat('07',16),'hex')",
+            "UPDATE libraries SET used_blob_bytes = max_blob_bytes + 1",
+            "UPDATE devices SET public_key = decode(repeat('08',32),'hex')",
+        ] {
+            assert!(
+                sqlx::query(query).execute(&db.pool).await.is_err(),
+                "{query}"
+            );
+        }
+        sqlx::query("UPDATE blobs SET committed_at_sequence=1,staging_expires_at=NULL")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(
+            sqlx::query("UPDATE blobs SET committed_at_sequence=NULL,staging_expires_at=200")
+                .execute(&db.pool)
+                .await
+                .is_err()
+        );
+        sqlx::query("UPDATE files SET status='retained',staging_expires_at=NULL")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(sqlx::query("DELETE FROM blobs")
+            .execute(&db.pool)
+            .await
+            .is_err());
+        sqlx::query("UPDATE files SET status='purged'")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM blobs")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(sqlx::query("DELETE FROM files")
+            .execute(&db.pool)
+            .await
+            .is_err());
+        assert!(sqlx::query("UPDATE files SET status='retained'")
+            .execute(&db.pool)
+            .await
+            .is_err());
+        sqlx::query("UPDATE devices SET revoked_at_sequence=2")
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        assert!(sqlx::query("UPDATE devices SET revoked_at_sequence=NULL")
+            .execute(&db.pool)
+            .await
+            .is_err());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM blocks")
+                .fetch_one(&db.pool)
+                .await
+                .unwrap(),
+            1
+        );
+        dispose(db, admin, guard).await;
+    }
+
+    #[tokio::test]
     async fn fixture_cleanup_survives_a_panicking_test() {
         let (db, admin, fixture) = empty_fixture().await;
         let name = fixture.name.clone();
