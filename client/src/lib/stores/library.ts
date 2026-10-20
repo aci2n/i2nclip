@@ -1,4 +1,4 @@
-import { get, type Writable, writable } from "svelte/store";
+import { get, writable } from "svelte/store";
 import type { LibraryApi } from "../api.ts";
 import * as api from "../api.ts";
 import { errorMessage } from "../error.ts";
@@ -25,328 +25,283 @@ export interface LibraryOptions {
 	onChange?: () => void;
 	confirm?: (message: string) => boolean;
 }
-export type Library = ReturnType<typeof createLibrary>;
+// Keep the public contract structural, independent of private implementation fields.
+export type Library = Pick<LibraryStore, keyof LibraryStore>;
 
-interface LibraryDependencies {
-	context: LibraryContext;
-	http: LibraryApi;
-	mediaOptions: MediaOptions;
-	onChange: () => void;
-	confirm: (message: string) => boolean;
-	log: ReturnType<typeof createLog>;
-}
 interface LibraryCard {
 	media: MediaItem;
 	value: MediaState;
 	unsubscribe: () => void;
 }
-interface LibraryRuntime {
-	state: Writable<LibraryState>;
-	cards: Map<string, LibraryCard>;
-	disposed: boolean;
-	searchController?: AbortController;
-	previewController: AbortController | null;
-}
 
 export function createLibrary(
 	context: LibraryContext,
-	{
-		http = api,
-		mediaOptions = {},
-		onChange = () => {},
-		confirm = (message: string) => globalThis.confirm(message),
-	}: LibraryOptions = {},
-) {
-	const deps: LibraryDependencies = {
-		context,
-		http,
-		mediaOptions,
-		onChange,
-		confirm,
-		log: createLog("library"),
-	};
-	const runtime: LibraryRuntime = {
-		state: writable<LibraryState>({
-			cards: [],
-			query: [],
-			searchDraft: "",
-			next: null,
-			loading: false,
-			empty: null,
-			status: "",
-			selected: null,
-		}),
-		cards: new Map(),
-		disposed: false,
-		previewController: null,
-	};
-	void searchLibrary(deps, runtime);
-
-	return {
-		subscribe: runtime.state.subscribe,
-		editDraft: (searchDraft: string) =>
-			runtime.state.update((v) => ({ ...v, searchDraft })),
-		addTag: (tag: string) =>
-			searchLibrary(deps, runtime, [...get(runtime.state).query, tag], {
-				clearDraft: true,
-			}),
-		removeTag: (tag: string) =>
-			searchLibrary(
-				deps,
-				runtime,
-				get(runtime.state).query.filter((existing) => existing !== tag),
-			),
-		clearSearch: () => searchLibrary(deps, runtime, [], { clearDraft: true }),
-		search: searchLibrary.bind(null, deps, runtime),
-		more: () =>
-			searchLibrary(deps, runtime, get(runtime.state).query, { more: true }),
-		refresh: () => searchLibrary(deps, runtime, get(runtime.state).query),
-		reveal: revealLibraryMedia.bind(null, runtime),
-		closePreview: closePreview.bind(null, runtime),
-		download: downloadLibraryMedia.bind(null, runtime),
-		updateMetadata: updateLibraryMetadata.bind(null, deps, runtime),
-		remove: removeLibraryMedia.bind(null, deps, runtime),
-		dispose: disposeLibrary.bind(null, deps, runtime),
-	};
+	options: LibraryOptions = {},
+): Library {
+	return new LibraryStore(context, options);
 }
 
-function publishCards(runtime: LibraryRuntime) {
-	runtime.state.update((v) => ({
-		...v,
-		cards: [...runtime.cards.values()].map((row) => row.value),
-	}));
-}
-
-function clearCards(runtime: LibraryRuntime) {
-	for (const row of runtime.cards.values()) {
-		row.unsubscribe();
-		row.media.dispose();
-	}
-	runtime.cards.clear();
-	publishCards(runtime);
-}
-
-function addCard(
-	deps: LibraryDependencies,
-	runtime: LibraryRuntime,
-	item: api.Media,
-) {
-	if (runtime.cards.has(item.id)) {
-		return;
-	}
-	const media = createMediaItem(item, deps.context, {
-		http: deps.http,
-		...deps.mediaOptions,
-	});
-	const row = { media, value: get(media), unsubscribe: () => {} };
-	runtime.cards.set(item.id, row);
-	row.unsubscribe = media.subscribe((value) => updateCard(runtime, row, value));
-}
-
-function closePreview(runtime: LibraryRuntime) {
-	runtime.previewController?.abort();
-	runtime.previewController = null;
-	runtime.state.update((v) => ({ ...v, selected: null }));
-}
-
-function resetLibrary(runtime: LibraryRuntime) {
-	closePreview(runtime);
-	runtime.searchController?.abort();
-	clearCards(runtime);
-	runtime.state.update((v) => ({
-		...v,
+class LibraryStore {
+	private readonly state = writable<LibraryState>({
+		cards: [],
+		query: [],
+		searchDraft: "",
 		next: null,
 		loading: false,
 		empty: null,
 		status: "",
 		selected: null,
-		query: [],
-		searchDraft: "",
-	}));
-}
-
-async function searchLibrary(
-	deps: LibraryDependencies,
-	runtime: LibraryRuntime,
-	query = get(runtime.state).query,
-	{ more = false, clearDraft = false } = {},
-) {
-	if (runtime.disposed || deps.context.signal.aborted) {
-		deps.log.debug("search-rejected", { reason: "disposed" });
-		return false;
-	}
-	const previous = get(runtime.state);
-	if (more && (previous.loading || !previous.next)) {
-		deps.log.debug("search-rejected", {
-			reason: previous.loading ? "busy" : "no-next-page",
-		});
-		return false;
-	}
-	let submitted: string[];
-	try {
-		submitted = submittedTags(more ? previous.query : query);
-	} catch (error) {
-		deps.log.warn("search-invalid", failureFields(error));
-		runtime.state.update((v) => ({ ...v, status: errorMessage(error) }));
-		return false;
-	}
-	const operation = deps.log.operation();
-	deps.log.debug("search-started", {
-		operation,
-		more,
-		tagCount: submitted.length,
 	});
-	runtime.searchController?.abort();
-	runtime.searchController = new AbortController();
-	const signal = AbortSignal.any([
-		runtime.searchController.signal,
-		deps.context.signal,
-	]);
-	if (!more) {
-		closePreview(runtime);
-		clearCards(runtime);
+	private readonly cards = new Map<string, LibraryCard>();
+	private readonly log = createLog("library");
+	private readonly context: LibraryContext;
+	private readonly http: LibraryApi;
+	private readonly mediaOptions: MediaOptions;
+	private readonly onChange: () => void;
+	private readonly confirm: (message: string) => boolean;
+	private disposed = false;
+	private searchController?: AbortController;
+	private previewController: AbortController | null = null;
+
+	constructor(
+		context: LibraryContext,
+		{
+			http = api,
+			mediaOptions = {},
+			onChange = () => {},
+			confirm = (message: string) => globalThis.confirm(message),
+		}: LibraryOptions,
+	) {
+		this.context = context;
+		this.http = http;
+		this.mediaOptions = mediaOptions;
+		this.onChange = onChange;
+		this.confirm = confirm;
+		void this.search();
 	}
-	runtime.state.update((v) => ({
-		...v,
-		query: submitted,
-		searchDraft: clearDraft ? "" : v.searchDraft,
-		loading: true,
-		empty: null,
-		status: "",
-		selected: more ? v.selected : null,
-		next: more ? v.next : null,
-	}));
-	try {
-		const page = await deps.http.list({
-			...deps.context,
-			tags: submitted,
-			after: more ? previous.next : null,
-			signal,
+
+	readonly subscribe = this.state.subscribe;
+	readonly editDraft = (searchDraft: string) =>
+		this.state.update((v) => ({ ...v, searchDraft }));
+	readonly addTag = (tag: string) =>
+		this.search([...get(this.state).query, tag], { clearDraft: true });
+	readonly removeTag = (tag: string) =>
+		this.search(get(this.state).query.filter((existing) => existing !== tag));
+	readonly clearSearch = () => this.search([], { clearDraft: true });
+	readonly more = () => this.search(get(this.state).query, { more: true });
+	readonly refresh = () => this.search(get(this.state).query);
+
+	private publishCards() {
+		this.state.update((v) => ({
+			...v,
+			cards: [...this.cards.values()].map((row) => row.value),
+		}));
+	}
+
+	private clearCards() {
+		for (const row of this.cards.values()) {
+			row.unsubscribe();
+			row.media.dispose();
+		}
+		this.cards.clear();
+		this.publishCards();
+	}
+
+	private addCard(item: api.Media) {
+		if (this.cards.has(item.id)) {
+			return;
+		}
+		const media = createMediaItem(item, this.context, {
+			http: this.http,
+			...this.mediaOptions,
 		});
-		if (signal.aborted) {
-			deps.log.debug("search-stale", { operation });
+		const row = { media, value: get(media), unsubscribe: () => {} };
+		this.cards.set(item.id, row);
+		row.unsubscribe = media.subscribe((value) => this.updateCard(row, value));
+	}
+
+	readonly closePreview = () => {
+		this.previewController?.abort();
+		this.previewController = null;
+		this.state.update((v) => ({ ...v, selected: null }));
+	};
+
+	private reset() {
+		this.closePreview();
+		this.searchController?.abort();
+		this.clearCards();
+		this.state.update((v) => ({
+			...v,
+			next: null,
+			loading: false,
+			empty: null,
+			status: "",
+			selected: null,
+			query: [],
+			searchDraft: "",
+		}));
+	}
+
+	readonly search = async (
+		query = get(this.state).query,
+		{ more = false, clearDraft = false } = {},
+	) => {
+		if (this.disposed || this.context.signal.aborted) {
+			this.log.debug("search-rejected", { reason: "disposed" });
 			return false;
 		}
-		deps.log.debug("search-completed", {
+		const previous = get(this.state);
+		if (more && (previous.loading || !previous.next)) {
+			this.log.debug("search-rejected", {
+				reason: previous.loading ? "busy" : "no-next-page",
+			});
+			return false;
+		}
+		let submitted: string[];
+		try {
+			submitted = submittedTags(more ? previous.query : query);
+		} catch (error) {
+			this.log.warn("search-invalid", failureFields(error));
+			this.state.update((v) => ({ ...v, status: errorMessage(error) }));
+			return false;
+		}
+		const operation = this.log.operation();
+		this.log.debug("search-started", {
 			operation,
-			count: page.items.length,
-			hasNext: Boolean(page.next),
+			more,
+			tagCount: submitted.length,
 		});
-		for (const item of page.items) {
-			addCard(deps, runtime, item);
+		this.searchController?.abort();
+		this.searchController = new AbortController();
+		const signal = AbortSignal.any([
+			this.searchController.signal,
+			this.context.signal,
+		]);
+		if (!more) {
+			this.closePreview();
+			this.clearCards();
 		}
-		runtime.state.update((v) => ({
+		this.state.update((v) => ({
 			...v,
-			next: page.next,
-			empty: runtime.cards.size
-				? null
-				: submitted.length
-					? "search"
-					: "library",
+			query: submitted,
+			searchDraft: clearDraft ? "" : v.searchDraft,
+			loading: true,
+			empty: null,
+			status: "",
+			selected: more ? v.selected : null,
+			next: more ? v.next : null,
 		}));
-		return true;
-	} catch (error) {
-		if (signal.aborted) {
-			deps.log.debug("search-cancelled", { operation });
-		} else {
-			deps.log.error("search-failed", { operation, ...failureFields(error) });
+		try {
+			const page = await this.http.list({
+				...this.context,
+				tags: submitted,
+				after: more ? previous.next : null,
+				signal,
+			});
+			if (signal.aborted) {
+				this.log.debug("search-stale", { operation });
+				return false;
+			}
+			this.log.debug("search-completed", {
+				operation,
+				count: page.items.length,
+				hasNext: Boolean(page.next),
+			});
+			for (const item of page.items) {
+				this.addCard(item);
+			}
+			this.state.update((v) => ({
+				...v,
+				next: page.next,
+				empty: this.cards.size ? null : submitted.length ? "search" : "library",
+			}));
+			return true;
+		} catch (error) {
+			if (signal.aborted) {
+				this.log.debug("search-cancelled", { operation });
+			} else {
+				this.log.error("search-failed", { operation, ...failureFields(error) });
+			}
+			if (!signal.aborted) {
+				this.state.update((v) => ({ ...v, status: errorMessage(error) }));
+			}
+			return false;
+		} finally {
+			if (!signal.aborted) {
+				this.state.update((v) => ({ ...v, loading: false }));
+			}
 		}
-		if (!signal.aborted) {
-			runtime.state.update((v) => ({ ...v, status: errorMessage(error) }));
+	};
+
+	readonly reveal = async (id: string, opener?: HTMLElement) => {
+		const row = this.cards.get(id);
+		if (
+			!row ||
+			row.value.busy ||
+			row.value.deleted ||
+			!canPreview(
+				row.value.metadata?.content_type || "",
+				row.value.metadata?.name || "",
+			)
+		) {
+			return false;
+		}
+		this.previewController?.abort();
+		this.previewController = new AbortController();
+		this.state.update((v) => ({
+			...v,
+			selected: { id, opener: v.selected?.opener || opener },
+		}));
+		return row.media.reveal(this.previewController.signal).then(Boolean);
+	};
+
+	readonly download = async (id: string) => {
+		const row = this.cards.get(id);
+		return row ? row.media.download() : false;
+	};
+
+	readonly updateMetadata = async (id: string, patch: Metadata) => {
+		const row = this.cards.get(id);
+		if (!row) {
+			return false;
+		}
+		const saved = await row.media.updateMetadata(patch);
+		if (saved) {
+			void this.onChange();
+		}
+		return saved;
+	};
+
+	readonly remove = async (id: string) => {
+		const row = this.cards.get(id);
+		if (
+			!row ||
+			row.value.busy ||
+			row.value.deleted ||
+			!this.confirm(
+				`Delete ${row.value.metadata?.name || id}? This cannot be undone.`,
+			)
+		) {
+			return false;
+		}
+		if (await row.media.remove()) {
+			void this.onChange();
+			this.closePreview();
+			return true;
 		}
 		return false;
-	} finally {
-		if (!signal.aborted) {
-			runtime.state.update((v) => ({ ...v, loading: false }));
-		}
-	}
-}
+	};
 
-async function revealLibraryMedia(
-	runtime: LibraryRuntime,
-	id: string,
-	opener?: HTMLElement,
-) {
-	const row = runtime.cards.get(id);
-	if (
-		!row ||
-		row.value.busy ||
-		row.value.deleted ||
-		!canPreview(
-			row.value.metadata?.content_type || "",
-			row.value.metadata?.name || "",
-		)
-	) {
-		return false;
-	}
-	runtime.previewController?.abort();
-	runtime.previewController = new AbortController();
-	runtime.state.update((v) => ({
-		...v,
-		selected: { id, opener: v.selected?.opener || opener },
-	}));
-	return row.media.reveal(runtime.previewController.signal).then(Boolean);
-}
+	readonly dispose = () => {
+		this.log.debug("disposed");
+		this.disposed = true;
+		this.reset();
+	};
 
-async function downloadLibraryMedia(runtime: LibraryRuntime, id: string) {
-	const row = runtime.cards.get(id);
-	return row ? row.media.download() : false;
-}
-
-async function updateLibraryMetadata(
-	deps: LibraryDependencies,
-	runtime: LibraryRuntime,
-	id: string,
-	patch: Metadata,
-) {
-	const row = runtime.cards.get(id);
-	if (!row) {
-		return false;
+	private updateCard(row: LibraryCard, value: MediaState) {
+		row.value = value;
+		this.publishCards();
 	}
-	const saved = await row.media.updateMetadata(patch);
-	if (saved) {
-		void deps.onChange();
-	}
-	return saved;
-}
-
-async function removeLibraryMedia(
-	deps: LibraryDependencies,
-	runtime: LibraryRuntime,
-	id: string,
-) {
-	const row = runtime.cards.get(id);
-	if (
-		!row ||
-		row.value.busy ||
-		row.value.deleted ||
-		!deps.confirm(
-			`Delete ${row.value.metadata?.name || id}? This cannot be undone.`,
-		)
-	) {
-		return false;
-	}
-	if (await row.media.remove()) {
-		void deps.onChange();
-		closePreview(runtime);
-		return true;
-	}
-	return false;
-}
-
-function disposeLibrary(deps: LibraryDependencies, runtime: LibraryRuntime) {
-	deps.log.debug("disposed");
-	runtime.disposed = true;
-	resetLibrary(runtime);
-}
-
-function updateCard(
-	runtime: LibraryRuntime,
-	row: LibraryCard,
-	value: MediaState,
-) {
-	row.value = value;
-	publishCards(runtime);
 }
 
 function submittedTags(tags: string[]) {

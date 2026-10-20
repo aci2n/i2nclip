@@ -614,3 +614,111 @@ test("search admission preserves drafts and rejects excess tags before replacing
 	assert.equal(await f.library.clearSearch(), false);
 	assert.equal(calls.length, count);
 });
+
+test("detached library callbacks preserve their owner across search and media actions", async (t) => {
+	let changes = 0;
+	const streaming = streamFixture();
+	streaming.finish.resolve();
+	const f = fixture(t, {
+		http: {
+			list: async () => ({
+				items: [
+					{
+						...item("a"),
+						metadata: { name: "a.png", content_type: "image/png" },
+					},
+				],
+				next: null,
+			}),
+			updateMetadata: async () => ({
+				conflict: false as const,
+				metaHash: "updated",
+			}),
+			remove: async () => {},
+		},
+		mediaOptions: { streams: streaming.streams, download: () => {} },
+		onChange: () => {
+			changes++;
+		},
+	});
+	const {
+		subscribe,
+		editDraft,
+		addTag,
+		removeTag,
+		clearSearch,
+		search,
+		more,
+		refresh,
+		reveal,
+		closePreview,
+		download,
+		updateMetadata,
+		remove,
+	} = f.library;
+	const values: string[] = [];
+	const unsubscribe = subscribe((value) => values.push(value.searchDraft));
+	t.after(unsubscribe);
+	await tick();
+	editDraft("draft");
+	assert.equal(values.at(-1), "draft");
+	assert.equal(await addTag("image"), true);
+	assert.deepEqual(get(f.library).query, ["image"]);
+	assert.equal(await removeTag("image"), true);
+	assert.equal(await clearSearch(), true);
+	assert.equal(await search(["picture"]), true);
+	assert.equal(await more(), false);
+	assert.equal(await refresh(), true);
+	assert.equal(await reveal("a"), true);
+	closePreview();
+	assert.equal(get(f.library).selected, null);
+	assert.equal(await download("a"), true);
+	assert.equal(await updateMetadata("a", { name: "renamed.png" }), true);
+	assert.equal(await remove("a"), true);
+	assert.equal(changes, 2);
+});
+
+test("disposing one library does not cancel or publish into another instance", async (t) => {
+	const pending: Array<
+		ListRequest & { done: PromiseWithResolvers<MediaPage> }
+	> = [];
+	const http = {
+		list: (request: ListRequest) => {
+			const done = deferred<MediaPage>();
+			pending.push({ ...request, done });
+			return done.promise;
+		},
+	};
+	const first = fixture(t, { http });
+	const second = fixture(t, { http });
+	t.after(() => {
+		for (const request of pending) {
+			request.done.resolve({ items: [], next: null });
+		}
+	});
+	first.library.editDraft("first");
+	second.library.editDraft("second");
+	const { dispose } = first.library;
+	dispose();
+	assert.equal(assertPresent(pending[0].signal).aborted, true);
+	assert.equal(assertPresent(pending[1].signal).aborted, false);
+	pending[0].done.resolve({ items: [item("stale")], next: null });
+	pending[1].done.resolve({ items: [item("live")], next: "cursor" });
+	await tick();
+	assert.deepEqual(get(first.library).cards, []);
+	assert.equal(get(first.library).searchDraft, "");
+	assert.deepEqual(
+		get(second.library).cards.map((card) => card.id),
+		["live"],
+	);
+	assert.equal(get(second.library).searchDraft, "second");
+	const { more } = second.library;
+	const loading = more();
+	assert.equal(pending[2].after, "cursor");
+	pending[2].done.resolve({ items: [item("next")], next: null });
+	assert.equal(await loading, true);
+	assert.deepEqual(
+		get(second.library).cards.map((card) => card.id),
+		["live", "next"],
+	);
+});
