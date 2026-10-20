@@ -1,6 +1,11 @@
 import { utf8 } from "./bytes.ts";
-import { bytes, document } from "./value.ts";
+import { bytes } from "./value.ts";
 export const PBKDF2_ITERATIONS = 600_000;
+type EncryptedBytes = readonly [
+	1,
+	Uint8Array<ArrayBuffer>,
+	Uint8Array<ArrayBuffer>,
+];
 
 export async function wrappingKey(
 	passphrase: string,
@@ -23,85 +28,82 @@ export async function wrappingKey(
 	);
 }
 
-// The same primitives protect the saved identity and portable recovery manifests.
 export async function sealBytes(
 	key: CryptoKey,
-	bytes: Uint8Array<ArrayBuffer>,
+	plaintext: Uint8Array<ArrayBuffer>,
 	purpose: string,
-) {
+): Promise<EncryptedBytes> {
 	const iv = crypto.getRandomValues(new Uint8Array(12));
 	const ct = await crypto.subtle.encrypt(
 		{ name: "AES-GCM", iv, additionalData: utf8(purpose) },
 		key,
-		bytes,
+		plaintext,
 	);
-	return {
-		v: 1,
-		iv,
-		ct: new Uint8Array(ct),
-	};
+	return [1, iv, new Uint8Array(ct)];
 }
 export async function openBytes(
 	key: CryptoKey,
 	input: unknown,
 	purpose: string,
 ) {
-	const record = document(input);
 	if (
-		record.v !== 1 ||
-		!(record.iv instanceof Uint8Array) ||
-		!(record.ct instanceof Uint8Array)
+		!Array.isArray(input) ||
+		input.length !== 3 ||
+		input[0] !== 1 ||
+		!(input[1] instanceof Uint8Array) ||
+		input[1].length !== 12 ||
+		!(input[2] instanceof Uint8Array) ||
+		input[2].length < 16
 	) {
-		throw new Error("Invalid encrypted data.");
-	}
-	const iv = bytes(record.iv);
-	if (iv.length !== 12 || record.ct.length < 16) {
 		throw new Error("Invalid encrypted data.");
 	}
 	return new Uint8Array(
 		await crypto.subtle.decrypt(
-			{ name: "AES-GCM", iv, additionalData: utf8(purpose) },
+			{ name: "AES-GCM", iv: bytes(input[1]), additionalData: utf8(purpose) },
 			key,
-			bytes(record.ct),
+			bytes(input[2]),
 		),
 	);
 }
 export async function passwordSeal(
-	bytes: Uint8Array<ArrayBuffer>,
+	plaintext: Uint8Array<ArrayBuffer>,
 	password: string,
 	purpose: string,
 ) {
 	const salt = crypto.getRandomValues(new Uint8Array(16));
-	const iterations = PBKDF2_ITERATIONS;
-	const key = await wrappingKey(password, salt, iterations);
-	return {
-		...(await sealBytes(key, bytes, purpose)),
-		salt,
-		iterations,
-	};
+	const key = await wrappingKey(password, salt, PBKDF2_ITERATIONS);
+	const [, iv, ct] = await sealBytes(key, plaintext, purpose);
+	return [1, salt, PBKDF2_ITERATIONS, iv, ct] as const;
 }
 export async function passwordOpen(
 	input: unknown,
 	password: string,
 	purpose: string,
 ) {
-	const record = document(input);
 	if (
-		typeof record.iterations !== "number" ||
-		!Number.isInteger(record.iterations) ||
-		record.iterations < PBKDF2_ITERATIONS ||
-		record.iterations > 2_000_000 ||
-		!(record.salt instanceof Uint8Array)
+		!Array.isArray(input) ||
+		input.length !== 5 ||
+		input[0] !== 1 ||
+		!(input[1] instanceof Uint8Array) ||
+		input[1].length !== 16 ||
+		!Number.isInteger(input[2]) ||
+		input[2] < PBKDF2_ITERATIONS ||
+		input[2] > 2_000_000
 	) {
 		throw new Error("Invalid encrypted data.");
 	}
-	const salt = bytes(record.salt);
-	if (salt.length !== 16) {
+	// Validate all cheap framing before the deliberately expensive password KDF.
+	if (
+		!(input[3] instanceof Uint8Array) ||
+		input[3].length !== 12 ||
+		!(input[4] instanceof Uint8Array) ||
+		input[4].length < 16
+	) {
 		throw new Error("Invalid encrypted data.");
 	}
-	const key = await wrappingKey(password, salt, record.iterations);
+	const key = await wrappingKey(password, bytes(input[1]), input[2]);
 	try {
-		return await openBytes(key, record, purpose);
+		return await openBytes(key, [1, input[3], input[4]], purpose);
 	} catch {
 		throw new Error("Wrong password or damaged encrypted data.");
 	}

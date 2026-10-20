@@ -610,6 +610,22 @@ head/sequence. Validate signing-key correspondence, genesis identity, distinct
 epochs, and bounds before installation. Epoch secrets, not merely the current
 secret, are needed for full history replay.
 
+The credential frame is `[1, server_origin, genesis_bytes, library_id,
+[signing_seed, signing_public_key], [[epoch, secret], ...],
+[trusted_sequence, trusted_hash], phase, pending_rotation_or_null]`.
+Epoch pairs are complete and ordered from 1. `phase` is `registering`, `pairing`,
+or `active`; only an active device can hold a pending rotation. Its frame is
+`[[replacement_seed, replacement_public_key], new_epoch_secret,
+exact_signed_transition_bytes]`. Validate that the transition extends the saved
+head and names the saved old signer, next epoch, and replacement key.
+Registration candidates must describe their own genesis and epoch 1.
+
+The portable backup frame is `["i2nclip-device-backup", 1,
+[1, password_salt, iterations, nonce, ciphertext]]`. The password salt is 16 bytes,
+the nonce is 12 bytes, and the KDF bounds remain 600,000–2,000,000 iterations.
+Local AES envelopes use `[1, nonce, ciphertext]`. These are fresh formats with
+no map-format fallback.
+
 A backup restores that logical device. It is not a perpetual master credential
 and does not contain file blobs. A revoked backup cannot restore server authority;
 an old backup cannot decrypt a later epoch without re-pairing. A still-active

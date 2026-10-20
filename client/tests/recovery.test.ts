@@ -60,24 +60,21 @@ test("portable recovery preserves content decryption, normalized tags and public
 		),
 		"original upload",
 	);
+	const envelope = document(decode(text)).encrypted as unknown[];
 	for (const changed of [
 		{ v: 99 },
-		{ encrypted: { v: 2 } },
+		{ encrypted: [2] },
 		{
-			encrypted: {
-				...document(document(decode(text)).encrypted),
-				iterations: 9_000_000,
-			},
+			encrypted: [
+				envelope[0],
+				envelope[1],
+				9_000_000,
+				envelope[3],
+				envelope[4],
+			],
 		},
-		{
-			encrypted: {
-				...document(document(decode(text)).encrypted),
-				salt: "AAAA",
-			},
-		},
-		{
-			encrypted: { ...document(document(decode(text)).encrypted), iv: "AAAA" },
-		},
+		{ encrypted: [envelope[0], "AAAA", envelope[2], envelope[3], envelope[4]] },
+		{ encrypted: [envelope[0], envelope[1], envelope[2], "AAAA", envelope[4]] },
 	]) {
 		await assert.rejects(
 			openRecovery(

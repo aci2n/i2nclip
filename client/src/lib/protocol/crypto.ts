@@ -9,13 +9,15 @@ import { parsePrivateKey } from "./identity.ts";
 import { decode, encode } from "./msgpack.ts";
 import { normalizeTag, parseTagList } from "./tags.ts";
 import { bytes, document } from "./value.ts";
-export interface LoadedKey {
+export interface SigningKey {
 	readonly privateCryptoKey: CryptoKey;
+	readonly publicKey: Uint8Array<ArrayBuffer>;
+	readonly registrationKey: string;
+}
+export interface LoadedKey extends SigningKey {
 	readonly fileKeyMaterial: CryptoKey;
 	readonly tagLabelKey: CryptoKey;
 	readonly tagTokenKey: CryptoKey;
-	readonly publicKey: Uint8Array<ArrayBuffer>;
-	readonly registrationKey: string;
 }
 interface RequestContext {
 	origin: string;
@@ -91,6 +93,23 @@ export function openTagLabel(key: CryptoKey, token: string, blob: Uint8Array) {
  * Returns the public key to register on the server, plus handles the
  * protocol operations can use without parsing again.
  */
+export async function loadSigningKey(privateKey: unknown): Promise<SigningKey> {
+	const parsed = parsePrivateKey(privateKey);
+	try {
+		const { privateCryptoKey } = await materialFromSeed(
+			parsed.seed,
+			parsed.publicKey,
+		);
+		return Object.freeze({
+			privateCryptoKey,
+			publicKey: parsed.publicKey,
+			registrationKey: bytesToB64url(parsed.publicKey),
+		});
+	} finally {
+		parsed.seed.fill(0);
+	}
+}
+
 export async function loadKey(privateKey: unknown): Promise<LoadedKey> {
 	const parsed = parsePrivateKey(privateKey);
 	try {
@@ -222,7 +241,7 @@ export async function authorizationHeader({
 	path,
 	body,
 }: RequestContext & {
-	key: LoadedKey;
+	key: SigningKey;
 	body?: Uint8Array<ArrayBuffer>;
 }) {
 	const hash = await bodyHash(body ?? new Uint8Array());
