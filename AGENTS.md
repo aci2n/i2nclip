@@ -24,7 +24,7 @@
 
 ## Database policy
 
-- Database startup runs embedded SQLx migrations from `sql/`. Keep applied migrations unchanged; add numbered SQL files for schema changes. Do not add legacy-schema detection or compatibility migrations without an explicit requirement.
+- Database startup runs embedded SQLx migrations from `sql/`. For the explicitly authorized blockchain-storage cutover, replace `sql/001_init.sql` directly and use fresh databases; no data conversion, compatibility paths, or follow-up migration for the old schema. After that baseline is established, keep applied migrations unchanged and add numbered SQL files for subsequent schema changes. Do not add legacy-schema detection or compatibility migrations without an explicit requirement.
 - SQL `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` are fine; reopening a current database must preserve its data.
 
 ## State and resource ownership

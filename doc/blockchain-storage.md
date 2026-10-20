@@ -339,11 +339,14 @@ owning library row; do not hold it while reading network bodies.
 
 ### Migration and cutover
 
-Keep `sql/001_init.sql` unchanged. Add numbered SQLx migration(s) for the new
-schema and removal of obsolete storage. This is a coordinated fresh-data cutover:
-document explicit database recreation before deploying it, never silently erase
-existing data, and reject incompatible populated data with a clear migration
-error rather than inventing a converter. Do not edit migration checksums.
+The user explicitly authorizes dropping existing application databases and
+replacing `sql/001_init.sql` directly for this greenfield cutover. Define only
+the new schema in that baseline; do not add a `002` migration, legacy-schema
+detection, conversion, or compatibility behavior. Document database recreation
+before deployment. SQLx checksum validation will reject an old database until it
+is recreated; never edit its migration ledger to disguise the changed baseline.
+Startup does not automatically erase databases. Subsequent changes after this
+baseline is established return to ordinary numbered migrations.
 
 The implementation branch need not be deployable at every intermediate commit.
 Keep commits compiling without warnings; deploy after the client/server cutover.
@@ -670,7 +673,7 @@ make an intermediate branch independently deployable.
 | 2 | Scope Makefile formatting/lint and pre-commit dispatch to changed subsystems; preserve explicit full-suite targets | Focused hook-dispatch checks for docs, backend, frontend, and shared changes |
 | 3 | Define canonical genesis/records/effects, strict verification, per-block crypto, and shared vectors | Focused Rust and JavaScript protocol/vector tests |
 | 4 | Implement the pure client membership/file reducer and lifecycle rules | Deterministic replay, tampering, invalid-operation, and epoch-transition tests |
-| 5 | Add numbered SQLx schema changes and persistence transactions | Fresh/reopen/concurrent migration and isolated PostgreSQL invariant tests |
+| 5 | Replace `sql/001_init.sql` with the new baseline and implement persistence transactions for fresh databases | Fresh/reopen/concurrent initialization and isolated PostgreSQL invariant tests |
 | 6 | Implement registration, signer-to-library resolution, append, pinned pagination, and quota responses | Focused Rust authentication/API/append-race tests |
 | 7 | Implement hash-addressed blob staging, inventory publication, expiration, and transactional purge | Focused blob, accounting, maintenance, and race tests |
 | 8 | Implement IndexedDB records/head transactions and the session-owned synchronizer | Focused storage, cancellation, rollback, and concurrent-tab tests |
