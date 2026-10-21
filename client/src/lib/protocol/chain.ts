@@ -19,7 +19,7 @@ export type StorageEffect =
 export type Effects =
 	| readonly StorageEffect[]
 	| readonly [Bytes]
-	| readonly [number, Bytes];
+	| readonly [number, Bytes, Bytes];
 export type BlockKind = "data" | "enroll" | "revoke" | "rotate";
 export interface BlockHeader {
 	readonly library: Bytes;
@@ -125,8 +125,12 @@ function parseBody(input: unknown): BlockBody {
 		}
 		if ((kind === "enroll" || kind === "revoke") && input[7].length === 1) {
 			effects = [fixedBytes(input[7][0])];
-		} else if (kind === "rotate" && input[7].length === 2) {
-			effects = [safeInteger(input[7][0], 2), fixedBytes(input[7][1])];
+		} else if (kind === "rotate" && input[7].length === 3) {
+			effects = [
+				safeInteger(input[7][0], 2),
+				fixedBytes(input[7][1]),
+				fixedBytes(input[7][2]),
+			];
 		} else {
 			return invalid();
 		}
@@ -164,8 +168,23 @@ function bodyBytes(body: BlockBody) {
 export async function sha256(bytes: Bytes): Promise<Bytes> {
 	return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
 }
-export async function genesis(initialPublicKey: Bytes) {
-	const document = encode([1, fixedBytes(initialPublicKey), 1]);
+export async function genesis(
+	recoveryPublicKey: Bytes,
+	initialPublicKey: Bytes,
+	epochSalt: Bytes,
+) {
+	if (sameBytes(recoveryPublicKey, initialPublicKey)) {
+		throw new Error(
+			"Recovery authority must be separate from the initial device.",
+		);
+	}
+	const document = encode([
+		1,
+		fixedBytes(recoveryPublicKey),
+		fixedBytes(initialPublicKey),
+		fixedBytes(epochSalt),
+		1,
+	]);
 	return {
 		bytes: document,
 		hash: await genesisHash(document),

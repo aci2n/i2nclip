@@ -3,7 +3,6 @@ import {
 	type Bytes,
 	compareBytes,
 	fixedBytes,
-	genesis,
 	MAX_BLOCK_BYTES,
 	MAX_PURGE_FILES,
 	type StorageEffect,
@@ -11,6 +10,7 @@ import {
 	type VerifiedBlock,
 } from "./chain.ts";
 import { decode, encode } from "./msgpack.ts";
+import { parseRecoveryGenesis } from "./recovery-key.ts";
 
 export interface ObjectReference {
 	readonly hash: Bytes;
@@ -48,6 +48,8 @@ export interface ChainState {
 	readonly head: Bytes;
 	readonly sequence: number;
 	readonly epoch: number;
+	readonly recoveryPublicKey: Bytes;
+	readonly epochSalt: Bytes;
 	readonly devices: ReadonlyMap<string, DeviceMembership>;
 	readonly files: ReadonlyMap<string, MaterializedFile>;
 }
@@ -137,15 +139,17 @@ export function decodeOperation(plaintext: Bytes): FileOperation {
 	return operation;
 }
 export async function initialChainState(
-	initialPublicKey: Bytes,
+	genesisBytes: Bytes,
 ): Promise<ChainState> {
-	const root = await genesis(initialPublicKey);
-	const publicKey = fixedBytes(initialPublicKey);
+	const root = await parseRecoveryGenesis(genesisBytes);
+	const publicKey = root.initialDevicePublicKey;
 	return {
 		library: root.hash,
 		head: root.hash,
 		sequence: 0,
 		epoch: 1,
+		recoveryPublicKey: root.recoveryPublicKey,
+		epochSalt: root.epochSalt,
 		devices: new Map([
 			[bytesToHex(publicKey), { publicKey, authorizedAt: 0, revokedAt: null }],
 		]),
@@ -244,12 +248,17 @@ export function reduceBlock(
 		invalid("parent, sequence, library, or epoch mismatch");
 	}
 	const signer = state.devices.get(bytesToHex(body.signer));
-	if (!signer || signer.revokedAt !== null) {
+	if (
+		body.kind === "rotate"
+			? !sameBytes(body.signer, state.recoveryPublicKey)
+			: !signer || signer.revokedAt !== null
+	) {
 		invalid("unauthorized signer");
 	}
 	let files = state.files;
 	let devices = state.devices;
 	let epoch = state.epoch;
+	let epochSalt = state.epochSalt;
 	if (body.kind === "data") {
 		if (!plaintext) {
 			invalid("missing decrypted operation");
@@ -274,7 +283,10 @@ export function reduceBlock(
 			next.set(bytesToHex(key), { ...target, revokedAt: body.sequence });
 		} else {
 			const key = body.effects[body.kind === "rotate" ? 1 : 0] as Bytes;
-			if (next.has(bytesToHex(key))) {
+			if (
+				sameBytes(key, state.recoveryPublicKey) ||
+				next.has(bytesToHex(key))
+			) {
 				invalid("device key already used");
 			}
 			if (body.kind === "rotate") {
@@ -283,6 +295,7 @@ export function reduceBlock(
 					invalid("epoch must advance by one");
 				}
 				epoch = nextEpoch;
+				epochSalt = fixedBytes(body.effects[2]);
 				for (const [id, device] of next) {
 					if (device.revokedAt === null) {
 						next.set(id, { ...device, revokedAt: body.sequence });
@@ -302,6 +315,7 @@ export function reduceBlock(
 		head: record.hash,
 		sequence: body.sequence,
 		epoch,
+		epochSalt,
 		devices,
 		files,
 	};

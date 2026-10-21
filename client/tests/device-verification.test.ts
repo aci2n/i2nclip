@@ -4,12 +4,9 @@ import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { verifyDevice } from "../src/lib/device-verification.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
 import { createRecord } from "../src/lib/protocol/chain.ts";
-import {
-	createDevice,
-	decodeDevice,
-	encodeDevice,
-} from "../src/lib/protocol/device.ts";
+import { decodeDevice, encodeDevice } from "../src/lib/protocol/device.ts";
 import { encode } from "../src/lib/protocol/msgpack.ts";
+import { createDevice } from "./library-fixture.ts";
 
 Object.defineProperty(globalThis, "IDBKeyRange", { value: IDBKeyRange });
 function database(t: test.TestContext) {
@@ -37,11 +34,11 @@ test("restored-device verification replays membership and cannot trust server ad
 			sequence: 1,
 			previous: old.identity.library,
 			epoch: 1,
-			signer: old.key.publicKey,
+			signer: old.recovery.key.publicKey,
 			kind: "rotate",
-			effects: [2, replacement.key.publicKey],
+			effects: [2, replacement.key.publicKey, new Uint8Array(32).fill(12)],
 		},
-		old.key.privateCryptoKey,
+		old.recovery.key.privateCryptoKey,
 	);
 	t.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
 		const after = new URL(String(input)).searchParams.get("after");

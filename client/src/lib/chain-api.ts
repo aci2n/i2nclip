@@ -233,11 +233,20 @@ class ChainApiImpl implements ChainTransport {
 			head: checkpoint(values[2], values[3]),
 		};
 	}
-	private async registerDevice(code: string, signal: AbortSignal) {
+	private async registerDevice(
+		code: string,
+		recoveryPublicKey: Bytes,
+		epochSalt: Bytes,
+		signal: AbortSignal,
+	) {
 		const response = await this.request(
 			"POST",
 			"/api/register-key",
-			encode([code.trim()]),
+			encode([
+				code.trim(),
+				fixedBytes(recoveryPublicKey),
+				fixedBytes(epochSalt),
+			]),
 			signal,
 		);
 		await response.body?.cancel();

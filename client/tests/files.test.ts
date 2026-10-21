@@ -14,17 +14,17 @@ import {
 	reduceBlock,
 } from "../src/lib/protocol/chain-state.ts";
 import { CHUNK_BYTES } from "../src/lib/protocol/content.ts";
-import { createDevice } from "../src/lib/protocol/device.ts";
 import {
 	type ChainMutation,
 	type ChainStore,
 	type ChainView,
 	stateCheckpoint,
 } from "../src/lib/stores/chain.ts";
+import { createDevice } from "./library-fixture.ts";
 
 async function fixture(t: test.TestContext) {
 	const device = await createDevice("https://example.test");
-	let state = await initialChainState(device.key.publicKey);
+	let state = await initialChainState(device.identity.genesis);
 	const view = writable<ChainView>({
 		live: state,
 		syncing: false,

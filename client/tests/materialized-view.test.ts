@@ -28,6 +28,8 @@ function source(files: readonly MaterializedFile[], sequence = 1): ChainState {
 		head: bytes(sequence),
 		sequence,
 		epoch: 1,
+		recoveryPublicKey: bytes(101),
+		epochSalt: bytes(102),
 		devices: new Map(),
 		files: new Map(files.map((file) => [bytesToHex(file.id), file])),
 	};

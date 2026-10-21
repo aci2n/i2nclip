@@ -21,6 +21,7 @@ import {
 } from "../src/lib/protocol/chain-state.ts";
 import { loadKey } from "../src/lib/protocol/crypto.ts";
 import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
+import { createLibraryRecovery } from "../src/lib/protocol/recovery-key.ts";
 import {
 	type ChainPage,
 	type ChainTransport,
@@ -106,7 +107,11 @@ class Transport implements ChainTransport {
 }
 async function fixture(t: TestContext, minimum?: Checkpoint) {
 	const key = await device();
-	const initial = await initialChainState(key.publicKey);
+	const recovery = await createLibraryRecovery(
+		"https://example.test",
+		key.publicKey,
+	);
+	const initial = await initialChainState(recovery.recovery.genesis.bytes);
 	const transport = new Transport(stateCheckpoint(initial));
 	const factory = new IDBFactory();
 	const storage = createChainStorage(
@@ -115,7 +120,7 @@ async function fixture(t: TestContext, minimum?: Checkpoint) {
 		factory,
 	);
 	const credentials = {
-		initialPublicKey: key.publicKey,
+		genesis: recovery.recovery.genesis.bytes,
 		publicKey: key.publicKey,
 		signingKey: key.privateCryptoKey,
 		secrets: new Map([[1, bytes(9)]]),
@@ -365,23 +370,19 @@ test("a valid signature from an unenrolled device is rejected during synchroniza
 	);
 });
 
-test("successful rotation is accepted without trying to read with the revoked signing key", async (t) => {
+test("ordinary device stores reject attempts to publish epoch resets", async (t) => {
 	const f = await fixture(t);
 	const replacement = await device();
 	const initial = await f.store.sync();
-	const reads = f.transport.reads;
-	const rotated = await f.store.append({
-		expected: stateCheckpoint(initial),
-		kind: "rotate",
-		effects: [2, replacement.publicKey],
-	});
-	assert.equal(rotated.epoch, 2);
-	assert.equal(rotated.devices.get(bytesToHex(f.key.publicKey))?.revokedAt, 1);
-	assert.equal(f.transport.reads, reads + 1);
-	assert.equal(
-		(await f.storage.head(new AbortController().signal))?.sequence,
-		1,
+	await assert.rejects(
+		f.store.append({
+			expected: stateCheckpoint(initial),
+			kind: "rotate",
+			effects: [2, replacement.publicKey, bytes(12)],
+		}),
+		/unauthorized/,
 	);
+	assert.equal(f.transport.writes, 0);
 });
 
 test("a live tab retains its observed head when another tab explicitly forgets shared history", async (t) => {

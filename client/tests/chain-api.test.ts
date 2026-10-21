@@ -4,8 +4,8 @@ import { createChainApi, HttpError } from "../src/lib/chain-api.ts";
 import { b64urlToBytes, bytesToHex } from "../src/lib/protocol/bytes.ts";
 import { MAX_BLOB_BYTES, sha256 } from "../src/lib/protocol/chain.ts";
 import { bodyHash, requestMessage } from "../src/lib/protocol/crypto.ts";
-import { createDevice } from "../src/lib/protocol/device.ts";
 import { decode, encode } from "../src/lib/protocol/msgpack.ts";
+import { createDevice } from "./library-fixture.ts";
 
 const binary = (n: number) => new Uint8Array(32).fill(n);
 const response = (value: unknown) => new Response(encode(value));
@@ -56,7 +56,7 @@ test("chain API signs the exact query and uses fixed registration, pagination an
 			assert.equal(options.redirect, "error");
 			assert.equal(options.credentials, "omit");
 			if (url.pathname === "/api/register-key") {
-				assert.deepEqual(decode(body), ["invite"]);
+				assert.deepEqual(decode(body), ["invite", binary(3), binary(4)]);
 				return new Response(null, { status: 204 });
 			}
 			if (options.method === "GET") {
@@ -67,7 +67,12 @@ test("chain API signs the exact query and uses fixed registration, pagination an
 		},
 	);
 	t.after(api.dispose);
-	await api.register(" invite ", new AbortController().signal);
+	await api.register(
+		" invite ",
+		binary(3),
+		binary(4),
+		new AbortController().signal,
+	);
 	const page = await api.read(
 		bytesToHex(binary(1)),
 		bytesToHex(binary(2)),

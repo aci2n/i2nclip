@@ -3,13 +3,13 @@ import test from "node:test";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
 import { createRecord } from "../src/lib/protocol/chain.ts";
 import {
-	createDevice,
 	decodeDevice,
 	encodeDevice,
 	MAX_CREDENTIAL_BYTES,
 } from "../src/lib/protocol/device.ts";
 import { decode, encode } from "../src/lib/protocol/msgpack.ts";
 import { passwordOpen, passwordSeal } from "../src/lib/protocol/password.ts";
+import { createDevice } from "./library-fixture.ts";
 
 const random = () => crypto.getRandomValues(new Uint8Array(32));
 
@@ -94,11 +94,11 @@ test("local pending rotation credentials bind both devices and the exact old-sig
 			sequence: 1,
 			previous: old.identity.library,
 			epoch: 1,
-			signer: old.key.publicKey,
+			signer: old.recovery.key.publicKey,
 			kind: "rotate",
-			effects: [2, next.key.publicKey],
+			effects: [2, next.key.publicKey, new Uint8Array(32).fill(12)],
 		},
-		old.key.privateCryptoKey,
+		old.recovery.key.privateCryptoKey,
 	);
 	const pending = {
 		...old.identity,

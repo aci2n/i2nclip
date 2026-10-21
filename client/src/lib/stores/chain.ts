@@ -41,7 +41,7 @@ export interface ChainTransport {
 	): Promise<{ accepted: Checkpoint; head: Checkpoint }>;
 }
 export interface ChainCredentials {
-	readonly initialPublicKey: Bytes;
+	readonly genesis: Bytes;
 	readonly publicKey: Bytes;
 	readonly signingKey: CryptoKey;
 	readonly secrets: ReadonlyMap<number, Bytes>;
@@ -216,7 +216,7 @@ class ChainStoreImpl {
 		}
 		const signal = AbortSignal.any([this.signal, caller]);
 		signal.throwIfAborted();
-		let state = await initialChainState(this.credentials.initialPublicKey);
+		let state = await initialChainState(this.credentials.genesis);
 		let selected: ChainState | null = sequence === 0 ? state : null;
 		// Verify the suffix too: the selected prefix must reach the trusted live head.
 		while (state.sequence < live.sequence) {
@@ -272,7 +272,7 @@ class ChainStoreImpl {
 		return this.syncing;
 	}
 	private async synchronize(): Promise<ChainState> {
-		const initial = await initialChainState(this.credentials.initialPublicKey);
+		const initial = await initialChainState(this.credentials.genesis);
 		this.check();
 		const observed = get(this.state).live;
 		const observedHead = observed ? stateCheckpoint(observed) : null;

@@ -12,6 +12,7 @@ import {
 	type LoadedDevice,
 } from "../protocol/device.ts";
 import { generatePrivateKey } from "../protocol/identity.ts";
+import { epochKey, openRecoveryFile } from "../protocol/recovery-key.ts";
 import { type ChainStore, stateCheckpoint } from "./chain.ts";
 import type { Session } from "./identity.ts";
 
@@ -177,7 +178,7 @@ class DevicesImpl {
 			});
 		});
 	}
-	private prepareEpoch() {
+	private prepareEpoch(file: Blob, password: string) {
 		return this.action(async () => {
 			const state = await this.chain.sync();
 			this.signal.throwIfAborted();
@@ -187,31 +188,60 @@ class DevicesImpl {
 			) {
 				throw new Error("This device no longer has rotation authority.");
 			}
-			const { privateKey } = await generatePrivateKey();
-			const secret = crypto.getRandomValues(new Uint8Array(32));
-			const record = await createRecord(
-				{
-					library: state.library,
-					sequence: state.sequence + 1,
-					previous: state.head,
-					epoch: state.epoch,
-					signer: current.key.publicKey,
-					kind: "rotate",
-					effects: [state.epoch + 1, privateKey.public_key],
-				},
-				current.key.privateCryptoKey,
-			);
-			this.signal.throwIfAborted();
-			if (
-				!(await this.session.prepareRotation(
-					{ replacement: privateKey, secret, record: record.bytes },
-					stateCheckpoint(state),
-				))
-			) {
-				throw new Error(
-					get(this.session).error || "Could not preserve rotation credentials.",
-				);
+			if (file.size > 1024 * 1024) {
+				throw new Error("Recovery file is too large.");
 			}
+			const recovery = await openRecoveryFile(
+				new Uint8Array(await file.arrayBuffer()),
+				password,
+			);
+			try {
+				this.signal.throwIfAborted();
+				if (bytesToHex(recovery.genesis.hash) !== bytesToHex(state.library)) {
+					throw new Error("Recovery file belongs to another library.");
+				}
+				const { privateKey } = await generatePrivateKey();
+				const salt = crypto.getRandomValues(new Uint8Array(32));
+				const secret = await epochKey(
+					recovery.identity.epochDerivationSecret,
+					state.library,
+					state.epoch + 1,
+					salt,
+				);
+				try {
+					const record = await createRecord(
+						{
+							library: state.library,
+							sequence: state.sequence + 1,
+							previous: state.head,
+							epoch: state.epoch,
+							signer: recovery.key.publicKey,
+							kind: "rotate",
+							effects: [state.epoch + 1, privateKey.public_key, salt],
+						},
+						recovery.key.privateCryptoKey,
+					);
+					this.signal.throwIfAborted();
+					if (
+						!(await this.session.prepareRotation(
+							{ replacement: privateKey, secret, record: record.bytes },
+							stateCheckpoint(state),
+						))
+					) {
+						throw new Error(
+							get(this.session).error ||
+								"Could not preserve rotation credentials.",
+						);
+					}
+				} finally {
+					secret.fill(0);
+					privateKey.seed.fill(0);
+				}
+			} finally {
+				recovery.identity.signingKey.seed.fill(0);
+				recovery.identity.epochDerivationSecret.fill(0);
+			}
+
 			this.update({
 				status: "Rotation prepared and saved locally. It can now be submitted.",
 			});

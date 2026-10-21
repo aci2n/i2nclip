@@ -16,9 +16,10 @@ import {
 	initialChainState,
 	reduceBlock,
 } from "../src/lib/protocol/chain-state.ts";
-import { loadKey } from "../src/lib/protocol/crypto.ts";
+import { loadSigningKey } from "../src/lib/protocol/crypto.ts";
 import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
 import { encode } from "../src/lib/protocol/msgpack.ts";
+import { createLibraryRecovery } from "../src/lib/protocol/recovery-key.ts";
 
 const filled = (value: number): Bytes => new Uint8Array(32).fill(value);
 const reference = (value: number) => ({
@@ -26,12 +27,16 @@ const reference = (value: number) => ({
 	key: filled(value + 1),
 });
 async function device() {
-	return loadKey((await generatePrivateKey()).privateKey);
+	return loadSigningKey((await generatePrivateKey()).privateKey);
 }
 async function fixture() {
 	const first = await device();
 	const secret = filled(9);
-	const initial = await initialChainState(first.publicKey);
+	const recovery = await createLibraryRecovery(
+		"https://example.test",
+		first.publicKey,
+	);
+	const initial = await initialChainState(recovery.recovery.genesis.bytes);
 	function header(state: ChainState, signer = first): BlockHeader {
 		return {
 			library: state.library,
@@ -61,19 +66,19 @@ async function fixture() {
 		state: ChainState,
 		kind: "enroll" | "revoke" | "rotate",
 		target: Bytes,
-		signer = first,
+		signer = kind === "rotate" ? recovery.recovery.key : first,
 		epoch = state.epoch + 1,
 	) {
 		return createRecord(
 			{
 				...header(state, signer),
 				kind,
-				effects: kind === "rotate" ? [epoch, target] : [target],
+				effects: kind === "rotate" ? [epoch, target, filled(12)] : [target],
 			},
 			signer.privateCryptoKey,
 		);
 	}
-	return { first, secret, initial, header, data, admin };
+	return { first, secret, initial, header, data, admin, recovery };
 }
 
 test("file operations deterministically replay without fetching objects or mutating prior states", async () => {
@@ -103,7 +108,7 @@ test("file operations deterministically replay without fetching objects or mutat
 	assert.equal(updated.state.files.get(key)?.deleted, false);
 	assert.equal(deleted.state.files.get(key)?.deleted, true);
 	assert.equal(purged.state.files.get(key)?.purged, true);
-	let replay = await initialChainState(f.first.publicKey);
+	let replay = await initialChainState(f.recovery.recovery.genesis.bytes);
 	for (const item of [
 		added,
 		updated,
@@ -198,7 +203,7 @@ test("membership is checked before each operation and rotation replaces all acti
 		revoked,
 		"rotate",
 		replacement.publicKey,
-		second,
+		f.recovery.recovery.key,
 	);
 	const rotated = reduceBlock(revoked, rotate);
 	assert.equal(rotated.epoch, 2);
@@ -216,7 +221,7 @@ test("membership is checked before each operation and rotation replaces all acti
 		revoked,
 		"rotate",
 		replacement.publicKey,
-		second,
+		f.recovery.recovery.key,
 		3,
 	);
 	assert.throws(() => reduceBlock(revoked, wrongEpoch), /advance by one/);
@@ -257,4 +262,34 @@ test("private operations require compact canonical arrays and sorted unique purg
 	]) {
 		assert.throws(() => decodeOperation(encode(operation)));
 	}
+});
+
+test("only the pinned recovery signer can reset and cannot acquire device authority", async () => {
+	const f = await fixture();
+	const next = await device();
+	const deviceReset = await f.admin(
+		f.initial,
+		"rotate",
+		next.publicKey,
+		f.first,
+	);
+	assert.throws(() => reduceBlock(f.initial, deviceReset), /unauthorized/);
+	const recoveryEnroll = await f.admin(
+		f.initial,
+		"enroll",
+		next.publicKey,
+		f.recovery.recovery.key,
+	);
+	assert.throws(() => reduceBlock(f.initial, recoveryEnroll), /unauthorized/);
+	const enrollRecovery = await f.admin(
+		f.initial,
+		"enroll",
+		f.recovery.recovery.key.publicKey,
+	);
+	assert.throws(() => reduceBlock(f.initial, enrollRecovery), /already used/);
+	const reset = await f.admin(f.initial, "rotate", next.publicKey);
+	const state = reduceBlock(f.initial, reset);
+	assert.deepEqual(state.epochSalt, filled(12));
+	assert.deepEqual(state.recoveryPublicKey, f.initial.recoveryPublicKey);
+	assert.equal(state.devices.get(bytesToHex(next.publicKey))?.authorizedAt, 1);
 });

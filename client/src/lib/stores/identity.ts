@@ -5,11 +5,15 @@ import { verifyDevice } from "../device-verification.ts";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
 import { createPersistence, type SavedIdentity } from "../persistence.ts";
+import {
+	createRecoveryFile,
+	type EncryptedBackup,
+} from "../protocol/backup.ts";
 import { bytesToHex } from "../protocol/bytes.ts";
 import type { ChainState } from "../protocol/chain-state.ts";
 import type { SigningKey } from "../protocol/crypto.ts";
 import {
-	createDevice,
+	createLibraryDevice,
 	type DeviceIdentity,
 	decodeDevice,
 	encodeDevice,
@@ -17,6 +21,12 @@ import {
 	type PendingRotation,
 } from "../protocol/device.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
+import {
+	epochKey,
+	type LoadedRecovery,
+	openRecoveryFile,
+	parseRecoveryGenesis,
+} from "../protocol/recovery-key.ts";
 import { checkServer } from "../protocol/server.ts";
 import { stateCheckpoint } from "./chain.ts";
 
@@ -48,7 +58,13 @@ const httpApi: IdentityApi = {
 	async register(device, code, signal) {
 		const api = createChainApi(device.identity.serverUrl, device.key, signal);
 		try {
-			await api.register(code, signal);
+			const genesis = await parseRecoveryGenesis(device.identity.genesis);
+			await api.register(
+				code,
+				genesis.recoveryPublicKey,
+				genesis.epochSalt,
+				signal,
+			);
 		} finally {
 			api.dispose();
 		}
@@ -63,6 +79,8 @@ export interface SessionSnapshot {
 }
 
 export interface SessionState extends SessionSnapshot {
+	recoveryFile: EncryptedBackup | null;
+	recoveryDownloaded: boolean;
 	status: "new" | "locked" | "unlocked";
 	serverUrl: string;
 	context: LibraryContext | null;
@@ -90,6 +108,7 @@ export function createSession(
 		http?: IdentityApi;
 		verify?: typeof verifyDevice;
 		defaultServerUrl?: string;
+		download?: (file: EncryptedBackup) => void;
 	} = {},
 ): Pick<SessionStoreImpl, keyof SessionStoreImpl> {
 	return new SessionStoreImpl(options);
@@ -100,6 +119,8 @@ class SessionStoreImpl {
 	private readonly http: IdentityApi;
 	private readonly verify: typeof verifyDevice;
 	private readonly defaultServerUrl: string;
+	private readonly download: (file: EncryptedBackup) => void;
+	private creationRecovery: LoadedRecovery | null = null;
 	private readonly log: ReturnType<typeof createLog>;
 	private readonly state: Writable<SessionState>;
 	private saved: SavedIdentity | null;
@@ -131,6 +152,9 @@ class SessionStoreImpl {
 	readonly initialize = this.initializeSession.bind(this);
 	readonly unlock = this.unlockSession.bind(this);
 	readonly create = this.createIdentity.bind(this);
+	readonly prepareCreation = this.prepareNewLibrary.bind(this);
+	readonly resumeCreation = this.resumeNewLibrary.bind(this);
+	readonly downloadRecovery = this.downloadCreationRecovery.bind(this);
 	readonly changePassword = this.changeSessionPassword.bind(this);
 	readonly forget = this.forgetIdentity.bind(this);
 	readonly reset = this.resetSession.bind(this);
@@ -141,20 +165,25 @@ class SessionStoreImpl {
 		http = httpApi,
 		verify = verifyDevice,
 		defaultServerUrl = globalThis.location?.origin || "http://localhost:8080",
+		download = downloadRecoveryFile,
 	}: {
 		persistence?: ReturnType<typeof createPersistence>;
 		http?: IdentityApi;
 		verify?: typeof verifyDevice;
 		defaultServerUrl?: string;
+		download?: (file: EncryptedBackup) => void;
 	} = {}) {
 		this.persistence = persistence;
 		this.http = http;
 		this.verify = verify;
 		this.defaultServerUrl = defaultServerUrl;
+		this.download = download;
 		this.log = createLog("session");
 		const lifetime = new AbortController();
 		this.state = writable<SessionState>({
 			status: "new",
+			recoveryFile: null,
+			recoveryDownloaded: false,
 			configured: false,
 			unlocked: false,
 			busy: false,
@@ -189,6 +218,7 @@ class SessionStoreImpl {
 	}
 
 	private endSessionLifetime() {
+		this.clearCreationRecovery();
 		this.log.debug("lifetime-ended");
 		this.lifetime.abort();
 		this.lifetime = new AbortController();
@@ -695,6 +725,106 @@ class SessionStoreImpl {
 		this.publishSession({ notice });
 	}
 
+	private clearCreationRecovery() {
+		this.creationRecovery?.identity.signingKey.seed.fill(0);
+		this.creationRecovery?.identity.epochDerivationSecret.fill(0);
+		this.creationRecovery = null;
+		const artifact = get(this.state).recoveryFile;
+		artifact?.bytes.fill(0);
+		this.publishSession({ recoveryFile: null, recoveryDownloaded: false });
+	}
+	private prepareNewLibrary(serverUrl: string) {
+		return this.sessionAction("prepareCreation", (signal) =>
+			this.prepareLibrary(serverUrl, signal),
+		);
+	}
+	private async prepareLibrary(serverUrl: string, signal: AbortSignal) {
+		this.unlockedSession();
+		checkServer(serverUrl);
+		if (this.library) {
+			throw new Error("Forget the prepared library before creating another.");
+		}
+		const created = await createLibraryDevice(new URL(serverUrl).origin);
+		try {
+			signal.throwIfAborted();
+			const artifact = await createRecoveryFile(created.recovery.identity);
+			signal.throwIfAborted();
+			await this.applyIdentity(created.device, signal);
+			this.creationRecovery = created.recovery;
+			this.publishSession({
+				recoveryFile: artifact,
+				recoveryDownloaded: false,
+			});
+		} catch (error) {
+			created.recovery.identity.signingKey.seed.fill(0);
+			created.recovery.identity.epochDerivationSecret.fill(0);
+			throw error;
+		}
+	}
+	private downloadCreationRecovery() {
+		return this.sessionAction("downloadRecovery", async (signal) => {
+			const artifact = get(this.state).recoveryFile;
+			if (!artifact || !this.creationRecovery) {
+				throw new Error(
+					"Import the matching recovery file or prepare a new library.",
+				);
+			}
+			signal.throwIfAborted();
+			this.download(artifact);
+			signal.throwIfAborted();
+			this.publishSession({ recoveryDownloaded: true });
+		});
+	}
+	private resumeNewLibrary(file: Blob, password: string) {
+		return this.sessionAction("resumeCreation", async (signal) => {
+			this.unlockedSession();
+			if (this.library?.identity.phase !== "registering") {
+				throw new Error("No pending library creation.");
+			}
+			if (file.size > 1024 * 1024) {
+				throw new Error("Recovery file is too large.");
+			}
+			const recovery = await openRecoveryFile(
+				new Uint8Array(await file.arrayBuffer()),
+				password,
+			);
+			try {
+				signal.throwIfAborted();
+				if (
+					bytesToHex(recovery.genesis.hash) !==
+					bytesToHex(this.library.identity.library)
+				) {
+					throw new Error("Recovery file belongs to another library.");
+				}
+				const first = await epochKey(
+					recovery.identity.epochDerivationSecret,
+					recovery.genesis.hash,
+					1,
+					recovery.genesis.epochSalt,
+				);
+				try {
+					if (
+						bytesToHex(first) !== bytesToHex(this.library.identity.epochs[0][1])
+					) {
+						throw new Error(
+							"Recovery epoch key does not match the prepared library.",
+						);
+					}
+				} finally {
+					first.fill(0);
+				}
+
+				this.clearCreationRecovery();
+				this.creationRecovery = recovery;
+				// Import demonstrates that this file exists outside transient creation memory.
+				this.publishSession({ recoveryDownloaded: true });
+			} catch (error) {
+				recovery.identity.signingKey.seed.fill(0);
+				recovery.identity.epochDerivationSecret.fill(0);
+				throw error;
+			}
+		});
+	}
 	private async performCreateIdentity(
 		{ serverUrl, otc }: { serverUrl: string; otc: string },
 		signal: AbortSignal,
@@ -702,22 +832,23 @@ class SessionStoreImpl {
 		this.unlockedSession();
 		checkServer(serverUrl);
 		const origin = new URL(serverUrl).origin;
-		let next = this.library;
+		if (!this.library) {
+			await this.prepareLibrary(origin, signal);
+		}
+		const next = this.loadedDevice();
 		if (
-			next &&
-			(next.identity.phase !== "registering" ||
-				next.identity.serverUrl !== origin)
+			next.identity.phase !== "registering" ||
+			next.identity.serverUrl !== origin
 		) {
 			throw new Error("Forget the prepared library before creating another.");
 		}
-		if (!next) {
-			next = await createDevice(origin);
-			signal.throwIfAborted();
-			// Persist both independent secrets before the first request can succeed.
-			await this.applyIdentity(next, signal);
-		}
 		try {
 			if (!(await this.http.registered(next, signal))) {
+				if (!get(this.state).recoveryDownloaded) {
+					throw new Error(
+						"Download the recovery file and store its generated password securely before registration. After a restart, import the matching recovery file.",
+					);
+				}
 				await this.http.register(next, otc, signal);
 			}
 			signal.throwIfAborted();
@@ -725,6 +856,7 @@ class SessionStoreImpl {
 				{ ...next, identity: { ...next.identity, phase: "active" } },
 				signal,
 			);
+			this.clearCreationRecovery();
 		} catch (error) {
 			signal.throwIfAborted();
 			throw new Error(
@@ -758,5 +890,19 @@ class SessionStoreImpl {
 		);
 		signal.throwIfAborted();
 		this.installSession(next.saved, next.key, identity);
+	}
+}
+
+function downloadRecoveryFile(file: EncryptedBackup) {
+	const url = URL.createObjectURL(
+		new Blob([file.bytes], { type: "application/msgpack" }),
+	);
+	try {
+		const anchor = document.createElement("a");
+		anchor.href = url;
+		anchor.download = "i2nclip-library-recovery.msgpack";
+		anchor.click();
+	} finally {
+		URL.revokeObjectURL(url);
 	}
 }

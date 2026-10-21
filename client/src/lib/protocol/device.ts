@@ -3,7 +3,6 @@ import { bytesToHex } from "./bytes.ts";
 import {
 	type Bytes,
 	fixedBytes,
-	genesis,
 	safeInteger,
 	sameBytes,
 	verifyRecord,
@@ -11,10 +10,11 @@ import {
 import { loadSigningKey, type SigningKey } from "./crypto.ts";
 import { generatePrivateKey, type PrivateKeyDocument } from "./identity.ts";
 import { decode, encode } from "./msgpack.ts";
+import { createLibraryRecovery, parseRecoveryGenesis } from "./recovery-key.ts";
 import { checkServer } from "./server.ts";
 
 export const MAX_CREDENTIAL_BYTES = 1024 * 1024;
-export type DevicePhase = "registering" | "pairing" | "active";
+export type DevicePhase = "registering" | "pairing" | "active" | "resetting";
 export interface PendingRotation {
 	readonly replacement: PrivateKeyDocument;
 	readonly secret: Bytes;
@@ -94,9 +94,8 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 		throw new Error("Device server must be a normalized origin.");
 	}
 	const genesisBytes = fixedBytesVariable(values[2]);
-	const genesisValues = frame(decode(genesisBytes), 3);
-	const initialPublicKey = fixedBytes(genesisValues[1]);
-	const initial = await genesis(initialPublicKey);
+	const initial = await parseRecoveryGenesis(genesisBytes);
+	const initialPublicKey = initial.initialDevicePublicKey;
 	const library = fixedBytes(values[3]);
 	if (
 		!sameBytes(genesisBytes, initial.bytes) ||
@@ -106,6 +105,9 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 	}
 	const privateKey = keyDocument(values[4]);
 	const key = await loadSigningKey(privateKey);
+	if (sameBytes(key.publicKey, initial.recoveryPublicKey)) {
+		throw new Error("Recovery key cannot be a device.");
+	}
 	if (!Array.isArray(values[5]) || !values[5].length) {
 		throw new Error("Missing epoch secrets.");
 	}
@@ -126,7 +128,12 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 		throw new Error("Invalid genesis trusted head.");
 	}
 	const phase = values[7];
-	if (phase !== "registering" && phase !== "pairing" && phase !== "active") {
+	if (
+		phase !== "registering" &&
+		phase !== "pairing" &&
+		phase !== "active" &&
+		phase !== "resetting"
+	) {
 		throw new Error("Invalid device preparation phase.");
 	}
 	if (
@@ -139,8 +146,8 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 	}
 	let rotation: PendingRotation | null = null;
 	if (values[8] !== null) {
-		if (phase !== "active") {
-			throw new Error("Only active devices can prepare rotation.");
+		if (phase !== "active" && phase !== "resetting") {
+			throw new Error("Invalid pending rotation phase.");
 		}
 		const pending = frame(values[8], 3);
 		const replacement = keyDocument(pending[0]);
@@ -155,11 +162,13 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 			body.sequence !== head.sequence + 1 ||
 			bytesToHex(body.previous) !== head.hash ||
 			!sameBytes(body.library, library) ||
-			!sameBytes(body.signer, key.publicKey) ||
+			!sameBytes(body.signer, initial.recoveryPublicKey) ||
 			body.effects[0] !== epochs.length + 1 ||
 			!(body.effects[1] instanceof Uint8Array) ||
 			!sameBytes(body.effects[1], replacement.public_key) ||
-			sameBytes(key.publicKey, replacement.public_key)
+			(phase === "resetting"
+				? !sameBytes(key.publicKey, replacement.public_key)
+				: sameBytes(key.publicKey, replacement.public_key))
 		) {
 			throw new Error(
 				"Pending rotation does not match the device credentials.",
@@ -188,20 +197,30 @@ function fixedBytesVariable(value: unknown): Bytes {
 	}
 	return value.slice();
 }
-export async function createDevice(server: string): Promise<LoadedDevice> {
+export async function createLibraryDevice(server: string) {
 	checkServer(server);
 	const { privateKey } = await generatePrivateKey();
-	const initial = await genesis(privateKey.public_key);
-	return decodeDevice(
-		encodeDevice({
-			serverUrl: new URL(server).origin,
-			genesis: initial.bytes,
-			library: initial.hash,
-			privateKey,
-			epochs: [[1, crypto.getRandomValues(new Uint8Array(32))]],
-			head: { sequence: 0, hash: bytesToHex(initial.hash) },
-			phase: "registering",
-			rotation: null,
-		}),
-	);
+	const created = await createLibraryRecovery(server, privateKey.public_key);
+	const initial = created.recovery.genesis;
+	const encoded = encodeDevice({
+		serverUrl: new URL(server).origin,
+		genesis: initial.bytes,
+		library: initial.hash,
+		privateKey,
+		epochs: [[1, created.epochKey]],
+		head: { sequence: 0, hash: bytesToHex(initial.hash) },
+		phase: "registering",
+		rotation: null,
+	});
+	try {
+		return { device: await decodeDevice(encoded), recovery: created.recovery };
+	} catch (error) {
+		created.recovery.identity.signingKey.seed.fill(0);
+		created.recovery.identity.epochDerivationSecret.fill(0);
+		throw error;
+	} finally {
+		encoded.fill(0);
+		privateKey.seed.fill(0);
+		created.epochKey.fill(0);
+	}
 }

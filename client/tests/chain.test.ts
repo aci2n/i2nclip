@@ -19,6 +19,9 @@ import { decode, encode } from "../src/lib/protocol/msgpack.ts";
 const vectors = JSON.parse(
 	readFileSync(new URL("./chain-vectors.json", import.meta.url), "utf8"),
 );
+const recoveryVectors = JSON.parse(
+	readFileSync(new URL("./recovery-vectors.json", import.meta.url), "utf8"),
+);
 const bytes = (name: string) => hexToBytes(vectors[name]);
 async function signingKey() {
 	return crypto.subtle.importKey(
@@ -44,9 +47,13 @@ async function resign(body: unknown) {
 }
 
 test("canonical genesis, block signatures and encryption match shared vectors", async (t) => {
-	const root = await genesis(bytes("public_key"));
-	assert.equal(bytesToHex(root.bytes), vectors.genesis);
-	assert.equal(bytesToHex(root.hash), vectors.library);
+	const root = await genesis(
+		hexToBytes(recoveryVectors.recovery_public_key),
+		hexToBytes(recoveryVectors.initial_device_public_key),
+		hexToBytes(recoveryVectors.epoch_1_salt),
+	);
+	assert.equal(bytesToHex(root.bytes), recoveryVectors.genesis);
+	assert.equal(bytesToHex(root.hash), recoveryVectors.library);
 	const record = await verifyRecord(bytes("record"));
 	assert.equal(bytesToHex(record.hash), vectors.block_hash);
 	assert.equal(bytesToHex(encode(headerValues(record.body))), vectors.header);
@@ -63,7 +70,7 @@ test("canonical genesis, block signatures and encryption match shared vectors", 
 		plaintext: bytes("plaintext"),
 	});
 	assert.deepEqual(rebuilt.bytes, record.bytes);
-	for (const name of ["enrollment", "rotation"]) {
+	for (const name of ["enrollment"]) {
 		const admin = await verifyRecord(bytes(name));
 		assert.equal(admin.body.encrypted, null);
 		assert.deepEqual(
@@ -126,7 +133,7 @@ test("signed malformed public effects and incompatible kinds are rejected", asyn
 		await assert.rejects(verifyRecord(await resign(changed)));
 	}
 	const rotation = decode(
-		(decode(bytes("rotation")) as Uint8Array[])[0],
+		(decode(hexToBytes(recoveryVectors.reset)) as Uint8Array[])[0],
 	) as unknown[];
 	rotation[10] = new Uint8Array(16);
 	await assert.rejects(verifyRecord(await resign(rotation)));

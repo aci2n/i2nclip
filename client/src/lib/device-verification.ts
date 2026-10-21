@@ -11,7 +11,7 @@ export async function verifyDevice(
 	minimum: Checkpoint,
 	signal: AbortSignal,
 ): Promise<ChainState> {
-	const { identity, key, initialPublicKey } = device;
+	const { identity, key } = device;
 	const api = createChainApi(identity.serverUrl, key, signal);
 	const storage = createChainStorage(
 		identity.serverUrl,
@@ -19,7 +19,7 @@ export async function verifyDevice(
 	);
 	const chain = createChain(
 		{
-			initialPublicKey,
+			genesis: identity.genesis,
 			publicKey: key.publicKey,
 			signingKey: key.privateCryptoKey,
 			secrets: new Map(identity.epochs),

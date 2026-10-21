@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { get, writable } from "svelte/store";
 import { createPersistence } from "../src/lib/persistence.ts";
+import type { EncryptedBackup } from "../src/lib/protocol/backup.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
 import { createRecord, verifyRecord } from "../src/lib/protocol/chain.ts";
 import {
@@ -16,20 +17,28 @@ import {
 } from "../src/lib/stores/chain.ts";
 import { createDevices } from "../src/lib/stores/devices.ts";
 import { createSession } from "../src/lib/stores/identity.ts";
+import { registerSession } from "./library-fixture.ts";
 import { memoryStorage } from "./memory-database.ts";
 
 async function fixture(t: test.TestContext) {
 	const persistence = createPersistence(memoryStorage().connect());
+	let recoveryFile: EncryptedBackup | null = null;
 	const session = createSession({
+		download: (file) => {
+			recoveryFile = { bytes: file.bytes.slice(), password: file.password };
+		},
 		persistence,
 		http: { registered: async () => false, register: async () => {} },
 	});
 	t.after(session.dispose);
 	await session.load();
 	await session.initialize("master password");
-	await session.create({ serverUrl: "https://example.test", otc: "invite" });
+	await registerSession(session, {
+		serverUrl: "https://example.test",
+		otc: "invite",
+	});
 	const original = session.device();
-	let server = await initialChainState(original.initialPublicKey);
+	let server = await initialChainState(original.identity.genesis);
 	const view = writable<ChainView>({
 		live: server,
 		syncing: false,
@@ -121,6 +130,13 @@ async function fixture(t: test.TestContext) {
 		session,
 		devices,
 		persistence,
+		prepareRotation: () => {
+			assert.ok(recoveryFile);
+			return devices.prepareRotation(
+				new Blob([recoveryFile.bytes]),
+				recoveryFile.password,
+			);
+		},
 		chain,
 		original,
 		posts,
@@ -134,7 +150,7 @@ async function fixture(t: test.TestContext) {
 
 test("rotation uses its durable local plan, submits exact bytes and reconciles replacement admission after a lost response", async (t) => {
 	const f = await fixture(t);
-	assert.equal(await f.devices.prepareRotation(), true);
+	assert.equal(await f.prepareRotation(), true);
 	const plan = f.session.device().identity.rotation;
 	assert.ok(plan);
 	f.outcome("lost");
@@ -154,7 +170,7 @@ test("rotation uses its durable local plan, submits exact bytes and reconciles r
 
 test("a rejected append preserves the pending plan and retries the same transition", async (t) => {
 	const f = await fixture(t);
-	await f.devices.prepareRotation();
+	await f.prepareRotation();
 	f.outcome("rejected");
 	assert.equal(await f.devices.submitRotation(), true);
 	assert.ok(f.session.device().identity.rotation);
@@ -168,7 +184,7 @@ test("a rejected append preserves the pending plan and retries the same transiti
 
 test("a moved parent requires explicit reconstruction and a new local plan", async (t) => {
 	const f = await fixture(t);
-	await f.devices.prepareRotation();
+	await f.prepareRotation();
 	const target = (await generatePrivateKey()).privateKey.public_key;
 	await f.chain.append({
 		expected: stateCheckpoint(f.current()),
@@ -178,14 +194,14 @@ test("a moved parent requires explicit reconstruction and a new local plan", asy
 	assert.equal(await f.devices.submitRotation(), false);
 	assert.equal(f.posts.length, 0);
 	assert.match(get(f.devices).error, /new rotation/);
-	assert.equal(await f.devices.prepareRotation(), true);
+	assert.equal(await f.prepareRotation(), true);
 	assert.equal(await f.devices.submitRotation(), true);
 	assert.equal(f.posts.length, 1);
 });
 
 test("verified rotation remains recoverable when saving the final identity fails", async (t) => {
 	const f = await fixture(t);
-	await f.devices.prepareRotation();
+	await f.prepareRotation();
 	const fail = t.mock.method(f.persistence, "save", async () => {
 		throw new Error("Disk full");
 	});
