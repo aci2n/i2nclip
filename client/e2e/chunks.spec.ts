@@ -1,43 +1,44 @@
-import { getMedia, registerKey, upload } from "../src/lib/api.ts";
-import {
-	authorizationHeader,
-	freshNonce,
-	loadKey,
-} from "../src/lib/protocol/crypto.ts";
-import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
+import { get } from "svelte/store";
+import { bytesToHex } from "../src/lib/protocol/bytes.ts";
+import { authorizationHeader, freshNonce } from "../src/lib/protocol/crypto.ts";
+import { stateCheckpoint } from "../src/lib/stores/chain.ts";
+import { liveLibrary } from "../tests/live-library.ts";
 import { startServer, stopServer } from "../tests/process.ts";
 import { expect, issueOtc, test } from "./fixtures.ts";
 
 for (const crossOrigin of [false, true]) {
-	test(`stable chunk URLs preserve HTTP cache reuse offline (${crossOrigin ? "cross" : "same"} origin)`, async ({
+	test(`ciphertext hash URLs preserve HTTP cache reuse offline (${crossOrigin ? "cross" : "same"} origin)`, async ({
 		page,
 		app,
 		context,
 	}) => {
-		const key = await loadKey((await generatePrivateKey()).privateKey);
-		await registerKey({
-			serverUrl: app.origin,
-			key,
-			otc: await issueOtc(app.data),
-		});
-		const saved = await upload({
-			serverUrl: app.origin,
-			key,
-			name: "cache.bin",
-			file: new Blob([new Uint8Array(4 * 1024 * 1024 + 17).fill(7)]),
-		});
-		const media = await getMedia({ serverUrl: app.origin, key, id: saved.id });
+		const client = await liveLibrary(app.origin, await issueOtc(app.data));
 		const separate = crossOrigin ? await startServer(app.data) : undefined;
 		try {
+			const state = get(client.chain).live;
+			if (!state) {
+				throw new Error("Expected verified genesis");
+			}
+			const saved = await client.files.upload({
+				file: new Blob([new Uint8Array(4 * 1024 * 1024 + 17).fill(7)]),
+				attributes: { name: "cache.bin" },
+				expected: stateCheckpoint(state),
+				signal: client.signal,
+			});
+			const file = get(client.chain).live?.files.get(saved.id);
+			if (!file) {
+				throw new Error("Expected published file");
+			}
+			const manifest = await client.files.manifest(file, client.signal);
 			await page.goto(separate?.origin ?? app.origin);
 			async function fetchChunks() {
 				const requests = await Promise.all(
-					[0, 1].map(async (index) => {
-						const path = `/api/media/${saved.id}/chunks/${index}`;
+					manifest.hashes.map(async (hash) => {
+						const path = `/api/blobs/${saved.id}/${bytesToHex(hash)}`;
 						return {
 							url: `${app.origin}${path}`,
 							authorization: await authorizationHeader({
-								key,
+								key: client.device.key,
 								origin: app.origin,
 								method: "GET",
 								path,
@@ -48,53 +49,46 @@ for (const crossOrigin of [false, true]) {
 						};
 					}),
 				);
-				return page.evaluate(
-					async ({ requests, total }) => {
-						const assembled = new Uint8Array(total);
-						let offset = 0;
-						const headers = [];
-						for (const request of requests) {
-							const response = await fetch(request.url, {
-								headers: { authorization: request.authorization },
-							});
-							if (response.status !== 200) {
-								throw new Error(`HTTP ${response.status}`);
-							}
-							headers.push({
-								etag: response.headers.get("etag"),
-								cache: response.headers.get("cache-control"),
-							});
-							const bytes = new Uint8Array(await response.arrayBuffer());
-							assembled.set(bytes, offset);
-							offset += bytes.length;
+				return page.evaluate(async (requests) => {
+					const results = [];
+					for (const request of requests) {
+						const response = await fetch(request.url, {
+							headers: { authorization: request.authorization },
+						});
+						if (!response.ok) {
+							throw new Error(`HTTP ${response.status}`);
 						}
-						if (offset !== total) {
-							throw new Error("short download");
-						}
-						const hash = [
-							...new Uint8Array(
-								await crypto.subtle.digest("SHA-256", assembled),
-							),
-						]
-							.map((byte) => byte.toString(16).padStart(2, "0"))
-							.join("");
-						return { hash, headers };
-					},
-					{ requests, total: media.bytes },
-				);
+						const bytes = await response.arrayBuffer();
+						results.push({
+							length: bytes.byteLength,
+							etag: response.headers.get("etag"),
+							cache: response.headers.get("cache-control"),
+							hash: Array.from(
+								new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+								(n) => n.toString(16).padStart(2, "0"),
+							).join(""),
+						});
+					}
+					return results;
+				}, requests);
 			}
 			const first = await fetchChunks();
-			expect(first.hash).toMatch(/^[0-9a-f]{64}$/);
-			expect(first.headers).toEqual(
-				[0, 1].map((index) => ({
-					etag: `"${saved.id}.${index}"`,
-					cache: "private, max-age=31536000, immutable",
-				})),
+			expect(first.map((chunk) => chunk.hash)).toEqual(
+				manifest.hashes.map(bytesToHex),
 			);
+			expect(first.map((chunk) => chunk.etag)).toEqual(
+				manifest.hashes.map(() => null),
+			);
+			expect(
+				first.every(
+					(chunk) => chunk.cache === "private, max-age=31536000, immutable",
+				),
+			).toBe(true);
 			await context.setOffline(true);
 			expect(await fetchChunks()).toEqual(first);
 		} finally {
 			await context.setOffline(false);
+			client.dispose();
 			await stopServer(separate?.child);
 		}
 	});
