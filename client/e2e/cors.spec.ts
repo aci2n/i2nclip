@@ -12,7 +12,7 @@ test("clients on another origin can read API success and authentication errors",
 		const result = await page.evaluate(async (origin) => {
 			const health = await fetch(`${origin}/api/health`);
 			// Authorization and Content-Type require a browser-managed preflight.
-			const signed = await fetch(`${origin}/api/media`, {
+			const signed = await fetch(`${origin}/api/blocks`, {
 				headers: {
 					authorization: "Bearer invalid",
 					"content-type": "application/msgpack",

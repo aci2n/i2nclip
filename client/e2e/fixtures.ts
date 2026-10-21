@@ -53,6 +53,12 @@ export async function master(page: Page, remember = false) {
 		page.getByRole("navigation", { name: "Main navigation" }),
 	).toBeVisible();
 }
+interface RecoveryArtifact {
+	bytes: Buffer<ArrayBuffer>;
+	password: string;
+}
+const recoveryArtifacts = new WeakMap<Page, RecoveryArtifact>();
+const recoveryPasswords = new WeakMap<Buffer, string>();
 export async function createLibrary(
 	page: Page,
 	app: App,
@@ -61,7 +67,25 @@ export async function createLibrary(
 ) {
 	await page.goto(`${app.origin}/#/settings`);
 	await master(page, remember);
-	await expect(page.getByLabel("Library name", { exact: true })).toHaveCount(0);
+	await page
+		.getByRole("button", { name: "Prepare library", exact: true })
+		.click();
+	const password = await page
+		.getByLabel("Recovery password", { exact: true })
+		.inputValue();
+	expect(password).toHaveLength(43);
+	await expect(
+		page.getByRole("button", { name: "Create library", exact: true }),
+	).toBeDisabled();
+	const downloading = page.waitForEvent("download");
+	await page
+		.getByRole("button", { name: "Download recovery file", exact: true })
+		.click();
+	const download = await downloading;
+	expect(download.suggestedFilename()).toBe("i2nclip-library-recovery.msgpack");
+	const bytes = Buffer.from(await readFile(await download.path()));
+	recoveryArtifacts.set(page, { bytes, password });
+	recoveryPasswords.set(bytes, password);
 	await page
 		.getByLabel("Invitation code", { exact: true })
 		.fill(await issueOtc(app.data, "debug", maxBytes));
@@ -73,21 +97,18 @@ export async function createLibrary(
 	).toBeVisible();
 }
 export async function recovery(page: Page) {
-	await page
-		.getByText("Download recovery file", { exact: true })
-		.first()
-		.click();
-	await page.getByLabel("Recovery password", { exact: true }).fill(PASSWORD);
-	await page
-		.getByLabel("Confirm recovery password", { exact: true })
-		.fill(PASSWORD);
-	const downloading = page.waitForEvent("download");
-	await page
-		.getByRole("button", { name: "Download recovery file", exact: true })
-		.click();
-	const download = await downloading;
-	expect(download.suggestedFilename()).toBe("i2nclip-recovery.msgpack");
-	return readFile(await download.path());
+	const artifact = recoveryArtifacts.get(page);
+	if (!artifact) {
+		throw new Error("This test has no saved recovery file.");
+	}
+	return artifact.bytes;
+}
+export function recoveryPassword(bytes: Buffer) {
+	const password = recoveryPasswords.get(bytes);
+	if (!password) {
+		throw new Error("Recovery password is not owned by this test.");
+	}
+	return password;
 }
 export async function restore(page: Page, app: App, bytes: Buffer) {
 	await page.goto(`${app.origin}/#/settings`);
@@ -98,9 +119,17 @@ export async function restore(page: Page, app: App, bytes: Buffer) {
 		mimeType: "application/msgpack",
 		buffer: bytes,
 	});
-	await page.getByLabel("Recovery password", { exact: true }).fill(PASSWORD);
+	await page
+		.getByLabel("Recovery password", { exact: true })
+		.fill(recoveryPassword(bytes));
 	await page
 		.getByRole("button", { name: "Restore library", exact: true })
+		.click();
+	await expect(
+		page.getByRole("button", { name: "Submit recovery reset", exact: true }),
+	).toBeVisible();
+	await page
+		.getByRole("button", { name: "Submit recovery reset", exact: true })
 		.click();
 	await expect(
 		page.getByRole("heading", { name: "Your library", exact: true }),
