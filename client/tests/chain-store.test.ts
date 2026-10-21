@@ -383,3 +383,42 @@ test("successful rotation is accepted without trying to read with the revoked si
 		1,
 	);
 });
+
+test("a live tab retains its observed head when another tab explicitly forgets shared history", async (t) => {
+	const f = await fixture(t);
+	await f.addFile(10);
+	await f.store.sync();
+	await f.storage.clear(new AbortController().signal);
+	f.transport.records.length = 0;
+	await assert.rejects(f.store.sync(), /stale/);
+	assert.equal(get(f.store).live?.sequence, 1);
+	assert.equal(
+		(await f.storage.head(new AbortController().signal))?.sequence,
+		1,
+	);
+});
+
+test("historical replay reaches the live trusted head without changing live state or writing history", async (t) => {
+	const f = await fixture(t);
+	const first = await f.addFile(10);
+	const second = await f.addFile(11);
+	await f.store.sync();
+	const reads = f.transport.reads;
+	assert.deepEqual(await f.store.at(1, new AbortController().signal), first);
+	assert.equal(
+		(await f.store.at(0, new AbortController().signal)).files.size,
+		0,
+	);
+	assert.deepEqual(get(f.store).live, second);
+	assert.equal(f.transport.reads, reads);
+	await assert.rejects(
+		f.store.at(3, new AbortController().signal),
+		/verified chain/,
+	);
+	await f.storage.discardRecords(new AbortController().signal);
+	await assert.rejects(
+		f.store.at(1, new AbortController().signal),
+		/incomplete/,
+	);
+	assert.equal(get(f.store).live?.sequence, 2);
+});

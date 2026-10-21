@@ -41,6 +41,9 @@ async function fixture(t: test.TestContext) {
 	let failCommit = false;
 	const chain: ChainStore = {
 		subscribe: view.subscribe,
+		async at() {
+			throw new Error("Historical replay is not used by this fixture.");
+		},
 		async sync() {
 			return state;
 		},

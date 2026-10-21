@@ -1,4 +1,4 @@
-import { type Writable, writable } from "svelte/store";
+import { get, type Writable, writable } from "svelte/store";
 import {
 	type CachedBlock,
 	type ChainStorage,
@@ -109,6 +109,7 @@ class ChainStoreImpl {
 	private disposed = false;
 	readonly subscribe = this.state.subscribe;
 	readonly sync = this.refresh.bind(this);
+	readonly at = this.replayAt.bind(this);
 	readonly append = this.appendMutation.bind(this);
 	readonly dispose = this.disposeChain.bind(this);
 
@@ -199,6 +200,56 @@ class ChainStoreImpl {
 		}
 		return this.runSync();
 	}
+
+	private async replayAt(
+		sequence: number,
+		caller: AbortSignal,
+	): Promise<ChainState> {
+		const live = get(this.state).live;
+		if (
+			!live ||
+			!Number.isSafeInteger(sequence) ||
+			sequence < 0 ||
+			sequence > live.sequence
+		) {
+			throw new Error("Choose a sequence within the verified chain.");
+		}
+		const signal = AbortSignal.any([this.signal, caller]);
+		signal.throwIfAborted();
+		let state = await initialChainState(this.credentials.initialPublicKey);
+		let selected: ChainState | null = sequence === 0 ? state : null;
+		// Verify the suffix too: the selected prefix must reach the trusted live head.
+		while (state.sequence < live.sequence) {
+			const batch = await this.storage.read(state.sequence, signal);
+			if (!batch.length) {
+				throw new Error(
+					"Cached history is incomplete. Refresh before choosing a block.",
+				);
+			}
+			for (const entry of batch) {
+				signal.throwIfAborted();
+				const applied = await this.apply(state, entry.bytes);
+				if (
+					!equalCheckpoint(entry, cached(applied.record)) ||
+					entry.previous !== bytesToHex(applied.record.body.previous)
+				) {
+					throw new Error("Invalid cached historical record.");
+				}
+				state = applied.next;
+				if (state.sequence === sequence) {
+					selected = state;
+				}
+				if (state.sequence === live.sequence) {
+					break;
+				}
+			}
+		}
+		signal.throwIfAborted();
+		if (!selected || bytesToHex(state.head) !== bytesToHex(live.head)) {
+			throw new Error("Cached history conflicts with the verified live head.");
+		}
+		return selected;
+	}
 	private runSync() {
 		this.check();
 		if (this.syncing) {
@@ -223,10 +274,20 @@ class ChainStoreImpl {
 	private async synchronize(): Promise<ChainState> {
 		const initial = await initialChainState(this.credentials.initialPublicKey);
 		this.check();
+		const observed = get(this.state).live;
+		const observedHead = observed ? stateCheckpoint(observed) : null;
+		const minimum =
+			observedHead && observedHead.sequence > this.credentials.minimum.sequence
+				? observedHead
+				: this.credentials.minimum;
 		const saved = await this.durable(() =>
-			this.storage.ensureHead(this.credentials.minimum, this.signal),
+			this.storage.ensureHead(minimum, this.signal),
 		);
-		const pins = [saved, this.credentials.minimum];
+		const pins = [
+			saved,
+			this.credentials.minimum,
+			...(observedHead ? [observedHead] : []),
+		];
 		this.checkPins(initial, pins);
 		let state = initial;
 		for (;;) {

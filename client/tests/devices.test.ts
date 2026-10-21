@@ -39,6 +39,9 @@ async function fixture(t: test.TestContext) {
 	});
 	const chain: ChainStore = {
 		subscribe: view.subscribe,
+		async at() {
+			throw new Error("Historical replay is not used by this fixture.");
+		},
 		async sync() {
 			if (
 				server.devices.get(bytesToHex(original.key.publicKey))?.revokedAt !==

@@ -42,6 +42,9 @@ function chain(initial: ChainState) {
 	});
 	const store: ChainStore = {
 		subscribe: state.subscribe,
+		async at() {
+			throw new Error("Historical replay is not used by this fixture.");
+		},
 		sync: async () => get(state).live ?? initial,
 		append: async () => {
 			throw new Error("unused");
