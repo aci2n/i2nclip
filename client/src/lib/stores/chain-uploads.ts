@@ -2,7 +2,8 @@ import { get, writable } from "svelte/store";
 import type { ChainApi } from "../chain-api.ts";
 import { errorMessage } from "../error.ts";
 import type { Files } from "../files.ts";
-import { prepareFile } from "../media/prepare.ts";
+import { canCompressImage } from "../media/image.ts";
+import { PREPARATION_BYTES, prepareFile } from "../media/prepare.ts";
 import { thumbnail } from "../media/thumbnail.ts";
 import type { UploadState } from "../media/upload-state.ts";
 import { bytesToHex } from "../protocol/bytes.ts";
@@ -182,7 +183,12 @@ class ChainUploadsImpl {
 					signal.throwIfAborted();
 					if (
 						quota.retainedFiles >= quota.maximumFiles ||
-						shape.encryptedBytes > quota.maximumBytes - quota.usedBytes
+						(shape.encryptedBytes > quota.maximumBytes - quota.usedBytes &&
+							!(
+								compressImages &&
+								file.size <= PREPARATION_BYTES &&
+								canCompressImage(file)
+							))
 					) {
 						throw new Error("This file exceeds the available storage quota.");
 					}
@@ -198,6 +204,12 @@ class ChainUploadsImpl {
 						onNotice: this.notice.bind(this, current),
 					});
 					signal.throwIfAborted();
+					if (
+						contentShape(prepared.size).encryptedBytes >
+						quota.maximumBytes - quota.usedBytes
+					) {
+						throw new Error("This file exceeds the available storage quota.");
+					}
 					current.name = prepared.name;
 					this.progress(current, "preparing", 0);
 					thumb = await this.thumbnail(prepared, signal);

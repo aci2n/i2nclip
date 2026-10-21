@@ -191,3 +191,68 @@ test("selecting a historical view cancels preparation and prevents publishing", 
 	assert.equal(get(uploads).uploading, false);
 	assert.equal(await uploads.upload([file]), false);
 });
+
+test("bounded eligible compression can bring an oversized image under quota before upload", async (t) => {
+	const f = await fixture(t);
+	let prepared = 0;
+	let thumbnails = 0;
+	let uploaded = 0;
+	let fits = true;
+	const uploads = createChainUploads(
+		f.session,
+		f.view,
+		{
+			upload: async (options) => {
+				uploaded++;
+				assert.equal(options.file.size, 100);
+				assert.equal(options.attributes.name, "small.webp");
+				return { id: "ab".repeat(32) };
+			},
+		},
+		{ quota: async () => ({ ...quota, maximumBytes: 1000 }) },
+		f.preferences,
+		f.context.signal,
+		{
+			prepare: async ({ file }) => {
+				prepared++;
+				return fits
+					? new File([new Uint8Array(100)], "small.webp", {
+							type: "image/webp",
+						})
+					: file;
+			},
+			thumbnail: async () => {
+				thumbnails++;
+				return null;
+			},
+		},
+	);
+	t.after(uploads.dispose);
+	assert.equal(
+		await uploads.upload([
+			new File([new Uint8Array(2048)], "large.png", { type: "image/png" }),
+		]),
+		true,
+	);
+	assert.equal(prepared, 1);
+	assert.equal(thumbnails, 1);
+	assert.equal(uploaded, 1);
+	fits = false;
+	assert.equal(
+		await uploads.upload([
+			new File([new Uint8Array(2048)], "unchanged.png", { type: "image/png" }),
+		]),
+		false,
+	);
+	assert.equal(prepared, 2);
+	assert.equal(thumbnails, 1);
+	assert.equal(uploaded, 1);
+	assert.equal(
+		await uploads.upload([
+			new File([new Uint8Array(2048)], "large.txt", { type: "text/plain" }),
+		]),
+		false,
+	);
+	assert.equal(prepared, 2);
+	assert.equal(uploaded, 1);
+});
