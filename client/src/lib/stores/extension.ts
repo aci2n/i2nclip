@@ -5,7 +5,6 @@ import { createLog, failureFields } from "../log.ts";
 import { contentShape } from "../protocol/content.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { document, string } from "../protocol/value.ts";
-import type { SessionSnapshot } from "./session.ts";
 
 export interface CaptureEvent {
 	source: unknown;
@@ -26,7 +25,11 @@ export interface ReceiverBrowser {
 	postMessage(message: unknown, origin: string): void;
 }
 
-export interface CaptureSessionState extends SessionSnapshot {
+export interface CaptureSessionState {
+	configured: boolean;
+	unlocked: boolean;
+	busy: boolean;
+	signal: AbortSignal;
 	status: "new" | "locked" | "unlocked";
 }
 

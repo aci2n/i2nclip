@@ -22,6 +22,9 @@ test("isolated pairing adapters complete a verified exchange", async (t) => {
 		context,
 	});
 	await sender.senderFinish({ message: third });
+	await sender.verifyReceiverBinding({
+		message: await receiver.bindReceiver({ publicKey: testKey().publicKey }),
+	});
 	assert.equal(
 		await sender.verificationCode(),
 		await receiver.verificationCode(),

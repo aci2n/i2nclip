@@ -1,35 +1,38 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
-import type { QuotaApi } from "../src/lib/api.ts";
-import { createQuota } from "../src/lib/stores/quota.ts";
+import type { ChainApi } from "../src/lib/chain-api.ts";
+
+type QuotaApi = Pick<ChainApi, "quota">;
+
+import { createChainQuota } from "../src/lib/stores/chain-quota.ts";
 import { assertPresent } from "./assert.ts";
-import { deferred, testKey } from "./helpers.ts";
+import { deferred } from "./helpers.ts";
 
 function fixture(t: test.TestContext, http: QuotaApi) {
 	const controller = new AbortController();
 	const session = {
 		serverUrl: "https://clip.example",
-		key: testKey(),
 		signal: controller.signal,
 		invalidate: () => controller.abort(),
 	};
-	const quota = createQuota(session, { http });
+	const quota = createChainQuota(http, session.signal);
 	t.after(quota.dispose);
 	session.signal.addEventListener("abort", quota.dispose, { once: true });
 	return { session, quota };
 }
 const usage = {
-	used_content_bytes: 29,
-	file_count: 1,
-	max_content_bytes: 536870912,
-	max_files: 10000,
+	logBytes: 0,
+	usedBytes: 29,
+	retainedFiles: 1,
+	maximumBytes: 536870912,
+	maximumFiles: 10000,
 };
 test("quota reads deduplicate and retry errors without persisting stale values", async (t) => {
 	let result = deferred<typeof usage>();
 	let calls = 0;
 	const { quota } = fixture(t, {
-		getQuota: async () => {
+		quota: async () => {
 			calls++;
 			return result.promise;
 		},
@@ -54,7 +57,7 @@ test("identity changes abort quota reads and late results cannot replace the new
 		result: PromiseWithResolvers<typeof usage>;
 	}[] = [];
 	const { session, quota } = fixture(t, {
-		getQuota: ({ signal }) => {
+		quota: (signal) => {
 			const result = deferred<typeof usage>();
 			pending.push({ signal, result });
 			return result.promise;
@@ -64,9 +67,9 @@ test("identity changes abort quota reads and late results cannot replace the new
 	session.invalidate();
 	assert.equal(assertPresent(pending[0].signal).aborted, true);
 	assert.equal(get(quota).value, null);
-	const next = fixture(t, { getQuota: async () => usage });
+	const next = fixture(t, { quota: async () => usage });
 	assert.equal(await next.quota.refresh(), true);
-	pending[0].result.resolve({ ...usage, file_count: 999 });
+	pending[0].result.resolve({ ...usage, retainedFiles: 999 });
 	assert.equal(await old, false);
 	assert.deepEqual(get(next.quota).value, usage);
 	assert.equal(await quota.refresh(), false);
@@ -75,8 +78,8 @@ test("disposing the workspace quota aborts its request and ignores a late error"
 	const result = deferred<typeof usage>();
 	let signal: AbortSignal | undefined;
 	const { quota } = fixture(t, {
-		getQuota: (args) => {
-			signal = args.signal;
+		quota: (requestSignal) => {
+			signal = requestSignal;
 			return result.promise;
 		},
 	});
@@ -94,7 +97,7 @@ test("live quota instances sharing an API keep requests and disposal independent
 		result: ReturnType<typeof deferred<typeof usage>>;
 	}[] = [];
 	const http: QuotaApi = {
-		getQuota: ({ signal }) => {
+		quota: (signal) => {
 			const result = deferred<typeof usage>();
 			requests.push({ signal, result });
 			return result.promise;
@@ -109,7 +112,7 @@ test("live quota instances sharing an API keep requests and disposal independent
 	assert.equal(assertPresent(requests[0].signal).aborted, true);
 	assert.equal(assertPresent(requests[1].signal).aborted, false);
 	assert.equal(get(second).loading, true);
-	requests[0].result.resolve({ ...usage, file_count: 999 });
+	requests[0].result.resolve({ ...usage, retainedFiles: 999 });
 	requests[1].result.resolve(usage);
 	assert.equal(await firstRead, false);
 	assert.equal(await secondRead, true);
