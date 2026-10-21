@@ -4,14 +4,11 @@ Current architecture and wire contracts: [chain storage](blockchain-storage.md),
 
 Other design notes record earlier changes. Where they conflict with these specifications, the current chain specifications take precedence.
 
-Planned follow-up, to apply only after the current implementation is complete:
-[device-preserving epoch rotation](device-preserving-rotation.md). It specifies
-per-device encrypted epoch keys and compares separate encryption keys with
-Ed25519-to-X25519 conversion; it does not change current runtime behavior.
-The approved [canonical genesis and separate enrollment](genesis-and-recovery-enrollment.md)
-follow-up refines that proposal: genesis contains no device, recovery may sign
-enrollment, and rotation changes no membership.
-
+Implemented greenfield design refinements:
+[device-preserving epoch rotation](device-preserving-rotation.md) and
+[canonical genesis and separate enrollment](genesis-and-recovery-enrollment.md).
+The current wire and credential formats are consolidated in
+[library recovery](library-recovery.md).
 
 - [Protocol](protocol.md): HTTP API, signatures, frames, quotas, concurrency, and transfer limits.
 - [Cryptography](crypto.md): keys, encrypted formats, and security boundaries.
@@ -25,7 +22,7 @@ enrollment, and rotation changes no membership.
 - [Improvement priorities](priorities.md): open topics requiring separate specifications.
 - [Chunk uploads specification](chunk-uploads.md): independently encrypted chunks and browser streaming; implemented.
 - [Transfer and shutdown deadlines](transfer-shutdown-proposal.md): implemented resource and shutdown limits.
-- [Blockchain storage specification](blockchain-storage.md): encrypted operation chain, device authority, deletable blobs, and implementation commits; implementation in progress.
+- [Blockchain storage specification](blockchain-storage.md): encrypted operation chain, device authority, deletable blobs, and implementation commits; implemented; final integration verification pending.
 - [Library recovery](library-recovery.md): fixed recovery authority, deterministic epoch keys, recovery without an authorized device, and generated backup passwords; authoritative amendment to the chain specification.
 
 Current behavior is documented separately from proposed work. The Rust server is

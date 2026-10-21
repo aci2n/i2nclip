@@ -198,3 +198,14 @@ keys. Purged blobs cannot be recovered by this file. Invalid trusted-writer
 operations and server withholding remain availability failures; this is not a
 chain rewind or a consensus system. Fresh restore has only its offline genesis
 anchor, so an unseen server suffix cannot be proven absent.
+
+### Freeing device capacity during recovery
+
+The recovery import form optionally accepts the full signing public key of one
+active device to revoke. Blank preserves all devices. The action explicitly says
+it will revoke a device. At 128 active devices, choose a target before enrolling.
+The session saves a local candidate first, then submits and verifies the root-signed
+revocation before preparing enrollment against its accepted head. A failure may
+leave revocation committed and enrollment pending; reopen the recovery file to
+verify current history and prepare again. Root secrets are never saved locally.
+Revocation does not rotate keys; rotate separately to protect future epochs.

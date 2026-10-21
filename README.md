@@ -12,14 +12,16 @@ and separately. Both are required for recovery. Registration stays disabled
 until the download starts; enter an administrator invitation to create the library.
 The server defaults to the app's origin, with configuration in a disclosure.
 
-Each device has its own local signing key and full library authority. Connect a
+Each device has its own local signing and encryption keys and full library authority. Connect a
 new device through pairing, compare both verification codes, and approve the
 transfer. Pairing enrolls a fresh receiver key and transfers epoch secrets plus a
 trusted chain checkpoint. Device keys cannot be exported. A lost device must
 re-pair; if all devices are lost, **Restore** uses the offline recovery file to
-verify history and prepare an epoch reset. Only that fixed recovery authority can
-reset epochs. A reset revokes every old device and authorizes one fresh initial
-device atomically. Old epoch data must be assumed already copied by revoked devices.
+verify history and enroll a fresh device. The fixed recovery authority alone can
+rotate epoch keys. Rotation preserves authorized devices and delivers the new
+key through a separate encrypted envelope for each device. Revoke a device before
+rotation to exclude it from future keys. Previously shared data must be assumed
+already copied by revoked devices.
 
 Each browser tab loads its protected device credential once from IndexedDB.
 Remembered access is optional; Lock ends that tab's resources and clears its

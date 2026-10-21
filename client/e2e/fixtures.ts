@@ -132,10 +132,13 @@ export async function restore(page: Page, app: App, bytes: Buffer) {
 		.getByRole("button", { name: "Restore library", exact: true })
 		.click();
 	await expect(
-		page.getByRole("button", { name: "Submit recovery reset", exact: true }),
+		page.getByRole("button", {
+			name: "Submit recovery enrollment",
+			exact: true,
+		}),
 	).toBeVisible();
 	await page
-		.getByRole("button", { name: "Submit recovery reset", exact: true })
+		.getByRole("button", { name: "Submit recovery enrollment", exact: true })
 		.click();
 	await expect(
 		page.getByRole("heading", { name: "Your library", exact: true }),

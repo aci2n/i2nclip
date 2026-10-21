@@ -6,13 +6,20 @@ import {
 	createRecord,
 	MAX_AUTHORIZED_DEVICES,
 } from "./protocol/chain.ts";
+import type { ChainState } from "./protocol/chain-state.ts";
 import {
 	decodeDevice,
 	encodeDevice,
 	type LoadedDevice,
 } from "./protocol/device.ts";
-import { generateDeviceEncryptionKey } from "./protocol/device-encryption.ts";
-import { generatePrivateKey } from "./protocol/identity.ts";
+import {
+	type DeviceEncryptionKey,
+	generateDeviceEncryptionKey,
+} from "./protocol/device-encryption.ts";
+import {
+	generatePrivateKey,
+	type PrivateKeyDocument,
+} from "./protocol/identity.ts";
 import { epochKey, type LoadedRecovery } from "./protocol/recovery-key.ts";
 import { createChain, stateCheckpoint } from "./stores/chain.ts";
 
@@ -58,6 +65,44 @@ class RecoveryReplay {
 		this.secrets.set(epoch, secret);
 		return secret;
 	}
+	private async candidate(
+		state: ChainState,
+		privateKey: PrivateKeyDocument,
+		encryption: DeviceEncryptionKey,
+	) {
+		const record = await createRecord(
+			{
+				library: state.library,
+				sequence: state.sequence + 1,
+				previous: state.head,
+				epoch: state.epoch,
+				signer: this.recovery.key.publicKey,
+				kind: "enroll",
+				effects: [privateKey.public_key, encryption.publicKey],
+			},
+			this.recovery.key.privateCryptoKey,
+		);
+		this.signal.throwIfAborted();
+		const encoded = encodeDevice({
+			serverUrl: this.recovery.identity.serverUrl,
+			genesis: this.recovery.genesis.bytes,
+			library: state.library,
+			privateKey,
+			encryption,
+			epochs: [...this.secrets.entries()],
+			head: stateCheckpoint(state),
+			phase: "recovering",
+			rotation: null,
+			registration: null,
+			recovery: record.bytes,
+		});
+		try {
+			return await decodeDevice(encoded);
+		} finally {
+			encoded.fill(0);
+		}
+	}
+
 	async prepare(revocation?: RecoveryRevocation) {
 		const { identity, genesis, key } = this.recovery;
 		const signal = this.signal;
@@ -106,38 +151,8 @@ class RecoveryReplay {
 			signal.throwIfAborted();
 			const { privateKey } = await generatePrivateKey();
 			const encryption = await generateDeviceEncryptionKey();
-			let encoded: Bytes | undefined;
 			try {
-				const candidate = async () => {
-					const record = await createRecord(
-						{
-							library: state.library,
-							sequence: state.sequence + 1,
-							previous: state.head,
-							epoch: state.epoch,
-							signer: key.publicKey,
-							kind: "enroll",
-							effects: [privateKey.public_key, encryption.publicKey],
-						},
-						key.privateCryptoKey,
-					);
-					signal.throwIfAborted();
-					encoded = encodeDevice({
-						serverUrl: identity.serverUrl,
-						genesis: genesis.bytes,
-						library: state.library,
-						privateKey,
-						encryption,
-						epochs: [...this.secrets.entries()],
-						head: stateCheckpoint(state),
-						phase: "recovering",
-						rotation: null,
-						registration: null,
-						recovery: record.bytes,
-					});
-					return await decodeDevice(encoded);
-				};
-				const pending = await candidate();
+				const pending = await this.candidate(state, privateKey, encryption);
 				if (!target || !revocation) {
 					return pending;
 				}
@@ -148,12 +163,10 @@ class RecoveryReplay {
 					kind: "revoke",
 					effects: [hexToBytes(target)],
 				});
-				encoded?.fill(0);
-				return await candidate();
+				return await this.candidate(state, privateKey, encryption);
 			} finally {
 				privateKey.seed.fill(0);
 				encryption.secret.fill(0);
-				encoded?.fill(0);
 			}
 		} finally {
 			chain.dispose();

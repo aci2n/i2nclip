@@ -266,7 +266,7 @@ test("direct links preserve the target through password unlock, navigation, relo
 			.getByRole("button", { name: "Restore library", exact: true })
 			.click();
 		await fresh
-			.getByRole("button", { name: "Submit recovery reset", exact: true })
+			.getByRole("button", { name: "Submit recovery enrollment", exact: true })
 			.click();
 		await expect(
 			fresh.getByRole("img", { name: "Target.png", exact: true }),

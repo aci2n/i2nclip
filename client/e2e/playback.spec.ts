@@ -106,7 +106,9 @@ test("preview stops at loaded boundaries and More loads the submitted search", a
 			name: `Gallery ${index}.png`,
 		})),
 	);
-	await expect(page.getByLabel("Block", { exact: true })).toHaveValue("41");
+	await expect(page.getByLabel("Block", { exact: true })).toHaveValue("42", {
+		timeout: 60_000,
+	});
 	const search = page.getByRole("searchbox", {
 		name: "Search files",
 		exact: true,

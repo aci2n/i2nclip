@@ -1,10 +1,8 @@
 # Canonical genesis and separate device enrollment
 
-Status: approved follow-up specification. Implement after the current chain
-implementation and final verification are complete, together with or after
-[device-preserving rotation](device-preserving-rotation.md). This document takes
-precedence over that proposal where recovery enrollment or genesis differs.
-It does not change current runtime behavior.
+Status: implemented; final integration verification pending. This greenfield
+refinement accompanies [device-preserving rotation](device-preserving-rotation.md).
+The consolidated current contract is [library recovery](library-recovery.md).
 
 ## Goal and scope
 

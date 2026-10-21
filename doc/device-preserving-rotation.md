@@ -1,11 +1,9 @@
 # Device-preserving epoch rotation
 
-Status: specified follow-up; **apply only after the current chain implementation
-and its final verification are complete**. This document does not change current
-runtime behavior. On implementation it supersedes the revoke-all rotation rules
-in [library recovery](library-recovery.md) and [chain storage](blockchain-storage.md).
-Do not implement compatibility readers or migrate existing credentials: this is
-still a greenfield format change with disposable databases.
+Status: implemented; final integration verification pending. This greenfield
+change replaces revoke-all rotation. The consolidated current wire and credential
+contract is [library recovery](library-recovery.md). No compatibility readers or
+migrations for earlier development formats are provided.
 
 Approved refinement: [canonical genesis and separate enrollment](genesis-and-recovery-enrollment.md)
 supersedes this document's initial-device genesis field and optional recovery
@@ -103,8 +101,8 @@ workflow is introduced.
 
 ## Membership and fixed frames
 
-Extend genesis's initial-device field to `[signing_public_key,
-encryption_public_key]`. Extend enrollment effects to carry this same pair,
+Genesis contains no device. Enrollment effects carry
+`[signing_public_key, encryption_public_key]`,
 and bind both in the human-approved pairing transcript, proposed enrollment, and
 receipt verification. Revocation still identifies a device by signing public key.
 The recovery public key remains a distinct immutable principal, never a device.
@@ -121,13 +119,10 @@ inspecting a public key; clients verify the enrollment workflow and signed bindi
 Use positional MessagePack arrays for every fixed structure. Rotation effects:
 
 ```
-[next_epoch, next_epoch_salt, recovery_device_or_null, envelopes]
-recovery_device_or_null = null | [signing_public_key, encryption_public_key]
+[next_epoch, next_epoch_salt, envelopes]
 envelopes = [[device_signing_public_key, encapsulated_key, ciphertext], ...]
 ```
 
-Ordinary rotation uses `null`. The optional fresh recovery device exists solely
-for restoring control with the offline recovery file, as described below.
 An envelope has 32-byte recipient identity, 32-byte HPKE encapsulation, and a
 48-byte ciphertext for the 32-byte epoch key and authentication tag. Sort entries
 lexicographically by signing-public-key bytes; reject duplicate or unsorted entries.
@@ -149,7 +144,7 @@ MessagePack:
 ```
 info = ["i2nclip/epoch-envelope/1", library_id]
 aad = ["i2nclip/epoch-envelope-context/1", library_id, sequence, parent_hash,
-       old_epoch, next_epoch, next_epoch_salt, recovery_device_or_null,
+       old_epoch, next_epoch, next_epoch_salt,
        recipient_signing_public_key, recipient_encryption_public_key]
 ```
 
@@ -168,23 +163,21 @@ authoritative, SQL membership is its transactionally maintained projection.
 
 Under the library lock, verify the recovery signature, parent/sequence/epoch CAS,
 fresh salt shape, and exact recipient set. It must equal membership authorized
-at the parent plus the optional fresh recovery device. No revoked, missing,
+at the parent. No revoked, missing,
 duplicate, or unknown recipient is permitted. Compare with authoritative locked
 membership, not a supplied client list. Reject over-limit records before mutation.
 Preserve existing members and their authorization sequences. Advance the epoch
-and, only when specified, enroll the fresh recovery device in the same transaction.
+without enrolling any device.
 Do not reset revocation flags, quota, file state, or history.
 
 Keep the 64 KiB record bound. Cap simultaneously authorized devices at 128,
-including genesis and optional recovery enrollment; enforce in enrollment and
-recovery rotation on server and client. A rotation for the maximum set must fit
+including recovery enrollment; enforce in enrollment on server and client. A rotation for the maximum set must fit
 the record bound, with a fixture verifying actual canonical encoded size. Do not
 split an epoch transition across records or silently omit devices. Revoked keys
 remain historical entries and do not count toward the active cap.
 
-HTTP submission may be signed by the recovery key, a currently authorized device,
-or the exact optional fresh recovery device named in the root-signed rotation.
-The latter receives no ordinary API access before acceptance. Existing exact
+HTTP rotation submission may be signed by the recovery key or a currently
+authorized device. A fresh candidate may relay only its own root-signed enrollment. Existing exact
 record retry rules apply: an accepted rotation retry succeeds idempotently even
 after the epoch advances. Recheck principal admission under the lock.
 
@@ -248,18 +241,12 @@ chain, server, ordinary credentials, and logs.
 
 ## Offline recovery without any device
 
-Preserve recovery-file restore. After root-authenticated verified replay, generate
-a fresh device signing/encryption pair. Prepare a rotation with that pair in
-`recovery_device_or_null`, envelopes for every currently authorized device, and
-an envelope for the fresh device. Existing devices remain authorized even if all
-their private keys have been lost. This is explicit root-authorized recovery
-enrollment, not revocation or replacement of existing membership.
-
-The fresh signing key may submit the exact root-signed candidate as today. Save
-its two keypairs, historical epoch keys, next key, and exact record durably before
-submission. Wipe recovery secrets after preparation; retain enough local state
-to retry and reconcile without reopening the file. Recovery replay derives epoch
-keys from verified salts and does not need another device's encryption key.
+Recovery-file restore verifies history with root-authenticated reads and derives
+all historical epoch secrets from signed salts. It prepares and durably saves a
+fresh two-key device candidate and root-signed enrollment. The candidate may
+submit only that exact enrollment. It does not rotate epochs. After enrollment,
+rotation remains a separate explicit root-authorized action. Recovery secrets
+are wiped after preparation and never persisted in ordinary credentials.
 
 Approved capacity policy: at most 128 devices are simultaneously authorized.
 The offline recovery key may sign revocations to free capacity before a fresh
