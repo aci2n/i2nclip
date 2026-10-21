@@ -21,7 +21,7 @@ use tower_http::{
 
 use crate::{
     auth::{ProofRequest, SignedRequest},
-    blob_routes, chain_routes, codec, media, pairing, AppState, Error, MAX_REGISTER_BODY,
+    blob_routes, chain_routes, codec, pairing, AppState, Error, MAX_REGISTER_BODY,
 };
 
 pub(crate) const SHORT_BODY_DEADLINE: Duration = Duration::from_secs(10);
@@ -33,7 +33,6 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/api/register-key", post(register_key))
         .merge(chain_routes::router())
         .merge(blob_routes::router())
-        .merge(media::router())
         .merge(pairing::router())
         .layer(
             CorsLayer::new()
@@ -277,7 +276,7 @@ mod request_tests {
                     .oneshot(
                         Request::builder()
                             .method("OPTIONS")
-                            .uri("/api/media")
+                            .uri("/api/blocks")
                             .header(header::ORIGIN, origin)
                             .header(header::ACCESS_CONTROL_REQUEST_METHOD, method)
                             .header(
@@ -306,7 +305,7 @@ mod request_tests {
             }
             for (path, status) in [
                 ("/api/health", StatusCode::OK),
-                ("/api/media", StatusCode::UNAUTHORIZED),
+                ("/api/blocks", StatusCode::UNAUTHORIZED),
             ] {
                 let response = app
                     .clone()
@@ -349,19 +348,15 @@ mod request_tests {
     #[tokio::test]
     async fn unsigned_application_requests_are_rejected_before_body_or_database() {
         let app = app().await;
-        let item = format!("/api/media/{}", "a".repeat(64));
-        let meta = format!("{item}/meta");
-        let chunk = format!("{item}/chunks/0");
+        let blob = format!("/api/blobs/{}/{}", "a".repeat(64), "b".repeat(64));
         for (method, path) in [
             ("POST", "/api/register-key"),
             ("GET", "/api/ping"),
             ("GET", "/api/quota"),
-            ("GET", "/api/tags"),
-            ("GET", "/api/media"),
-            ("POST", "/api/media"),
-            ("GET", chunk.as_str()),
-            ("PUT", meta.as_str()),
-            ("DELETE", item.as_str()),
+            ("GET", "/api/blocks"),
+            ("POST", "/api/blocks"),
+            ("GET", blob.as_str()),
+            ("POST", "/api/blobs"),
         ] {
             let body = Body::new(
                 Body::from("unread")

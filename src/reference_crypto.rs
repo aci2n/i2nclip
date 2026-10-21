@@ -242,59 +242,6 @@ struct TagDocument {
     label: Vec<u8>,
 }
 
-pub fn encode_meta(prev_meta_hash: &[u8; 32], meta: &[u8], tags: &[u8]) -> Vec<u8> {
-    #[derive(serde::Serialize)]
-    struct Document<'a> {
-        #[serde(with = "serde_bytes")]
-        prev_meta_hash: &'a [u8],
-        #[serde(with = "serde_bytes")]
-        meta: &'a [u8],
-        tags: Vec<TagDocument>,
-    }
-    codec::encode(&Document {
-        prev_meta_hash,
-        meta,
-        tags: codec::decode(tags).unwrap(),
-    })
-    .unwrap()
-}
-
-pub fn fixture_tag_labels(tokens: &str) -> Vec<u8> {
-    codec::encode(
-        &tokens
-            .lines()
-            .filter(|token| !token.trim().is_empty())
-            .map(|token| TagDocument {
-                token: URL_SAFE_NO_PAD
-                    .decode(token.trim())
-                    .unwrap_or_else(|_| token.as_bytes().to_vec()),
-                label: sealed_fixture(0, 43),
-            })
-            .collect::<Vec<_>>(),
-    )
-    .unwrap()
-}
-
-/// A structurally valid envelope with an exact encoded size, without authentication.
-pub fn sealed_fixture(value: u8, size: usize) -> Vec<u8> {
-    let iv = [value; 12];
-    let mut length = size.saturating_sub(26);
-    loop {
-        let ciphertext = vec![value; length];
-        let bytes = codec::encode(&Sealed {
-            v: 1,
-            iv: &iv,
-            ct: &ciphertext,
-        })
-        .unwrap();
-        if bytes.len() == size {
-            return bytes;
-        }
-        assert!(bytes.len() > size, "unrepresentable sealed fixture size");
-        length -= bytes.len() - size;
-    }
-}
-
 /// Inspect test responses as JSON values, representing binary fields as byte arrays.
 pub fn document_json(bytes: &[u8]) -> serde_json::Value {
     struct Value(serde_json::Value);

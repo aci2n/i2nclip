@@ -304,7 +304,7 @@ mod tests {
         assert_eq!(health.status(), StatusCode::OK);
         assert_eq!(health.headers()[header::CACHE_CONTROL], "no-store");
         assert_eq!(
-            request(app.clone(), Method::GET, "/api/media")
+            request(app.clone(), Method::GET, "/api/blocks")
                 .await
                 .status(),
             StatusCode::UNAUTHORIZED

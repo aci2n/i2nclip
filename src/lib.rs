@@ -1,8 +1,8 @@
 //! Encrypted media store.
 //!
 //! Clients encrypt bytes and metadata before upload. This process checks
-//! Ed25519 signatures against public keys in PostgreSQL and stores ciphertext plus
-//! HMAC tag tokens. It does not have the private key, so it cannot decrypt.
+//! Ed25519 signatures against public keys in PostgreSQL and stores encrypted blocks and
+//! opaque hash-addressed blobs. It does not have private keys, so it cannot decrypt.
 
 #![forbid(unsafe_code)]
 
@@ -13,9 +13,7 @@ mod chain_routes;
 pub mod codec;
 mod db;
 mod error;
-mod frame;
 mod maintenance;
-mod media;
 mod pairing;
 mod permits;
 #[cfg(test)]
@@ -38,19 +36,8 @@ pub const LISTEN: &str = "0.0.0.0:8080";
 
 /// Plaintext bytes independently authenticated by each content chunk.
 pub const CHUNK_PLAINTEXT_BYTES: i64 = 4 * 1024 * 1024;
-pub(crate) const MAX_CHUNK_BYTES: usize = CHUNK_PLAINTEXT_BYTES as usize + 16;
-pub(crate) const MAX_DESCRIPTOR: usize = 1024;
 pub(crate) const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
-pub(crate) const MAX_META: usize = 64 * 1024;
-pub(crate) const MAX_TAGS: usize = 64;
-pub(crate) const MAX_TAG_LABEL: usize = 1024;
-/// Bound on the encoded tag array, including 64 maximum-size binary labels.
-pub(crate) const MAX_TAG_DATA: usize = 96 * 1024;
-/// One page of the library list. The next page starts after the last row.
-pub(crate) const PAGE: usize = 24;
-pub(crate) const MAX_CREATE_BODY: usize = 192 * 1024;
-pub(crate) const MAX_META_BODY: usize = 96 + MAX_META + MAX_TAG_DATA;
-/// `POST /api/register-key` accepts a small MessagePack map only.
+/// Registration uses a bounded positional MessagePack frame.
 pub(crate) const MAX_REGISTER_BODY: usize = 4096;
 pub(crate) const SKEW_SECS: u64 = 300;
 
