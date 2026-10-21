@@ -11,6 +11,7 @@ import type {
 	Room,
 } from "../src/lib/pairing/service.ts";
 import { createPersistence } from "../src/lib/persistence.ts";
+import type { EncryptedBackup } from "../src/lib/protocol/backup.ts";
 import { b64urlToBytes, bytesToHex } from "../src/lib/protocol/bytes.ts";
 import {
 	type Bytes,
@@ -22,9 +23,14 @@ import {
 	type ChainState,
 	reduceBlock,
 } from "../src/lib/protocol/chain-state.ts";
+import { sealEpochKeys } from "../src/lib/protocol/epoch-envelope.ts";
 import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
 import { encode } from "../src/lib/protocol/msgpack.ts";
 import { pairedDevice } from "../src/lib/protocol/pairing-device.ts";
+import {
+	epochKey,
+	openRecoveryFile,
+} from "../src/lib/protocol/recovery-key.ts";
 import { createChain } from "../src/lib/stores/chain.ts";
 import { createChainPairing } from "../src/lib/stores/chain-pairing.ts";
 import { createSession } from "../src/lib/stores/identity.ts";
@@ -162,9 +168,12 @@ async function fixture(t: test.TestContext) {
 			Reflect.deleteProperty(globalThis, "indexedDB");
 		}
 	});
+	let backup: EncryptedBackup | undefined;
 	const sender = createSession({
 		persistence: createPersistence(memoryStorage().connect()),
-		download: () => {},
+		download: (file) => {
+			backup = { bytes: file.bytes.slice(), password: file.password };
+		},
 		http: { registered: async () => false, register: async () => {} },
 	});
 	const receiverPersistence = createPersistence(memoryStorage().connect());
@@ -203,6 +212,10 @@ async function fixture(t: test.TestContext) {
 			publicKey: original.key.publicKey,
 			signingKey: original.key.privateCryptoKey,
 			secrets: new Map(original.identity.epochs),
+			encryption: {
+				publicKey: original.identity.encryption.publicKey,
+				keyPair: original.encryptionKey,
+			},
 			minimum: original.identity.head,
 		},
 		cache,
@@ -250,6 +263,10 @@ async function fixture(t: test.TestContext) {
 		return Promise.all([send, receive]);
 	}
 	return {
+		backup: () => {
+			assert(backup);
+			return backup;
+		},
 		sender,
 		receiver,
 		receiverPersistence,
@@ -387,4 +404,55 @@ test("receiver rejects bundles with another origin, parent, epoch history, or ta
 			"https://example.test",
 		),
 	);
+});
+
+test("pairing transfers learned epoch keys without rewriting the sender credential", async (t) => {
+	const f = await fixture(t);
+	const backup = f.backup();
+	const recovery = await openRecoveryFile(backup.bytes, backup.password);
+	const salt = crypto.getRandomValues(new Uint8Array(32));
+	const state = f.server.state;
+	const secret = await epochKey(
+		recovery.identity.epochDerivationSecret,
+		state.library,
+		2,
+		salt,
+	);
+	try {
+		const envelopes = await sealEpochKeys(
+			{
+				library: state.library,
+				sequence: state.sequence + 1,
+				previous: state.head,
+				epoch: 1,
+				nextEpoch: 2,
+				salt,
+			},
+			[...state.devices.values()],
+			secret,
+		);
+		const record = await createRecord(
+			{
+				library: state.library,
+				sequence: state.sequence + 1,
+				previous: state.head,
+				epoch: 1,
+				signer: recovery.key.publicKey,
+				kind: "rotate",
+				effects: [2, salt, envelopes],
+			},
+			recovery.key.privateCryptoKey,
+		);
+		await f.server.append(record.bytes);
+		await f.chain.sync();
+		assert.equal(f.sender.device().identity.epochs.length, 1);
+		assert.deepEqual(await f.pair(), [true, true]);
+		assert.equal(f.receiver.device().identity.epochs.length, 2);
+		assert.deepEqual(f.receiver.device().identity.epochs[1][1], secret);
+	} finally {
+		secret.fill(0);
+		recovery.identity.signingKey.seed.fill(0);
+		recovery.identity.epochDerivationSecret.fill(0);
+		backup.bytes.fill(0);
+	}
 });
