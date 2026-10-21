@@ -8,7 +8,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use http_body_util::BodyExt;
-use i2nclip::{codec, crypto, Error};
+use i2nclip::{codec, crypto};
 use reference_crypto::{self as client_crypto, Identity};
 use tower::ServiceExt;
 

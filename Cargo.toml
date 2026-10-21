@@ -44,8 +44,6 @@ serde_bytes = "0.11"
 # Reference-client encryption, key derivation, and searchable tag tokens.
 aes-gcm = "0.10"
 hkdf = "0.12"
-hmac = "0.12"
-unicode-normalization = "0.1"
 # Controlled request streams and paused-clock deadline tests.
 http-body-util = { version = "0.1", features = ["channel"] }
 tokio = { version = "1", features = ["test-util"] }

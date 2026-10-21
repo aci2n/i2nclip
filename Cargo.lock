@@ -1262,7 +1262,6 @@ dependencies = [
  "futures-util",
  "getrandom 0.2.17",
  "hkdf",
- "hmac",
  "http-body-util",
  "rmp-serde",
  "serde",
@@ -1277,7 +1276,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "unicode-normalization",
  "url",
 ]
 

@@ -1,54 +1,15 @@
-//! Public-key verification, request hashing, and sealed-blob shape checks.
+//! Public-key verification, request hashing, and exact request hashing.
 //!
 //! The server receives public keys and ciphertext, never an identity seed.
-//! Encryption, decryption, key derivation, tag normalization, and request
+//! Reference chunk encryption and request
 //! signing live in the test-only `reference_crypto` module. Shared vectors
 //! check those reference operations against the JavaScript client.
 //!
-//! Sealed blobs contain version 1, a 12-byte nonce, and ciphertext with a
-//! 16-byte GCM tag. Shape checks reject accidental plaintext; they do not
-//! authenticate ciphertext or prove it can be decrypted.
-
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::{Signature, VerifyingKey};
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{codec, Error};
-
-const VERSION: u8 = 1;
-const NONCE_LEN: usize = 12;
-const TAG_LEN: usize = 16;
-
-/// The application-owned encryption envelope; ciphertext includes the GCM tag.
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Sealed<'a> {
-    pub v: u8,
-    #[serde(with = "serde_bytes", borrow)]
-    pub iv: &'a [u8],
-    #[serde(with = "serde_bytes", borrow)]
-    pub ct: &'a [u8],
-}
-
-/// Shape validation only: the server has no key to authenticate ciphertext.
-pub fn looks_sealed(blob: &[u8], max: usize) -> bool {
-    check_blob(blob, max).is_ok()
-}
-
-/// Require the sealed-blob shape before storing encrypted bytes.
-pub(crate) fn check_blob(bytes: &[u8], max: usize) -> Result<Sealed<'_>, Error> {
-    if bytes.len() <= max {
-        if let Ok(value) = codec::decode::<Sealed<'_>>(bytes) {
-            if value.v == VERSION && value.iv.len() == NONCE_LEN && value.ct.len() >= TAG_LEN {
-                return Ok(value);
-            }
-        }
-    }
-    Err(Error::BadRequest(
-        "encrypted MessagePack envelope required".into(),
-    ))
-}
+use crate::Error;
 
 /// Lowercase hex SHA-256 of `body`. The empty body has a hash too, so GET and
 /// DELETE still commit to "no bytes".
@@ -137,7 +98,7 @@ mod tests {
     use serde::Serialize;
 
     use super::*;
-    use crate::reference_crypto::*;
+    use crate::{codec, reference_crypto::*};
 
     #[test]
     fn signature_verification_rejects_weak_key_forgery() {
@@ -168,41 +129,6 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_rejects_wrong_key_aad_and_tamper() {
-        let id = from_seed([9u8; 32]);
-        let plain = b"i2nclip-plaintext-marker-9f3c";
-        let file_id = "33".repeat(32);
-        let mut blob = seal_metadata(&id.seed, &file_id, plain).unwrap();
-        // The plaintext bytes must not appear as a contiguous slice. This is
-        // the property the HTTP tests also check on disk.
-        assert!(!blob.windows(plain.len()).any(|window| window == plain));
-        assert_eq!(open_metadata(&id.seed, &file_id, &blob).unwrap(), plain);
-        assert!(open_metadata(&id.seed, &"11".repeat(32), &blob).is_err());
-        assert!(open_metadata(&[8u8; 32], &file_id, &blob).is_err());
-        blob[20] ^= 0x01;
-        assert!(open_metadata(&id.seed, &file_id, &blob).is_err());
-        assert!(!looks_sealed(b"\xff\xd8\xff", 100));
-        assert!(!looks_sealed(b"short", 100));
-    }
-
-    #[test]
-    fn tag_tokens_fold_case_and_follow_the_key() {
-        let a = from_seed([1u8; 32]);
-        let b = from_seed([2u8; 32]);
-        let left = tag_token(&a.seed, " Vacation ").unwrap();
-        let right = tag_token(&a.seed, "vacation").unwrap();
-        assert_eq!(left, right);
-        assert_eq!(left.len(), 43);
-        assert_ne!(left, tag_token(&b.seed, "vacation").unwrap());
-        // NFC: e + combining acute, versus the single code point é.
-        let composed = tag_token(&a.seed, "Café").unwrap();
-        let decomposed = tag_token(&a.seed, "Cafe\u{0301}").unwrap();
-        assert_eq!(composed, decomposed);
-        assert!(tag_token(&a.seed, "   ").is_err());
-        assert!(tag_token(&a.seed, "a,b").is_err());
-    }
-
-    #[test]
     fn registration_key_roundtrips_and_signature_verifies() {
         let id = from_seed([4u8; 32]);
         let key = id.registration_key();
@@ -214,7 +140,7 @@ mod tests {
             1_700_000_000,
             "nonce",
             "GET",
-            "/api/media",
+            "/api/blocks",
             &hash,
         );
         let signature = sign(&id.seed, request.as_bytes());
@@ -226,7 +152,7 @@ mod tests {
             1_700_000_000,
             "nonce",
             "GET",
-            "/api/media",
+            "/api/blocks",
             &body_hash(b"other"),
         );
         assert!(verify(&id.public, other_body.as_bytes(), &signature).is_err());
@@ -235,7 +161,7 @@ mod tests {
             1_700_000_000,
             "nonce",
             "DELETE",
-            "/api/media",
+            "/api/blocks",
             &hash,
         );
         assert!(verify(&id.public, other_method.as_bytes(), &signature).is_err());
@@ -248,19 +174,6 @@ mod tests {
     fn vectors_file_matches_javascript_client() {
         let seed = [0x11u8; 32];
         let id = from_seed(seed);
-        let nonce = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-        let media_id = "33".repeat(32);
-        let meta_json = r#"{"name":"vacation-photo.jpg","content_type":"image/jpeg","size":4194307,"tags":["vacation","dog"],"image":{"width":32,"height":16,"taken_at":"2020:01:02 03:04:05","make":"Canon"}}"#;
-        let meta_plain = codec::encode(&serde_json::json!({
-            "metadata": serde_json::from_str::<serde_json::Value>(meta_json).unwrap(),
-            "thumb": null,
-        }))
-        .unwrap();
-        let meta_ct = metadata_with_nonce(&seed, &media_id, &meta_plain, &nonce).unwrap();
-        let token = tag_token(&seed, "Vacation").unwrap();
-        let tag_label_aad = format!("i2nclip/v1 tag {token}");
-        let tag_label = tag_label_with_nonce(&seed, &token, b"Vacation", &nonce).unwrap();
-        let cafe = tag_token(&seed, "Café").unwrap();
         let sign_nonce_raw = [0x22u8; 16];
         let sign_nonce = URL_SAFE_NO_PAD.encode(sign_nonce_raw);
         let sign_body = "hello";
@@ -271,7 +184,7 @@ mod tests {
             1_700_000_000,
             &sign_nonce,
             "POST",
-            "/api/media",
+            "/api/blocks",
             &sign_body_hash,
         );
         let authorization = authorization(
@@ -280,16 +193,8 @@ mod tests {
             1_700_000_000,
             &sign_nonce,
             "POST",
-            "/api/media",
+            "/api/blocks",
             sign_body.as_bytes(),
-        );
-        let descriptor = content_descriptor(&seed, &media_id, 4194307, &[0x44; 32], &[0x55; 12]);
-        let frame = encode_create(
-            &media_id,
-            4194307,
-            &descriptor,
-            &meta_ct,
-            &codec::encode(&Vec::<u8>::new()).unwrap(),
         );
         #[derive(Serialize)]
         struct PrivateKey<'a> {
@@ -310,23 +215,11 @@ mod tests {
             private_key_hex,
             public_hex: hex(&id.public),
             public_key: id.registration_key(),
-            tag: "Vacation".to_string(),
-            token,
-            tag_label_aad,
-            tag_label_hex: hex(&tag_label),
-            cafe_tag: "Café".to_string(),
-            cafe_token: cafe,
-            media_id: media_id.to_string(),
-            nonce_hex: hex(&nonce),
-            meta_json: meta_json.to_string(),
-            meta_plaintext_hex: hex(&meta_plain),
-            meta_ciphertext_hex: hex(&meta_ct),
-            frame_hex: hex(&frame),
             sign_ts: 1_700_000_000,
             sign_nonce,
             sign_origin: sign_origin.to_string(),
             sign_method: "POST".to_string(),
-            sign_path: "/api/media".to_string(),
+            sign_path: "/api/blocks".to_string(),
             sign_body_utf8: sign_body.to_string(),
             request_text,
             body_hash: sign_body_hash,
@@ -352,18 +245,6 @@ mod tests {
         private_key_hex: String,
         public_hex: String,
         public_key: String,
-        tag: String,
-        token: String,
-        tag_label_aad: String,
-        tag_label_hex: String,
-        cafe_tag: String,
-        cafe_token: String,
-        media_id: String,
-        nonce_hex: String,
-        meta_json: String,
-        meta_plaintext_hex: String,
-        meta_ciphertext_hex: String,
-        frame_hex: String,
         sign_ts: u64,
         sign_nonce: String,
         sign_origin: String,

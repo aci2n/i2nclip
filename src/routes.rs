@@ -389,11 +389,17 @@ mod request_tests {
             "http://i2nclip.test".into(),
         );
         let signer = crate::reference_crypto::from_seed([1; 32]).public;
-        let registration = crate::reference_crypto::registration_body;
         for body in [
             b"not MessagePack".to_vec(),
             codec::encode(&json!({})).unwrap(),
-            registration(&"x".repeat(513)),
+            codec::encode(&(
+                "x".repeat(513),
+                serde_bytes::ByteBuf::from(
+                    crate::reference_crypto::from_seed([2; 32]).public.to_vec(),
+                ),
+                serde_bytes::ByteBuf::from(vec![11; 32]),
+            ))
+            .unwrap(),
         ] {
             assert!(matches!(
                 register_key_body(&state, signer, &body).await,
