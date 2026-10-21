@@ -18,7 +18,7 @@ export function parsePrivateKey(input: unknown) {
 	) {
 		throw new Error("Invalid library identity.");
 	}
-	// loadKey wipes its seed. Never expose a view into the saved document.
+	// loadSigningKey wipes its seed. Never expose a view into the saved document.
 	return { seed: value.seed.slice(), publicKey: value.public_key.slice() };
 }
 export async function generatePrivateKey() {

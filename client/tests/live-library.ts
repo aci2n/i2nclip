@@ -8,10 +8,14 @@ import { createLibraryDevice } from "../src/lib/protocol/device.ts";
 import { createChain } from "../src/lib/stores/chain.ts";
 
 /** A test-owned real protocol client; no browser credentials are exported. */
-export async function liveLibrary(origin: string, invitation: string) {
+export async function liveLibrary(
+	origin: string,
+	invitation: string,
+	fetcher: typeof fetch = globalThis.fetch,
+) {
 	const { device, recovery } = await createLibraryDevice(origin);
 	const controller = new AbortController();
-	const api = createChainApi(origin, device.key, controller.signal);
+	const api = createChainApi(origin, device.key, controller.signal, fetcher);
 	const cache = createChainStorage(
 		origin,
 		bytesToHex(device.identity.library),

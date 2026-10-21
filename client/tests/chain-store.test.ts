@@ -19,7 +19,7 @@ import {
 	initialChainState,
 	reduceBlock,
 } from "../src/lib/protocol/chain-state.ts";
-import { loadKey } from "../src/lib/protocol/crypto.ts";
+import { loadSigningKey } from "../src/lib/protocol/crypto.ts";
 import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
 import { createLibraryRecovery } from "../src/lib/protocol/recovery-key.ts";
 import {
@@ -32,7 +32,7 @@ import {
 Object.defineProperty(globalThis, "IDBKeyRange", { value: IDBKeyRange });
 const bytes = (n: number): Bytes => new Uint8Array(32).fill(n);
 async function device() {
-	return loadKey((await generatePrivateKey()).privateKey);
+	return loadSigningKey((await generatePrivateKey()).privateKey);
 }
 
 class Transport implements ChainTransport {

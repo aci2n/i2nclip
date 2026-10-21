@@ -1,5 +1,4 @@
-import { decode, encode } from "./msgpack.ts";
-import { bytes as binary, document, number, string } from "./value.ts";
+import { document, number, string } from "./value.ts";
 export interface Metadata {
 	[field: string]: unknown;
 	name?: string;
@@ -39,28 +38,5 @@ export function parseMetadata(input: unknown): Metadata {
 	return result;
 }
 
-// Extensible metadata and an optional binary preview share one document.
-
-// Envelope overhead includes map fields, nonce, ciphertext length and GCM tag.
+// Bound encrypted metadata independently of content and thumbnail objects.
 export const MAX_META_PLAINTEXT = 64 * 1024 - 64;
-
-export function encodeMetaPlain(metadata: Metadata, thumb?: Uint8Array | null) {
-	const clean = { ...metadata };
-	delete clean.thumb;
-	return encode({ metadata: clean, thumb: thumb?.length ? thumb : null });
-}
-export function decodeMetaPlain(bytes: Uint8Array) {
-	const value = document(decode(bytes));
-	if (
-		!value.metadata ||
-		typeof value.metadata !== "object" ||
-		Array.isArray(value.metadata) ||
-		value.metadata instanceof Uint8Array ||
-		(value.thumb !== null && !(value.thumb instanceof Uint8Array))
-	) {
-		throw new Error("Invalid metadata document.");
-	}
-	const metadata = parseMetadata(value.metadata);
-	delete metadata.thumb;
-	return { metadata, thumb: value.thumb === null ? null : binary(value.thumb) };
-}

@@ -1,11 +1,4 @@
-import { bytesToHex, utf8 } from "./bytes.ts";
-import {
-	type LoadedKey,
-	openDescriptorBytes,
-	sealDescriptorBytes,
-} from "./crypto.ts";
-import { decode, encode } from "./msgpack.ts";
-import { bytes, document, number } from "./value.ts";
+import { utf8 } from "./bytes.ts";
 
 export const CHUNK_BYTES = 4 * 1024 * 1024;
 export const CHUNK_TAG_BYTES = 16;
@@ -46,80 +39,6 @@ export async function importContentKey(raw: Uint8Array<ArrayBuffer>) {
 		"encrypt",
 		"decrypt",
 	]);
-}
-
-// Supplied raw content keys support the shared reference vectors.
-// Production creates fresh random material for every upload attempt.
-export async function sealDescriptor(
-	library: LoadedKey,
-	id: string,
-	size: number,
-	raw: Uint8Array<ArrayBuffer>,
-) {
-	const { chunks } = contentShape(size);
-	const key = await importContentKey(raw);
-	const plain = encode({
-		v: 2,
-		key: raw,
-		plaintext_bytes: size,
-		chunk_bytes: CHUNK_BYTES,
-		chunk_count: chunks,
-	});
-	try {
-		const descriptor = await sealDescriptorBytes(
-			library.fileKeyMaterial,
-			id,
-			plain,
-		);
-		return {
-			descriptor,
-			content: { id, size, chunks, key } satisfies ContentFile,
-		};
-	} finally {
-		plain.fill(0);
-	}
-}
-
-export async function createContent(library: LoadedKey, size: number) {
-	const id = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
-	const raw = crypto.getRandomValues(new Uint8Array(32));
-	try {
-		return await sealDescriptor(library, id, size, raw);
-	} finally {
-		raw.fill(0);
-	}
-}
-
-export async function openDescriptor(
-	library: LoadedKey,
-	id: string,
-	descriptor: Uint8Array<ArrayBuffer>,
-): Promise<ContentFile> {
-	const plain = await openDescriptorBytes(
-		library.fileKeyMaterial,
-		id,
-		descriptor,
-	);
-	try {
-		const value = document(decode(plain));
-		const size = number(value.plaintext_bytes);
-		const { chunks } = contentShape(size);
-		if (
-			value.v !== 2 ||
-			value.chunk_bytes !== CHUNK_BYTES ||
-			value.chunk_count !== chunks
-		) {
-			throw new Error("Invalid content descriptor.");
-		}
-		const raw = bytes(value.key);
-		try {
-			return { id, size, chunks, key: await importContentKey(raw) };
-		} finally {
-			raw.fill(0);
-		}
-	} finally {
-		plain.fill(0);
-	}
 }
 
 function chunkParameters(file: ContentFile, index: number) {
