@@ -185,14 +185,21 @@ class ChainLibraryImpl {
 		);
 	}
 	private readonlyView() {
+		const context = get(this.session).context;
+		const member = context
+			? get(this.chain).live?.devices.get(bytesToHex(context.key.publicKey))
+			: null;
 		return (
 			this.signal.aborted ||
+			!context ||
 			!get(this.view).selected ||
 			get(this.view).historical ||
 			get(this.session).pendingRotation ||
-			get(this.session).busy
+			get(this.session).busy ||
+			member?.revokedAt !== null
 		);
 	}
+
 	private sessionChanged() {
 		if (this.readonlyView()) {
 			this.mutation?.abort();

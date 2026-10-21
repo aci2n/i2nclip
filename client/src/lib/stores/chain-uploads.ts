@@ -5,6 +5,7 @@ import type { Files } from "../files.ts";
 import { prepareFile } from "../media/prepare.ts";
 import { thumbnail } from "../media/thumbnail.ts";
 import type { UploadState } from "../media/upload-state.ts";
+import { bytesToHex } from "../protocol/bytes.ts";
 import { contentShape } from "../protocol/content.ts";
 import { manifestSize } from "../protocol/file-objects.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
@@ -95,17 +96,32 @@ class ChainUploadsImpl {
 			session.subscribe(this.guardBatch.bind(this)),
 		);
 	}
+
 	private allowed() {
 		const source = get(this.view);
+		const context = get(this.session).context;
 		return (
 			Boolean(source.selected) &&
+			Boolean(context) &&
 			!source.historical &&
 			!get(this.session).pendingRotation &&
-			!this.signal.aborted
+			!this.signal.aborted &&
+			source.selected?.devices.get(
+				context ? bytesToHex(context.key.publicKey) : "",
+			)?.revokedAt === null
 		);
 	}
 	private guardBatch() {
-		if (!this.allowed()) {
+		const source = get(this.view);
+		const context = get(this.session).context;
+		const revoked = Boolean(
+			source.selected &&
+				context &&
+				!source.historical &&
+				source.selected.devices.get(bytesToHex(context.key.publicKey))
+					?.revokedAt !== null,
+		);
+		if (source.historical || get(this.session).pendingRotation || revoked) {
 			this.batch?.abort(
 				new Error(
 					"Uploads stopped because the selected view or device authority changed.",
@@ -113,6 +129,7 @@ class ChainUploadsImpl {
 			);
 		}
 	}
+
 	private clearNotices() {
 		this.state.update((state) => ({
 			...state,
@@ -133,6 +150,15 @@ class ChainUploadsImpl {
 		this.state.set({ ...empty(), uploading: true });
 		let index = 0;
 		try {
+			if (!get(this.view).selected) {
+				await this.view.refresh();
+			}
+			signal.throwIfAborted();
+			if (!this.allowed()) {
+				throw new Error(
+					"Uploads require an authorized device in the live view.",
+				);
+			}
 			while (this.queue.length) {
 				signal.throwIfAborted();
 				const file = this.queue.shift();
