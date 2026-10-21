@@ -13,19 +13,31 @@ export function createDatabase(
 	factory: IDBFactory = globalThis.indexedDB,
 	name = "i2nclip",
 ): Database {
-	let disposed = false;
-	let connection: Promise<IDBDatabase> | null = null;
-	const transactions = new Set<IDBTransaction>();
-	function open() {
-		if (disposed) {
+	return new DatabaseImpl(factory, name);
+}
+class DatabaseImpl implements Database {
+	private disposed = false;
+	private connection: Promise<IDBDatabase> | null = null;
+	private readonly transactions = new Set<IDBTransaction>();
+	private readonly factory: IDBFactory;
+	private readonly name: string;
+	readonly read = this.readValue.bind(this);
+	readonly update = this.updateValue.bind(this);
+	readonly dispose = this.disposeDatabase.bind(this);
+	constructor(factory: IDBFactory, name: string) {
+		this.factory = factory;
+		this.name = name;
+	}
+	private open() {
+		if (this.disposed) {
 			throw new Error("Browser storage is closed.");
 		}
-		if (!connection) {
-			connection = new Promise<IDBDatabase>((resolve, reject) => {
-				const request = factory.open(name, 1);
+		if (!this.connection) {
+			this.connection = new Promise<IDBDatabase>((resolve, reject) => {
+				const request = this.factory.open(this.name, 1);
 				let blocked = false;
 				request.onupgradeneeded = () => {
-					if (disposed || blocked) {
+					if (this.disposed || blocked) {
 						request.transaction?.abort();
 						return;
 					}
@@ -42,33 +54,33 @@ export function createDatabase(
 				};
 				request.onsuccess = () => {
 					const database = request.result;
-					if (disposed || blocked) {
+					if (this.disposed || blocked) {
 						database.close();
 						reject(new Error("Browser storage is closed."));
 						return;
 					}
 					database.onversionchange = () => {
 						database.close();
-						connection = null;
+						this.connection = null;
 					};
 					resolve(database);
 				};
 			}).catch((error: unknown) => {
-				connection = null;
+				this.connection = null;
 				throw error;
 			});
 		}
-		return connection;
+		return this.connection;
 	}
-	async function transaction<T>(
+	private async transaction<T>(
 		key: string,
 		signal: AbortSignal,
 		change?: (current: T | undefined) => T | undefined,
 	): Promise<T | undefined> {
 		signal.throwIfAborted();
-		const database = await open();
+		const database = await this.open();
 		signal.throwIfAborted();
-		if (disposed) {
+		if (this.disposed) {
 			throw new Error("Browser storage is closed.");
 		}
 		return new Promise((resolve, reject) => {
@@ -76,15 +88,15 @@ export function createDatabase(
 				"state",
 				change ? "readwrite" : "readonly",
 			);
-			transactions.add(tx);
+			this.transactions.add(tx);
 			let result: T | undefined;
 			let failure: unknown;
 			const abort = () => tx.abort();
 			signal.addEventListener("abort", abort, { once: true });
-			function cleanup() {
+			const cleanup = () => {
 				signal.removeEventListener("abort", abort);
-				transactions.delete(tx);
-			}
+				this.transactions.delete(tx);
+			};
 			tx.oncomplete = () => {
 				cleanup();
 				resolve(result);
@@ -119,21 +131,27 @@ export function createDatabase(
 			};
 		});
 	}
-	return {
-		read: (key, signal) => transaction(key, signal),
-		update: (key, change, signal) => transaction(key, signal, change),
-		dispose() {
-			if (disposed) {
-				return;
-			}
-			disposed = true;
-			for (const tx of transactions) {
-				tx.abort();
-			}
-			void connection?.then(
-				(database) => database.close(),
-				() => {},
-			);
-		},
-	};
+	private readValue<T>(key: string, signal: AbortSignal) {
+		return this.transaction<T>(key, signal);
+	}
+	private updateValue<T>(
+		key: string,
+		change: (current: T | undefined) => T | undefined,
+		signal: AbortSignal,
+	) {
+		return this.transaction<T>(key, signal, change);
+	}
+	private disposeDatabase() {
+		if (this.disposed) {
+			return;
+		}
+		this.disposed = true;
+		for (const tx of this.transactions) {
+			tx.abort();
+		}
+		void this.connection?.then(
+			(database) => database.close(),
+			() => {},
+		);
+	}
 }
