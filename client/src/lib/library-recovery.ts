@@ -1,19 +1,33 @@
 import { createChainApi } from "./chain-api.ts";
 import { createChainStorage } from "./chain-storage.ts";
-import { bytesToHex } from "./protocol/bytes.ts";
-import { type Bytes, createRecord } from "./protocol/chain.ts";
-import { decodeDevice, encodeDevice } from "./protocol/device.ts";
+import { bytesToHex, hexToBytes } from "./protocol/bytes.ts";
+import {
+	type Bytes,
+	createRecord,
+	MAX_AUTHORIZED_DEVICES,
+} from "./protocol/chain.ts";
+import {
+	decodeDevice,
+	encodeDevice,
+	type LoadedDevice,
+} from "./protocol/device.ts";
 import { generateDeviceEncryptionKey } from "./protocol/device-encryption.ts";
 import { generatePrivateKey } from "./protocol/identity.ts";
 import { epochKey, type LoadedRecovery } from "./protocol/recovery-key.ts";
 import { createChain, stateCheckpoint } from "./stores/chain.ts";
 
+export interface RecoveryRevocation {
+	readonly publicKey: string;
+	readonly save: (device: LoadedDevice) => Promise<void>;
+}
+
 /** Session-owned operation: verify/decrypt complete history before preparing recovery enrollment. */
 export function prepareRecoveryDevice(
 	recovery: LoadedRecovery,
 	signal: AbortSignal,
+	revocation?: RecoveryRevocation,
 ) {
-	return new RecoveryReplay(recovery, signal).prepare();
+	return new RecoveryReplay(recovery, signal).prepare(revocation);
 }
 class RecoveryReplay {
 	private readonly secrets = new Map<number, Bytes>();
@@ -44,7 +58,7 @@ class RecoveryReplay {
 		this.secrets.set(epoch, secret);
 		return secret;
 	}
-	async prepare() {
+	async prepare(revocation?: RecoveryRevocation) {
 		const { identity, genesis, key } = this.recovery;
 		const signal = this.signal;
 		signal.throwIfAborted();
@@ -68,39 +82,74 @@ class RecoveryReplay {
 		);
 		try {
 			await this.derive(1, genesis.epochSalt);
-			const state = await chain.sync();
+			let state = await chain.sync();
+			const target = revocation?.publicKey.trim().toLowerCase();
+			if (
+				target &&
+				(!/^[0-9a-f]{64}$/.test(target) ||
+					state.devices.get(target)?.revokedAt !== null)
+			) {
+				throw new Error(
+					"Choose an active device by its full signing public key.",
+				);
+			}
+			if (
+				!target &&
+				[...state.devices.values()].filter(
+					(device) => device.revokedAt === null,
+				).length >= MAX_AUTHORIZED_DEVICES
+			) {
+				throw new Error(
+					"The library has 128 authorized devices. Explicitly revoke one device before enrollment.",
+				);
+			}
 			signal.throwIfAborted();
 			const { privateKey } = await generatePrivateKey();
 			const encryption = await generateDeviceEncryptionKey();
 			let encoded: Bytes | undefined;
 			try {
-				const record = await createRecord(
-					{
+				const candidate = async () => {
+					const record = await createRecord(
+						{
+							library: state.library,
+							sequence: state.sequence + 1,
+							previous: state.head,
+							epoch: state.epoch,
+							signer: key.publicKey,
+							kind: "enroll",
+							effects: [privateKey.public_key, encryption.publicKey],
+						},
+						key.privateCryptoKey,
+					);
+					signal.throwIfAborted();
+					encoded = encodeDevice({
+						serverUrl: identity.serverUrl,
+						genesis: genesis.bytes,
 						library: state.library,
-						sequence: state.sequence + 1,
-						previous: state.head,
-						epoch: state.epoch,
-						signer: key.publicKey,
-						kind: "enroll",
-						effects: [privateKey.public_key, encryption.publicKey],
-					},
-					key.privateCryptoKey,
-				);
+						privateKey,
+						encryption,
+						epochs: [...this.secrets.entries()],
+						head: stateCheckpoint(state),
+						phase: "recovering",
+						rotation: null,
+						registration: null,
+						recovery: record.bytes,
+					});
+					return await decodeDevice(encoded);
+				};
+				const pending = await candidate();
+				if (!target || !revocation) {
+					return pending;
+				}
+				await revocation.save(pending);
 				signal.throwIfAborted();
-				encoded = encodeDevice({
-					serverUrl: identity.serverUrl,
-					genesis: genesis.bytes,
-					library: state.library,
-					privateKey,
-					encryption,
-					epochs: [...this.secrets.entries()],
-					head: stateCheckpoint(state),
-					phase: "recovering",
-					rotation: null,
-					registration: null,
-					recovery: record.bytes,
+				state = await chain.append({
+					expected: stateCheckpoint(state),
+					kind: "revoke",
+					effects: [hexToBytes(target)],
 				});
-				return await decodeDevice(encoded);
+				encoded?.fill(0);
+				return await candidate();
 			} finally {
 				privateKey.seed.fill(0);
 				encryption.secret.fill(0);

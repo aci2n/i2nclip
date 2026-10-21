@@ -264,3 +264,25 @@ After the current implementation is ready, make separate cohesive commits:
    once after the combined follow-ups are finished; browser coverage must verify
    creation, pairing, device-free restore, and retained-device rotation. Use only
    relevant focused tests per earlier commit, not E2E after every change.
+
+## Recovery revocation control
+
+The recovery import form may name one existing device by its full signing public
+key (64 hexadecimal characters). Leaving it blank preserves every device. The
+submit label explicitly states that selecting a key revokes that device. This
+also frees one slot at the active-device limit; no device is selected automatically.
+
+The session verifies history and that the selected target is currently active.
+It saves a fresh local recovery candidate before publishing the root-signed
+revocation. The root-owned replay store submits against its verified parent and
+verifies the accepted head using the ordinary append/reconciliation path. Only
+then does it construct and save the candidate enrollment against that head.
+The recovery secret remains in memory and is wiped when this workflow ends.
+
+A failed local save publishes no revocation. Cancellation or an uncertain result
+may leave a revocation accepted while enrollment is unfinished; the candidate
+remains saved, and reopening the recovery file verifies the resulting history
+before preparing another enrollment. A stale candidate is never silently rebased.
+Revocation does not rotate keys. Acceptance checks cover explicit selection,
+unchanged default behavior, persistence before mutation, invalid/inactive targets,
+capacity, and failure after accepted revocation. No extra schema or API is needed.

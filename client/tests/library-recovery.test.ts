@@ -335,3 +335,73 @@ test("invalid encrypted history is rejected before accepting its head", async (t
 	t.after(cache.dispose);
 	assert.equal((await cache.head(new AbortController().signal))?.sequence, 1);
 });
+
+test("explicit recovery revocation persists a candidate before publishing and prepares against the accepted head", async (t) => {
+	const f = await fixture(t);
+	const target = [...f.server.state.devices.values()].find(
+		(device) => device.revokedAt === null,
+	);
+	assert(target);
+	const before = f.server.state.sequence;
+	let saved = false;
+	f.server.loseResponse = true;
+	const candidate = await prepareRecoveryDevice(
+		f.recovery,
+		new AbortController().signal,
+		{
+			publicKey: bytesToHex(target.publicKey),
+			save: async (pending) => {
+				assert.equal(f.server.posts, 0);
+				assert.equal(pending.identity.phase, "recovering");
+				assert.equal(pending.identity.head.sequence, before);
+				saved = true;
+			},
+		},
+	);
+	assert(saved);
+	assert.equal(
+		f.server.state.devices.get(bytesToHex(target.publicKey))?.revokedAt,
+		before + 1,
+	);
+	assert.equal(candidate.identity.head.sequence, before + 1);
+	assert(candidate.identity.recovery);
+	const enrollment = await verifyRecord(candidate.identity.recovery);
+	assert.deepEqual(enrollment.body.previous, f.server.state.head);
+	assert.equal(enrollment.body.epoch, 2);
+});
+
+test("failed recovery candidate persistence publishes no revocation", async (t) => {
+	const f = await fixture(t);
+	const target = [...f.server.state.devices.values()].find(
+		(device) => device.revokedAt === null,
+	);
+	assert(target);
+	await assert.rejects(
+		prepareRecoveryDevice(f.recovery, new AbortController().signal, {
+			publicKey: bytesToHex(target.publicKey),
+			save: async () => {
+				throw new Error("Disk full");
+			},
+		}),
+		/Disk full/,
+	);
+	assert.equal(f.server.posts, 0);
+	assert.equal(
+		f.server.state.devices.get(bytesToHex(target.publicKey))?.revokedAt,
+		null,
+	);
+});
+
+test("recovery rejects an unrecognized revocation target before saving or publishing", async (t) => {
+	const f = await fixture(t);
+	await assert.rejects(
+		prepareRecoveryDevice(f.recovery, new AbortController().signal, {
+			publicKey: "00".repeat(32),
+			save: async () => {
+				assert.fail("Invalid target must not save a candidate");
+			},
+		}),
+		/active device/,
+	);
+	assert.equal(f.server.posts, 0);
+});

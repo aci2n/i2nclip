@@ -115,6 +115,7 @@ const phase = $derived(
 				error=""
 				label="Prepare another enrollment"
 				description="If the chain changed, unlock the recovery file again to prepare a fresh enrollment."
+				allowRevocation
 				onrestore={session.restore}
 			/>
 		</details>
@@ -193,6 +194,7 @@ const phase = $derived(
 			<RecoveryImport
 				{busy}
 				error=""
+				allowRevocation
 				onrestore={session.restore}
 				description="Unlock the offline recovery file to verify history and prepare this device’s enrollment. This works without any authorized device."
 			/>

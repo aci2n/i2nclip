@@ -952,7 +952,7 @@ class SessionStoreImpl {
 		}
 	}
 
-	private restoreLibrary(file: Blob, password: string) {
+	private restoreLibrary(file: Blob, password: string, revokePublicKey = "") {
 		return this.sessionAction("restore", async (signal) => {
 			this.unlockedSession();
 			if (this.library && this.library.identity.phase !== "recovering") {
@@ -974,7 +974,16 @@ class SessionStoreImpl {
 				) {
 					throw new Error("Recovery file belongs to another library.");
 				}
-				const candidate = await prepareRecoveryDevice(recovery, signal);
+				const candidate = await prepareRecoveryDevice(
+					recovery,
+					signal,
+					revokePublicKey.trim()
+						? {
+								publicKey: revokePublicKey,
+								save: (device) => this.applyIdentity(device, signal),
+							}
+						: undefined,
+				);
 				signal.throwIfAborted();
 				await this.applyIdentity(candidate, signal);
 				this.publishSession({
