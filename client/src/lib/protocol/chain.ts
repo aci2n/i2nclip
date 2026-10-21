@@ -168,8 +168,11 @@ export async function genesis(initialPublicKey: Bytes) {
 	const document = encode([1, fixedBytes(initialPublicKey), 1]);
 	return {
 		bytes: document,
-		hash: await sha256(concat([GENESIS_DOMAIN, document])),
+		hash: await genesisHash(document),
 	};
+}
+export function genesisHash(document: Bytes) {
+	return sha256(concat([GENESIS_DOMAIN, document]));
 }
 export async function verifyRecord(input: Bytes): Promise<VerifiedBlock> {
 	if (input.length > MAX_BLOCK_BYTES) {

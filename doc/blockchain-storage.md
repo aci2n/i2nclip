@@ -63,9 +63,9 @@ Whole-library state restoration is excluded.
 
 ### Library and genesis
 
-Generate a random 32-byte recovery key, an independent initial-device signing
-seed, and a fresh public 32-byte epoch-1 salt. Derive the recovery signing keypair
-and epoch key as specified in `library-recovery.md`. Canonical genesis is
+Generate an independent recovery signing keypair, random 32-byte epoch
+derivation secret, initial-device signing keypair, and fresh public 32-byte
+epoch-1 salt. Derive the epoch key as specified in `library-recovery.md`. Canonical genesis is
 `[1, recovery_public_key, initial_device_public_key, epoch_1_salt, 1]`.
 The recovery and device public keys must be distinct. Its hash is:
 
@@ -93,8 +93,8 @@ does not lose its credentials.
 
 | Material | Purpose and location |
 | --- | --- |
-| Recovery key | Single secret in the separate recovery file; derives recovery signing keypair and all epoch keys; never transferred to devices |
-| Recovery signing keypair | Derived reset authority and recovery chain-read signatures; public key fixed in genesis, private runtime handle temporary |
+| Recovery key | Credential containing independent signing and epoch derivation secrets in the separate recovery file; never transferred to devices |
+| Recovery signing keypair | Independently generated reset authority and recovery chain-read signatures; public key fixed in genesis, private runtime handle temporary |
 | Device signing seed | HTTP and ordinary block signatures; password-protected local identity and device backup |
 | Epoch keys | Per-block encryption key derivation; protected identity, authenticated pairing, and backups |
 | Manifest key | Fresh random AES key per immutable manifest; inside encrypted `AddFile` |
@@ -104,16 +104,16 @@ does not lose its credentials.
 
 The recovery key is separate from every device signing key. Paired devices generate their
 own signing keys; pairing never clones the sender's signing seed. Retain all
-historical epoch keys needed for full replay. Epoch keys are derived independently from the recovery key using their public
+historical epoch keys needed for full replay. Epoch keys are derived independently from its epoch derivation secret using their public
 salts and epoch/library contexts, never from one another. Use non-extractable runtime keys where practical and wipe
 temporary owned byte buffers; browser memory and strings cannot be reliably
 erased.
 
 ### Recovery-key lifecycle
 
-The recovery key is the single backed-up secret. It derives both the recovery
-signing keypair and numbered epoch keys through distinct HKDF contexts. Genesis
-contains its derived public key and the first public epoch salt; reset records
+The recovery key bundles two backed-up secrets: the recovery signing private
+key and the epoch derivation secret. The latter derives numbered epoch keys
+through HKDF. Genesis contains the recovery signing public key and the first public epoch salt; reset records
 contain subsequent salts. The recovery file can reconstruct the historical keyring
 and restore control without an authorized device. It does not restore purged
 objects or fix an invalid operation written by a trusted device.
@@ -287,13 +287,13 @@ enrolled, including in another library. For `revoke`, effects are
 revocation must leave at least one active device. A signer may revoke itself
 when another active device remains.
 
-For `rotate`, effects are `[next_epoch, new_device_public_key, next_epoch_salt]`. The next epoch is
+For `rotate`, effects are `[next_epoch, initial_device_public_key, next_epoch_salt]`. The next epoch is
 exactly the previous epoch plus one, the replacement key is fresh, and the public
 epoch salt is a fresh random 32-byte value. Atomically
 revoke every old device and authorize the replacement. Genesis and library ID
 stay unchanged. No epoch key or recovery envelope appears in the public transition. The initiating
-recovery operation derives the next epoch key from the recovery key and signed
-public salt; other devices
+recovery operation derives the next epoch key from the epoch derivation secret
+in the recovery credential and the signed public salt; other devices
 must re-pair to get it. Unlike enrollment and revocation, `rotate` must be signed
 by the immutable recovery public key from genesis. An ordinary device signature is
 invalid for a reset, even when that device was the initial device. The recovery signing key

@@ -23,15 +23,14 @@ restore availability when the server withholds data.
 
 ## Cryptographic derivations and formats
 
-Generate a uniformly random 32-byte recovery key for each library. Store it only
-in a separate password-encrypted recovery file. It is not the Ed25519 signing
-seed: derive that 32-byte seed using HKDF-SHA256 with the recovery key as input,
-a 32-byte all-zero salt, and UTF-8 info `i2nclip/recovery-signing/1`. Derive the
-Ed25519 public key from that signing seed and pin it in genesis. Runtime signing
-keys are non-extractable. A small Ed25519 public-key derivation helper is permitted
-because WebCrypto does not portably expose public-key derivation from an imported
-seed; test its output against independent Rust/shared vectors. Signing, HKDF,
-and AEAD continue to use WebCrypto.
+The recovery key is a credential containing two independently generated secrets:
+an Ed25519 recovery signing private key and a uniformly random 32-byte epoch
+derivation secret. Generate the signing keypair with WebCrypto, export its seed
+and public key for the encrypted file, and import a non-extractable runtime signing
+handle. Pin its public key in genesis. No public-key derivation dependency is
+needed. Validate imported seed/public-key correspondence by signing and verifying
+a probe using WebCrypto; reject mismatches. Signing, HKDF, and AEAD use WebCrypto.
+The two secrets are preserved together; neither is derived from the other.
 
 Canonical genesis is `[1, recovery_public_key, initial_device_public_key,
 epoch_1_salt, 1]`. All three binary fields are 32 bytes, and the two public keys
@@ -42,16 +41,21 @@ as a device.
 
 For epoch `e`, derive a 32-byte epoch key with HKDF-SHA256:
 
-- Input key material: recovery key.
+- Input key material: epoch derivation secret.
 - Salt: that epoch's fresh, public, random 32-byte salt.
 - Info: MessagePack `["i2nclip/epoch-key/1", library_id, e]`.
 
 Epoch 1's salt is in genesis. A `rotate` record's effects become
-`[next_epoch, replacement_device_public_key, next_epoch_salt]`. Its signer is the
+`[next_epoch, initial_device_public_key, next_epoch_salt]`. Its signer is the
 recovery public key, its record epoch is the old epoch, and its encryption fields
 are null. The recovery signature authenticates the parent, sequence, library,
 new epoch, new device, and new salt. Ordinary records still require an active
 device signature. Reset signatures do not grant file-operation authority.
+
+Genesis and reset are symmetric epoch starts: each names that epoch's initial
+authorized device. Reset acceptance revokes every previous device and authorizes
+this initial device atomically, without a separate enrollment block. Subsequent
+devices are enrolled normally. This resets membership, not file state/history.
 
 Devices hold only their Ed25519 device key and numbered epoch keys, not the
 recovery key or recovery signing seed. Known epoch keys do not allow deriving
@@ -59,10 +63,12 @@ other epoch keys or the recovery key. The existing per-block HKDF/salt/AES-GCM
 scheme remains separate and unchanged. Manifest, content, metadata, and thumbnail
 keys remain independently random.
 
-Recovery plaintext is `[1, server_origin, genesis_bytes, library_id, recovery_key]`.
+Recovery plaintext is `[1, server_origin, genesis_bytes, library_id,
+[signing_seed, signing_public_key], epoch_derivation_secret]`. Both secrets are
+32 bytes; the public key is also 32 bytes.
 The portable envelope is `["i2nclip-library-recovery", 1, password_envelope]`, with
 AAD `i2nclip/library-recovery/1`, the existing password KDF bounds, and a 1 MiB
-encoded-file bound. Validate the derived public key against genesis, recompute
+encoded-file bound. Validate the signing public key against genesis, recompute
 library ID, and validate the normalized server origin before use. Device backup
 and recovery-file discriminators/AAD are deliberately distinct.
 
@@ -84,7 +90,7 @@ An old device backup does not substitute for it.
 ## Server interfaces and persistence
 
 The server receives the recovery public key and salts, never the recovery key,
-derived signing seed, or epoch keys. Registration becomes `[invitation_code,
+signing seed, epoch derivation secret, or epoch keys. Registration becomes `[invitation_code,
 recovery_public_key, epoch_1_salt]`, signed by the initial device. Atomically save
 genesis, both public principals, initial device membership, and quota while
 consuming the invitation. Keep the fresh `sql/001_init.sql` baseline policy.
@@ -144,7 +150,7 @@ Preserve the existing active context while preparing; block unrelated UI writes
 until the pending reset is resolved. Dispose the old context on final acceptance.
 
 For recovery with no active device, unlock the recovery file and authenticate
-chain reads with its derived signing key. Starting from genesis, verify canonical
+chain reads with its recovery signing key. Starting from genesis, verify canonical
 records, signatures, public authority transitions, parents, and sequence. Derive
 keys from authenticated epoch salts and decrypt/reduce every private operation
 before accepting the corresponding state. Reuse bounded replay and cache writes;
@@ -180,7 +186,7 @@ cannot undo it; keep sufficient pending credentials to reconcile. Neither a
 401 alone nor a generic conflict establishes acceptance or permanent loss.
 
 No-data availability, invalid chain data, unavailable historical salts/records,
-wrong passwords, wrong-library files, and derivation/public-key mismatch must
+wrong passwords, wrong-library files, and signing-key/public-key mismatch must
 produce explicit errors. Never fall back to a fresh or shorter chain.
 
 ## Acceptance checks and commit sequence
@@ -189,7 +195,7 @@ Implement as separate cohesive commits; use only focused checks per commit:
 
 1. Commit the amended specification and consistent naming.
 2. Recovery-key derivation and recovery-file formats: deterministic fixtures,
-   wrong purpose/password/library, bounds, derived-public-key correspondence,
+   wrong purpose/password/library, bounds, signing seed/public-key correspondence,
    and known-epoch isolation; client/Rust shared vectors where applicable.
 3. Device formats with recovery genesis and public epoch salts:
    strict canonical parsing, genesis hash, reset authority, and replay tests.
@@ -203,3 +209,14 @@ Implement as separate cohesive commits; use only focused checks per commit:
 6. Continue pairing, materialized UI, deletion/history, and the remaining main
    implementation plan. Complete the final legacy cleanup and full integration
    verification after the chain features work; do not run E2E for each change.
+
+### Two-secret recovery acceptance checks
+
+Creation must use independent native key generation and random epoch derivation
+material. Recovery export/import must preserve both secrets and reject missing or
+mismatched signing credentials, wrong library, password, purpose, or oversized
+files. Neither secret is stored in ordinary device credentials or pairing.
+Cancellation and workflow disposal wipe both owned secret buffers. No old
+single-secret recovery format is supported. Dependency manifests and lockfiles
+must contain no added Ed25519 package. No server interface or genesis change is
+introduced by splitting these private secrets.
