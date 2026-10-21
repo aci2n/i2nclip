@@ -24,7 +24,8 @@ test("chain API signs the exact query and uses fixed registration, pagination an
 		device.identity.serverUrl,
 		device.key,
 		new AbortController().signal,
-		async (input, init) => {
+		async function (this: typeof globalThis, input, init) {
+			assert.equal(this, globalThis);
 			const url = new URL(String(input));
 			const options = init ?? {};
 			seen.push(url.pathname);

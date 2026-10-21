@@ -90,7 +90,7 @@ class ChainApiImpl implements ChainTransport {
 		checkServer(server);
 		this.origin = new URL(server).origin;
 		this.key = key;
-		this.fetcher = fetcher;
+		this.fetcher = fetcher.bind(globalThis);
 		this.signal = AbortSignal.any([signal, this.controller.signal]);
 	}
 	private async request(
