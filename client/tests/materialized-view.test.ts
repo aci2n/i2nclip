@@ -149,3 +149,66 @@ test("cache reuse requires both metadata hash and key and purge clears decrypted
 		/purged/,
 	);
 });
+
+test("historical selection stays read-only at the live head and suppresses superseded replays", async (t) => {
+	const item = file(1);
+	const live = chain(source([item], 3));
+	const pending = deferred<ChainState>();
+	t.mock.method(live.store, "at", async (sequence: number) =>
+		sequence === 1 ? pending.promise : source([item], sequence),
+	);
+	const view = createMaterializedView(
+		live.store,
+		{
+			metadata: async () => ({
+				attributes: { name: "example" },
+				thumbnail: null,
+			}),
+		},
+		new AbortController().signal,
+	);
+	t.after(view.dispose);
+	const stale = view.select(1);
+	assert.equal(await view.select(2), true);
+	pending.resolve(source([item], 1));
+	assert.equal(await stale, false);
+	assert.equal(get(view).selected?.sequence, 2);
+	assert.equal(get(view).historical, true);
+	live.publish(source([item], 4));
+	assert.equal(get(view).selected?.sequence, 2);
+	assert.equal(await view.select(4), true);
+	assert.equal(get(view).historical, true);
+	assert.equal(await view.select(null), true);
+	assert.equal(get(view).historical, false);
+	assert.equal(get(view).selected?.sequence, 4);
+});
+
+test("a live purge invalidates historical plaintext and marks its metadata index incomplete", async (t) => {
+	const item = file(1);
+	const initial = source([item], 1);
+	const live = chain(source([item], 2));
+	t.mock.method(live.store, "at", async () => initial);
+	const view = createMaterializedView(
+		live.store,
+		{
+			metadata: async () => ({
+				attributes: { name: "private" },
+				thumbnail: null,
+			}),
+		},
+		new AbortController().signal,
+	);
+	t.after(view.dispose);
+	await view.select(1);
+	await view.index();
+	const revision = get(view).revision;
+	assert.equal(get(view).metadata.size, 1);
+	live.publish(source([{ ...item, purged: true, deleted: true }], 3));
+	assert.equal(get(view).selected, initial);
+	assert.ok(get(view).revision > revision);
+	assert.equal(get(view).metadata.size, 0);
+	assert.ok(get(view).unavailable.has(bytesToHex(item.id)));
+	await view.index();
+	assert.equal(get(view).complete, false);
+	assert.match(get(view).errors.get(bytesToHex(item.id)) ?? "", /purged/);
+});

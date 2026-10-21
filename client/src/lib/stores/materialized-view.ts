@@ -9,6 +9,9 @@ import type { ChainStore } from "./chain.ts";
 export interface MaterializedViewState {
 	readonly selected: ChainState | null;
 	readonly historical: boolean;
+	readonly unavailable: ReadonlySet<string>;
+	readonly selecting: boolean;
+	readonly selectionError: string;
 	readonly revision: number;
 	readonly metadata: ReadonlyMap<string, FileMetadata>;
 	readonly errors: ReadonlyMap<string, string>;
@@ -40,9 +43,14 @@ class MaterializedViewImpl {
 	private readonly signal: AbortSignal;
 	private readonly controller = new AbortController();
 	private selection = new AbortController();
+	private choosing = new AbortController();
+	private unavailable = new Set<string>();
 	private readonly state: Writable<MaterializedViewState> = writable({
 		selected: null,
 		historical: false,
+		unavailable: new Set<string>(),
+		selecting: false,
+		selectionError: "",
 		revision: 0,
 		metadata: new Map(),
 		errors: new Map(),
@@ -62,6 +70,7 @@ class MaterializedViewImpl {
 	readonly index = this.indexSelected.bind(this);
 	readonly file = this.readSelectedFile.bind(this);
 	readonly refresh = this.refreshChain.bind(this);
+	readonly select = this.selectSequence.bind(this);
 	readonly dispose = this.disposeView.bind(this);
 	constructor(
 		chain: ChainStore,
@@ -76,18 +85,30 @@ class MaterializedViewImpl {
 				return;
 			}
 			this.state.update((state) => ({ ...state, chainError: value.error }));
-			if (value.live && !get(this.state).historical) {
-				this.select(value.live, false);
+			if (value.live) {
+				this.unavailable = new Set(
+					[...value.live.files]
+						.filter(([, file]) => file.purged)
+						.map(([id]) => id),
+				);
+				const selected = get(this.state);
+				if (selected.historical && selected.selected) {
+					this.installSelection(selected.selected, true);
+				} else {
+					this.installSelection(value.live, false);
+				}
 			}
 		});
 		this.signal.addEventListener("abort", this.dispose, { once: true });
 	}
-	private select(selected: ChainState, historical: boolean) {
+	private installSelection(selected: ChainState, historical: boolean) {
 		const previous = get(this.state);
 		if (
 			previous.selected &&
 			bytesToHex(previous.selected.head) === bytesToHex(selected.head) &&
-			previous.historical === historical
+			previous.historical === historical &&
+			previous.unavailable.size === this.unavailable.size &&
+			[...this.unavailable].every((id) => previous.unavailable.has(id))
 		) {
 			return;
 		}
@@ -97,7 +118,12 @@ class MaterializedViewImpl {
 		const metadata = new Map<string, FileMetadata>();
 		for (const [id, entry] of this.cache) {
 			const file = selected.files.get(id);
-			if (!file || file.purged || referenceKey(file) !== entry.reference) {
+			if (
+				!file ||
+				file.purged ||
+				this.unavailable.has(id) ||
+				referenceKey(file) !== entry.reference
+			) {
 				this.cache.delete(id);
 			} else {
 				metadata.set(id, entry.metadata);
@@ -106,6 +132,9 @@ class MaterializedViewImpl {
 		this.state.set({
 			selected,
 			historical,
+			unavailable: new Set(this.unavailable),
+			selecting: false,
+			selectionError: "",
 			revision: previous.revision + 1,
 			metadata,
 			errors: new Map(),
@@ -125,7 +154,7 @@ class MaterializedViewImpl {
 		if (!file) {
 			throw new Error("File not found in the selected library state.");
 		}
-		if (file.purged) {
+		if (file.purged || source.unavailable.has(id)) {
 			throw new Error("This file was permanently purged.");
 		}
 		const signal = AbortSignal.any([this.signal, this.selection.signal, own]);
@@ -209,6 +238,39 @@ class MaterializedViewImpl {
 			complete: errors.size === 0,
 		}));
 	}
+	private async selectSequence(sequence: number | null) {
+		this.signal.throwIfAborted();
+		this.choosing.abort();
+		this.choosing = new AbortController();
+		const signal = AbortSignal.any([this.signal, this.choosing.signal]);
+		this.state.update((state) => ({
+			...state,
+			selecting: true,
+			selectionError: "",
+		}));
+		try {
+			const state =
+				sequence === null
+					? (get(this.chain).live ?? (await this.chain.sync()))
+					: await this.chain.at(sequence, signal);
+			signal.throwIfAborted();
+			this.installSelection(state, sequence !== null);
+			return true;
+		} catch (error) {
+			if (!signal.aborted) {
+				this.state.update((state) => ({
+					...state,
+					selectionError: errorMessage(error),
+				}));
+			}
+			return false;
+		} finally {
+			if (!signal.aborted) {
+				this.state.update((state) => ({ ...state, selecting: false }));
+			}
+		}
+	}
+
 	private refreshChain() {
 		return this.chain.sync();
 	}
@@ -219,11 +281,15 @@ class MaterializedViewImpl {
 		this.signal.removeEventListener("abort", this.dispose);
 		this.controller.abort();
 		this.selection.abort();
+		this.choosing.abort();
 		this.unsubscribe();
 		this.cache.clear();
 		this.state.set({
 			selected: null,
 			historical: false,
+			unavailable: new Set<string>(),
+			selecting: false,
+			selectionError: "",
 			revision: get(this.state).revision + 1,
 			metadata: new Map(),
 			errors: new Map(),
