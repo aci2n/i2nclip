@@ -63,9 +63,12 @@ AES-256-GCM (suite IDs `0x0020`, `0x0001`, `0x0002`). The recovery signature
 authenticates the complete rotation; HPKE base mode supplies recipient secrecy.
 Use a maintained RFC-conforming implementation, pinned in the lockfile, and its
 required input/all-zero shared-secret checks. Do not implement curve arithmetic,
-conversion, or a custom public-key encryption construction. Choose and document
-the concrete dependency after checking browser support, bundle cost, and RFC
-vectors in the implementation commit; no dependency is added by this document.
+conversion, or a custom public-key encryption construction. Implementation choice: pinned `hpke@1.1.7` (panva/hpke), which has zero runtime
+dependencies and uses native WebCrypto. The X25519/AES-256-GCM import path is
+tree-shakeable. Validate its browser availability with the existing startup probe
+and final browser suite. `client/tests/hpke-vector.json` preserves the relevant
+official RFC base-mode fixture, and focused tests cover context separation,
+tampering, invalid inputs, and non-extractable runtime private keys.
 See [RFC 9180](https://www.rfc-editor.org/rfc/rfc9180.html).
 
 ## Membership and fixed frames
