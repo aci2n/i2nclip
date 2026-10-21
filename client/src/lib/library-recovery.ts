@@ -3,6 +3,7 @@ import { createChainStorage } from "./chain-storage.ts";
 import { bytesToHex } from "./protocol/bytes.ts";
 import { type Bytes, createRecord } from "./protocol/chain.ts";
 import { decodeDevice, encodeDevice } from "./protocol/device.ts";
+import { generateDeviceEncryptionKey } from "./protocol/epoch-envelope.ts";
 import { generatePrivateKey } from "./protocol/identity.ts";
 import { epochKey, type LoadedRecovery } from "./protocol/recovery-key.ts";
 import { createChain, stateCheckpoint } from "./stores/chain.ts";
@@ -70,6 +71,7 @@ class RecoveryReplay {
 			const state = await chain.sync();
 			signal.throwIfAborted();
 			const { privateKey } = await generatePrivateKey();
+			const encryption = await generateDeviceEncryptionKey();
 			const salt = crypto.getRandomValues(new Uint8Array(32));
 			let secret: Bytes | undefined;
 			let encoded: Bytes | undefined;
@@ -98,6 +100,7 @@ class RecoveryReplay {
 					genesis: genesis.bytes,
 					library: state.library,
 					privateKey,
+					encryption,
 					epochs: [...this.secrets.entries()],
 					head: stateCheckpoint(state),
 					phase: "resetting",
@@ -107,6 +110,7 @@ class RecoveryReplay {
 			} finally {
 				secret?.fill(0);
 				privateKey.seed.fill(0);
+				encryption.secret.fill(0);
 				encoded?.fill(0);
 			}
 		} finally {

@@ -8,6 +8,11 @@ import {
 	verifyRecord,
 } from "./chain.ts";
 import { loadSigningKey, type SigningKey } from "./crypto.ts";
+import {
+	type DeviceEncryptionKey,
+	generateDeviceEncryptionKey,
+	loadDeviceEncryptionKey,
+} from "./epoch-envelope.ts";
 import { generatePrivateKey, type PrivateKeyDocument } from "./identity.ts";
 import { decode, encode } from "./msgpack.ts";
 import { createLibraryRecovery, parseRecoveryGenesis } from "./recovery-key.ts";
@@ -26,6 +31,7 @@ export interface DeviceIdentity {
 	readonly genesis: Bytes;
 	readonly library: Bytes;
 	readonly privateKey: PrivateKeyDocument;
+	readonly encryption: DeviceEncryptionKey;
 	readonly epochs: readonly (readonly [number, Bytes])[];
 	readonly head: Checkpoint;
 	readonly phase: DevicePhase;
@@ -34,6 +40,7 @@ export interface DeviceIdentity {
 export interface LoadedDevice {
 	readonly identity: DeviceIdentity;
 	readonly key: SigningKey;
+	readonly encryptionKey: CryptoKeyPair;
 	readonly initialPublicKey: Bytes;
 }
 function frame(value: unknown, length: number): unknown[] {
@@ -60,7 +67,11 @@ export function encodeDevice(identity: DeviceIdentity): Bytes {
 		identity.serverUrl,
 		identity.genesis,
 		identity.library,
-		keyValues(identity.privateKey),
+		[
+			...keyValues(identity.privateKey),
+			identity.encryption.secret,
+			identity.encryption.publicKey,
+		],
 		identity.epochs,
 		[identity.head.sequence, fixedBytesHex(identity.head.hash)],
 		identity.phase,
@@ -104,7 +115,13 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 	) {
 		throw new Error("Device genesis and library identity do not match.");
 	}
-	const privateKey = keyDocument(values[4]);
+	const localKeys = frame(values[4], 4);
+	const privateKey = keyDocument(localKeys.slice(0, 2));
+	const encryption = {
+		secret: fixedBytes(localKeys[2]),
+		publicKey: fixedBytes(localKeys[3]),
+	};
+	const encryptionKey = await loadDeviceEncryptionKey(encryption);
 	const key = await loadSigningKey(privateKey);
 	if (sameBytes(key.publicKey, initial.recoveryPublicKey)) {
 		throw new Error("Recovery key cannot be a device.");
@@ -185,6 +202,7 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 		genesis: genesisBytes,
 		library,
 		privateKey,
+		encryption,
 		epochs,
 		head,
 		phase,
@@ -193,7 +211,7 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 	if (!sameBytes(input, encodeDevice(identity))) {
 		throw new Error("Noncanonical device credentials.");
 	}
-	return { identity, key, initialPublicKey };
+	return { identity, key, encryptionKey, initialPublicKey };
 }
 function fixedBytesVariable(value: unknown): Bytes {
 	if (!(value instanceof Uint8Array)) {
@@ -204,6 +222,7 @@ function fixedBytesVariable(value: unknown): Bytes {
 export async function createLibraryDevice(server: string) {
 	checkServer(server);
 	const { privateKey } = await generatePrivateKey();
+	const encryption = await generateDeviceEncryptionKey();
 	const created = await createLibraryRecovery(server, privateKey.public_key);
 	const initial = created.recovery.genesis;
 	const encoded = encodeDevice({
@@ -211,6 +230,7 @@ export async function createLibraryDevice(server: string) {
 		genesis: initial.bytes,
 		library: initial.hash,
 		privateKey,
+		encryption,
 		epochs: [[1, created.epochKey]],
 		head: { sequence: 0, hash: bytesToHex(initial.hash) },
 		phase: "registering",
@@ -225,6 +245,7 @@ export async function createLibraryDevice(server: string) {
 	} finally {
 		encoded.fill(0);
 		privateKey.seed.fill(0);
+		encryption.secret.fill(0);
 		created.epochKey.fill(0);
 	}
 }

@@ -33,6 +33,15 @@ test("device initialization separates signing and epoch secrets and has determin
 	);
 	assert.equal("fileKeyMaterial" in first.key, false);
 	assert.equal(first.key.privateCryptoKey.extractable, false);
+	assert.equal(first.encryptionKey.privateKey.extractable, false);
+	assert.notDeepEqual(
+		first.identity.encryption.secret,
+		first.identity.privateKey.seed,
+	);
+	assert.notDeepEqual(
+		first.identity.encryption.secret,
+		first.identity.epochs[0]?.[1],
+	);
 });
 
 test("local credentials preserve historical keys and trusted head within bounds", async () => {
@@ -141,5 +150,32 @@ test("password envelopes use compact frames and bind their purpose", async () =>
 	await assert.rejects(
 		passwordOpen({ v: 1 }, "test password", "one"),
 		/Invalid/,
+	);
+});
+
+test("local encryption credentials reject public-key substitution and own their secret buffers", async () => {
+	const first = await createDevice("https://example.test");
+	const second = await createDevice("https://example.test");
+	await assert.rejects(
+		decodeDevice(
+			encodeDevice({
+				...first.identity,
+				encryption: {
+					secret: first.identity.encryption.secret,
+					publicKey: second.identity.encryption.publicKey,
+				},
+			}),
+		),
+	);
+	const bytes = encodeDevice(first.identity);
+	const loaded = await decodeDevice(bytes);
+	bytes.fill(0);
+	assert.deepEqual(
+		loaded.identity.encryption.secret,
+		first.identity.encryption.secret,
+	);
+	assert.notEqual(
+		loaded.identity.encryption.secret,
+		first.identity.encryption.secret,
 	);
 });

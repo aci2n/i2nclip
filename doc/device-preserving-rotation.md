@@ -65,7 +65,7 @@ Use a maintained RFC-conforming implementation, pinned in the lockfile, and its
 required input/all-zero shared-secret checks. Do not implement curve arithmetic,
 conversion, or a custom public-key encryption construction. Implementation choice: pinned `hpke@1.1.7` (panva/hpke), which has zero runtime
 dependencies and uses native WebCrypto. The X25519/AES-256-GCM import path is
-tree-shakeable. Validate its browser availability with the existing startup probe
+tree-shakeable. Validate its browser availability through the creation/import key probes
 and final browser suite. `client/tests/hpke-vector.json` preserves the relevant
 official RFC base-mode fixture, and focused tests cover context separation,
 tampering, invalid inputs, and non-extractable runtime private keys.
