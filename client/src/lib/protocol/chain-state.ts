@@ -248,10 +248,13 @@ export function reduceBlock(
 		invalid("parent, sequence, library, or epoch mismatch");
 	}
 	const signer = state.devices.get(bytesToHex(body.signer));
+	const recoverySigned = sameBytes(body.signer, state.recoveryPublicKey);
 	if (
 		body.kind === "rotate"
-			? !sameBytes(body.signer, state.recoveryPublicKey)
-			: !signer || signer.revokedAt !== null
+			? !recoverySigned
+			: recoverySigned
+				? body.kind === "data"
+				: !signer || signer.revokedAt !== null
 	) {
 		invalid("unauthorized signer");
 	}
@@ -275,8 +278,9 @@ export function reduceBlock(
 			if (
 				!target ||
 				target.revokedAt !== null ||
-				[...devices.values()].filter((device) => device.revokedAt === null)
-					.length <= 1
+				(!recoverySigned &&
+					[...devices.values()].filter((device) => device.revokedAt === null)
+						.length <= 1)
 			) {
 				invalid("revocation requires an active target and surviving device");
 			}
@@ -301,6 +305,12 @@ export function reduceBlock(
 						next.set(id, { ...device, revokedAt: body.sequence });
 					}
 				}
+			}
+			if (
+				[...next.values()].filter((device) => device.revokedAt === null)
+					.length >= 128
+			) {
+				invalid("authorized device limit reached");
 			}
 			next.set(bytesToHex(key), {
 				publicKey: key,

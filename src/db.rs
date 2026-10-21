@@ -630,6 +630,134 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recovery_revocation_and_enrollment_restore_device_free_control() {
+        use serde_bytes::ByteBuf;
+
+        use crate::chain::{Effects, Kind};
+        let (db, admin, guard, first, library) = chain_fixture().await;
+        let root = recovery();
+        let next = crate::reference_crypto::from_seed([9; 32]);
+        let stranger = crate::reference_crypto::from_seed([10; 32]);
+        let revoke = signed_chain(
+            &membership_body(
+                library,
+                &root,
+                1,
+                library,
+                Kind::Revoke,
+                Effects::Device((ByteBuf::from(first.public.to_vec()),)),
+            ),
+            &root,
+        );
+        assert!(matches!(
+            db.append_record(stranger.public, &revoke).await,
+            Err(Error::Unauthorized)
+        ));
+        db.append_record(root.public, &revoke).await.unwrap();
+        assert!(!db.allowed(&first.public).await.unwrap());
+        assert!(!db.allowed(&root.public).await.unwrap());
+        let parent = crate::chain::verify_record(&revoke).unwrap().hash;
+        let enroll = signed_chain(
+            &membership_body(
+                library,
+                &root,
+                2,
+                parent,
+                Kind::Enroll,
+                Effects::Device((ByteBuf::from(next.public.to_vec()),)),
+            ),
+            &root,
+        );
+        assert!(matches!(
+            db.append_record(stranger.public, &enroll).await,
+            Err(Error::Unauthorized)
+        ));
+        db.append_record(next.public, &enroll).await.unwrap();
+        db.append_record(next.public, &enroll).await.unwrap();
+        assert!(db.allowed(&next.public).await.unwrap());
+        let mut invalid = membership_body(
+            library,
+            &root,
+            3,
+            crate::chain::verify_record(&enroll).unwrap().hash,
+            Kind::Data,
+            Effects::Storage(vec![]),
+        );
+        invalid.salt = Some(vec![1; 32].into());
+        invalid.nonce = Some(vec![2; 12].into());
+        invalid.encrypted = Some(vec![3; 16].into());
+        assert!(matches!(
+            db.append_record(root.public, &signed_chain(&invalid, &root))
+                .await,
+            Err(Error::Unauthorized)
+        ));
+        dispose(db, admin, guard).await;
+    }
+
+    #[tokio::test]
+    async fn authorized_device_capacity_is_released_by_recovery_revocation() {
+        use serde_bytes::ByteBuf;
+
+        use crate::chain::{Effects, Kind};
+        let (db, admin, guard, first, library) = chain_fixture().await;
+        // Populate the projection directly to exercise the boundary without 127 appends.
+        for index in 0u8..127 {
+            let device = crate::reference_crypto::from_seed([index.wrapping_add(100); 32]);
+            sqlx::query("INSERT INTO library_keys(public_key,library_id,authorized_at_sequence) VALUES($1,$2,0)")
+                .bind(device.public.as_slice()).bind(library.as_slice()).execute(&db.pool).await.unwrap();
+        }
+        let next = crate::reference_crypto::from_seed([90; 32]);
+        let enroll = signed_chain(
+            &membership_body(
+                library,
+                &first,
+                1,
+                library,
+                Kind::Enroll,
+                Effects::Device((ByteBuf::from(next.public.to_vec()),)),
+            ),
+            &first,
+        );
+        assert!(matches!(
+            db.append_record(first.public, &enroll).await,
+            Err(Error::Conflict)
+        ));
+        let root = recovery();
+        let revoke = signed_chain(
+            &membership_body(
+                library,
+                &root,
+                1,
+                library,
+                Kind::Revoke,
+                Effects::Device((ByteBuf::from(first.public.to_vec()),)),
+            ),
+            &root,
+        );
+        db.append_record(root.public, &revoke).await.unwrap();
+        let enroll = signed_chain(
+            &membership_body(
+                library,
+                &root,
+                2,
+                crate::chain::verify_record(&revoke).unwrap().hash,
+                Kind::Enroll,
+                Effects::Device((ByteBuf::from(next.public.to_vec()),)),
+            ),
+            &root,
+        );
+        db.append_record(next.public, &enroll).await.unwrap();
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM library_keys WHERE kind='device' AND revoked_at_sequence IS NULL",
+        )
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 128);
+        dispose(db, admin, guard).await;
+    }
+
+    #[tokio::test]
     async fn chain_append_rechecks_membership_and_rotates_atomically() {
         use serde_bytes::ByteBuf;
 

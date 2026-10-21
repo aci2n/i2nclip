@@ -65,17 +65,21 @@ impl Database {
         library.validate_authority()?;
         let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM library_keys WHERE public_key=$1 AND library_id=$2 AND kind='device' AND revoked_at_sequence IS NULL)")
             .bind(signer.as_slice()).bind(&library.id).fetch_one(&mut *tx).await?;
-        if let (Kind::Rotate, Effects::Rotation((_, initial, _))) =
-            (&record.body.kind, &record.body.effects)
-        {
-            if library.recovery_public_key != record.body.signer
-                || !(signer.as_slice() == library.recovery_public_key
-                    || active
-                    || signer.as_slice() == initial.as_ref())
+        let recovery_signed = record.body.signer.as_slice() == library.recovery_public_key;
+        if recovery_signed {
+            let candidate = match (&record.body.kind, &record.body.effects) {
+                (Kind::Enroll, Effects::Device((key,))) => Some(key.as_ref()),
+                (Kind::Rotate, Effects::Rotation((_, key, _))) => Some(key.as_ref()),
+                (Kind::Revoke, _) => None,
+                _ => return Err(Error::Unauthorized),
+            };
+            if !(signer.as_slice() == library.recovery_public_key
+                || active
+                || candidate == Some(signer.as_slice()))
             {
                 return Err(Error::Unauthorized);
             }
-        } else if signer != record.body.signer || !active {
+        } else if record.body.kind == Kind::Rotate || signer != record.body.signer || !active {
             return Err(Error::Unauthorized);
         }
         let duplicate: bool = sqlx::query_scalar(
@@ -102,7 +106,7 @@ impl Database {
         sqlx::query("INSERT INTO blocks(library_id,sequence,hash,previous_hash,signer_key,signed_body,signature) VALUES($1,$2,$3,$4,$5,$6,$7)")
             .bind(&library.id).bind(record.body.sequence as i64).bind(record.hash.as_slice()).bind(record.body.previous.as_slice())
             .bind(record.body.signer.as_slice()).bind(&record.signed_body).bind(&record.signature).execute(&mut *tx).await?;
-        apply_effects(&mut tx, &record).await?;
+        apply_effects(&mut tx, &record, recovery_signed).await?;
         let epoch = match &record.body.effects {
             Effects::Rotation((epoch, _, _)) => *epoch,
             _ => record.body.epoch,
@@ -185,7 +189,11 @@ impl Database {
     }
 }
 
-async fn apply_effects(tx: &mut Transaction<'_, Postgres>, record: &Record) -> Result<(), Error> {
+async fn apply_effects(
+    tx: &mut Transaction<'_, Postgres>,
+    record: &Record,
+    recovery_signed: bool,
+) -> Result<(), Error> {
     let library = &record.body.library;
     let sequence = record.body.sequence as i64;
     match (&record.body.kind, &record.body.effects) {
@@ -204,7 +212,7 @@ async fn apply_effects(tx: &mut Transaction<'_, Postgres>, record: &Record) -> R
             .bind(library.as_slice())
             .fetch_one(&mut **tx)
             .await?;
-            if count <= 1 {
+            if count <= 1 && !recovery_signed {
                 return Err(Error::Conflict);
             }
             let revoked=sqlx::query("UPDATE library_keys SET revoked_at_sequence=$3 WHERE library_id=$1 AND public_key=$2 AND kind='device' AND revoked_at_sequence IS NULL")
@@ -232,6 +240,11 @@ async fn enroll(
     key: &[u8],
     sequence: i64,
 ) -> Result<(), Error> {
+    let active: i64 = sqlx::query_scalar("SELECT count(*) FROM library_keys WHERE library_id=$1 AND kind='device' AND revoked_at_sequence IS NULL")
+        .bind(library.as_slice()).fetch_one(&mut **tx).await?;
+    if active >= 128 {
+        return Err(Error::Conflict);
+    }
     let inserted=sqlx::query("INSERT INTO library_keys(public_key,library_id,authorized_at_sequence) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
         .bind(key).bind(library.as_slice()).bind(sequence).execute(&mut **tx).await?;
     if inserted.rows_affected() != 1 {

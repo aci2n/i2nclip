@@ -280,7 +280,7 @@ test("only the pinned recovery signer can reset and cannot acquire device author
 		next.publicKey,
 		f.recovery.recovery.key,
 	);
-	assert.throws(() => reduceBlock(f.initial, recoveryEnroll), /unauthorized/);
+	assert.equal(reduceBlock(f.initial, recoveryEnroll).devices.size, 2);
 	const enrollRecovery = await f.admin(
 		f.initial,
 		"enroll",
@@ -292,4 +292,60 @@ test("only the pinned recovery signer can reset and cannot acquire device author
 	assert.deepEqual(state.epochSalt, filled(12));
 	assert.deepEqual(state.recoveryPublicKey, f.initial.recoveryPublicKey);
 	assert.equal(state.devices.get(bytesToHex(next.publicKey))?.authorizedAt, 1);
+});
+
+test("recovery can revoke the last device and enroll again without gaining data authority", async () => {
+	const f = await fixture();
+	const root = f.recovery.recovery.key;
+	const revoked = reduceBlock(
+		f.initial,
+		await f.admin(f.initial, "revoke", f.first.publicKey, root),
+	);
+	assert.equal(
+		[...revoked.devices.values()].filter((d) => d.revokedAt === null).length,
+		0,
+	);
+	const next = await device();
+	const restored = reduceBlock(
+		revoked,
+		await f.admin(revoked, "enroll", next.publicKey, root),
+	);
+	assert.equal(
+		restored.devices.get(bytesToHex(next.publicKey))?.revokedAt,
+		null,
+	);
+	await assert.rejects(
+		f.data(restored, { kind: "DeleteFile", id: filled(1) }, [], root),
+		/unauthorized/,
+	);
+});
+
+test("128 active devices is the enrollment limit and revoked devices release capacity", async () => {
+	const f = await fixture();
+	const root = f.recovery.recovery.key;
+	const members = new Map(f.initial.devices);
+	for (let index = 0; members.size < 128; index++) {
+		const publicKey = filled(index);
+		members.set(bytesToHex(publicKey), {
+			publicKey,
+			authorizedAt: 0,
+			revokedAt: null,
+		});
+	}
+	const full = { ...f.initial, devices: members };
+	const next = await device();
+	const enroll = await f.admin(full, "enroll", next.publicKey, root);
+	assert.throws(() => reduceBlock(full, enroll), /limit/);
+	const freed = reduceBlock(
+		full,
+		await f.admin(full, "revoke", f.first.publicKey, root),
+	);
+	const restored = reduceBlock(
+		freed,
+		await f.admin(freed, "enroll", next.publicKey, root),
+	);
+	assert.equal(
+		[...restored.devices.values()].filter((d) => d.revokedAt === null).length,
+		128,
+	);
 });
