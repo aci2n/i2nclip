@@ -589,7 +589,24 @@ After authenticated approval, the logical exchange is:
    verifies genesis through the transferred head and enrollment, persists the
    accepted head, and acknowledges activation.
 
-Version the relay workflow for these phases. Keep tight existing bounds for
+Version the relay workflow for these phases.
+
+The ordered relay has seven messages: OPAQUE request (1), response (2),
+OPAQUE finish plus encrypted receiver-key binding (3), encrypted transfer with
+the exact proposed enrollment (4), encrypted durable-preparation acknowledgment
+(5), encrypted enrollment acceptance (6), and encrypted activation acknowledgment
+(7). Sender capabilities submit even steps and receiver capabilities submit odd
+steps. Derive independent directional AES keys and bind each packet's phase to
+its AAD. The phase-3 public-key binding is authenticated after OPAQUE finishes;
+it never relies on an unsigned public-key field supplied by the relay.
+
+Fixed relay requests are `[1]` (create), `[message]` (join), and `[step, message]`
+(submit). Snapshots are `[1, room_id, instance, remaining_seconds, step,
+message_or_null, capability_or_null]`. Only phase 4 can carry a credential-sized
+packet; other messages retain the 8 KiB limit. Each complete HTTP frame is capped
+at 1 MiB plus 128 bytes, and room messages share the 16 MiB aggregate budget.
+
+Keep tight existing bounds for
 OPAQUE messages. Permit the encrypted credential packet up to the backup-sized
 bound plus framing, with an aggregate 16 MiB stored-message budget across rooms;
 reject admission without retaining oversized state. Do not raise every PAKE

@@ -14,7 +14,7 @@ use axum::{
     Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use serde_bytes::ByteBuf;
 use tokio::time::Instant;
 
@@ -30,7 +30,10 @@ use crate::{
 const ALPHABET: &[u8; 32] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const TTL: Duration = Duration::from_secs(120);
 const MAX_ROOMS: usize = 256;
-const MAX_BODY: usize = 16_384;
+const MAX_PAKE_BODY: usize = 16_384;
+const MAX_TRANSFER: usize = 1024 * 1024;
+const MAX_BODY: usize = MAX_TRANSFER + 128;
+const MAX_STORED_BYTES: usize = 16 * 1024 * 1024;
 const MAX_MESSAGE: usize = 8192;
 const JOIN_WINDOW: Duration = Duration::from_secs(60);
 const SOURCE_JOIN_LIMIT: usize = 10;
@@ -112,7 +115,6 @@ struct Room {
     messages: Vec<ByteBuf>,
 }
 
-#[derive(Serialize)]
 struct Snapshot {
     v: u8,
     id: String,
@@ -120,7 +122,6 @@ struct Snapshot {
     remaining_secs: u64,
     step: usize,
     message: Option<ByteBuf>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     capability: Option<String>,
 }
 
@@ -249,7 +250,7 @@ impl PairingState {
         if self
             .rooms
             .values()
-            .any(|room| room.owner == owner && room.messages.len() < 5)
+            .any(|room| room.owner == owner && room.messages.len() < 7)
         {
             return Err((StatusCode::CONFLICT, "a pairing is already active"));
         }
@@ -288,8 +289,26 @@ impl PairingState {
             .ok_or((StatusCode::NOT_FOUND, "pairing ended or expired"))
     }
 
+    fn check_message_capacity(&self, additional: usize) -> Result<(), Rejection> {
+        let stored: usize = self
+            .rooms
+            .values()
+            .flat_map(|room| room.messages.iter())
+            .map(|message| message.len())
+            .sum();
+        if additional > MAX_STORED_BYTES.saturating_sub(stored) {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "pairing message capacity reached",
+            ));
+        }
+        Ok(())
+    }
+
     fn join(&mut self, id: &str, message: ByteBuf, now: Instant) -> Result<Snapshot, Rejection> {
-        valid_message(&message)?;
+        valid_message(&message, MAX_MESSAGE)?;
+        self.prune(now);
+        self.check_message_capacity(message.len())?;
         let room = self.room(id, now)?;
         if room.receiver.is_some() {
             return Err((StatusCode::CONFLICT, "pairing already has a receiver"));
@@ -308,10 +327,18 @@ impl PairingState {
         message: ByteBuf,
         now: Instant,
     ) -> Result<Snapshot, Rejection> {
-        valid_message(&message)?;
+        valid_message(&message, if step == 4 { MAX_TRANSFER } else { MAX_MESSAGE })?;
+        self.prune(now);
+        if self
+            .rooms
+            .get(id)
+            .is_none_or(|room| step > room.messages.len())
+        {
+            self.check_message_capacity(message.len())?;
+        }
         let room = self.room(id, now)?;
         let sender = room.sender(token)?;
-        if !(2..=5).contains(&step) || sender != step.is_multiple_of(2) {
+        if !(2..=7).contains(&step) || sender != step.is_multiple_of(2) {
             return Err((StatusCode::CONFLICT, "invalid pairing step"));
         }
         if step <= room.messages.len() {
@@ -320,7 +347,7 @@ impl PairingState {
             }
         } else if step == room.messages.len() + 1 {
             room.messages.push(message);
-            if step == 5 {
+            if step == 7 {
                 tracing::info!(event = "pairing_acknowledged");
             }
         } else {
@@ -330,8 +357,8 @@ impl PairingState {
     }
 }
 
-fn valid_message(message: &[u8]) -> Result<(), Rejection> {
-    if message.is_empty() || message.len() > MAX_MESSAGE {
+fn valid_message(message: &[u8], maximum: usize) -> Result<(), Rejection> {
+    if message.is_empty() || message.len() > maximum {
         Err((StatusCode::BAD_REQUEST, "invalid pairing message"))
     } else {
         Ok(())
@@ -348,7 +375,18 @@ pub(crate) fn router() -> Router<AppState> {
 
 fn result(value: Result<Snapshot, Failure>) -> Response {
     match value {
-        Ok(value) => document_response(StatusCode::OK, value),
+        Ok(value) => document_response(
+            StatusCode::OK,
+            (
+                value.v,
+                value.id,
+                value.instance,
+                value.remaining_secs,
+                value.step,
+                value.message,
+                value.capability,
+            ),
+        ),
         Err(Failure::Unavailable) => fail(Error::Unavailable),
         Err(Failure::Rejected((status, message))) => {
             tracing::debug!(event = "pairing_rejected", status = status.as_u16());
@@ -378,35 +416,30 @@ fn source(request: &Request) -> Option<IpAddr> {
         .map(|peer| peer.0.ip())
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Create {
-    v: u8,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Message {
-    message: ByteBuf,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Submission {
-    step: usize,
-    message: ByteBuf,
-}
+type Create = (u8,);
+type Message = (ByteBuf,);
+type Submission = (usize, ByteBuf);
 
-async fn document_body<T: DeserializeOwned>(request: Request) -> Result<T, Box<Response>> {
-    let bytes = read_body_with_deadline(request.into_body(), MAX_BODY, SHORT_BODY_DEADLINE).await?;
-    codec::decode(&bytes)
-        .map_err(|_| Box::new(fail(Error::BadRequest("invalid pairing payload".into()))))
+async fn document_body<T: DeserializeOwned + Serialize>(
+    request: Request,
+    maximum: usize,
+) -> Result<T, Box<Response>> {
+    let bytes = read_body_with_deadline(request.into_body(), maximum, SHORT_BODY_DEADLINE).await?;
+    let invalid = || Box::new(fail(Error::BadRequest("invalid pairing payload".into())));
+    let value: T = codec::decode(&bytes).map_err(|_| invalid())?;
+    let canonical = codec::encode(&value).map_err(|_| invalid())?;
+    if canonical != bytes {
+        return Err(invalid());
+    }
+    Ok(value)
 }
 
 async fn create(State(state): State<AppState>, request: auth::SignedRequest) -> Response {
-    let (owner, bytes) = match request.read(MAX_BODY, SHORT_BODY_DEADLINE).await {
+    let (owner, bytes) = match request.read(MAX_PAKE_BODY, SHORT_BODY_DEADLINE).await {
         Ok(value) => value,
         Err(response) => return *response,
     };
-    if !matches!(codec::decode::<Create>(&bytes), Ok(Create { v: 1 })) {
+    if !matches!(codec::decode::<Create>(&bytes), Ok((1,))) || bytes.as_ref() != [0x91, 1] {
         return fail(Error::BadRequest("invalid pairing version".into()));
     }
     result(state.pairings.create(owner))
@@ -421,11 +454,11 @@ async fn join(State(state): State<AppState>, Path(id): Path<String>, request: Re
         Ok(permit) => permit,
         Err(_) => return fail(Error::Unavailable),
     };
-    let message: Message = match document_body(request).await {
+    let message: Message = match document_body(request, MAX_PAKE_BODY).await {
         Ok(value) => value,
         Err(response) => return *response,
     };
-    result(state.pairings.join(&id, message.message))
+    result(state.pairings.join(&id, message.0))
 }
 
 async fn submit(
@@ -442,15 +475,11 @@ async fn submit(
         Ok(permit) => permit,
         Err(_) => return fail(Error::Unavailable),
     };
-    let message: Submission = match document_body(request).await {
+    let message: Submission = match document_body(request, MAX_BODY).await {
         Ok(value) => value,
         Err(response) => return *response,
     };
-    result(
-        state
-            .pairings
-            .submit(&id, &token, message.step, message.message),
-    )
+    result(state.pairings.submit(&id, &token, message.0, message.1))
 }
 
 async fn poll(State(state): State<AppState>, Path(id): Path<String>, request: Request) -> Response {
@@ -569,12 +598,7 @@ mod tests {
                 (Body::from("not json"), StatusCode::BAD_REQUEST)
             } else {
                 (
-                    Body::from(
-                        codec::encode(&Message {
-                            message: b"init".to_vec().into(),
-                        })
-                        .unwrap(),
-                    ),
+                    Body::from(codec::encode(&(ByteBuf::from(b"init".to_vec()),)).unwrap()),
                     StatusCode::NOT_FOUND,
                 )
             };
@@ -617,10 +641,7 @@ mod tests {
                     .uri("/api/pairings/XXXX/join")
                     .extension(peer(2))
                     .body(Body::from(
-                        codec::encode(&Message {
-                            message: b"init".to_vec().into(),
-                        })
-                        .unwrap(),
+                        codec::encode(&(ByteBuf::from(b"init".to_vec()),)).unwrap(),
                     ))
                     .unwrap(),
             )
@@ -635,10 +656,7 @@ mod tests {
                     .uri("/api/pairings/XXXX/join")
                     .extension(peer(1))
                     .body(Body::from(
-                        codec::encode(&Message {
-                            message: b"init".to_vec().into(),
-                        })
-                        .unwrap(),
+                        codec::encode(&(ByteBuf::from(b"init".to_vec()),)).unwrap(),
                     ))
                     .unwrap(),
             )
@@ -798,10 +816,7 @@ mod tests {
         for (body, expected) in [
             (b"not MessagePack".to_vec(), StatusCode::BAD_REQUEST),
             (
-                codec::encode(&Message {
-                    message: b"init".to_vec().into(),
-                })
-                .unwrap(),
+                codec::encode(&(ByteBuf::from(b"init".to_vec()),)).unwrap(),
                 StatusCode::OK,
             ),
         ] {
@@ -885,7 +900,9 @@ mod tests {
             (2, &send, "response"),
             (3, &recv, "finish"),
             (4, &send, "payload"),
-            (5, &recv, "ack"),
+            (5, &recv, "prepared"),
+            (6, &send, "enrolled"),
+            (7, &recv, "active"),
         ] {
             assert_eq!(
                 rooms
@@ -930,7 +947,7 @@ mod tests {
                 .message
                 .as_ref()
                 .map(|bytes| bytes.as_slice()),
-            Some(b"ack".as_slice())
+            Some(b"active".as_slice())
         );
     }
 
@@ -1063,5 +1080,77 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    #[test]
+    fn credential_transfers_have_phase_specific_and_aggregate_limits() {
+        let now = Instant::now();
+        let mut rooms = PairingState::default();
+        let mut prepared = Vec::new();
+        for number in 0..16 {
+            let sender = rooms.create([number; 32], now).unwrap();
+            let receiver = rooms.join(&sender.id, vec![1].into(), now).unwrap();
+            let send = sender.capability.unwrap();
+            let recv = receiver.capability.unwrap();
+            rooms
+                .submit(&sender.id, &send, 2, vec![2].into(), now)
+                .unwrap();
+            assert_eq!(
+                rooms
+                    .submit(&sender.id, &recv, 3, vec![3; MAX_MESSAGE + 1].into(), now)
+                    .err()
+                    .unwrap()
+                    .0,
+                StatusCode::BAD_REQUEST
+            );
+            rooms
+                .submit(&sender.id, &recv, 3, vec![3].into(), now)
+                .unwrap();
+            prepared.push((sender.id, send, recv));
+        }
+        for (id, token, _) in &prepared[..15] {
+            rooms
+                .submit(id, token, 4, vec![4; MAX_TRANSFER].into(), now)
+                .unwrap();
+        }
+        let (id, token, _) = &prepared[15];
+        assert_eq!(
+            rooms
+                .submit(id, token, 4, vec![4; MAX_TRANSFER].into(), now)
+                .err()
+                .unwrap()
+                .0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        // Exact retries do not reserve another copy of their already stored packet.
+        let (first, first_token, _) = &prepared[0];
+        rooms
+            .submit(first, first_token, 4, vec![4; MAX_TRANSFER].into(), now)
+            .unwrap();
+        rooms.rooms.remove(first);
+        rooms
+            .submit(id, token, 4, vec![4; MAX_TRANSFER].into(), now)
+            .unwrap();
+        let (_, _, receiver) = &prepared[15];
+        assert_eq!(
+            rooms
+                .submit(id, receiver, 5, vec![5; MAX_MESSAGE + 1].into(), now)
+                .err()
+                .unwrap()
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        rooms.prune(now + TTL);
+        assert!(rooms.rooms.is_empty());
+        assert!(rooms.check_message_capacity(MAX_STORED_BYTES).is_ok());
+    }
+
+    #[test]
+    fn fixed_relay_requests_reject_maps_and_extra_fields() {
+        assert!(codec::decode::<Create>(&codec::encode(&(1_u8,)).unwrap()).is_ok());
+        assert!(codec::decode::<Create>(&[0x81, 0xa1, b'v', 1]).is_err());
+        assert!(codec::decode::<Create>(&codec::encode(&(1_u8, 2_u8)).unwrap()).is_err());
+        assert!(
+            codec::decode::<Message>(&codec::encode(&(ByteBuf::from(vec![1]),)).unwrap()).is_ok()
+        );
     }
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createPairingCrypto } from "../src/lib/pairing/crypto.ts";
 import { pairingCrypto, pairingRelay } from "../src/lib/pairing/service.ts";
+import { decode } from "../src/lib/protocol/msgpack.ts";
 import { deferred, testKey, tick } from "./helpers.ts";
 import { documentResponse } from "./msgpack-response.ts";
 
@@ -34,6 +35,64 @@ test("isolated pairing adapters complete a verified exchange", async (t) => {
 		}),
 		null,
 	);
+});
+
+test("relay frames keep control messages small and permit only the credential transfer to grow", async (t) => {
+	const snapshot = [
+		1,
+		"K7MP",
+		"abcdefghijklmnopqrstuv",
+		120,
+		0,
+		null,
+		"s".repeat(43),
+	];
+	let requests = 0;
+	t.mock.method(
+		globalThis,
+		"fetch",
+		async (_url: unknown, options: RequestInit) => {
+			requests++;
+			const payload = decode(
+				new Uint8Array(await new Response(options.body).arrayBuffer()),
+			);
+			assert.ok(Array.isArray(payload));
+			if (payload.length === 1 && payload[0] === 1) {
+				return documentResponse(snapshot);
+			}
+			assert.equal(payload.length, 2);
+			return documentResponse([
+				1,
+				snapshot[1],
+				snapshot[2],
+				120,
+				payload[0],
+				payload[1],
+				null,
+			]);
+		},
+	);
+	const relay = pairingRelay(
+		"https://clip.example",
+		new AbortController().signal,
+	);
+	const room = await relay.create(testKey());
+	const large = new Uint8Array(1024 * 1024);
+	assert.equal((await relay.submit(room, 4, large)).step, 4);
+	await assert.rejects(relay.submit(room, 3, new Uint8Array(8193)), /message/);
+	await assert.rejects(relay.join("K7MP", new Uint8Array(8193)), /join/);
+	assert.equal(requests, 2);
+	const invalid = [
+		1,
+		snapshot[1],
+		snapshot[2],
+		120,
+		3,
+		new Uint8Array(8193),
+		null,
+	];
+	t.mock.method(globalThis, "fetch", async () => documentResponse(invalid));
+	await assert.rejects(relay.poll(room), /response/);
 });
 test("pairing crypto adapter serializes calls, rejects disposal immediately and sanitizes failures", async (t) => {
 	const worker = pairingCrypto();
@@ -108,7 +167,15 @@ test("pairing relay accepts a newly created room with no message and cancellatio
 		async (_url: unknown, options: RequestInit) =>
 			options.method === "DELETE"
 				? new Response(null, { status: 204 })
-				: documentResponse(snapshot),
+				: documentResponse([
+						snapshot.v,
+						snapshot.id,
+						snapshot.instance,
+						snapshot.remaining_secs,
+						snapshot.step,
+						snapshot.message,
+						snapshot.capability,
+					]),
 	);
 	const relay = pairingRelay(
 		"https://clip.example",

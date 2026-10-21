@@ -1,13 +1,9 @@
-import type { LoadedKey } from "../protocol/crypto.ts";
+import { sameBytes } from "../protocol/chain.ts";
+import type { SigningKey } from "../protocol/crypto.ts";
 import { authorizationHeader, freshNonce } from "../protocol/crypto.ts";
 import { CONTENT_TYPE, decode, encode } from "../protocol/msgpack.ts";
 import { pairingContext, pairingOrigin } from "../protocol/pairing.ts";
-import {
-	bytes as binary,
-	document,
-	number,
-	string,
-} from "../protocol/value.ts";
+import { bytes as binary, number, string } from "../protocol/value.ts";
 import { createPairingCrypto, type PairingCrypto } from "./crypto.ts";
 export interface Room {
 	v: number;
@@ -23,7 +19,7 @@ export interface JoinedRoom extends Room {
 	capability: string;
 }
 export interface PairingRelay {
-	create(key: LoadedKey): Promise<JoinedRoom>;
+	create(key: SigningKey): Promise<JoinedRoom>;
 	join(id: string, message: Uint8Array<ArrayBuffer>): Promise<JoinedRoom>;
 	poll(room: JoinedRoom): Promise<Room>;
 	submit(
@@ -43,21 +39,49 @@ function joinedRoom(room: Room): JoinedRoom {
 	return { ...room, capability: room.capability };
 }
 
-const MAX_BODY = 16384;
+const MAX_BODY = 1024 * 1024 + 128;
 // Each pairing adapter executes one isolated, disposable PAKE attempt.
 export function pairingCrypto(): PairingCrypto {
-	const controller = new AbortController();
-	const { signal } = controller;
-	let running = false;
-	let execute: PairingCrypto | null = null;
-	async function call<T>(
+	return new PairingCryptoService();
+}
+class PairingCryptoService implements PairingCrypto {
+	private readonly controller = new AbortController();
+	private running = false;
+	private execute: PairingCrypto | null = null;
+	readonly senderSetup = (args: Parameters<PairingCrypto["senderSetup"]>[0]) =>
+		this.call((crypto) => crypto.senderSetup(args));
+	readonly receiverStart = (
+		args: Parameters<PairingCrypto["receiverStart"]>[0],
+	) => this.call((crypto) => crypto.receiverStart(args));
+	readonly senderResponse = (
+		args: Parameters<PairingCrypto["senderResponse"]>[0],
+	) => this.call((crypto) => crypto.senderResponse(args));
+	readonly receiverFinish = (
+		args: Parameters<PairingCrypto["receiverFinish"]>[0],
+	) => this.call((crypto) => crypto.receiverFinish(args));
+	readonly senderFinish = (
+		args: Parameters<PairingCrypto["senderFinish"]>[0],
+	) => this.call((crypto) => crypto.senderFinish(args));
+	readonly verificationCode = () =>
+		this.call((crypto) => crypto.verificationCode());
+	readonly transfer = (args: Parameters<PairingCrypto["transfer"]>[0]) =>
+		this.call((crypto) => crypto.transfer(args));
+	readonly receive = (args: Parameters<PairingCrypto["receive"]>[0]) =>
+		this.call((crypto) => crypto.receive(args));
+	readonly acknowledge = () => this.call((crypto) => crypto.acknowledge());
+	readonly verifyAcknowledgment = (
+		args: Parameters<PairingCrypto["verifyAcknowledgment"]>[0],
+	) => this.call((crypto) => crypto.verifyAcknowledgment(args));
+	readonly dispose = this.disposeCrypto.bind(this);
+	private async call<T>(
 		operation: (executor: PairingCrypto) => Promise<T>,
 	): Promise<T> {
+		const { signal } = this.controller;
 		signal.throwIfAborted();
-		if (running) {
+		if (this.running) {
 			throw new Error("Pairing is busy.");
 		}
-		running = true;
+		this.running = true;
 		let onAbort: () => void = () => {};
 		const stopped = new Promise<never>((_, reject) => {
 			onAbort = () => reject(signal.reason);
@@ -65,12 +89,11 @@ export function pairingCrypto(): PairingCrypto {
 		});
 		const work = async () => {
 			signal.throwIfAborted();
-			execute ||= createPairingCrypto();
-			const current = execute;
+			this.execute ??= createPairingCrypto();
+			const current = this.execute;
 			try {
 				return await operation(current);
 			} finally {
-				// Crypto already in flight can finish after the caller is canceled.
 				if (signal.aborted) {
 					current.dispose();
 				}
@@ -85,28 +108,16 @@ export function pairingCrypto(): PairingCrypto {
 			throw new Error("Pairing authentication failed. Create a new code.");
 		} finally {
 			signal.removeEventListener("abort", onAbort);
-			running = false;
+			this.running = false;
 		}
 	}
-	return {
-		senderSetup: (args) => call((crypto) => crypto.senderSetup(args)),
-		receiverStart: (args) => call((crypto) => crypto.receiverStart(args)),
-		senderResponse: (args) => call((crypto) => crypto.senderResponse(args)),
-		receiverFinish: (args) => call((crypto) => crypto.receiverFinish(args)),
-		senderFinish: (args) => call((crypto) => crypto.senderFinish(args)),
-		verificationCode: () => call((crypto) => crypto.verificationCode()),
-		transfer: (args) => call((crypto) => crypto.transfer(args)),
-		receive: (args) => call((crypto) => crypto.receive(args)),
-		acknowledge: () => call((crypto) => crypto.acknowledge()),
-		verifyAcknowledgment: (args) =>
-			call((crypto) => crypto.verifyAcknowledgment(args)),
-		dispose() {
-			controller.abort(new DOMException("Pairing ended.", "AbortError"));
-			execute?.dispose();
-			execute = null;
-		},
-	};
+	private disposeCrypto() {
+		this.controller.abort(new DOMException("Pairing ended.", "AbortError"));
+		this.execute?.dispose();
+		this.execute = null;
+	}
 }
+
 export async function readPairingResponse(response: Response) {
 	const reader = response.body?.getReader();
 	if (!reader) {
@@ -139,7 +150,11 @@ export async function readPairingResponse(response: Response) {
 		offset += chunk.length;
 	}
 	try {
-		return decode(bytes);
+		const value = decode(bytes);
+		if (!sameBytes(bytes, encode(value))) {
+			throw new Error("Noncanonical pairing response.");
+		}
+		return value;
 	} catch {
 		throw new Error("Invalid pairing response.");
 	}
@@ -148,27 +163,41 @@ export function pairingRelay(
 	serverUrl: string,
 	signal: AbortSignal,
 ): PairingRelay {
-	const origin = pairingOrigin(serverUrl);
-	async function request(
+	return new PairingRelayImpl(serverUrl, signal);
+}
+class PairingRelayImpl implements PairingRelay {
+	private readonly origin: string;
+	private readonly signal: AbortSignal;
+	readonly create = this.createRoom.bind(this);
+	readonly join = this.joinRoom.bind(this);
+	readonly poll = this.pollRoom.bind(this);
+	readonly submit = this.submitMessage.bind(this);
+	readonly cancel = this.cancelRoom.bind(this);
+	constructor(serverUrl: string, signal: AbortSignal) {
+		this.origin = pairingOrigin(serverUrl);
+		this.signal = signal;
+	}
+
+	private async request(
 		method: "DELETE",
 		path: string,
 		payload?: unknown,
 		capability?: string | null,
-		key?: LoadedKey,
+		key?: SigningKey,
 	): Promise<null>;
-	async function request(
+	private async request(
 		method: "GET" | "POST",
 		path: string,
 		payload?: unknown,
 		capability?: string | null,
-		key?: LoadedKey,
+		key?: SigningKey,
 	): Promise<Room>;
-	async function request(
+	private async request(
 		method: string,
 		path: string,
 		payload?: unknown,
 		capability?: string | null,
-		key?: LoadedKey,
+		key?: SigningKey,
 	): Promise<Room | null> {
 		const body = payload === undefined ? undefined : encode(payload);
 		if (body && body.length > MAX_BODY) {
@@ -178,7 +207,7 @@ export function pairingRelay(
 		if (key) {
 			authorization = await authorizationHeader({
 				key,
-				origin,
+				origin: this.origin,
 				ts: Math.floor(Date.now() / 1000),
 				nonce: freshNonce(),
 				method,
@@ -189,9 +218,9 @@ export function pairingRelay(
 			authorization = `Bearer ${capability}`;
 		}
 		const deadline = AbortSignal.timeout(10000);
-		const combined = AbortSignal.any([signal, deadline]);
+		const combined = AbortSignal.any([this.signal, deadline]);
 		combined.throwIfAborted();
-		const response = await fetch(new URL(path, origin), {
+		const response = await fetch(new URL(path, this.origin), {
 			method,
 			body,
 			headers: {
@@ -219,23 +248,38 @@ export function pairingRelay(
 		}
 		let value: Record<string, unknown>;
 		try {
-			value = document(await readPairingResponse(response));
+			const frame = await readPairingResponse(response);
+			if (!Array.isArray(frame) || frame.length !== 7) {
+				throw new Error("Invalid pairing response frame.");
+			}
+			value = {
+				v: frame[0],
+				id: frame[1],
+				instance: frame[2],
+				remaining_secs: frame[3],
+				step: frame[4],
+				message: frame[5],
+				capability: frame[6],
+			};
 		} catch (error) {
 			combined.throwIfAborted();
 			throw error;
 		}
-		pairingContext(origin, value);
+		pairingContext(this.origin, value);
 		if (
 			typeof value.step !== "number" ||
 			!Number.isInteger(value.step) ||
 			value.step < 0 ||
-			value.step > 5 ||
+			value.step > 7 ||
 			typeof value.remaining_secs !== "number" ||
 			!Number.isInteger(value.remaining_secs) ||
 			value.remaining_secs < 0 ||
 			value.remaining_secs > 120 ||
-			(value.step > 0 &&
-				(!(value.message instanceof Uint8Array) || value.message.length > 8192))
+			(value.step === 0
+				? value.message !== null
+				: !(value.message instanceof Uint8Array) ||
+					value.message.length === 0 ||
+					value.message.length > (value.step === 4 ? 1024 * 1024 : 8192))
 		) {
 			throw new Error("Invalid pairing response.");
 		}
@@ -247,42 +291,61 @@ export function pairingRelay(
 			step: value.step,
 			remaining_secs: value.remaining_secs,
 			capability:
-				value.capability === undefined ? undefined : string(value.capability),
+				value.capability === null ? undefined : string(value.capability),
 			message: value.message === null ? null : binary(value.message),
 		};
 	}
-	return {
-		create: async (key: LoadedKey) =>
-			joinedRoom(await request("POST", "/api/pairings", { v: 1 }, null, key)),
-		join: async (id: string, message: Uint8Array<ArrayBuffer>) =>
-			joinedRoom(
-				await request("POST", `/api/pairings/${id}/join`, { message }),
-			),
-		poll: (room: JoinedRoom) =>
-			request(
-				"GET",
-				`/api/pairings/${room.id}/messages`,
-				undefined,
-				room.capability,
-			),
-		submit: (
-			room: JoinedRoom,
-			step: number,
-			message: Uint8Array<ArrayBuffer>,
-		) =>
-			request(
-				"POST",
-				`/api/pairings/${room.id}/messages`,
-				{ step, message },
-				room.capability,
-			),
-		cancel: async (room: JoinedRoom) => {
-			await request(
-				"DELETE",
-				`/api/pairings/${room.id}`,
-				undefined,
-				room.capability,
-			);
-		},
-	};
+	private async createRoom(key: SigningKey) {
+		return joinedRoom(
+			await this.request("POST", "/api/pairings", [1], null, key),
+		);
+	}
+	private async joinRoom(id: string, message: Uint8Array<ArrayBuffer>) {
+		if (
+			!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/.test(id) ||
+			message.length === 0 ||
+			message.length > 8192
+		) {
+			throw new Error("Invalid pairing join.");
+		}
+		return joinedRoom(
+			await this.request("POST", `/api/pairings/${id}/join`, [message]),
+		);
+	}
+	private pollRoom(room: JoinedRoom) {
+		return this.request(
+			"GET",
+			`/api/pairings/${room.id}/messages`,
+			undefined,
+			room.capability,
+		);
+	}
+	private async submitMessage(
+		room: JoinedRoom,
+		step: number,
+		message: Uint8Array<ArrayBuffer>,
+	) {
+		if (
+			!Number.isInteger(step) ||
+			step < 2 ||
+			step > 7 ||
+			message.length > (step === 4 ? 1024 * 1024 : 8192)
+		) {
+			throw new Error("Invalid pairing message.");
+		}
+		return this.request(
+			"POST",
+			`/api/pairings/${room.id}/messages`,
+			[step, message],
+			room.capability,
+		);
+	}
+	private async cancelRoom(room: JoinedRoom) {
+		await this.request(
+			"DELETE",
+			`/api/pairings/${room.id}`,
+			undefined,
+			room.capability,
+		);
+	}
 }
