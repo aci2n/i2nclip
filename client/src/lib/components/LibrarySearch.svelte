@@ -72,7 +72,7 @@ label {
 }
 @media (max-width: 32rem), (pointer: coarse) {
 	.suggestions button {
-		min-height: 2.75rem;
+		min-height: 3rem;
 	}
 }
 </style>

@@ -143,7 +143,7 @@ function revoke(key: Bytes) {
 		status={$session.lastAction === "changePassword" &&
 		!$session.busy &&
 		!$session.error
-			? "Local password changed."
+			? "Master password changed."
 			: ""}
 		onpassword={session.changePassword}
 	/>

@@ -151,7 +151,9 @@ test("preview opens immediately and arrows, keys, swipes and close cancel stalle
 		await openers.last().click();
 		await loading(secondName, 8);
 		held[7].gate.resolve("error");
-		await expect(dialog.getByRole("alert")).toHaveText("Preview unavailable");
+		await expect(dialog.getByRole("alert")).toHaveText(
+			"Server request failed (HTTP 503).",
+		);
 		await expect(previous).toBeEnabled();
 		await dialog.getByRole("button", { name: "Retry", exact: true }).click();
 		await loading(secondName, 9);

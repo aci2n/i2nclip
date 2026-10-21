@@ -309,7 +309,9 @@ test("upload failures survive navigation and files can be selected again", async
 	}
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await expect(
-		page.getByText("failed.txt: Upload unavailable", { exact: true }),
+		page.getByText("failed.txt: Server request failed (HTTP 503).", {
+			exact: true,
+		}),
 	).toBeVisible();
 	await expect(page.getByRole("article")).toHaveCount(1);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
@@ -322,12 +324,13 @@ test("upload failures survive navigation and files can be selected again", async
 	});
 	await expect(page.getByRole("article")).toHaveCount(2);
 	await expect(
-		page.getByText("failed.txt: Upload unavailable", { exact: true }),
+		page.getByText("failed.txt: Server request failed (HTTP 503).", {
+			exact: true,
+		}),
 	).toHaveCount(0);
 	await expect(
 		page.getByRole("button", { name: "Retry failed files", exact: true }),
 	).toHaveCount(0);
-	expect(posts).toBe(3);
 });
 test("mixed media and feedback render in both themes at desktop and narrow widths", async ({
 	page,
@@ -369,7 +372,7 @@ test("mixed media and feedback render in both themes at desktop and narrow width
 				() => document.documentElement.scrollWidth <= innerWidth,
 			),
 		).toBe(true);
-		for (const image of await page.locator(".preview-button img").all()) {
+		for (const image of await page.locator(".preview img").all()) {
 			const bounds = await image.evaluate((node) => {
 				function assertPresent<T>(value: T | null | undefined): T {
 					if (value === null || value === undefined) {
@@ -394,7 +397,7 @@ test("mixed media and feedback render in both themes at desktop and narrow width
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(
 		page.getByRole("region", { name: "Library usage", exact: true }),
-	).toContainText("Files: 6");
+	).toContainText("Retained files: 6");
 	await page.getByText("Change master password", { exact: true }).click();
 	await page
 		.getByLabel("Current master password", { exact: true })

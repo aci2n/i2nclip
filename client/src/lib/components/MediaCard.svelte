@@ -161,6 +161,7 @@ const source = $derived.by(() => {
 	min-width: 0;
 }
 .preview {
+	position: relative;
 	display: grid;
 	place-items: center;
 	aspect-ratio: 16 / 10;
@@ -171,6 +172,8 @@ const source = $derived.by(() => {
 	border: 0;
 }
 .preview img {
+	position: absolute;
+	inset: 0;
 	width: 100%;
 	height: 100%;
 	object-fit: contain;
