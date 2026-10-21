@@ -1,13 +1,36 @@
 import { b64urlToBytes, utf8 } from "./bytes.ts";
+import { sameBytes } from "./chain.ts";
 import { decode, encode } from "./msgpack.ts";
 import { checkServer } from "./server.ts";
-import { bytes as binary, document } from "./value.ts";
+import { document } from "./value.ts";
 export interface PairingKeys {
+	readonly receiverBinding: CryptoKey;
 	readonly transfer: CryptoKey;
+	readonly completion: CryptoKey;
+	readonly activation: CryptoKey;
 	readonly acknowledgment: CryptoKey;
 	readonly verificationCode: string;
 }
-export type Direction = "transfer" | "acknowledgment";
+export type Direction =
+	| "receiverBinding"
+	| "transfer"
+	| "acknowledgment"
+	| "completion"
+	| "activation";
+const PHASE: Record<Direction, number> = {
+	receiverBinding: 3,
+	transfer: 4,
+	acknowledgment: 5,
+	completion: 6,
+	activation: 7,
+};
+export const MAX_PAIRING_PACKET_BYTES = 1024 * 1024;
+function plaintextLimit(direction: Direction) {
+	return direction === "transfer" ? MAX_PAIRING_PACKET_BYTES - 64 : 4096;
+}
+function packetLimit(direction: Direction) {
+	return direction === "transfer" ? MAX_PAIRING_PACKET_BYTES : 8192;
+}
 
 export const PAIRING_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 export const PAIRING_TTL_MS = 120_000;
@@ -88,11 +111,16 @@ export async function pairingKeys(
 	if (raw.length < 32) {
 		throw new Error("Invalid pairing key.");
 	}
-	const base = await crypto.subtle.importKey("raw", raw, "HKDF", false, [
-		"deriveKey",
-		"deriveBits",
-	]);
-	raw.fill(0);
+	let base: CryptoKey;
+	try {
+		base = await crypto.subtle.importKey("raw", raw, "HKDF", false, [
+			"deriveKey",
+			"deriveBits",
+		]);
+	} finally {
+		raw.fill(0);
+	}
+
 	const derive = (direction: string) =>
 		crypto.subtle.deriveKey(
 			{
@@ -120,7 +148,10 @@ export async function pairingKeys(
 	);
 	try {
 		return {
+			receiverBinding: await derive("receiver-binding"),
 			transfer: await derive("transfer"),
+			completion: await derive("completion"),
+			activation: await derive("activation"),
 			acknowledgment: await derive("acknowledgment"),
 			verificationCode: formatVerificationCode(verification),
 		};
@@ -130,7 +161,7 @@ export async function pairingKeys(
 }
 
 function aad(context: string, direction: Direction) {
-	return utf8(`${context} ${direction} ${direction === "transfer" ? 4 : 5}`);
+	return utf8(`${context} ${direction} ${PHASE[direction]}`);
 }
 
 export async function sealPairing(
@@ -139,58 +170,67 @@ export async function sealPairing(
 	direction: Direction,
 	value: unknown,
 ) {
-	const iv = crypto.getRandomValues(new Uint8Array(12));
+	const nonce = crypto.getRandomValues(new Uint8Array(12));
 	const plain = encode(value);
-	if (plain.length > 4096) {
-		throw new Error("Invalid pairing payload.");
-	}
 	try {
-		const ciphertext = await crypto.subtle.encrypt(
-			{ name: "AES-GCM", iv, additionalData: aad(context, direction) },
-			keys[direction],
-			plain,
+		if (plain.length > plaintextLimit(direction)) {
+			throw new Error("Invalid pairing payload.");
+		}
+		const ciphertext = new Uint8Array(
+			await crypto.subtle.encrypt(
+				{ name: "AES-GCM", iv: nonce, additionalData: aad(context, direction) },
+				keys[direction],
+				plain,
+			),
 		);
-		return encode({
-			v: 1,
-			iv,
-			ct: new Uint8Array(ciphertext),
-		});
+		return encode([1, nonce, ciphertext]);
 	} finally {
 		plain.fill(0);
 	}
 }
-
 export async function openPairing(
 	keys: PairingKeys,
 	context: string,
 	direction: Direction,
 	packet: unknown,
 ) {
-	if (!(packet instanceof Uint8Array) || packet.length > 8192) {
-		throw new Error("Invalid pairing payload.");
-	}
-	const value = document(decode(packet));
 	if (
-		value.v !== 1 ||
-		!(value.iv instanceof Uint8Array) ||
-		!(value.ct instanceof Uint8Array)
+		!(packet instanceof Uint8Array) ||
+		packet.length > packetLimit(direction)
 	) {
 		throw new Error("Invalid pairing payload.");
 	}
-	const iv = binary(value.iv);
-	const ct = binary(value.ct);
-	if (iv.length !== 12 || ct.length > 4112 || ct.length < 16) {
+	const value = decode(packet);
+	if (
+		!Array.isArray(value) ||
+		value.length !== 3 ||
+		value[0] !== 1 ||
+		!(value[1] instanceof Uint8Array) ||
+		value[1].length !== 12 ||
+		!(value[2] instanceof Uint8Array) ||
+		value[2].length < 16 ||
+		value[2].length > plaintextLimit(direction) + 16 ||
+		!sameBytes(packet, encode(value))
+	) {
 		throw new Error("Invalid pairing payload.");
 	}
 	const plain = new Uint8Array(
 		await crypto.subtle.decrypt(
-			{ name: "AES-GCM", iv, additionalData: aad(context, direction) },
+			{
+				name: "AES-GCM",
+				iv: new Uint8Array(value[1]),
+				additionalData: aad(context, direction),
+			},
 			keys[direction],
-			ct,
+			new Uint8Array(value[2]),
 		),
 	);
 	try {
-		return structuredClone(decode(plain));
+		const decoded = decode(plain);
+		if (!sameBytes(plain, encode(decoded))) {
+			throw new Error("Noncanonical pairing payload.");
+		}
+		return structuredClone(decoded);
 	} finally {
 		plain.fill(0);
 	}

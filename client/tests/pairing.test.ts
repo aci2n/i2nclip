@@ -22,11 +22,7 @@ import {
 	parsePairingCode,
 	sealPairing,
 } from "../src/lib/protocol/pairing.ts";
-import {
-	bytes as binary,
-	document,
-	string,
-} from "../src/lib/protocol/value.ts";
+import { bytes as binary, string } from "../src/lib/protocol/value.ts";
 import type { PairingServices } from "../src/lib/stores/pairing.ts";
 import { createPairing } from "../src/lib/stores/pairing.ts";
 import type {
@@ -272,10 +268,10 @@ test("transfer encryption rejects tampering, direction swaps, and different room
 	await assert.rejects(
 		openPairing(keys, `${context} changed`, "transfer", packet),
 	);
-	const parsed = document(decode(packet));
-	const ciphertext = binary(parsed.ct);
+	const parsed = decode(packet) as unknown[];
+	const ciphertext = binary(parsed[2]);
 	ciphertext[0] ^= 1;
-	parsed.ct = ciphertext;
+	parsed[2] = ciphertext;
 	await assert.rejects(openPairing(keys, context, "transfer", encode(parsed)));
 	await assert.rejects(
 		openPairing(keys, context, "transfer", "x".repeat(8193)),
