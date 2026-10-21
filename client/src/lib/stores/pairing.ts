@@ -18,7 +18,7 @@ import {
 	type PairingRelay,
 	pairingRelay,
 } from "../services/pairing-relay.ts";
-import { type ChainStore, stateCheckpoint } from "./library-chain.ts";
+import { type ChainStore, stateCheckpoint } from "./chain.ts";
 import type { Session } from "./session.ts";
 
 interface Task {

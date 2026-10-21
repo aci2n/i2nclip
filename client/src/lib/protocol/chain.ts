@@ -1,9 +1,7 @@
+import type { SigningKey } from "./auth.ts";
 import { concat, utf8 } from "./bytes.ts";
-import type { EpochEnvelope } from "./epoch-envelope.ts";
 import { decode, encode } from "./msgpack.ts";
-
 export type Bytes = Uint8Array<ArrayBuffer>;
-export const MAX_AUTHORIZED_DEVICES = 128;
 export const MAX_BLOCK_BYTES = 64 * 1024;
 export const MAX_BLOB_BYTES = 4 * 1024 * 1024 + 64;
 export const MAX_PAGE_BYTES = 1024 * 1024;
@@ -13,37 +11,27 @@ export const SIGN_DOMAIN = utf8("i2nclip/chain/sign/1\n");
 const BLOCK_DOMAIN = utf8("i2nclip/chain/block/1\n");
 const GENESIS_DOMAIN = utf8("i2nclip/chain/genesis/1\n");
 const AAD_DOMAIN = utf8("i2nclip/chain/aad/1\n");
-
 export type StorageEffect =
 	| readonly ["publish", Bytes, Bytes]
 	| readonly ["commit", Bytes, readonly Bytes[]]
 	| readonly ["purge", readonly Bytes[]];
-export type Effects =
-	| readonly StorageEffect[]
-	| readonly [Bytes]
-	| readonly [Bytes, Bytes]
-	| readonly [number, Bytes, readonly EpochEnvelope[]];
-export type BlockKind = "data" | "enroll" | "revoke" | "rotate";
+export type Effects = readonly StorageEffect[];
 export interface BlockHeader {
 	readonly library: Bytes;
 	readonly sequence: number;
 	readonly previous: Bytes;
-	readonly epoch: number;
-	readonly signer: Bytes;
-	readonly kind: BlockKind;
 	readonly effects: Effects;
 }
 export interface BlockBody extends BlockHeader {
-	readonly salt: Bytes | null;
-	readonly nonce: Bytes | null;
-	readonly encrypted: Bytes | null;
+	readonly salt: Bytes;
+	readonly nonce: Bytes;
+	readonly encrypted: Bytes;
 }
 export interface VerifiedBlock {
 	readonly bytes: Bytes;
 	readonly hash: Bytes;
 	readonly body: BlockBody;
 }
-
 function invalid(): never {
 	throw new Error("Invalid chain record.");
 }
@@ -103,77 +91,54 @@ function storageEffect(input: unknown): StorageEffect {
 	}
 	return invalid();
 }
-function parseBody(input: unknown): BlockBody {
-	if (!Array.isArray(input) || input.length !== 11 || input[0] !== 1) {
+
+export async function sha256(bytes: Bytes): Promise<Bytes> {
+	return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+}
+export function genesisHash(bytes: Bytes) {
+	return sha256(concat([GENESIS_DOMAIN, bytes]));
+}
+export async function genesis(publicKey: Bytes) {
+	const bytes = encode([1, fixedBytes(publicKey)]);
+	return { bytes, hash: await genesisHash(bytes) };
+}
+export async function parseGenesis(bytes: Bytes) {
+	if (bytes.length > 128) {
 		invalid();
 	}
-	const kind = input[6];
-	let effects: Effects;
-	if (kind === "data") {
-		if (!Array.isArray(input[7]) || input[7].length > 1) {
-			invalid();
-		}
-		effects = input[7].map(storageEffect);
-		fixedBytes(input[8]);
-		fixedBytes(input[9], 12);
-		if (!(input[10] instanceof Uint8Array) || input[10].length < 16) {
-			invalid();
-		}
-	} else {
-		if (input[8] !== null || input[9] !== null || input[10] !== null) {
-			invalid();
-		}
-		if (!Array.isArray(input[7])) {
-			invalid();
-		}
-		if (kind === "revoke" && input[7].length === 1) {
-			effects = [fixedBytes(input[7][0])];
-		} else if (kind === "enroll" && input[7].length === 2) {
-			effects = [fixedBytes(input[7][0]), fixedBytes(input[7][1])];
-		} else if (
-			kind === "rotate" &&
-			input[7].length === 3 &&
-			Array.isArray(input[7][2]) &&
-			input[7][2].length <= MAX_AUTHORIZED_DEVICES
-		) {
-			const envelopes = input[7][2].map((entry: unknown) => {
-				if (!Array.isArray(entry) || entry.length !== 3) {
-					return invalid();
-				}
-				return [
-					fixedBytes(entry[0]),
-					fixedBytes(entry[1]),
-					fixedBytes(entry[2], 48),
-				] as const;
-			});
-			if (
-				envelopes.some(
-					(entry, index) =>
-						index > 0 && compareBytes(envelopes[index - 1][0], entry[0]) >= 0,
-				)
-			) {
-				return invalid();
-			}
-			effects = [
-				safeInteger(input[7][0], 2),
-				fixedBytes(input[7][1]),
-				envelopes,
-			];
-		} else {
-			return invalid();
-		}
+	const value = decode(bytes);
+	if (
+		!Array.isArray(value) ||
+		value.length !== 2 ||
+		value[0] !== 1 ||
+		!sameBytes(encode(value), bytes)
+	) {
+		invalid();
+	}
+	const publicKey = fixedBytes(value[1]);
+	await crypto.subtle.importKey("raw", publicKey, "Ed25519", false, ["verify"]);
+	return { bytes: bytes.slice(), hash: await genesisHash(bytes), publicKey };
+}
+function parseBody(input: unknown): BlockBody {
+	if (
+		!Array.isArray(input) ||
+		input.length !== 8 ||
+		input[0] !== 1 ||
+		!Array.isArray(input[4]) ||
+		input[4].length > 1 ||
+		!(input[7] instanceof Uint8Array) ||
+		input[7].length < 16
+	) {
+		invalid();
 	}
 	return {
 		library: fixedBytes(input[1]),
 		sequence: safeInteger(input[2], 1),
 		previous: fixedBytes(input[3]),
-		epoch: safeInteger(input[4], 1),
-		signer: fixedBytes(input[5]),
-		kind,
-		effects,
-		salt: kind === "data" ? fixedBytes(input[8]) : null,
-		nonce: kind === "data" ? fixedBytes(input[9], 12) : null,
-		encrypted: kind === "data" ? new Uint8Array(input[10]) : null,
+		effects: input[4].map(storageEffect),
+		salt: fixedBytes(input[5]),
+		nonce: fixedBytes(input[6], 12),
+		encrypted: new Uint8Array(input[7]),
 	};
 }
 export function headerValues(body: BlockBody): unknown[] {
@@ -182,9 +147,6 @@ export function headerValues(body: BlockBody): unknown[] {
 		body.library,
 		body.sequence,
 		body.previous,
-		body.epoch,
-		body.signer,
-		body.kind,
 		body.effects,
 		body.salt,
 		body.nonce,
@@ -193,29 +155,19 @@ export function headerValues(body: BlockBody): unknown[] {
 function bodyBytes(body: BlockBody) {
 	return encode([...headerValues(body), body.encrypted]);
 }
-export async function sha256(bytes: Bytes): Promise<Bytes> {
-	return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-}
-export async function genesis(recoveryPublicKey: Bytes, epochSalt: Bytes) {
-	const document = encode([
-		1,
-		fixedBytes(recoveryPublicKey),
-		fixedBytes(epochSalt),
-	]);
-	return { bytes: document, hash: await genesisHash(document) };
-}
-export function genesisHash(document: Bytes) {
-	return sha256(concat([GENESIS_DOMAIN, document]));
-}
-export async function verifyRecord(input: Bytes): Promise<VerifiedBlock> {
+export async function verifyRecord(
+	input: Bytes,
+	publicKey: Bytes,
+): Promise<VerifiedBlock> {
 	if (input.length > MAX_BLOCK_BYTES) {
 		invalid();
 	}
 	const wire = decode(input);
-	if (!Array.isArray(wire) || wire.length !== 2) {
-		invalid();
-	}
-	if (!(wire[0] instanceof Uint8Array)) {
+	if (
+		!Array.isArray(wire) ||
+		wire.length !== 2 ||
+		!(wire[0] instanceof Uint8Array)
+	) {
 		invalid();
 	}
 	const signed = new Uint8Array(wire[0]);
@@ -229,7 +181,7 @@ export async function verifyRecord(input: Bytes): Promise<VerifiedBlock> {
 	}
 	const key = await crypto.subtle.importKey(
 		"raw",
-		body.signer,
+		fixedBytes(publicKey),
 		"Ed25519",
 		false,
 		["verify"],
@@ -244,60 +196,27 @@ export async function verifyRecord(input: Bytes): Promise<VerifiedBlock> {
 	) {
 		throw new Error("Invalid chain signature.");
 	}
-	if (body.kind === "enroll") {
-		const encryption = await crypto.subtle.importKey(
-			"raw",
-			body.effects[1] as Bytes,
-			"X25519",
-			false,
-			[],
-		);
-		const probe = await crypto.subtle.generateKey("X25519", false, [
-			"deriveBits",
-		]);
-		new Uint8Array(
-			await crypto.subtle.deriveBits(
-				{ name: "X25519", public: encryption },
-				probe.privateKey,
-				256,
-			),
-		).fill(0);
-	}
-
 	return {
 		bytes: input.slice(),
 		body,
 		hash: await sha256(concat([BLOCK_DOMAIN, input])),
 	};
 }
-async function blockKey(secret: Bytes, body: BlockBody) {
-	if (!body.salt) {
-		invalid();
-	}
-	const material = await crypto.subtle.importKey(
-		"raw",
-		fixedBytes(secret),
-		"HKDF",
-		false,
-		["deriveKey"],
-	);
+async function blockKey(root: CryptoKey, body: BlockBody) {
 	return crypto.subtle.deriveKey(
 		{
 			name: "HKDF",
 			hash: "SHA-256",
 			salt: body.salt,
-			info: encode(["i2nclip/chain/key/1", body.library, body.epoch]),
+			info: encode(["i2nclip/chain/key/1", body.library]),
 		},
-		material,
+		root,
 		{ name: "AES-GCM", length: 256 },
 		false,
 		["encrypt", "decrypt"],
 	);
 }
-function encryptionParameters(body: BlockBody) {
-	if (!body.nonce) {
-		invalid();
-	}
+function parameters(body: BlockBody) {
 	return {
 		name: "AES-GCM",
 		iv: body.nonce,
@@ -306,58 +225,39 @@ function encryptionParameters(body: BlockBody) {
 }
 export async function createRecord(
 	header: BlockHeader,
-	key: CryptoKey,
-	privateOperation?: { secret: Bytes; plaintext: Bytes },
+	signing: SigningKey,
+	root: CryptoKey,
+	plaintext: Bytes,
 ): Promise<VerifiedBlock> {
 	const body: BlockBody = {
 		...header,
-		salt:
-			header.kind === "data"
-				? crypto.getRandomValues(new Uint8Array(32))
-				: null,
-		nonce:
-			header.kind === "data"
-				? crypto.getRandomValues(new Uint8Array(12))
-				: null,
-		encrypted: header.kind === "data" ? new Uint8Array(16) : null,
+		salt: crypto.getRandomValues(new Uint8Array(32)),
+		nonce: crypto.getRandomValues(new Uint8Array(12)),
+		encrypted: new Uint8Array(16),
 	};
-	parseBody([...headerValues(body), body.encrypted]);
-	if (header.kind === "data") {
-		if (
-			!privateOperation ||
-			privateOperation.plaintext.length > MAX_BLOCK_BYTES - 1024
-		) {
-			invalid();
-		}
-		const encrypted = new Uint8Array(
-			await crypto.subtle.encrypt(
-				encryptionParameters(body),
-				await blockKey(privateOperation.secret, body),
-				privateOperation.plaintext,
-			),
-		);
-		return signBody({ ...body, encrypted }, key);
-	}
-	if (privateOperation) {
-		invalid();
-	}
-	return signBody(body, key);
-}
-async function signBody(body: BlockBody, key: CryptoKey) {
-	const signed = bodyBytes(body);
-	const signature = new Uint8Array(
-		await crypto.subtle.sign("Ed25519", key, concat([SIGN_DOMAIN, signed])),
+	const encrypted = new Uint8Array(
+		await crypto.subtle.encrypt(
+			parameters(body),
+			await blockKey(root, body),
+			plaintext,
+		),
 	);
-	return verifyRecord(encode([signed, signature]));
+	const complete = { ...body, encrypted };
+	const signed = bodyBytes(complete);
+	const signature = new Uint8Array(
+		await crypto.subtle.sign(
+			"Ed25519",
+			signing.privateCryptoKey,
+			concat([SIGN_DOMAIN, signed]),
+		),
+	);
+	return verifyRecord(encode([signed, signature]), signing.publicKey);
 }
-export async function decryptOperation(record: VerifiedBlock, secret: Bytes) {
-	if (record.body.kind !== "data" || !record.body.encrypted) {
-		invalid();
-	}
+export async function decryptOperation(record: VerifiedBlock, root: CryptoKey) {
 	return new Uint8Array(
 		await crypto.subtle.decrypt(
-			encryptionParameters(record.body),
-			await blockKey(secret, record.body),
+			parameters(record.body),
+			await blockKey(root, record.body),
 			record.body.encrypted,
 		),
 	);

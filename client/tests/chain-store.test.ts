@@ -2,11 +2,6 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { get } from "svelte/store";
-import {
-	type ChainStorage,
-	type Checkpoint,
-	createChainStorage,
-} from "../src/lib/chain-storage.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
 import {
 	type Bytes,
@@ -19,21 +14,21 @@ import {
 	initialChainState,
 	reduceBlock,
 } from "../src/lib/protocol/chain-state.ts";
-import { loadSigningKey } from "../src/lib/protocol/crypto.ts";
-import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
-import { createLibraryRecovery } from "../src/lib/protocol/recovery-key.ts";
+import {
+	type ChainStorage,
+	type Checkpoint,
+	createChainStorage,
+} from "../src/lib/storage/chain.ts";
 import {
 	type ChainPage,
 	type ChainTransport,
 	createChain,
 	stateCheckpoint,
 } from "../src/lib/stores/chain.ts";
+import { createIdentity } from "./library-fixture.ts";
 
 Object.defineProperty(globalThis, "IDBKeyRange", { value: IDBKeyRange });
 const bytes = (n: number): Bytes => new Uint8Array(32).fill(n);
-async function device() {
-	return loadSigningKey((await generatePrivateKey()).privateKey);
-}
 
 class Transport implements ChainTransport {
 	readonly records: VerifiedBlock[] = [];
@@ -42,7 +37,9 @@ class Transport implements ChainTransport {
 	writes = 0;
 	loseResponse = false;
 	pageOverride: ((page: ChainPage) => ChainPage) | null = null;
-	constructor(genesis: Checkpoint) {
+	readonly publicKey: Bytes;
+	constructor(genesis: Checkpoint, publicKey: Bytes) {
+		this.publicKey = publicKey;
 		this.genesis = genesis;
 	}
 	async read(
@@ -85,7 +82,7 @@ class Transport implements ChainTransport {
 	async append(data: Bytes, signal: AbortSignal) {
 		signal.throwIfAborted();
 		this.writes++;
-		const record = await verifyRecord(data);
+		const record = await verifyRecord(data, this.publicKey);
 		const current = this.records.at(-1);
 		if (
 			bytesToHex(record.body.previous) !==
@@ -106,16 +103,11 @@ class Transport implements ChainTransport {
 	}
 }
 async function fixture(t: TestContext, minimum?: Checkpoint) {
-	const key = await device();
-	const recovery = await createLibraryRecovery(
-		"https://example.test",
-		key.publicKey,
-		key.publicKey,
-	);
-	const genesis = await initialChainState(recovery.recovery.genesis.bytes);
-	const initial = reduceBlock(genesis, recovery.enrollment);
-	const transport = new Transport(stateCheckpoint(genesis));
-	transport.records.push(recovery.enrollment);
+	const identity = await createIdentity("https://example.test");
+	t.after(identity.dispose);
+	const key = identity.signing;
+	const initial = await initialChainState(identity.genesis);
+	const transport = new Transport(stateCheckpoint(initial), key.publicKey);
 	const factory = new IDBFactory();
 	const storage = createChainStorage(
 		"https://example.test",
@@ -123,12 +115,12 @@ async function fixture(t: TestContext, minimum?: Checkpoint) {
 		factory,
 	);
 	const credentials = {
-		genesis: recovery.recovery.genesis.bytes,
-		publicKey: key.publicKey,
-		signingKey: key.privateCryptoKey,
-		secrets: new Map([[1, bytes(9)]]),
+		genesis: identity.genesis,
+		signing: key,
+		encryption: identity.encryption,
 		minimum: minimum ?? stateCheckpoint(initial),
 	};
+
 	const controller = new AbortController();
 	const store = createChain(credentials, storage, transport, controller.signal);
 	t.after(store.dispose);
@@ -146,13 +138,12 @@ async function fixture(t: TestContext, minimum?: Checkpoint) {
 				library: state.library,
 				sequence: state.sequence + 1,
 				previous: state.head,
-				epoch: 1,
-				signer: key.publicKey,
-				kind: "data",
+
 				effects: [["publish", id, bytes(6)]],
 			},
-			key.privateCryptoKey,
-			{ secret: bytes(9), plaintext },
+			key,
+			identity.encryption,
+			plaintext,
 		);
 		state = reduceBlock(state, record, plaintext);
 		transport.records.push(record);
@@ -179,7 +170,7 @@ test("bounded encrypted replay persists state and restarts from verified cache",
 	const b = f.store.sync();
 	assert.equal(a, b);
 	assert.deepEqual(await a, expected);
-	assert.equal(f.transport.reads, 3);
+	assert.equal(f.transport.reads, 2);
 	assert.equal(get(f.store).live?.files.size, 2);
 	f.store.dispose();
 	const storage = createChainStorage(
@@ -195,7 +186,7 @@ test("bounded encrypted replay persists state and restarts from verified cache",
 	);
 	t.after(restarted.dispose);
 	assert.deepEqual(await restarted.sync(), expected);
-	assert.equal(f.transport.reads, 4);
+	assert.equal(f.transport.reads, 3);
 });
 
 test("fresh client cannot publish a prefix below its trusted head or accept a fork", async (t) => {
@@ -227,7 +218,7 @@ test("fresh client cannot publish a prefix below its trusted head or accept a fo
 	await storage.discardRecords(new AbortController().signal);
 	f.transport.records.pop();
 	await assert.rejects(pinned.sync(), /stale/);
-	assert.equal((await storage.head(new AbortController().signal))?.sequence, 3);
+	assert.equal((await storage.head(new AbortController().signal))?.sequence, 2);
 });
 
 test("invalid pages and signatures never advance the persisted head", async (t) => {
@@ -237,7 +228,7 @@ test("invalid pages and signatures never advance the persisted head", async (t) 
 	await assert.rejects(f.store.sync(), /pagination/);
 	assert.equal(
 		(await f.storage.head(new AbortController().signal))?.sequence,
-		1,
+		0,
 	);
 	f.transport.pageOverride = (page) => ({
 		...page,
@@ -271,11 +262,11 @@ test("a persistence failure prevents accepted state from reaching the UI", async
 	);
 	t.after(store.dispose);
 	await assert.rejects(store.sync(), /Disk full/);
-	assert.equal(get(store).live, null);
+	assert.equal(get(store).live?.sequence, 0);
 	assert.match(get(store).storageError, /Disk full/);
 	assert.equal(
 		(await f.storage.head(new AbortController().signal))?.sequence,
-		1,
+		0,
 	);
 });
 
@@ -286,7 +277,7 @@ test("mutations reject stale drafts and reconcile a lost append response by exac
 	await assert.rejects(
 		f.store.append({
 			expected: stale,
-			kind: "data",
+
 			effects: [],
 			plaintext: encodeOperation({ kind: "DeleteFile", id: bytes(10) }),
 		}),
@@ -296,7 +287,7 @@ test("mutations reject stale drafts and reconcile a lost append response by exac
 	f.transport.loseResponse = true;
 	const result = await f.store.append({
 		expected: stateCheckpoint(current),
-		kind: "data",
+
 		effects: [],
 		plaintext: encodeOperation({ kind: "DeleteFile", id: bytes(10) }),
 	});
@@ -304,7 +295,7 @@ test("mutations reject stale drafts and reconcile a lost append response by exac
 	assert.equal(f.transport.writes, 1);
 	assert.equal(
 		(await f.storage.head(new AbortController().signal))?.sequence,
-		3,
+		2,
 	);
 });
 
@@ -348,49 +339,6 @@ test("a trusted head with a different hash rejects an otherwise valid chain", as
 	);
 });
 
-test("a valid signature from an unenrolled device is rejected during synchronization", async (t) => {
-	const f = await fixture(t);
-	const outsider = await device();
-	const target = await device();
-	f.transport.records.push(
-		await createRecord(
-			{
-				library: f.initial.library,
-				sequence: f.initial.sequence + 1,
-				previous: f.initial.head,
-				epoch: 1,
-				signer: outsider.publicKey,
-				kind: "enroll",
-				effects: [target.publicKey, target.publicKey],
-			},
-			outsider.privateCryptoKey,
-		),
-	);
-	await assert.rejects(f.store.sync(), /unauthorized/);
-	assert.equal(
-		(await f.storage.head(new AbortController().signal))?.sequence,
-		1,
-	);
-});
-
-test("ordinary device stores reject attempts to publish epoch resets", async (t) => {
-	const f = await fixture(t);
-	const initial = await f.store.sync();
-	await assert.rejects(
-		f.store.append({
-			expected: stateCheckpoint(initial),
-			kind: "rotate",
-			effects: [
-				2,
-				bytes(12),
-				[[f.key.publicKey, bytes(9), new Uint8Array(48)]],
-			],
-		}),
-		/unauthorized/,
-	);
-	assert.equal(f.transport.writes, 0);
-});
-
 test("a live tab retains its observed head when another tab explicitly forgets shared history", async (t) => {
 	const f = await fixture(t);
 	await f.addFile(10);
@@ -398,10 +346,10 @@ test("a live tab retains its observed head when another tab explicitly forgets s
 	await f.storage.clear(new AbortController().signal);
 	f.transport.records.length = 0;
 	await assert.rejects(f.store.sync(), /stale/);
-	assert.equal(get(f.store).live?.sequence, 2);
+	assert.equal(get(f.store).live?.sequence, 1);
 	assert.equal(
 		(await f.storage.head(new AbortController().signal))?.sequence,
-		2,
+		1,
 	);
 });
 
@@ -430,5 +378,5 @@ test("historical replay reaches the live trusted head without changing live stat
 		f.store.at(1, new AbortController().signal),
 		/incomplete/,
 	);
-	assert.equal(get(f.store).live?.sequence, 3);
+	assert.equal(get(f.store).live?.sequence, 2);
 });

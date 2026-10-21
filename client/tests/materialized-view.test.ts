@@ -25,12 +25,9 @@ function file(n: number): MaterializedFile {
 function source(files: readonly MaterializedFile[], sequence = 1): ChainState {
 	return {
 		library: bytes(0),
+		publicKey: bytes(101),
 		head: bytes(sequence),
 		sequence,
-		epoch: 1,
-		recoveryPublicKey: bytes(101),
-		epochSalt: bytes(102),
-		devices: new Map(),
 		files: new Map(files.map((file) => [bytesToHex(file.id), file])),
 	};
 }
@@ -43,9 +40,6 @@ function chain(initial: ChainState) {
 		storageError: "",
 	});
 	const store: ChainStore = {
-		keyring() {
-			throw new Error("Key delivery is not used by this fixture.");
-		},
 		subscribe: state.subscribe,
 		async at() {
 			throw new Error("Historical replay is not used by this fixture.");

@@ -1,4 +1,4 @@
-import type { Database } from "../src/lib/database.ts";
+import type { Database } from "../src/lib/storage/database.ts";
 
 // Separate connections share only this test's records; values cross a clone boundary.
 export function memoryStorage() {

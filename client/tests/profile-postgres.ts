@@ -5,8 +5,8 @@ import type { IncomingMessage } from "node:http";
 import http from "node:http";
 import { promisify } from "node:util";
 import { get } from "svelte/store";
+import { authorizationHeader, freshNonce } from "../src/lib/protocol/auth.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
-import { authorizationHeader, freshNonce } from "../src/lib/protocol/crypto.ts";
 import { stateCheckpoint } from "../src/lib/stores/chain.ts";
 import { liveLibrary } from "./live-library.ts";
 import { database, issueOtc, startServer, stopServer } from "./process.ts";
@@ -107,7 +107,7 @@ async function run() {
 			const path = `/api/blobs/${result.id}/${hash}`;
 			const download = async () => {
 				const authorization = await authorizationHeader({
-					key: client.device.key,
+					key: client.identity.signing,
 					origin,
 					method: "GET",
 					path,

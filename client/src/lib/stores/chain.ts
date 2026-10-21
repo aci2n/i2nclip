@@ -1,14 +1,8 @@
 import { get, type Writable, writable } from "svelte/store";
-import {
-	type CachedBlock,
-	type ChainStorage,
-	type Checkpoint,
-	equalCheckpoint,
-} from "../chain-storage.ts";
 import { errorMessage } from "../error.ts";
+import type { SigningKey } from "../protocol/auth.ts";
 import { bytesToHex } from "../protocol/bytes.ts";
 import {
-	type BlockKind,
 	type Bytes,
 	createRecord,
 	decryptOperation,
@@ -25,9 +19,11 @@ import {
 	reduceBlock,
 } from "../protocol/chain-state.ts";
 import {
-	type EpochEnvelope,
-	openEpochKey,
-} from "../protocol/epoch-envelope.ts";
+	type CachedBlock,
+	type ChainStorage,
+	type Checkpoint,
+	equalCheckpoint,
+} from "../storage/chain.ts";
 
 export interface ChainPage {
 	readonly target: Checkpoint;
@@ -47,15 +43,9 @@ export interface ChainTransport {
 }
 export interface ChainCredentials {
 	readonly genesis: Bytes;
-	readonly publicKey: Bytes;
-	readonly signingKey: CryptoKey;
-	readonly secrets: ReadonlyMap<number, Bytes>;
+	readonly signing: SigningKey;
+	readonly encryption: CryptoKey;
 	readonly minimum: Checkpoint;
-	readonly encryption?: {
-		readonly publicKey: Bytes;
-		readonly keyPair: CryptoKeyPair;
-	};
-	readonly recoverEpoch?: (epoch: number, salt: Bytes) => Promise<Bytes>;
 }
 export interface ChainView {
 	readonly live: ChainState | null;
@@ -66,9 +56,8 @@ export interface ChainView {
 }
 export interface ChainMutation {
 	readonly expected: Checkpoint;
-	readonly kind: BlockKind;
 	readonly effects: Effects;
-	readonly plaintext?: Bytes;
+	readonly plaintext: Bytes;
 	readonly signal?: AbortSignal;
 }
 export function stateCheckpoint(state: ChainState): Checkpoint {
@@ -114,7 +103,6 @@ class ChainStoreImpl {
 		error: "",
 		storageError: "",
 	});
-	private readonly learned = new Map<number, Bytes>();
 	private syncing: Promise<ChainState> | null = null;
 	private mutating = false;
 	private disposed = false;
@@ -123,7 +111,6 @@ class ChainStoreImpl {
 	readonly at = this.replayAt.bind(this);
 	readonly append = this.appendMutation.bind(this);
 	readonly dispose = this.disposeChain.bind(this);
-	readonly keyring = this.epochKeys.bind(this);
 
 	constructor(
 		credentials: ChainCredentials,
@@ -156,104 +143,20 @@ class ChainStoreImpl {
 			throw error;
 		}
 	}
-	private secret(epoch: number) {
-		const secret =
-			this.credentials.secrets.get(epoch) ?? this.learned.get(epoch);
-		if (!secret) {
-			throw new Error(
-				`Missing encryption secret for epoch ${epoch}. Re-pair this device.`,
-			);
-		}
-		return secret;
-	}
 	private async apply(state: ChainState, bytes: Bytes) {
 		this.check();
-		const record = await verifyRecord(bytes);
+		const record = await verifyRecord(bytes, state.publicKey);
 		this.check();
-		let plaintext: Bytes | undefined;
-		try {
-			if (record.body.kind === "data") {
-				plaintext = await decryptOperation(
-					record,
-					this.secret(record.body.epoch),
-				);
-			}
-			const next = reduceBlock(state, record, plaintext);
-			const own = next.devices.get(bytesToHex(this.credentials.publicKey));
-			const encryption = this.credentials.encryption;
-			if (
-				own &&
-				encryption &&
-				!sameBytes(own.encryptionPublicKey, encryption.publicKey)
-			) {
-				throw new Error("Device encryption key does not match its enrollment.");
-			}
-			if (next.epoch !== state.epoch) {
-				const known =
-					this.credentials.secrets.get(next.epoch) ??
-					this.learned.get(next.epoch);
-				if (this.credentials.recoverEpoch) {
-					await this.credentials.recoverEpoch(next.epoch, next.epochSalt);
-				} else if (
-					encryption &&
-					state.devices.get(bytesToHex(this.credentials.publicKey))
-						?.revokedAt === null
-				) {
-					const envelope = (
-						record.body.effects[2] as readonly EpochEnvelope[]
-					).find((entry) => sameBytes(entry[0], this.credentials.publicKey));
-					if (!envelope) {
-						throw new Error("Rotation omits this authorized device.");
-					}
-					const secret = await openEpochKey(
-						{
-							library: state.library,
-							sequence: next.sequence,
-							previous: state.head,
-							epoch: state.epoch,
-							nextEpoch: next.epoch,
-							salt: next.epochSalt,
-							recipient: this.credentials.publicKey,
-							encryptionPublicKey: encryption.publicKey,
-						},
-						encryption.keyPair,
-						envelope,
-					);
-					try {
-						this.check();
-						if (known && !sameBytes(known, secret)) {
-							throw new Error(
-								"Epoch envelope disagrees with the known epoch key.",
-							);
-						}
-						if (!known) {
-							this.learned.set(next.epoch, secret.slice());
-						}
-					} finally {
-						secret.fill(0);
-					}
-				} else if (!known) {
-					throw new Error(
-						`Missing encryption secret for epoch ${next.epoch}. Re-pair this device.`,
-					);
-				}
-			}
-			this.check();
-			return { next, record };
-		} finally {
-			plaintext?.fill(0);
-		}
-	}
-	private epochKeys(): readonly (readonly [number, Bytes])[] {
-		this.check();
-		const live = get(this.state).live;
-		if (!live) {
-			throw new Error("Wait for verified library state.");
-		}
-		return Array.from(
-			{ length: live.epoch },
-			(_, index) => [index + 1, this.secret(index + 1).slice()] as const,
+		const plaintext = await decryptOperation(
+			record,
+			this.credentials.encryption,
 		);
+		try {
+			this.check();
+			return { next: reduceBlock(state, record, plaintext), record };
+		} finally {
+			plaintext.fill(0);
+		}
 	}
 	private checkPins(state: ChainState, pins: readonly Checkpoint[]) {
 		for (const pin of pins) {
@@ -301,6 +204,9 @@ class ChainStoreImpl {
 		const signal = AbortSignal.any([this.signal, caller]);
 		signal.throwIfAborted();
 		let state = await initialChainState(this.credentials.genesis);
+		if (!sameBytes(state.publicKey, this.credentials.signing.publicKey)) {
+			throw new Error("Library signing key does not match genesis.");
+		}
 		let selected: ChainState | null = sequence === 0 ? state : null;
 		// Verify the suffix too: the selected prefix must reach the trusted live head.
 		while (state.sequence < live.sequence) {
@@ -342,7 +248,6 @@ class ChainStoreImpl {
 		this.update({ syncing: true, error: "" });
 		this.syncing = this.synchronize()
 			.catch((error: unknown) => {
-				this.clearDerivedKeys();
 				if (!this.signal.aborted) {
 					this.update({ error: errorMessage(error) });
 				}
@@ -491,18 +396,11 @@ class ChainStoreImpl {
 					library: state.library,
 					sequence: state.sequence + 1,
 					previous: state.head,
-					epoch: state.epoch,
-					signer: this.credentials.publicKey,
-					kind: mutation.kind,
 					effects: mutation.effects,
 				},
-				this.credentials.signingKey,
-				mutation.kind === "data"
-					? {
-							secret: this.secret(state.epoch),
-							plaintext: mutation.plaintext ?? new Uint8Array(),
-						}
-					: undefined,
+				this.credentials.signing,
+				this.credentials.encryption,
+				mutation.plaintext,
 			);
 			const candidate = (await this.apply(state, record.bytes)).next;
 			signal.throwIfAborted();
@@ -545,19 +443,12 @@ class ChainStoreImpl {
 			}
 		}
 	}
-	private clearDerivedKeys() {
-		for (const secret of this.learned.values()) {
-			secret.fill(0);
-		}
-		this.learned.clear();
-	}
 	private disposeChain() {
 		if (this.disposed) {
 			return;
 		}
 		this.disposed = true;
 		this.controller.abort();
-		this.clearDerivedKeys();
 		this.storage.dispose();
 		this.state.set({
 			live: null,

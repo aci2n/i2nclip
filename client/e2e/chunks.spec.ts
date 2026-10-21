@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
+import { authorizationHeader, freshNonce } from "../src/lib/protocol/auth.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
-import { authorizationHeader, freshNonce } from "../src/lib/protocol/crypto.ts";
 import { stateCheckpoint } from "../src/lib/stores/chain.ts";
 import { liveLibrary } from "../tests/live-library.ts";
 import { startServer, stopServer } from "../tests/process.ts";
@@ -38,7 +38,7 @@ for (const crossOrigin of [false, true]) {
 						return {
 							url: `${app.origin}${path}`,
 							authorization: await authorizationHeader({
-								key: client.device.key,
+								key: client.identity.signing,
 								origin: app.origin,
 								method: "GET",
 								path,

@@ -1,14 +1,14 @@
 import { get, writable } from "svelte/store";
-import type { ChainApi, StorageQuota } from "../chain-api.ts";
 import { errorMessage } from "../error.ts";
-export type ChainQuota = ReturnType<typeof createChainQuota>;
-export function createChainQuota(
+import type { ChainApi, StorageQuota } from "../services/library-api.ts";
+export type Quota = ReturnType<typeof createQuota>;
+export function createQuota(
 	api: Pick<ChainApi, "quota">,
 	signal: AbortSignal,
-): Pick<ChainQuotaImpl, keyof ChainQuotaImpl> {
-	return new ChainQuotaImpl(api, signal);
+): Pick<QuotaImpl, keyof QuotaImpl> {
+	return new QuotaImpl(api, signal);
 }
-class ChainQuotaImpl {
+class QuotaImpl {
 	private readonly api: Pick<ChainApi, "quota">;
 	private readonly controller = new AbortController();
 	private readonly signal: AbortSignal;

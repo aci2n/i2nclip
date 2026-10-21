@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createPairingCrypto } from "../src/lib/pairing/crypto.ts";
-import { pairingCrypto, pairingRelay } from "../src/lib/pairing/service.ts";
-import { generateDeviceEncryptionKey } from "../src/lib/protocol/device-encryption.ts";
 import { decode } from "../src/lib/protocol/msgpack.ts";
+import { createPairingCrypto } from "../src/lib/services/pairing-crypto.ts";
+import { pairingRelay } from "../src/lib/services/pairing-relay.ts";
 import { deferred, testKey, tick } from "./helpers.ts";
+import { createIdentity } from "./library-fixture.ts";
 import { documentResponse } from "./msgpack-response.ts";
 
 test("isolated pairing adapters complete a verified exchange", async (t) => {
-	const sender = pairingCrypto();
-	const receiver = pairingCrypto();
+	const sender = createPairingCrypto();
+	const receiver = createPairingCrypto();
 	t.after(sender.dispose);
 	t.after(receiver.dispose);
 	const context =
@@ -23,19 +23,25 @@ test("isolated pairing adapters complete a verified exchange", async (t) => {
 		context,
 	});
 	await sender.senderFinish({ message: third });
-	await sender.verifyReceiverBinding({
-		message: await receiver.bindReceiver({
-			publicKey: testKey().publicKey,
-			encryption: await generateDeviceEncryptionKey(),
-		}),
-	});
+
 	assert.equal(
 		await sender.verificationCode(),
 		await receiver.verificationCode(),
 	);
-	const value = { v: 1, privateKey: "private identity" };
-	const packet = await sender.transfer({ value });
-	assert.deepEqual(await receiver.receive({ message: packet }), value);
+	const identity = await createIdentity("https://clip.example");
+	t.after(identity.dispose);
+	const checkpoint = {
+		sequence: 0,
+		hash: Buffer.from(identity.library).toString("hex"),
+	};
+	const packet = await sender.transfer({ identity, checkpoint });
+	const received = await receiver.receive({ message: packet });
+	t.after(received.identity.dispose);
+	assert.deepEqual(
+		received.identity.signing.publicKey,
+		identity.signing.publicKey,
+	);
+
 	assert.equal(
 		await sender.verifyAcknowledgment({
 			message: await receiver.acknowledge(),
@@ -102,19 +108,20 @@ test("relay frames keep control messages small and permit only the credential tr
 	await assert.rejects(relay.poll(room), /response/);
 });
 test("pairing crypto adapter serializes calls, rejects disposal immediately and sanitizes failures", async (t) => {
-	const worker = pairingCrypto();
+	const worker = createPairingCrypto();
 	const pending = worker.senderSetup({
 		secret: "W4TXN9RC",
 		context: "context",
 	});
-	await assert.rejects(worker.verificationCode(), /busy/);
+	const busy = assert.rejects(worker.verificationCode(), /busy/);
 	worker.dispose();
+	await busy;
 	await assert.rejects(pending, { name: "AbortError" });
 	await assert.rejects(
 		worker.senderSetup({ context: "context", secret: "secret" }),
 		{ name: "AbortError" },
 	);
-	const fresh = pairingCrypto();
+	const fresh = createPairingCrypto();
 	t.after(fresh.dispose);
 	await assert.rejects(
 		fresh.senderResponse({
@@ -122,10 +129,10 @@ test("pairing crypto adapter serializes calls, rejects disposal immediately and 
 		}),
 		(error) =>
 			(error instanceof Error ? error.message : String(error)) ===
-			"Pairing authentication failed. Create a new code.",
+			"Invalid pairing step.",
 	);
 });
-for (const factory of [pairingCrypto, createPairingCrypto]) {
+for (const factory of [createPairingCrypto]) {
 	test(`${factory.name} stays disposed after key derivation finishes`, async (t) => {
 		const sender = factory();
 		const receiver = factory();

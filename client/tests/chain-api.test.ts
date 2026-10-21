@@ -1,29 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createChainApi, HttpError } from "../src/lib/chain-api.ts";
+import { bodyHash, requestMessage } from "../src/lib/protocol/auth.ts";
 import { b64urlToBytes, bytesToHex } from "../src/lib/protocol/bytes.ts";
 import { MAX_BLOB_BYTES, sha256 } from "../src/lib/protocol/chain.ts";
-import { bodyHash, requestMessage } from "../src/lib/protocol/crypto.ts";
 import { decode, encode } from "../src/lib/protocol/msgpack.ts";
-import { createDevice } from "./library-fixture.ts";
+import { createChainApi, HttpError } from "../src/lib/services/library-api.ts";
+import { createIdentity } from "./library-fixture.ts";
 
 const binary = (n: number) => new Uint8Array(32).fill(n);
 const response = (value: unknown) => new Response(encode(value));
 
 test("chain API signs the exact query and uses fixed registration, pagination and receipt frames", async (t) => {
-	const device = await createDevice("https://example.test");
-	assert(device.identity.registration);
+	const device = await createIdentity("https://example.test");
+	t.after(device.dispose);
 	const verifier = await crypto.subtle.importKey(
 		"raw",
-		device.key.publicKey,
+		device.signing.publicKey,
 		"Ed25519",
 		false,
 		["verify"],
 	);
 	const seen: string[] = [];
 	const api = createChainApi(
-		device.identity.serverUrl,
-		device.key,
+		device.origin,
+		device.signing,
 		new AbortController().signal,
 		async function (this: typeof globalThis, input, init) {
 			assert.equal(this, globalThis);
@@ -58,11 +58,7 @@ test("chain API signs the exact query and uses fixed registration, pagination an
 			assert.equal(options.redirect, "error");
 			assert.equal(options.credentials, "omit");
 			if (url.pathname === "/api/register-key") {
-				assert.deepEqual(decode(body), [
-					"invite",
-					device.identity.genesis,
-					device.identity.registration,
-				]);
+				assert.deepEqual(decode(body), ["invite", device.genesis]);
 				return new Response(null, { status: 204 });
 			}
 			if (options.method === "GET") {
@@ -73,12 +69,7 @@ test("chain API signs the exact query and uses fixed registration, pagination an
 		},
 	);
 	t.after(api.dispose);
-	await api.register(
-		" invite ",
-		device.identity.genesis,
-		device.identity.registration,
-		new AbortController().signal,
-	);
+	await api.register(" invite ", device.genesis, new AbortController().signal);
 	const page = await api.read(
 		bytesToHex(binary(1)),
 		bytesToHex(binary(2)),
@@ -96,13 +87,13 @@ test("chain API signs the exact query and uses fixed registration, pagination an
 });
 
 test("blob staging and downloads authenticate addresses while quota remains operational", async (t) => {
-	const device = await createDevice("https://example.test");
+	const device = await createIdentity("https://example.test");
 	const blob = new Uint8Array(48).fill(7);
 	const hash = await sha256(blob);
 	let corrupt = false;
 	const api = createChainApi(
-		device.identity.serverUrl,
-		device.key,
+		device.origin,
+		device.signing,
 		new AbortController().signal,
 		async (input, init) => {
 			const path = new URL(String(input)).pathname;
@@ -142,11 +133,11 @@ test("blob staging and downloads authenticate addresses while quota remains oper
 });
 
 test("streaming bounds ignore false Content-Length and cancel an oversized body", async (t) => {
-	const device = await createDevice("https://example.test");
+	const device = await createIdentity("https://example.test");
 	let cancelled = false;
 	const api = createChainApi(
-		device.identity.serverUrl,
-		device.key,
+		device.origin,
+		device.signing,
 		new AbortController().signal,
 		async () =>
 			new Response(
@@ -175,11 +166,11 @@ test("streaming bounds ignore false Content-Length and cancel an oversized body"
 });
 
 test("registration distinguishes unauthorized access and rejects malformed protocol responses", async (t) => {
-	const device = await createDevice("https://example.test");
+	const device = await createIdentity("https://example.test");
 	let status = 401;
 	const api = createChainApi(
-		device.identity.serverUrl,
-		device.key,
+		device.origin,
+		device.signing,
 		new AbortController().signal,
 		async () => new Response(null, { status }),
 	);
@@ -194,8 +185,8 @@ test("registration distinguishes unauthorized access and rejects malformed proto
 		(error) => error instanceof HttpError && error.status === 503,
 	);
 	const malformed = createChainApi(
-		device.identity.serverUrl,
-		device.key,
+		device.origin,
+		device.signing,
 		signal,
 		async () => response({ head: binary(1) }),
 	);

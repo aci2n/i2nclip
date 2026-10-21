@@ -1,6 +1,5 @@
 import { get, writable } from "svelte/store";
 import { errorMessage } from "../error.ts";
-import type { Files } from "../files.ts";
 import { downloadName } from "../media/format.ts";
 import {
 	decodeTextPreview,
@@ -10,6 +9,7 @@ import {
 import { bytesToHex } from "../protocol/bytes.ts";
 import type { MaterializedFile } from "../protocol/chain-state.ts";
 import type { FileManifest, FileMetadata } from "../protocol/file-objects.ts";
+import type { Files } from "../services/files.ts";
 import type { ContentSource, ContentStreams } from "./content-streams.ts";
 
 type MediaFiles = Pick<Files, "manifest" | "readRange" | "thumbnail">;

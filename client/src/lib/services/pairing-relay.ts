@@ -1,6 +1,6 @@
-import type { SigningKey } from "../protocol/crypto.ts";
-import { authorizationHeader, freshNonce } from "../protocol/crypto.ts";
-import { sameBytes } from "../protocol/library-chain.ts";
+import type { SigningKey } from "../protocol/auth.ts";
+import { authorizationHeader, freshNonce } from "../protocol/auth.ts";
+import { sameBytes } from "../protocol/chain.ts";
 import { CONTENT_TYPE, decode, encode } from "../protocol/msgpack.ts";
 import { pairingContext, pairingOrigin } from "../protocol/pairing.ts";
 import { bytes as binary, number, string } from "../protocol/value.ts";
@@ -249,7 +249,7 @@ class PairingRelayImpl implements PairingRelay {
 		if (
 			!Number.isInteger(step) ||
 			step < 2 ||
-			step > 7 ||
+			step > 5 ||
 			message.length > (step === 4 ? 1024 * 1024 : 8192)
 		) {
 			throw new Error("Invalid pairing message.");

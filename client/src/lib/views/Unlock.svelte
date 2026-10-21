@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Session } from "../stores/identity.ts";
+import type { Session } from "../stores/session.ts";
 
 interface Props {
 	session: Session;
@@ -115,7 +115,8 @@ async function submit(event: SubmitEvent) {
 			<div class="stack reset">
 				<p>
 					This removes the saved identity from this device. Server files remain.
-					You will need a recovery file or another paired device to reconnect.
+					You will need a library backup or another connected browser to
+					reconnect.
 				</p>
 				<button
 					class="secondary danger"

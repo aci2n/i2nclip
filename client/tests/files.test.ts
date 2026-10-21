@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { writable } from "svelte/store";
-import { createFiles, type FileApi } from "../src/lib/files.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
 import {
 	compareBytes,
@@ -11,17 +10,19 @@ import {
 } from "../src/lib/protocol/chain.ts";
 import { reduceBlock } from "../src/lib/protocol/chain-state.ts";
 import { CHUNK_BYTES } from "../src/lib/protocol/content.ts";
+import { createFiles, type FileApi } from "../src/lib/services/files.ts";
 import {
 	type ChainMutation,
 	type ChainStore,
 	type ChainView,
 	stateCheckpoint,
 } from "../src/lib/stores/chain.ts";
-import { createDevice, initialDeviceState } from "./library-fixture.ts";
+import { createIdentity, initialIdentityState } from "./library-fixture.ts";
 
 async function fixture(t: test.TestContext) {
-	const device = await createDevice("https://example.test");
-	let state = await initialDeviceState(device.identity);
+	const device = await createIdentity("https://example.test");
+	t.after(device.dispose);
+	let state = await initialIdentityState(device);
 	const view = writable<ChainView>({
 		live: state,
 		syncing: false,
@@ -37,9 +38,6 @@ async function fixture(t: test.TestContext) {
 	>();
 	let failCommit = false;
 	const chain: ChainStore = {
-		keyring() {
-			throw new Error("Key delivery is not used by this fixture.");
-		},
 		subscribe: view.subscribe,
 		async at() {
 			throw new Error("Historical replay is not used by this fixture.");
@@ -75,18 +73,11 @@ async function fixture(t: test.TestContext) {
 					library: state.library,
 					sequence: state.sequence + 1,
 					previous: state.head,
-					epoch: 1,
-					signer: device.key.publicKey,
-					kind: mutation.kind,
 					effects: mutation.effects,
 				},
-				device.key.privateCryptoKey,
-				mutation.kind === "data"
-					? {
-							secret: device.identity.epochs[0]?.[1] ?? new Uint8Array(32),
-							plaintext: mutation.plaintext ?? new Uint8Array(),
-						}
-					: undefined,
+				device.signing,
+				device.encryption,
+				mutation.plaintext,
 			);
 			state = reduceBlock(state, record, mutation.plaintext);
 			mutations.push(mutation);

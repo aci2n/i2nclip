@@ -1,6 +1,5 @@
 import { get, writable } from "svelte/store";
 import { errorMessage } from "../error.ts";
-import type { Files, PreparedFileChange } from "../files.ts";
 import type { MediaDisplay } from "../media/display.ts";
 import { bytesToHex } from "../protocol/bytes.ts";
 import { type Bytes, sameBytes } from "../protocol/chain.ts";
@@ -11,6 +10,7 @@ import {
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { encode } from "../protocol/msgpack.ts";
 import { normalizeTag } from "../protocol/tags.ts";
+import type { Files, PreparedFileChange } from "../services/files.ts";
 import type { ChainStore } from "./chain.ts";
 import { stateCheckpoint } from "./chain.ts";
 import type { ContentStreams } from "./content-streams.ts";
@@ -20,11 +20,11 @@ import {
 	type FileMedia,
 	type FileMediaState,
 } from "./file-media.ts";
-import type { Session } from "./identity.ts";
 import type {
 	MaterializedView,
 	MaterializedViewState,
 } from "./materialized-view.ts";
+import type { Session } from "./session.ts";
 
 export interface LibraryCard extends MediaDisplay {
 	readonly createdSequence: number;
@@ -32,7 +32,7 @@ export interface LibraryCard extends MediaDisplay {
 	readonly deleted: boolean;
 	readonly unavailable: boolean;
 }
-export interface ChainLibraryState {
+export interface LibraryState {
 	readonly cards: readonly LibraryCard[];
 	readonly query: string;
 	readonly deleted: boolean;
@@ -80,8 +80,8 @@ function resourceKey(file: MaterializedFile) {
 function folded(value: string) {
 	return value.trim().normalize("NFC").toLowerCase();
 }
-export type ChainLibrary = ReturnType<typeof createChainLibrary>;
-export function createChainLibrary(
+export type Library = ReturnType<typeof createLibrary>;
+export function createLibrary(
 	session: Session,
 	chain: ChainStore,
 	view: MaterializedView,
@@ -89,8 +89,8 @@ export function createChainLibrary(
 	streams: ContentStreams,
 	signal: AbortSignal,
 	services: Services = {},
-): Pick<ChainLibraryImpl, keyof ChainLibraryImpl> {
-	return new ChainLibraryImpl(
+): Pick<LibraryImpl, keyof LibraryImpl> {
+	return new LibraryImpl(
 		session,
 		chain,
 		view,
@@ -100,7 +100,7 @@ export function createChainLibrary(
 		services,
 	);
 }
-class ChainLibraryImpl {
+class LibraryImpl {
 	private readonly session: Session;
 	private readonly chain: ChainStore;
 	private readonly view: MaterializedView;
@@ -132,7 +132,7 @@ class ChainLibraryImpl {
 	private deleted = false;
 	private error = "";
 	private revision = -1;
-	private readonly state = writable<ChainLibraryState>({
+	private readonly state = writable<LibraryState>({
 		cards: [],
 		query: "",
 		deleted: false,
@@ -187,17 +187,12 @@ class ChainLibraryImpl {
 	}
 	private readonlyView() {
 		const context = get(this.session).context;
-		const member = context
-			? get(this.chain).live?.devices.get(bytesToHex(context.key.publicKey))
-			: null;
 		return (
 			this.signal.aborted ||
 			!context ||
 			!get(this.view).selected ||
 			get(this.view).historical ||
-			get(this.session).pendingRotation ||
-			get(this.session).busy ||
-			member?.revokedAt !== null
+			get(this.session).busy
 		);
 	}
 
@@ -586,7 +581,7 @@ class ChainLibraryImpl {
 							: { kind: "PurgeFiles" as const, ids: [file.id] };
 				await this.chain.append({
 					expected,
-					kind: "data",
+
 					effects: kind === "purge" ? [["purge", [file.id]]] : [],
 					plaintext: encodeOperation(operation),
 					signal,

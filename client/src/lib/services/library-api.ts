@@ -1,10 +1,9 @@
-import type { Checkpoint } from "../chain-storage.ts";
-import { bytesToHex } from "../protocol/bytes.ts";
 import {
 	authorizationHeader,
 	freshNonce,
 	type SigningKey,
-} from "../protocol/crypto.ts";
+} from "../protocol/auth.ts";
+import { bytesToHex } from "../protocol/bytes.ts";
 import {
 	type Bytes,
 	fixedBytes,
@@ -15,10 +14,11 @@ import {
 	safeInteger,
 	sameBytes,
 	sha256,
-} from "../protocol/library-chain.ts";
+} from "../protocol/chain.ts";
 import { CONTENT_TYPE, decode, encode } from "../protocol/msgpack.ts";
 import { checkServer } from "../protocol/server.ts";
-import type { ChainPage, ChainTransport } from "../stores/library-chain.ts";
+import type { Checkpoint } from "../storage/chain.ts";
+import type { ChainPage, ChainTransport } from "../stores/chain.ts";
 
 export interface StorageQuota {
 	readonly maximumBytes: number;

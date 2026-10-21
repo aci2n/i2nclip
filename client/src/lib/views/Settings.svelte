@@ -1,40 +1,27 @@
 <script lang="ts">
 import AboutDialog from "../components/AboutDialog.svelte";
-import DevicesPanel from "../components/DevicesPanel.svelte";
+import LibraryBackup from "../components/LibraryBackup.svelte";
 import PairingSend from "../components/PairingSend.svelte";
 import PasswordSettings from "../components/PasswordSettings.svelte";
 import UploadPreferences from "../components/UploadPreferences.svelte";
 import { fileSize } from "../media/format.ts";
-import { bytesToHex } from "../protocol/bytes.ts";
-import type { Bytes } from "../protocol/chain.ts";
-import { type ChainStore, stateCheckpoint } from "../stores/chain.ts";
-import type { Pairing } from "../stores/chain-pairing.ts";
-import type { ChainQuota } from "../stores/chain-quota.ts";
-import type { ChainUploads } from "../stores/chain-uploads.ts";
-import type { Devices } from "../stores/devices.ts";
-import type { Session } from "../stores/identity.ts";
+import type { Pairing } from "../stores/pairing.ts";
 import type { Preferences } from "../stores/preferences.ts";
+import type { Quota } from "../stores/quota.ts";
+import type { Session } from "../stores/session.ts";
+import type { Uploads } from "../stores/uploads.ts";
 import Setup from "./Setup.svelte";
 
 interface Props {
 	session: Session;
 	pairing: Pairing;
-	quota: ChainQuota | null;
-	uploads: ChainUploads | null;
+	quota: Quota | null;
+	uploads: Uploads | null;
 	preferences: Preferences;
-	devices: Devices | null;
-	chain: ChainStore | null;
 }
-let { session, pairing, quota, uploads, preferences, devices, chain }: Props =
-	$props();
+let { session, pairing, quota, uploads, preferences }: Props = $props();
 let about = $state(false);
 const busy = $derived($session.busy || $pairing.active);
-function revoke(key: Bytes) {
-	const state = $chain?.live;
-	if (state && devices) {
-		void devices.revoke(key, stateCheckpoint(state));
-	}
-}
 </script>
 <div class="settings stack">
 	{#if !$session.configured}
@@ -44,9 +31,8 @@ function revoke(key: Bytes) {
 			<h2>Your library</h2>
 			<p class="address">{$session.serverUrl}</p>
 			<p>
-				The recovery file is your offline safety net. It is never stored on
-				paired devices and cannot be exported from them. Lost devices must
-				re-pair; if all devices are lost, restore the recovery file.
+				Every connected browser has full access. Keep a library backup and its
+				password in case local credentials are lost.
 			</p>
 			<section class="stack" aria-label="Library usage">
 				<h3>Current server usage</h3>
@@ -83,47 +69,52 @@ function revoke(key: Bytes) {
 		</section>
 		<PairingSend
 			state={$pairing}
-			busy={busy || $session.pendingRotation}
+			{busy}
 			onsend={pairing.send}
 			onapprove={pairing.approve}
 			onreject={pairing.rejectVerification}
 			oncancel={pairing.cancel}
 		/>
-		{#if devices && $devices}
-			<DevicesPanel
-				state={$devices}
-				current={$session.context
-					? bytesToHex($session.context.key.publicKey)
-					: ""}
-				{busy}
-				onrevoke={revoke}
-				onprepare={devices.prepareRotation}
-				onsubmit={devices.submitRotation}
-				onreconcile={devices.reconcile}
-			/>
-		{/if}
+		<details class="panel">
+			<summary>Library backup</summary>
+			<div class="stack content">
+				<LibraryBackup
+					password={$session.backup?.password ?? ""}
+					{busy}
+					downloaded={$session.backupDownloaded}
+					onprepare={session.prepareBackup}
+					ondownload={session.downloadBackup}
+					oncopy={session.copyBackupPassword}
+				/>
+				{#if ["prepareBackup", "downloadBackup", "copyBackupPassword"].includes(
+					$session.lastAction,
+				) && $session.error}
+					<p class="error" role="alert">{$session.error}</p>
+				{/if}
+			</div>
+		</details>
 		{#if $session.notice}
 			<p role="status">{$session.notice}</p>
 		{/if}
 		<details class="panel">
-			<summary>Forget this device</summary>
+			<summary>Forget this browser</summary>
 			<div class="stack content">
 				<p>
-					This removes this client's device keys and cached history, including
+					This removes this browser’s credentials and cached history, including
 					its trusted head. Server data and other devices remain. Reconnect by
-					pairing or recovery.
+					pairing or a library backup.
 				</p>
 				<button
 					type="button"
 					class="secondary danger"
 					disabled={busy || $uploads?.uploading}
 					onclick={() => {
-						if (confirm("Forget this device and remove its cached history?")) {
+						if (confirm("Forget this browser and remove its cached history?")) {
 							void session.forget();
 						}
 					}}
 				>
-					Forget device
+					Forget browser
 				</button>
 				{#if $session.lastAction === "forget" && $session.error}
 					<p class="error" role="alert">{$session.error}</p>

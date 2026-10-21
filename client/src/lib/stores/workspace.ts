@@ -1,37 +1,35 @@
-import { createChainApi } from "../chain-api.ts";
-import { createChainStorage } from "../chain-storage.ts";
-import { createFiles } from "../files.ts";
 import { bytesToHex } from "../protocol/bytes.ts";
+import { createFiles } from "../services/files.ts";
+import { createChainApi } from "../services/library-api.ts";
+import { createChainStorage } from "../storage/chain.ts";
 import { createChain } from "./chain.ts";
-import { createChainLibrary } from "./chain-library.ts";
-import { createChainQuota } from "./chain-quota.ts";
-import { createChainUploads } from "./chain-uploads.ts";
 import type { ContentStreams } from "./content-streams.ts";
-import { createDevices } from "./devices.ts";
-import type { LibraryContext, Session } from "./identity.ts";
+import { createLibrary } from "./library.ts";
 import { createMaterializedView } from "./materialized-view.ts";
 import type { Preferences } from "./preferences.ts";
+import { createQuota } from "./quota.ts";
+import type { LibraryContext, Session } from "./session.ts";
+import { createUploads } from "./uploads.ts";
 
-export type ChainWorkspace = ReturnType<typeof createChainWorkspace>;
-export function createChainWorkspace(
+export type Workspace = ReturnType<typeof createWorkspace>;
+export function createWorkspace(
 	context: LibraryContext,
 	session: Session,
 	preferences: Preferences,
 	streams: ContentStreams,
-): Pick<ChainWorkspaceImpl, keyof ChainWorkspaceImpl> {
-	return new ChainWorkspaceImpl(context, session, preferences, streams);
+): Pick<WorkspaceImpl, keyof WorkspaceImpl> {
+	return new WorkspaceImpl(context, session, preferences, streams);
 }
-class ChainWorkspaceImpl {
+class WorkspaceImpl {
 	readonly context: LibraryContext;
 	readonly api: ReturnType<typeof createChainApi>;
 	private readonly cache: ReturnType<typeof createChainStorage>;
 	readonly chain: ReturnType<typeof createChain>;
 	private readonly files: ReturnType<typeof createFiles>;
 	readonly view: ReturnType<typeof createMaterializedView>;
-	readonly quota: ReturnType<typeof createChainQuota>;
-	readonly library: ReturnType<typeof createChainLibrary>;
-	readonly uploads: ReturnType<typeof createChainUploads>;
-	readonly devices: ReturnType<typeof createDevices>;
+	readonly quota: ReturnType<typeof createQuota>;
+	readonly library: ReturnType<typeof createLibrary>;
+	readonly uploads: ReturnType<typeof createUploads>;
 	private started = false;
 	private disposed = false;
 	readonly start = this.startWorkspace.bind(this);
@@ -46,33 +44,28 @@ class ChainWorkspaceImpl {
 		this.api = createChainApi(context.serverUrl, context.key, context.signal);
 		this.cache = createChainStorage(
 			context.serverUrl,
-			bytesToHex(context.identity.library),
+			bytesToHex(context.library),
 		);
 		this.chain = createChain(
 			{
-				genesis: context.identity.genesis,
-				publicKey: context.key.publicKey,
-				signingKey: context.key.privateCryptoKey,
-				secrets: new Map(context.identity.epochs),
-				encryption: {
-					publicKey: context.identity.encryption.publicKey,
-					keyPair: context.encryptionKey,
-				},
-				minimum: context.identity.head,
+				genesis: context.genesis,
+				signing: context.key,
+				encryption: context.encryption,
+				minimum: context.head,
 			},
 			this.cache,
 			this.api,
 			context.signal,
 		);
 		this.files = createFiles(
-			context.identity.library,
+			context.library,
 			this.chain,
 			this.api,
 			context.signal,
 		);
 		this.view = createMaterializedView(this.chain, this.files, context.signal);
-		this.quota = createChainQuota(this.api, context.signal);
-		this.library = createChainLibrary(
+		this.quota = createQuota(this.api, context.signal);
+		this.library = createLibrary(
 			session,
 			this.chain,
 			this.view,
@@ -81,7 +74,7 @@ class ChainWorkspaceImpl {
 			context.signal,
 			{ changed: this.quota.refresh },
 		);
-		this.uploads = createChainUploads(
+		this.uploads = createUploads(
 			session,
 			this.view,
 			this.files,
@@ -90,7 +83,6 @@ class ChainWorkspaceImpl {
 			context.signal,
 			{ settled: this.quota.refresh },
 		);
-		this.devices = createDevices(session, this.chain, this.api, context.signal);
 		if (context.signal.aborted) {
 			this.dispose();
 		} else {
@@ -112,7 +104,6 @@ class ChainWorkspaceImpl {
 		this.disposed = true;
 		this.context.signal.removeEventListener("abort", this.dispose);
 		this.uploads.dispose();
-		this.devices.dispose();
 		this.library.dispose();
 		this.view.dispose();
 		this.chain.dispose();

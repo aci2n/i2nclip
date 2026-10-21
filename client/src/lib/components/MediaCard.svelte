@@ -2,7 +2,7 @@
 import { fileSize, fileType } from "../media/format.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { routeHref } from "../routes.ts";
-import type { LibraryCard } from "../stores/chain-library.ts";
+import type { LibraryCard } from "../stores/library.ts";
 import FilenameEditor from "./FilenameEditor.svelte";
 import TagEditor from "./TagEditor.svelte";
 

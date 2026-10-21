@@ -15,13 +15,7 @@ test("each pairing phase has independent encryption and authenticated context", 
 		bytesToB64url(crypto.getRandomValues(new Uint8Array(64))),
 		"test room",
 	);
-	const directions: Direction[] = [
-		"receiverBinding",
-		"transfer",
-		"acknowledgment",
-		"completion",
-		"activation",
-	];
+	const directions: Direction[] = ["transfer", "acknowledgment"];
 	for (const direction of directions) {
 		const packet = await sealPairing(keys, "test room", direction, [1, true]);
 		assert.deepEqual(await openPairing(keys, "test room", direction, packet), [
@@ -47,7 +41,7 @@ test("only credential transfer permits large packets and all frames are canonica
 		value,
 	);
 	await assert.rejects(
-		sealPairing(keys, "test room", "completion", value),
+		sealPairing(keys, "test room", "acknowledgment", value),
 		/payload/,
 	);
 	await assert.rejects(

@@ -1,11 +1,10 @@
-import assert from "node:assert/strict";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { get } from "svelte/store";
-import { createChainApi } from "../src/lib/chain-api.ts";
-import { createChainStorage } from "../src/lib/chain-storage.ts";
-import { createFiles } from "../src/lib/files.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
-import { createLibraryDevice } from "../src/lib/protocol/device.ts";
+import { createFiles } from "../src/lib/services/files.ts";
+import { createChainApi } from "../src/lib/services/library-api.ts";
+import { createLibraryIdentity } from "../src/lib/services/library-identity.ts";
+import { createChainStorage } from "../src/lib/storage/chain.ts";
 import { createChain } from "../src/lib/stores/chain.ts";
 
 Object.assign(globalThis, { IDBKeyRange });
@@ -16,50 +15,47 @@ export async function liveLibrary(
 	invitation: string,
 	fetcher: typeof fetch = globalThis.fetch,
 ) {
-	const { device, recovery } = await createLibraryDevice(origin);
+	const { identity, checkpoint } = await createLibraryIdentity(
+		origin,
+		new AbortController().signal,
+	);
 	const controller = new AbortController();
-	const api = createChainApi(origin, device.key, controller.signal, fetcher);
+	const api = createChainApi(
+		origin,
+		identity.signing,
+		controller.signal,
+		fetcher,
+	);
 	const cache = createChainStorage(
 		origin,
-		bytesToHex(device.identity.library),
+		bytesToHex(identity.library),
 		new IDBFactory(),
 	);
 	const chain = createChain(
 		{
-			genesis: device.identity.genesis,
-			publicKey: device.key.publicKey,
-			signingKey: device.key.privateCryptoKey,
-			secrets: new Map(device.identity.epochs),
-			minimum: device.identity.head,
+			genesis: identity.genesis,
+			signing: identity.signing,
+			encryption: identity.encryption,
+			minimum: checkpoint,
 		},
 		cache,
 		api,
 		controller.signal,
 	);
-	const files = createFiles(
-		device.identity.library,
-		chain,
-		api,
-		controller.signal,
-	);
+	const files = createFiles(identity.library, chain, api, controller.signal);
 	function dispose() {
 		controller.abort();
+		identity.dispose();
 		files.dispose();
 		chain.dispose();
 		cache.dispose();
 		api.dispose();
 	}
 	try {
-		assert(device.identity.registration);
-		await api.register(
-			invitation,
-			device.identity.genesis,
-			device.identity.registration,
-			controller.signal,
-		);
+		await api.register(invitation, identity.genesis, controller.signal);
 		await chain.sync();
 		return {
-			device,
+			identity,
 			api,
 			chain,
 			files,
@@ -70,8 +66,5 @@ export async function liveLibrary(
 	} catch (error) {
 		dispose();
 		throw error;
-	} finally {
-		recovery.identity.signingKey.seed.fill(0);
-		recovery.identity.epochDerivationSecret.fill(0);
 	}
 }

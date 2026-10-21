@@ -1,5 +1,5 @@
-import { createDatabase, type Database } from "../database.ts";
 import { PBKDF2_ITERATIONS, wrappingKey } from "../protocol/password.ts";
+import { createDatabase, type Database } from "./database.ts";
 export interface SavedSession {
 	readonly revision: string;
 	readonly salt: Uint8Array<ArrayBuffer>;

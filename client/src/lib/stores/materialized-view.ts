@@ -1,9 +1,9 @@
 import { get, type Writable, writable } from "svelte/store";
 import { errorMessage } from "../error.ts";
-import type { Files } from "../files.ts";
 import { bytesToHex } from "../protocol/bytes.ts";
 import type { ChainState, MaterializedFile } from "../protocol/chain-state.ts";
 import type { FileMetadata } from "../protocol/file-objects.ts";
+import type { Files } from "../services/files.ts";
 import type { ChainStore } from "./chain.ts";
 
 export interface MaterializedViewState {

@@ -1,12 +1,7 @@
 import { get, writable } from "svelte/store";
-import {
-	type Checkpoint,
-	clearChainCaches,
-	createChainStorage,
-} from "../chain-storage.ts";
 import { errorMessage } from "../error.ts";
+import type { SigningKey } from "../protocol/auth.ts";
 import { bytesToHex } from "../protocol/bytes.ts";
-import type { SigningKey } from "../protocol/crypto.ts";
 import { createChainApi } from "../services/library-api.ts";
 import {
 	createLibraryIdentity,
@@ -19,11 +14,16 @@ import {
 	sealLocalIdentity,
 } from "../services/library-identity.ts";
 import {
+	type Checkpoint,
+	clearChainCaches,
+	createChainStorage,
+} from "../storage/chain.ts";
+import {
 	createSessionStorage,
 	type SavedSession,
 	type SessionStorage,
 } from "../storage/session.ts";
-import { createChain, stateCheckpoint } from "./library-chain.ts";
+import { createChain, stateCheckpoint } from "./chain.ts";
 export interface LibraryContext {
 	readonly serverUrl: string;
 	readonly key: SigningKey;
@@ -301,7 +301,10 @@ class SessionStoreImpl {
 				`Wrong password or damaged saved identity. ${errorMessage(error)}`,
 			);
 		}
-		signal.throwIfAborted();
+		if (signal.aborted) {
+			opened?.identity.dispose();
+			signal.throwIfAborted();
+		}
 		this.endIdentity();
 		this.wrapping = key;
 		if (opened) {
@@ -735,6 +738,11 @@ class SessionStoreImpl {
 		this.endIdentity();
 		this.wrapping = null;
 		this.disposed = true;
+		this.update({
+			status: this.saved ? "locked" : "new",
+			unlocked: false,
+			busy: false,
+		});
 		this.persistence.dispose();
 	}
 }

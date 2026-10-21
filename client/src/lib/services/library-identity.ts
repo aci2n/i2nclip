@@ -8,6 +8,8 @@
  * Never add a seed getter, JSON credential export, or plaintext callback here.
  * This is an audit boundary, not a sandbox against arbitrary application code.
  */
+
+import type { SigningKey } from "../protocol/auth.ts";
 import {
 	b64urlToBytes,
 	bytesToB64url,
@@ -16,7 +18,6 @@ import {
 	utf8,
 } from "../protocol/bytes.ts";
 import type { Bytes } from "../protocol/chain.ts";
-import type { SigningKey } from "../protocol/crypto.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
 import {
 	openBytes,

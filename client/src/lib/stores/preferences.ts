@@ -1,6 +1,6 @@
 import { writable } from "svelte/store";
-import { createDatabase, type Database } from "../database.ts";
 import { createLog, failureFields } from "../log.ts";
+import { createDatabase, type Database } from "../storage/database.ts";
 
 const KEY = "compressImages";
 export type Preferences = Pick<PreferencesStore, keyof PreferencesStore>;

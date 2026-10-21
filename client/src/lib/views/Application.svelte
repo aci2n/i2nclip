@@ -1,7 +1,7 @@
 <script lang="ts">
 import { onDestroy } from "svelte";
 import { routeHref } from "../routes.ts";
-import { createChainApplication as createApplication } from "../stores/chain-application.ts";
+import { createApplication } from "../stores/application.ts";
 import Library from "./Library.svelte";
 import Media from "./Media.svelte";
 import Settings from "./Settings.svelte";
@@ -113,8 +113,6 @@ function pasteFiles(event: ClipboardEvent) {
 				quota={workspace?.quota ?? null}
 				uploads={workspace?.uploads ?? null}
 				{preferences}
-				devices={workspace?.devices ?? null}
-				chain={workspace?.chain ?? null}
 			/>
 		{:else if $session.configured && $preferences.loading}
 			<p role="status">Loading library…</p>

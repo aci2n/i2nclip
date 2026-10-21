@@ -2,20 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { get } from "svelte/store";
-import { createChainStorage } from "../src/lib/chain-storage.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
 import {
 	type Bytes,
 	createRecord,
 	decryptOperation,
-} from "../src/lib/protocol/library-chain.ts";
+} from "../src/lib/protocol/chain.ts";
 import { createPairingCrypto } from "../src/lib/services/pairing-crypto.ts";
 import type {
 	JoinedRoom,
 	PairingRelay,
 } from "../src/lib/services/pairing-relay.ts";
+import { createChainStorage } from "../src/lib/storage/chain.ts";
 import { createSessionStorage } from "../src/lib/storage/session.ts";
-import { createChain } from "../src/lib/stores/library-chain.ts";
+import { createChain } from "../src/lib/stores/chain.ts";
 import { createPairing } from "../src/lib/stores/pairing.ts";
 import { createSession } from "../src/lib/stores/session.ts";
 import { memoryStorage } from "./memory-database.ts";

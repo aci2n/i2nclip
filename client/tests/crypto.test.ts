@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bytesToHex, hexToBytes, utf8 } from "../src/lib/protocol/bytes.ts";
 import {
 	authorizationHeader,
-	loadSigningKey,
 	requestMessage,
-} from "../src/lib/protocol/crypto.ts";
+} from "../src/lib/protocol/auth.ts";
+import { bytesToHex, hexToBytes, utf8 } from "../src/lib/protocol/bytes.ts";
 import { decode } from "../src/lib/protocol/msgpack.ts";
+import { loadSigningKey } from "./helpers.ts";
 import vectors from "./test-vectors.json" with { type: "json" };
 
 test("native signing identities and HTTP proofs match independent Rust vectors", async () => {

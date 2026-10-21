@@ -1,8 +1,6 @@
-import type { ChainApi } from "./chain-api.ts";
-import { type Checkpoint, equalCheckpoint } from "./chain-storage.ts";
-import { sniffContentType } from "./media/metadata.ts";
-import { automaticTags } from "./media/tags.ts";
-import { bytesToHex, hexToBytes } from "./protocol/bytes.ts";
+import { sniffContentType } from "../media/metadata.ts";
+import { automaticTags } from "../media/tags.ts";
+import { bytesToHex, hexToBytes } from "../protocol/bytes.ts";
 import {
 	type Bytes,
 	compareBytes,
@@ -10,20 +8,20 @@ import {
 	openObject,
 	type StorageEffect,
 	sameBytes,
-} from "./protocol/chain.ts";
+} from "../protocol/chain.ts";
 import {
 	encodeOperation,
 	type FileOperation,
 	type MaterializedFile,
 	type ObjectReference,
-} from "./protocol/chain-state.ts";
+} from "../protocol/chain-state.ts";
 import {
 	CHUNK_BYTES,
 	CHUNK_TAG_BYTES,
 	contentShape,
 	decryptChunk,
 	encryptChunk,
-} from "./protocol/content.ts";
+} from "../protocol/content.ts";
 import {
 	encodeFileMetadata,
 	type FileManifest,
@@ -35,10 +33,12 @@ import {
 	sealFileMetadata,
 	sealManifest,
 	sealThumbnail,
-} from "./protocol/file-objects.ts";
-import type { Metadata } from "./protocol/meta-plain.ts";
-import { uniqueTags } from "./protocol/tags.ts";
-import { type ChainStore, stateCheckpoint } from "./stores/chain.ts";
+} from "../protocol/file-objects.ts";
+import type { Metadata } from "../protocol/meta-plain.ts";
+import { uniqueTags } from "../protocol/tags.ts";
+import { type Checkpoint, equalCheckpoint } from "../storage/chain.ts";
+import { type ChainStore, stateCheckpoint } from "../stores/chain.ts";
+import type { ChainApi } from "./library-api.ts";
 
 export interface PreparedFileChange {
 	readonly expected: Checkpoint;
@@ -407,7 +407,6 @@ class FilesImpl {
 		try {
 			return await this.chain.append({
 				expected: change.expected,
-				kind: "data",
 				effects: change.effects,
 				plaintext,
 				signal,

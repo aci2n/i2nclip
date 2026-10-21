@@ -1,4 +1,4 @@
-import { type Bytes, MAX_PAGE_BLOCKS, sameBytes } from "./protocol/chain.ts";
+import { type Bytes, MAX_PAGE_BLOCKS, sameBytes } from "../protocol/chain.ts";
 
 export interface Checkpoint {
 	readonly sequence: number;

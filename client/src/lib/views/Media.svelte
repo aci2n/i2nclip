@@ -1,11 +1,11 @@
 <script lang="ts">
 import { onDestroy } from "svelte";
 import MediaViewer from "../components/MediaViewer.svelte";
-import type { ChainLibrary } from "../stores/chain-library.ts";
+import type { Library } from "../stores/library.ts";
 
 interface Props {
 	id: string;
-	library: ChainLibrary;
+	library: Library;
 }
 let { id, library }: Props = $props();
 $effect(() => {

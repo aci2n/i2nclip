@@ -5,12 +5,12 @@ import {
 	createRecord,
 	decryptOperation,
 	verifyRecord,
-} from "../src/lib/protocol/library-chain.ts";
+} from "../src/lib/protocol/chain.ts";
 import {
 	encodeOperation,
 	initialChainState,
 	reduceBlock,
-} from "../src/lib/protocol/library-state.ts";
+} from "../src/lib/protocol/chain-state.ts";
 import { encode } from "../src/lib/protocol/msgpack.ts";
 import { createLibraryIdentity } from "../src/lib/services/library-identity.ts";
 import vector from "./shared-seed-vectors.json" with { type: "json" };

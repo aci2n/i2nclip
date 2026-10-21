@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { bodyHash } from "../src/lib/protocol/auth.ts";
 import { bytesToHex, hexToBytes, utf8 } from "../src/lib/protocol/bytes.ts";
 import {
 	CHUNK_BYTES,
@@ -8,7 +9,6 @@ import {
 	encryptChunk,
 	importContentKey,
 } from "../src/lib/protocol/content.ts";
-import { bodyHash } from "../src/lib/protocol/crypto.ts";
 
 import vectors from "./test-vectors.json" with { type: "json" };
 

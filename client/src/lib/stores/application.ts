@@ -1,39 +1,35 @@
 import { get, writable } from "svelte/store";
-import { bytesToHex } from "../protocol/bytes.ts";
-import { createChainPairing } from "./chain-pairing.ts";
-import {
-	type ChainWorkspace,
-	createChainWorkspace,
-} from "./chain-workspace.ts";
 import {
 	type ContentStreams,
 	createContentStreams,
 } from "./content-streams.ts";
 import { createExtensionReceiver } from "./extension.ts";
-import { createSession, type LibraryContext } from "./identity.ts";
+import { createPairing } from "./pairing.ts";
 import { createPreferences } from "./preferences.ts";
 import { createRouting } from "./routing.ts";
+import { createSession, type LibraryContext } from "./session.ts";
+import { createWorkspace, type Workspace } from "./workspace.ts";
 
 interface Options {
 	session?: ReturnType<typeof createSession>;
 	preferences?: ReturnType<typeof createPreferences>;
 	routing?: ReturnType<typeof createRouting>;
 }
-export type ChainApplication = ReturnType<typeof createChainApplication>;
-export function createChainApplication(
+export type Application = ReturnType<typeof createApplication>;
+export function createApplication(
 	options: Options = {},
-): Pick<ChainApplicationImpl, keyof ChainApplicationImpl> {
-	return new ChainApplicationImpl(options);
+): Pick<ApplicationImpl, keyof ApplicationImpl> {
+	return new ApplicationImpl(options);
 }
-class ChainApplicationImpl {
+class ApplicationImpl {
 	readonly session: ReturnType<typeof createSession>;
 	readonly preferences: ReturnType<typeof createPreferences>;
 	readonly routing: ReturnType<typeof createRouting>;
-	readonly pairing: ReturnType<typeof createChainPairing>;
-	private readonly state = writable<{ workspace: ChainWorkspace | null }>({
+	readonly pairing: ReturnType<typeof createPairing>;
+	private readonly state = writable<{ workspace: Workspace | null }>({
 		workspace: null,
 	});
-	private workspace: ChainWorkspace | null = null;
+	private workspace: Workspace | null = null;
 	private streams: ContentStreams | null = null;
 	private context: LibraryContext | null = null;
 	private extension: ReturnType<typeof createExtensionReceiver> | null = null;
@@ -53,7 +49,7 @@ class ChainApplicationImpl {
 		this.session = session;
 		this.preferences = preferences;
 		this.routing = routing;
-		this.pairing = createChainPairing(session, {
+		this.pairing = createPairing(session, {
 			chain: () => this.workspace?.chain ?? null,
 		});
 	}
@@ -105,7 +101,7 @@ class ChainApplicationImpl {
 			!this.workspace &&
 			this.streams
 		) {
-			this.workspace = createChainWorkspace(
+			this.workspace = createWorkspace(
 				context,
 				this.session,
 				this.preferences,
@@ -127,24 +123,9 @@ class ChainApplicationImpl {
 
 	private captureUploads() {
 		const workspace = this.workspace;
-		const session = get(this.session);
-		if (
-			!workspace ||
-			get(workspace.view).historical ||
-			session.pendingRotation
-		) {
-			return null;
-		}
-		const live = get(workspace.chain).live;
-		if (
-			live &&
-			session.context &&
-			live.devices.get(bytesToHex(session.context.key.publicKey))?.revokedAt !==
-				null
-		) {
-			return null;
-		}
-		return workspace.uploads;
+		return workspace && !get(workspace.view).historical
+			? workspace.uploads
+			: null;
 	}
 
 	private uploadDroppedFiles(files: File[]) {

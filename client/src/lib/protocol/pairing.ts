@@ -4,26 +4,12 @@ import { decode, encode } from "./msgpack.ts";
 import { checkServer } from "./server.ts";
 import { document } from "./value.ts";
 export interface PairingKeys {
-	readonly receiverBinding: CryptoKey;
 	readonly transfer: CryptoKey;
-	readonly completion: CryptoKey;
-	readonly activation: CryptoKey;
 	readonly acknowledgment: CryptoKey;
 	readonly verificationCode: string;
 }
-export type Direction =
-	| "receiverBinding"
-	| "transfer"
-	| "acknowledgment"
-	| "completion"
-	| "activation";
-const PHASE: Record<Direction, number> = {
-	receiverBinding: 3,
-	transfer: 4,
-	acknowledgment: 5,
-	completion: 6,
-	activation: 7,
-};
+export type Direction = "transfer" | "acknowledgment";
+const PHASE: Record<Direction, number> = { transfer: 4, acknowledgment: 5 };
 export const MAX_PAIRING_PACKET_BYTES = 1024 * 1024;
 function plaintextLimit(direction: Direction) {
 	return direction === "transfer" ? MAX_PAIRING_PACKET_BYTES - 64 : 4096;
@@ -148,10 +134,7 @@ export async function pairingKeys(
 	);
 	try {
 		return {
-			receiverBinding: await derive("receiver-binding"),
 			transfer: await derive("transfer"),
-			completion: await derive("completion"),
-			activation: await derive("activation"),
 			acknowledgment: await derive("acknowledgment"),
 			verificationCode: formatVerificationCode(verification),
 		};

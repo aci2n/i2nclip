@@ -3,16 +3,14 @@ import {
 	type Bytes,
 	compareBytes,
 	fixedBytes,
-	MAX_AUTHORIZED_DEVICES,
 	MAX_BLOCK_BYTES,
 	MAX_PURGE_FILES,
+	parseGenesis,
 	type StorageEffect,
 	sameBytes,
 	type VerifiedBlock,
 } from "./chain.ts";
-import { validateEpochEnvelopes } from "./epoch-envelope.ts";
 import { decode, encode } from "./msgpack.ts";
-import { parseRecoveryGenesis } from "./recovery-key.ts";
 
 export interface ObjectReference {
 	readonly hash: Bytes;
@@ -40,20 +38,11 @@ export interface MaterializedFile {
 	readonly deleted: boolean;
 	readonly purged: boolean;
 }
-export interface DeviceMembership {
-	readonly publicKey: Bytes;
-	readonly encryptionPublicKey: Bytes;
-	readonly authorizedAt: number;
-	readonly revokedAt: number | null;
-}
 export interface ChainState {
 	readonly library: Bytes;
+	readonly publicKey: Bytes;
 	readonly head: Bytes;
 	readonly sequence: number;
-	readonly epoch: number;
-	readonly recoveryPublicKey: Bytes;
-	readonly epochSalt: Bytes;
-	readonly devices: ReadonlyMap<string, DeviceMembership>;
 	readonly files: ReadonlyMap<string, MaterializedFile>;
 }
 function invalid(reason: string): never {
@@ -141,18 +130,13 @@ export function decodeOperation(plaintext: Bytes): FileOperation {
 	}
 	return operation;
 }
-export async function initialChainState(
-	genesisBytes: Bytes,
-): Promise<ChainState> {
-	const root = await parseRecoveryGenesis(genesisBytes);
+export async function initialChainState(bytes: Bytes): Promise<ChainState> {
+	const root = await parseGenesis(bytes);
 	return {
 		library: root.hash,
+		publicKey: root.publicKey,
 		head: root.hash,
 		sequence: 0,
-		epoch: 1,
-		recoveryPublicKey: root.recoveryPublicKey,
-		epochSalt: root.epochSalt,
-		devices: new Map(),
 		files: new Map(),
 	};
 }
@@ -232,111 +216,24 @@ function applyFiles(
 	return files;
 }
 
-/** Pure replay of a cryptographically verified record. No object fetches or key lookup. */
+/** Pure reduction of an already cryptographically verified operation. */
 export function reduceBlock(
 	state: ChainState,
 	record: VerifiedBlock,
-	plaintext?: Bytes,
+	plaintext: Bytes,
 ): ChainState {
 	const body = record.body;
 	if (
 		!sameBytes(state.library, body.library) ||
 		!sameBytes(state.head, body.previous) ||
-		body.sequence !== state.sequence + 1 ||
-		body.epoch !== state.epoch
+		body.sequence !== state.sequence + 1
 	) {
-		invalid("parent, sequence, library, or epoch mismatch");
-	}
-	if (
-		state.sequence === 0 &&
-		(body.kind !== "enroll" || !sameBytes(body.signer, state.recoveryPublicKey))
-	) {
-		invalid("first block must be recovery-signed enrollment");
-	}
-	const signer = state.devices.get(bytesToHex(body.signer));
-	const recoverySigned = sameBytes(body.signer, state.recoveryPublicKey);
-	if (
-		body.kind === "rotate"
-			? !recoverySigned
-			: recoverySigned
-				? body.kind === "data"
-				: !signer || signer.revokedAt !== null
-	) {
-		invalid("unauthorized signer");
-	}
-	let files = state.files;
-	let devices = state.devices;
-	let epoch = state.epoch;
-	let epochSalt = state.epochSalt;
-	if (body.kind === "data") {
-		if (!plaintext) {
-			invalid("missing decrypted operation");
-		}
-		files = applyFiles(state, record, plaintext);
-	} else {
-		if (plaintext) {
-			invalid("unexpected private operation");
-		}
-		const next = new Map(devices);
-		if (body.kind === "revoke") {
-			const key = body.effects[0] as Bytes;
-			const target = devices.get(bytesToHex(key));
-			if (
-				!target ||
-				target.revokedAt !== null ||
-				(!recoverySigned &&
-					[...devices.values()].filter((device) => device.revokedAt === null)
-						.length <= 1)
-			) {
-				invalid("revocation requires an active target and surviving device");
-			}
-			next.set(bytesToHex(key), { ...target, revokedAt: body.sequence });
-		} else if (body.kind === "enroll") {
-			const key = fixedBytes(body.effects[0]);
-			const encryptionPublicKey = fixedBytes(body.effects[1]);
-			if (
-				sameBytes(key, state.recoveryPublicKey) ||
-				next.has(bytesToHex(key)) ||
-				[...next.values()].some((device) =>
-					sameBytes(device.encryptionPublicKey, encryptionPublicKey),
-				)
-			) {
-				invalid("device key already used");
-			}
-			if (
-				[...next.values()].filter((device) => device.revokedAt === null)
-					.length >= MAX_AUTHORIZED_DEVICES
-			) {
-				invalid("authorized device limit reached");
-			}
-			next.set(bytesToHex(key), {
-				publicKey: key,
-				encryptionPublicKey,
-				authorizedAt: body.sequence,
-				revokedAt: null,
-			});
-		} else {
-			const [nextEpoch, salt, envelopes] = body.effects as readonly [
-				number,
-				Bytes,
-				unknown,
-			];
-			if (nextEpoch !== epoch + 1 || !Number.isSafeInteger(nextEpoch)) {
-				invalid("epoch must advance by one");
-			}
-			validateEpochEnvelopes(envelopes, [...devices.values()]);
-			epoch = nextEpoch;
-			epochSalt = fixedBytes(salt);
-		}
-		devices = next;
+		invalid("parent, sequence, or library mismatch");
 	}
 	return {
 		...state,
 		head: record.hash,
 		sequence: body.sequence,
-		epoch,
-		epochSalt,
-		devices,
-		files,
+		files: applyFiles(state, record, plaintext),
 	};
 }

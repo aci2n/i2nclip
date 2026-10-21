@@ -6,8 +6,8 @@ import {
 	type CachedBlock,
 	clearChainCaches,
 	createChainStorage,
-} from "../src/lib/chain-storage.ts";
-import { createDatabase } from "../src/lib/database.ts";
+} from "../src/lib/storage/chain.ts";
+import { createDatabase } from "../src/lib/storage/database.ts";
 
 Object.defineProperty(globalThis, "IDBKeyRange", { value: IDBKeyRange });
 const hash = (n: number) => n.toString(16).padStart(64, "0");

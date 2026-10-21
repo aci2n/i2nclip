@@ -1,9 +1,5 @@
 import * as opaque from "@serenity-kit/opaque";
-import {
-	type Bytes,
-	fixedBytes,
-	sameBytes,
-} from "../protocol/library-chain.ts";
+import { type Bytes, fixedBytes, sameBytes } from "../protocol/chain.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
 import {
 	openPairing,

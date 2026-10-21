@@ -1,21 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get, writable } from "svelte/store";
-import { createPersistence } from "../src/lib/persistence.ts";
+import { createSessionStorage } from "../src/lib/storage/session.ts";
 import type { ChainStore, ChainView } from "../src/lib/stores/chain.ts";
-import { createChainUploads } from "../src/lib/stores/chain-uploads.ts";
-import { createSession } from "../src/lib/stores/identity.ts";
 import { createMaterializedView } from "../src/lib/stores/materialized-view.ts";
 import { createPreferences } from "../src/lib/stores/preferences.ts";
+import { createSession } from "../src/lib/stores/session.ts";
+import { createUploads } from "../src/lib/stores/uploads.ts";
 import { deferred } from "./helpers.ts";
 import { initialSessionState, registerSession } from "./library-fixture.ts";
 import { memoryStorage } from "./memory-database.ts";
 
 async function fixture(t: test.TestContext, uninitialized = false) {
 	const session = createSession({
-		persistence: createPersistence(memoryStorage().connect()),
+		persistence: createSessionStorage(memoryStorage().connect()),
 		download: () => {},
 		http: { registered: async () => false, register: async () => {} },
+		verify: async (_identity, head) => head,
 	});
 	t.after(session.dispose);
 	await session.load();
@@ -35,9 +36,6 @@ async function fixture(t: test.TestContext, uninitialized = false) {
 		storageError: "",
 	});
 	const chain: ChainStore = {
-		keyring() {
-			throw new Error("Key delivery is not used by this fixture.");
-		},
 		subscribe: state.subscribe,
 		at: async () => initial,
 		sync: async () => {
@@ -77,7 +75,7 @@ test("uploads continue after individual failures and ignore late progress", asyn
 	const names: string[] = [];
 	const late: Array<(percent: number) => void> = [];
 	let reads = 0;
-	const uploads = createChainUploads(
+	const uploads = createUploads(
 		f.session,
 		f.view,
 		{
@@ -131,7 +129,7 @@ test("unsupported local sizes are rejected before preparation or quota reads", a
 	const f = await fixture(t);
 	let prepared = 0;
 	let reads = 0;
-	const uploads = createChainUploads(
+	const uploads = createUploads(
 		f.session,
 		f.view,
 		{ upload: async () => ({ id: "unused" }) },
@@ -165,7 +163,7 @@ test("selecting a historical view cancels preparation and prevents publishing", 
 	const preparing = deferred();
 	const prepared = deferred<File>();
 	let published = 0;
-	const uploads = createChainUploads(
+	const uploads = createUploads(
 		f.session,
 		f.view,
 		{
@@ -203,7 +201,7 @@ test("bounded eligible compression can bring an oversized image under quota befo
 	let thumbnails = 0;
 	let uploaded = 0;
 	let fits = true;
-	const uploads = createChainUploads(
+	const uploads = createUploads(
 		f.session,
 		f.view,
 		{
@@ -266,7 +264,7 @@ test("a capture received on unlock waits for initial verified materialization", 
 	const f = await fixture(t, true);
 	let uploads = 0;
 	assert.equal(get(f.view).selected, null);
-	const batch = createChainUploads(
+	const batch = createUploads(
 		f.session,
 		f.view,
 		{

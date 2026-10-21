@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
-import { createPersistence } from "../src/lib/persistence.ts";
-import { createSession } from "../src/lib/stores/identity.ts";
+import { createSessionStorage } from "../src/lib/storage/session.ts";
 import { createPreferences } from "../src/lib/stores/preferences.ts";
+import { createSession } from "../src/lib/stores/session.ts";
 import { deferred } from "./helpers.ts";
 import { memoryStorage } from "./memory-database.ts";
 
@@ -26,7 +26,9 @@ test("initial storage loads are explicit, shared and never repeated after comple
 		reads.push("preferences");
 		return preferencesRead.promise;
 	});
-	const session = createSession({ persistence: createPersistence(sessionDb) });
+	const session = createSession({
+		persistence: createSessionStorage(sessionDb),
+	});
 	const preferences = createPreferences(preferencesDb);
 	t.after(session.dispose);
 	t.after(preferences.dispose);
@@ -52,7 +54,7 @@ test("initial storage loads are explicit, shared and never repeated after comple
 test("disposed session and preferences cannot begin initial reads", async (t) => {
 	const db = memoryStorage().connect();
 	const read = t.mock.method(db, "read", async () => undefined);
-	const session = createSession({ persistence: createPersistence(db) });
+	const session = createSession({ persistence: createSessionStorage(db) });
 	const preferences = createPreferences(db);
 	t.after(session.dispose);
 	t.after(preferences.dispose);

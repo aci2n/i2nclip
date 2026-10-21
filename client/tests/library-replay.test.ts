@@ -1,24 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
-import { createChainStorage } from "../src/lib/chain-storage.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
 import {
 	type Bytes,
 	createRecord,
 	type VerifiedBlock,
 	verifyRecord,
-} from "../src/lib/protocol/library-chain.ts";
-import { encodeOperation } from "../src/lib/protocol/library-state.ts";
+} from "../src/lib/protocol/chain.ts";
+import { encodeOperation } from "../src/lib/protocol/chain-state.ts";
 import {
 	createLibraryIdentity,
 	type LibraryIdentity,
 } from "../src/lib/services/library-identity.ts";
+import { createChainStorage } from "../src/lib/storage/chain.ts";
 import {
 	type ChainTransport,
 	createChain,
 	stateCheckpoint,
-} from "../src/lib/stores/library-chain.ts";
+} from "../src/lib/stores/chain.ts";
 
 Object.defineProperty(globalThis, "IDBKeyRange", { value: IDBKeyRange });
 class History implements ChainTransport {

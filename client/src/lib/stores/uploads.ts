@@ -1,19 +1,18 @@
 import { get, writable } from "svelte/store";
-import type { ChainApi } from "../chain-api.ts";
 import { errorMessage } from "../error.ts";
-import type { Files } from "../files.ts";
 import { canCompressImage } from "../media/image.ts";
 import { PREPARATION_BYTES, prepareFile } from "../media/prepare.ts";
 import { thumbnail } from "../media/thumbnail.ts";
 import type { UploadState } from "../media/upload-state.ts";
-import { bytesToHex } from "../protocol/bytes.ts";
 import { contentShape } from "../protocol/content.ts";
 import { manifestSize } from "../protocol/file-objects.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
+import type { Files } from "../services/files.ts";
+import type { ChainApi } from "../services/library-api.ts";
 import { stateCheckpoint } from "./chain.ts";
-import type { Session } from "./identity.ts";
 import type { MaterializedView } from "./materialized-view.ts";
 import type { Preferences } from "./preferences.ts";
+import type { Session } from "./session.ts";
 
 interface ActiveUpload {
 	name: string;
@@ -35,8 +34,8 @@ const empty = (): UploadState => ({
 	completed: [],
 	status: "",
 });
-export type ChainUploads = ReturnType<typeof createChainUploads>;
-export function createChainUploads(
+export type Uploads = ReturnType<typeof createUploads>;
+export function createUploads(
 	session: Session,
 	view: MaterializedView,
 	files: Pick<Files, "upload">,
@@ -44,8 +43,8 @@ export function createChainUploads(
 	preferences: Preferences,
 	signal: AbortSignal,
 	services: Services = {},
-): Pick<ChainUploadsImpl, keyof ChainUploadsImpl> {
-	return new ChainUploadsImpl(
+): Pick<UploadsImpl, keyof UploadsImpl> {
+	return new UploadsImpl(
 		session,
 		view,
 		files,
@@ -55,7 +54,7 @@ export function createChainUploads(
 		services,
 	);
 }
-class ChainUploadsImpl {
+class UploadsImpl {
 	private readonly session: Session;
 	private readonly view: MaterializedView;
 	private readonly files: Pick<Files, "upload">;
@@ -100,33 +99,17 @@ class ChainUploadsImpl {
 
 	private allowed() {
 		const source = get(this.view);
-		const context = get(this.session).context;
 		return (
 			Boolean(source.selected) &&
-			Boolean(context) &&
+			Boolean(get(this.session).context) &&
 			!source.historical &&
-			!get(this.session).pendingRotation &&
-			!this.signal.aborted &&
-			source.selected?.devices.get(
-				context ? bytesToHex(context.key.publicKey) : "",
-			)?.revokedAt === null
+			!this.signal.aborted
 		);
 	}
 	private guardBatch() {
-		const source = get(this.view);
-		const context = get(this.session).context;
-		const revoked = Boolean(
-			source.selected &&
-				context &&
-				!source.historical &&
-				source.selected.devices.get(bytesToHex(context.key.publicKey))
-					?.revokedAt !== null,
-		);
-		if (source.historical || get(this.session).pendingRotation || revoked) {
+		if (!this.allowed()) {
 			this.batch?.abort(
-				new Error(
-					"Uploads stopped because the selected view or device authority changed.",
-				),
+				new Error("Uploads stopped because the selected view changed."),
 			);
 		}
 	}
@@ -146,7 +129,6 @@ class ChainUploadsImpl {
 			this.signal.aborted ||
 			!get(this.session).context ||
 			get(this.view).historical ||
-			get(this.session).pendingRotation ||
 			(get(this.view).selected && !this.allowed())
 		) {
 			return false;

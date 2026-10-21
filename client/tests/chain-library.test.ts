@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get, writable } from "svelte/store";
-import type { Files } from "../src/lib/files.ts";
-import { createPersistence } from "../src/lib/persistence.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
 import { createRecord } from "../src/lib/protocol/chain.ts";
 import {
@@ -14,12 +12,14 @@ import {
 	type FileMetadata,
 	newFileContent,
 } from "../src/lib/protocol/file-objects.ts";
+import type { Files } from "../src/lib/services/files.ts";
+import { createSessionStorage } from "../src/lib/storage/session.ts";
 import type { ChainStore, ChainView } from "../src/lib/stores/chain.ts";
 import { stateCheckpoint } from "../src/lib/stores/chain.ts";
-import { createChainLibrary } from "../src/lib/stores/chain-library.ts";
 import type { ContentStreams } from "../src/lib/stores/content-streams.ts";
-import { createSession } from "../src/lib/stores/identity.ts";
+import { createLibrary } from "../src/lib/stores/library.ts";
 import { createMaterializedView } from "../src/lib/stores/materialized-view.ts";
+import { createSession } from "../src/lib/stores/session.ts";
 import { deferred } from "./helpers.ts";
 import { initialSessionState, registerSession } from "./library-fixture.ts";
 import { memoryStorage } from "./memory-database.ts";
@@ -27,9 +27,10 @@ import { memoryStorage } from "./memory-database.ts";
 const filled = (n: number) => new Uint8Array(32).fill(n);
 async function fixture(t: test.TestContext) {
 	const session = createSession({
-		persistence: createPersistence(memoryStorage().connect()),
+		persistence: createSessionStorage(memoryStorage().connect()),
 		download: () => {},
 		http: { registered: async () => false, register: async () => {} },
+		verify: async (_identity, head) => head,
 	});
 	t.after(session.dispose);
 	await session.load();
@@ -54,9 +55,6 @@ async function fixture(t: test.TestContext) {
 	let commits = 0;
 	let commitWait: Promise<void> = Promise.resolve();
 	const chain: ChainStore = {
-		keyring() {
-			throw new Error("Key delivery is not used by this fixture.");
-		},
 		subscribe: source.subscribe,
 		sync: async () => state,
 		at: async (sequence) => {
@@ -72,18 +70,11 @@ async function fixture(t: test.TestContext) {
 					library: state.library,
 					sequence: state.sequence + 1,
 					previous: state.head,
-					epoch: state.epoch,
-					signer: context.key.publicKey,
-					kind: change.kind,
 					effects: change.effects,
 				},
-				context.key.privateCryptoKey,
-				change.kind === "data"
-					? {
-							secret: context.identity.epochs[0][1],
-							plaintext: change.plaintext ?? new Uint8Array(),
-						}
-					: undefined,
+				context.key,
+				context.encryption,
+				change.plaintext,
 			);
 			state = reduceBlock(state, record, change.plaintext);
 			history.set(state.sequence, state);
@@ -94,7 +85,7 @@ async function fixture(t: test.TestContext) {
 	};
 	await chain.append({
 		expected: stateCheckpoint(state),
-		kind: "data",
+
 		effects: [["publish", id, filled(9)]],
 		plaintext: encodeOperation({
 			kind: "AddFile",
@@ -157,7 +148,7 @@ async function fixture(t: test.TestContext) {
 			signal.throwIfAborted();
 			return chain.append({
 				expected: change.expected,
-				kind: "data",
+
 				effects: change.effects,
 				plaintext: encodeOperation(change.operation),
 				signal,
@@ -194,7 +185,7 @@ async function fixture(t: test.TestContext) {
 		},
 		dispose() {},
 	};
-	const library = createChainLibrary(
+	const library = createLibrary(
 		session,
 		chain,
 		view,
@@ -243,7 +234,7 @@ test("metadata changes render only after acceptance and historical views reject 
 	assert.equal(await update, true);
 	await f.view.index();
 	assert.equal(get(f.library).cards[0].metadata?.name, "updated.txt");
-	assert.equal(await f.view.select(2), true);
+	assert.equal(await f.view.select(1), true);
 	await f.view.index();
 	assert.equal(get(f.library).cards[0].metadata?.name, "original.txt");
 	assert.equal(get(f.library).readonly, true);
@@ -259,7 +250,7 @@ test("metadata changes render only after acceptance and historical views reject 
 	assert.equal(await f.library.restore(f.id), false);
 	assert.equal(await f.library.purge(f.id), false);
 	assert.equal(f.stats().commits, 1);
-	assert.equal(await f.view.select(3), true);
+	assert.equal(await f.view.select(2), true);
 	assert.equal(get(f.library).readonly, true);
 });
 

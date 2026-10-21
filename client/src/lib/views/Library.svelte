@@ -4,16 +4,16 @@ import HistorySelector from "../components/HistorySelector.svelte";
 import LibrarySearch from "../components/LibrarySearch.svelte";
 import MediaCard from "../components/MediaCard.svelte";
 import MediaDialog from "../components/MediaDialog.svelte";
-import Uploads from "../components/Uploads.svelte";
+import UploadStatus from "../components/Uploads.svelte";
 import type { ChainStore } from "../stores/chain.ts";
-import type { ChainLibrary } from "../stores/chain-library.ts";
-import type { ChainUploads } from "../stores/chain-uploads.ts";
+import type { Library } from "../stores/library.ts";
 import type { MaterializedView } from "../stores/materialized-view.ts";
+import type { Uploads } from "../stores/uploads.ts";
 import { pickFiles, selectFiles } from "../ui/dom.ts";
 
 interface Props {
-	library: ChainLibrary;
-	uploads: ChainUploads;
+	library: Library;
+	uploads: Uploads;
 	view: MaterializedView;
 	chain: ChainStore;
 }
@@ -92,7 +92,7 @@ function movePreview(step: number) {
 		Deleted files
 	</button>
 </fieldset>
-<Uploads
+<UploadStatus
 	uploading={$uploads.uploading}
 	progress={$uploads.progress}
 	failures={$uploads.failures}

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
-import type { ChainApi } from "../src/lib/chain-api.ts";
+import type { ChainApi } from "../src/lib/services/library-api.ts";
 
 type QuotaApi = Pick<ChainApi, "quota">;
 
-import { createChainQuota } from "../src/lib/stores/chain-quota.ts";
+import { createQuota } from "../src/lib/stores/quota.ts";
 import { assertPresent } from "./assert.ts";
 import { deferred } from "./helpers.ts";
 
@@ -16,7 +16,7 @@ function fixture(t: test.TestContext, http: QuotaApi) {
 		signal: controller.signal,
 		invalidate: () => controller.abort(),
 	};
-	const quota = createChainQuota(http, session.signal);
+	const quota = createQuota(http, session.signal);
 	t.after(quota.dispose);
 	session.signal.addEventListener("abort", quota.dispose, { once: true });
 	return { session, quota };

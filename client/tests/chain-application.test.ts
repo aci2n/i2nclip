@@ -2,13 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { get } from "svelte/store";
-import { createPersistence } from "../src/lib/persistence.ts";
-import { bytesToHex } from "../src/lib/protocol/bytes.ts";
 import { encode } from "../src/lib/protocol/msgpack.ts";
-import { createChainApplication as createApplication } from "../src/lib/stores/chain-application.ts";
-import { createSession } from "../src/lib/stores/identity.ts";
+import { createSessionStorage } from "../src/lib/storage/session.ts";
+import { createApplication } from "../src/lib/stores/application.ts";
 import { createPreferences } from "../src/lib/stores/preferences.ts";
-import { registerSession, sessionEnrollment } from "./library-fixture.ts";
+import { createSession } from "../src/lib/stores/session.ts";
+import { registerSession } from "./library-fixture.ts";
 import { memoryStorage } from "./memory-database.ts";
 
 function browserFixture(t: test.TestContext) {
@@ -40,7 +39,7 @@ test("application initializes before synchronous subscriptions and detaches navi
 	const browser = browserFixture(t);
 	const storage = memoryStorage();
 	const session = createSession({
-		persistence: createPersistence(storage.connect()),
+		persistence: createSessionStorage(storage.connect()),
 	});
 	const preferences = createPreferences(storage.connect());
 	const app = createApplication({ session, preferences });
@@ -60,7 +59,7 @@ test("application initializes before synchronous subscriptions and detaches navi
 	browser.location.hash = "#/settings";
 	browser.dispatchEvent(new Event("hashchange"));
 	assert.equal(get(app.routing).page, "library");
-	assert.equal(get(app.session).status, "locked");
+	assert.equal(get(app.session).status, "new");
 });
 
 test("application starts initial reads and receiver exactly once, and cannot restart after disposal", async (t) => {
@@ -75,7 +74,7 @@ test("application starts initial reads and receiver exactly once, and cannot res
 	);
 	const listeners = t.mock.method(browser, "addEventListener");
 	const app = createApplication({
-		session: createSession({ persistence: createPersistence(sessionDb) }),
+		session: createSession({ persistence: createSessionStorage(sessionDb) }),
 		preferences: createPreferences(preferencesDb),
 	});
 	t.after(app.dispose);
@@ -104,7 +103,7 @@ test("application disposal before start leaves storage and receiver untouched", 
 	const read = t.mock.method(db, "read", async () => undefined);
 	const listeners = t.mock.method(browser, "addEventListener");
 	const app = createApplication({
-		session: createSession({ persistence: createPersistence(db) }),
+		session: createSession({ persistence: createSessionStorage(db) }),
 		preferences: createPreferences(memoryStorage().connect()),
 	});
 	t.after(app.dispose);
@@ -133,7 +132,7 @@ test("failed receiver setup releases its subscription and application resources"
 	);
 	const db = memoryStorage().connect();
 	const read = t.mock.method(db, "read", async () => undefined);
-	const session = createSession({ persistence: createPersistence(db) });
+	const session = createSession({ persistence: createSessionStorage(db) });
 	let activeSubscriptions = 0;
 	const subscribe = session.subscribe;
 	t.mock.method(
@@ -156,7 +155,7 @@ test("failed receiver setup releases its subscription and application resources"
 	assert.throws(app.start, /Receiver setup failed/);
 	assert.equal(activeSubscriptions, 0);
 	assert.equal(read.mock.callCount(), 0);
-	assert.equal(get(session).status, "locked");
+	assert.equal(get(session).status, "new");
 	assert(remove.mock.calls.some((call) => call.arguments[0] === "hashchange"));
 	app.start();
 	assert.equal(activeSubscriptions, 0);
@@ -166,7 +165,7 @@ test("disposal from a synchronous startup notification detaches the new subscrip
 	browserFixture(t);
 	const db = memoryStorage().connect();
 	const read = t.mock.method(db, "read", async () => undefined);
-	const session = createSession({ persistence: createPersistence(db) });
+	const session = createSession({ persistence: createSessionStorage(db) });
 	let active = 0;
 	const subscribe = session.subscribe;
 	t.mock.method(
@@ -224,9 +223,10 @@ test("one root workspace survives navigation, including deep links, and historic
 		}
 	});
 	const session = createSession({
-		persistence: createPersistence(memoryStorage().connect()),
+		persistence: createSessionStorage(memoryStorage().connect()),
 		download: () => {},
 		http: { registered: async () => false, register: async () => {} },
+		verify: async (_identity, head) => head,
 	});
 	const app = createApplication({
 		session,
@@ -240,14 +240,8 @@ test("one root workspace survives navigation, including deep links, and historic
 		}
 		const after = url.searchParams.get("after");
 		assert.ok(after);
-		const first = await sessionEnrollment(session);
 		return new Response(
-			encode([
-				first.hash,
-				first.body.sequence,
-				after === bytesToHex(first.body.library) ? [first.bytes] : [],
-				null,
-			]),
+			encode([session.pairingIdentity().identity.library, 0, [], null]),
 		);
 	});
 	app.start();
