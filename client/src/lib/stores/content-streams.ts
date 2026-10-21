@@ -363,6 +363,7 @@ class ContentStreamsStoreImpl {
 	private async downloadContent(
 		source: ContentSource,
 		start: (url: string) => unknown,
+		lifetime?: AbortSignal,
 	) {
 		let finish: (error?: Error) => void = () => {};
 		const done = new Promise<void>((resolve, reject) => {
@@ -375,7 +376,7 @@ class ContentStreamsStoreImpl {
 		});
 		// Observe rejection before waiting for initialization or a browser request.
 		void done.catch(() => {});
-		const lease = await this.openStream(source, undefined, finish);
+		const lease = await this.openStream(source, lifetime, finish);
 		const timer = setTimeout(
 			() => finish(new Error("The browser did not start the download.")),
 			BRIDGE_TIMEOUT_MS,

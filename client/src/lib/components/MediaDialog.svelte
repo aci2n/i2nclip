@@ -1,11 +1,11 @@
 <script lang="ts">
-import type { MediaState } from "../stores/media-item.ts";
+import type { MediaDisplay } from "../media/display.ts";
 import { modal } from "../ui/dom.ts";
 import { previewSwipes } from "../ui/preview-swipes.ts";
 import MediaContent from "./MediaContent.svelte";
 
 interface Props {
-	selected?: MediaState;
+	selected?: MediaDisplay;
 	opener?: HTMLElement;
 	hasPrevious?: boolean;
 	hasNext?: boolean;

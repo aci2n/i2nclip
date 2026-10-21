@@ -1,8 +1,8 @@
 <script lang="ts">
-import type { MediaState } from "../stores/media-item.ts";
+import type { MediaDisplay } from "../media/display.ts";
 
 interface Props {
-	media: MediaState;
+	media: MediaDisplay;
 	presentation?: "dialog" | "page";
 }
 let { media, presentation = "page" }: Props = $props();

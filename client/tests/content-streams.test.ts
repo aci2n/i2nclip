@@ -270,3 +270,19 @@ test("concurrent requests keep cancellation separate and release read capacity",
 	peers[1].send({ kind: "complete" });
 	peers[2].send({ kind: "complete" });
 });
+
+test("an aborted file lifetime cannot start a download after asynchronous stream setup", async (t) => {
+	const f = fixture(t);
+	const file = new AbortController();
+	let started = 0;
+	const downloading = f.streams.download(
+		f.source,
+		() => {
+			started++;
+		},
+		file.signal,
+	);
+	file.abort();
+	await assert.rejects(downloading, /abort/i);
+	assert.equal(started, 0);
+});
