@@ -113,7 +113,8 @@ export async function openLibraryBackup(
 		!Array.isArray(frame) ||
 		frame.length !== 3 ||
 		frame[0] !== "i2nclip-library-backup" ||
-		frame[1] !== 1
+		frame[1] !== 1 ||
+		!equal(encode(frame), bytes)
 	) {
 		invalid();
 	}
@@ -133,14 +134,19 @@ export async function openPairingIdentity(
 	if (packet.length > MAX_CREDENTIAL_BYTES) {
 		invalid();
 	}
-	const plaintext = await openBytes(
-		key,
-		decode(packet),
-		`${context} transfer 4`,
-	);
+	const envelope = decode(packet);
+	if (!equal(encode(envelope), packet)) {
+		invalid();
+	}
+	const plaintext = await openBytes(key, envelope, `${context} transfer 4`);
 	try {
 		const frame = decode(plaintext);
-		if (!Array.isArray(frame) || frame.length !== 3 || frame[0] !== 1) {
+		if (
+			!Array.isArray(frame) ||
+			frame.length !== 3 ||
+			frame[0] !== 1 ||
+			!equal(encode(frame), plaintext)
+		) {
 			invalid();
 		}
 		const challenge = binary(frame[2], 32);

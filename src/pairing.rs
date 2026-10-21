@@ -250,7 +250,7 @@ impl PairingState {
         if self
             .rooms
             .values()
-            .any(|room| room.owner == owner && room.messages.len() < 7)
+            .any(|room| room.owner == owner && room.messages.len() < 5)
         {
             return Err((StatusCode::CONFLICT, "a pairing is already active"));
         }
@@ -338,7 +338,7 @@ impl PairingState {
         }
         let room = self.room(id, now)?;
         let sender = room.sender(token)?;
-        if !(2..=7).contains(&step) || sender != step.is_multiple_of(2) {
+        if !(2..=5).contains(&step) || sender != step.is_multiple_of(2) {
             return Err((StatusCode::CONFLICT, "invalid pairing step"));
         }
         if step <= room.messages.len() {
@@ -347,7 +347,7 @@ impl PairingState {
             }
         } else if step == room.messages.len() + 1 {
             room.messages.push(message);
-            if step == 7 {
+            if step == 5 {
                 tracing::info!(event = "pairing_acknowledged");
             }
         } else {
@@ -900,9 +900,7 @@ mod tests {
             (2, &send, "response"),
             (3, &recv, "finish"),
             (4, &send, "payload"),
-            (5, &recv, "prepared"),
-            (6, &send, "enrolled"),
-            (7, &recv, "active"),
+            (5, &recv, "saved"),
         ] {
             assert_eq!(
                 rooms
@@ -947,7 +945,7 @@ mod tests {
                 .message
                 .as_ref()
                 .map(|bytes| bytes.as_slice()),
-            Some(b"active".as_slice())
+            Some(b"saved".as_slice())
         );
     }
 
