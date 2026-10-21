@@ -1,5 +1,11 @@
 import * as opaque from "@serenity-kit/opaque";
-import { fixedBytes } from "../protocol/chain.ts";
+import { type Bytes, fixedBytes, sameBytes } from "../protocol/chain.ts";
+import {
+	type DeviceEncryptionKey,
+	loadDeviceEncryptionKey,
+	openToDevice,
+	sealToDevice,
+} from "../protocol/device-encryption.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
 import type { PairingKeys } from "../protocol/pairing.ts";
 import { openPairing, pairingKeys, sealPairing } from "../protocol/pairing.ts";
@@ -24,10 +30,11 @@ export interface PairingCrypto {
 	}): Promise<null>;
 	bindReceiver(args: {
 		publicKey: Uint8Array<ArrayBuffer>;
+		encryption: DeviceEncryptionKey;
 	}): Promise<Uint8Array<ArrayBuffer>>;
 	verifyReceiverBinding(args: {
 		message: Uint8Array<ArrayBuffer>;
-	}): Promise<Uint8Array<ArrayBuffer>>;
+	}): Promise<readonly [Bytes, Bytes]>;
 	complete(args: { value: unknown }): Promise<Uint8Array<ArrayBuffer>>;
 	receiveCompletion(args: {
 		message: Uint8Array<ArrayBuffer>;
@@ -55,6 +62,9 @@ type CryptoState =
 				| "receiver-activation";
 			context: string;
 			keys: PairingKeys;
+			binding?: readonly [Bytes, Bytes];
+			encryption?: CryptoKeyPair;
+			proof?: Bytes;
 	  };
 
 function identifiers(context: string) {
@@ -232,46 +242,116 @@ class PairingCryptoImpl implements PairingCrypto {
 		return current.keys.verificationCode;
 	}
 	private async performTransfer(args: { value: unknown }) {
-		await opaque.ready;
 		this.active();
 		const current = this.state;
-
-		if (
-			current.phase !== "sender-authenticated" &&
-			current.phase !== "sender-bound"
-		) {
+		if (current.phase !== "sender-bound" || !current.binding) {
 			throw invalidStep();
 		}
-		this.state = { ...current, phase: "sender-acknowledgment" };
-		return sealPairing(current.keys, current.context, "transfer", args.value);
+		this.state = { phase: "failed" };
+		const proof = crypto.getRandomValues(new Uint8Array(32));
+		const plaintext = encode([1, args.value, proof]);
+		try {
+			const info = encode(["i2nclip/pairing-device/1", current.context]);
+			const aad = encode(current.binding);
+			const [encapsulated, ciphertext] = await sealToDevice(
+				current.binding[1],
+				plaintext,
+				info,
+				aad,
+			);
+			const packet = await sealPairing(
+				current.keys,
+				current.context,
+				"transfer",
+				[1, encapsulated, ciphertext],
+			);
+			this.active();
+			this.state = { ...current, phase: "sender-acknowledgment", proof };
+			return packet;
+		} catch (error) {
+			proof.fill(0);
+			throw error;
+		} finally {
+			plaintext.fill(0);
+		}
 	}
 	private async performReceive(args: { message: Uint8Array<ArrayBuffer> }) {
-		await opaque.ready;
 		this.active();
 		const current = this.state;
-
 		if (
-			current.phase !== "receiver-authenticated" &&
-			current.phase !== "receiver-bound"
+			current.phase !== "receiver-bound" ||
+			!current.binding ||
+			!current.encryption
 		) {
 			throw invalidStep();
 		}
-		this.state = { ...current, phase: "receiver-save" };
-		return openPairing(current.keys, current.context, "transfer", args.message);
+		this.state = { phase: "failed" };
+		const envelope = await openPairing(
+			current.keys,
+			current.context,
+			"transfer",
+			args.message,
+		);
+		if (
+			!Array.isArray(envelope) ||
+			envelope.length !== 3 ||
+			envelope[0] !== 1 ||
+			!(envelope[2] instanceof Uint8Array)
+		) {
+			throw new Error("Invalid pairing device envelope.");
+		}
+		const plaintext = await openToDevice(
+			current.encryption,
+			fixedBytes(envelope[1]),
+			new Uint8Array(envelope[2]),
+			encode(["i2nclip/pairing-device/1", current.context]),
+			encode(current.binding),
+		);
+		try {
+			const value = decode(plaintext);
+			if (
+				!Array.isArray(value) ||
+				value.length !== 3 ||
+				value[0] !== 1 ||
+				!sameBytes(plaintext, encode(value))
+			) {
+				throw new Error("Invalid pairing device proof.");
+			}
+			const proof = fixedBytes(value[2]);
+			const result = structuredClone(value[1]);
+			this.active();
+			this.state = { ...current, phase: "receiver-save", proof };
+			return result;
+		} finally {
+			plaintext.fill(0);
+		}
 	}
 	private async performAcknowledge() {
 		await opaque.ready;
 		this.active();
 		const current = this.state;
 
-		if (current.phase !== "receiver-save") {
+		if (current.phase !== "receiver-save" || !current.proof) {
 			throw invalidStep();
 		}
-		this.state = { ...current, phase: "receiver-completion" };
-		return sealPairing(current.keys, current.context, "acknowledgment", [
-			1,
-			true,
-		]);
+		this.state = { phase: "failed" };
+		try {
+			const packet = await sealPairing(
+				current.keys,
+				current.context,
+				"acknowledgment",
+				[1, current.proof],
+			);
+			this.active();
+			this.state = {
+				...current,
+				phase: "receiver-completion",
+				proof: undefined,
+			};
+			return packet;
+		} finally {
+			current.proof.fill(0);
+		}
 	}
 
 	private async performVerifyAcknowledgment(args: {
@@ -279,43 +359,60 @@ class PairingCryptoImpl implements PairingCrypto {
 	}) {
 		this.active();
 		const current = this.state;
-		if (current.phase !== "sender-acknowledgment") {
+		if (current.phase !== "sender-acknowledgment" || !current.proof) {
 			throw invalidStep();
 		}
 		this.state = { phase: "failed" };
-		const value = await openPairing(
-			current.keys,
-			current.context,
-			"acknowledgment",
-			binary(args.message),
-		);
-		this.active();
-		if (
-			!Array.isArray(value) ||
-			value.length !== 2 ||
-			value[0] !== 1 ||
-			value[1] !== true
-		) {
-			throw new Error("Invalid pairing acknowledgment.");
+		try {
+			const value = await openPairing(
+				current.keys,
+				current.context,
+				"acknowledgment",
+				binary(args.message),
+			);
+			this.active();
+			if (
+				!Array.isArray(value) ||
+				value.length !== 2 ||
+				value[0] !== 1 ||
+				!sameBytes(fixedBytes(value[1]), current.proof)
+			) {
+				throw new Error("Invalid pairing acknowledgment.");
+			}
+			this.state = { ...current, phase: "sender-completion", proof: undefined };
+			return null;
+		} finally {
+			current.proof.fill(0);
 		}
-		this.state = { ...current, phase: "sender-completion" };
-		return null;
 	}
-	private async bindReceiverKey(args: { publicKey: Uint8Array<ArrayBuffer> }) {
+	private async bindReceiverKey(args: {
+		publicKey: Uint8Array<ArrayBuffer>;
+		encryption: DeviceEncryptionKey;
+	}) {
 		this.active();
 		const current = this.state;
 		if (current.phase !== "receiver-authenticated") {
 			throw invalidStep();
 		}
 		this.state = { phase: "failed" };
+		const encryption = await loadDeviceEncryptionKey(args.encryption);
+		this.active();
 		const packet = await sealPairing(
 			current.keys,
 			current.context,
 			"receiverBinding",
-			[1, fixedBytes(args.publicKey)],
+			[1, fixedBytes(args.publicKey), fixedBytes(args.encryption.publicKey)],
 		);
 		this.active();
-		this.state = { ...current, phase: "receiver-bound" };
+		this.state = {
+			...current,
+			phase: "receiver-bound",
+			binding: [
+				fixedBytes(args.publicKey),
+				fixedBytes(args.encryption.publicKey),
+			],
+			encryption,
+		};
 		return packet;
 	}
 	private async openReceiverBinding(args: {
@@ -334,12 +431,12 @@ class PairingCryptoImpl implements PairingCrypto {
 			args.message,
 		);
 		this.active();
-		if (!Array.isArray(value) || value.length !== 2 || value[0] !== 1) {
+		if (!Array.isArray(value) || value.length !== 3 || value[0] !== 1) {
 			throw new Error("Invalid receiver binding.");
 		}
-		const publicKey = fixedBytes(value[1]);
-		this.state = { ...current, phase: "sender-bound" };
-		return publicKey;
+		const binding = [fixedBytes(value[1]), fixedBytes(value[2])] as const;
+		this.state = { ...current, phase: "sender-bound", binding };
+		return binding;
 	}
 	private async sendCompletion(args: { value: unknown }) {
 		this.active();
@@ -418,6 +515,9 @@ class PairingCryptoImpl implements PairingCrypto {
 		return null;
 	}
 	private performDispose() {
+		if ("proof" in this.state) {
+			this.state.proof?.fill(0);
+		}
 		this.state = { phase: "disposed" };
 	}
 }

@@ -3,7 +3,7 @@ import { createChainStorage } from "./chain-storage.ts";
 import { bytesToHex } from "./protocol/bytes.ts";
 import { type Bytes, createRecord } from "./protocol/chain.ts";
 import { decodeDevice, encodeDevice } from "./protocol/device.ts";
-import { generateDeviceEncryptionKey } from "./protocol/epoch-envelope.ts";
+import { generateDeviceEncryptionKey } from "./protocol/device-encryption.ts";
 import { generatePrivateKey } from "./protocol/identity.ts";
 import { epochKey, type LoadedRecovery } from "./protocol/recovery-key.ts";
 import { createChain, stateCheckpoint } from "./stores/chain.ts";

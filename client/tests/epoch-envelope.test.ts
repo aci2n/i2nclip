@@ -13,9 +13,11 @@ import {
 	MAX_BLOCK_BYTES,
 } from "../src/lib/protocol/chain.ts";
 import {
-	type EpochEnvelopeContext,
 	generateDeviceEncryptionKey,
 	loadDeviceEncryptionKey,
+} from "../src/lib/protocol/device-encryption.ts";
+import {
+	type EpochEnvelopeContext,
 	openEpochKey,
 	sealEpochKey,
 	sealEpochKeys,

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createPairingCrypto } from "../src/lib/pairing/crypto.ts";
 import { pairingCrypto, pairingRelay } from "../src/lib/pairing/service.ts";
+import { generateDeviceEncryptionKey } from "../src/lib/protocol/device-encryption.ts";
 import { decode } from "../src/lib/protocol/msgpack.ts";
 import { deferred, testKey, tick } from "./helpers.ts";
 import { documentResponse } from "./msgpack-response.ts";
@@ -23,7 +24,10 @@ test("isolated pairing adapters complete a verified exchange", async (t) => {
 	});
 	await sender.senderFinish({ message: third });
 	await sender.verifyReceiverBinding({
-		message: await receiver.bindReceiver({ publicKey: testKey().publicKey }),
+		message: await receiver.bindReceiver({
+			publicKey: testKey().publicKey,
+			encryption: await generateDeviceEncryptionKey(),
+		}),
 	});
 	assert.equal(
 		await sender.verificationCode(),

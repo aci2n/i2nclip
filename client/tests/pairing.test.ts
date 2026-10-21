@@ -5,6 +5,7 @@ import type { PairingCrypto } from "../src/lib/pairing/crypto.ts";
 import { createPairingCrypto } from "../src/lib/pairing/crypto.ts";
 import { readPairingResponse } from "../src/lib/pairing/service.ts";
 import { bytesToB64url } from "../src/lib/protocol/bytes.ts";
+import { generateDeviceEncryptionKey } from "../src/lib/protocol/device-encryption.ts";
 import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
 import { decode, encode } from "../src/lib/protocol/msgpack.ts";
 import {
@@ -112,7 +113,10 @@ async function authenticate(
 	await sender.senderFinish({ message: third });
 	const { privateKey } = await generatePrivateKey();
 	await sender.verifyReceiverBinding({
-		message: await receiver.bindReceiver({ publicKey: privateKey.public_key }),
+		message: await receiver.bindReceiver({
+			publicKey: privateKey.public_key,
+			encryption: await generateDeviceEncryptionKey(),
+		}),
 	});
 }
 test("real OPAQUE pairing transfers identity and verifies an encrypted save acknowledgment", async () => {

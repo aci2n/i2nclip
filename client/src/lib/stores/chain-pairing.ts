@@ -7,6 +7,10 @@ import type { JoinedRoom, PairingRelay } from "../pairing/service.ts";
 import { pairingCrypto, pairingRelay } from "../pairing/service.ts";
 import { bytesToHex } from "../protocol/bytes.ts";
 import { type Bytes, createRecord, sameBytes } from "../protocol/chain.ts";
+import {
+	type DeviceEncryptionKey,
+	generateDeviceEncryptionKey,
+} from "../protocol/device-encryption.ts";
 import { generatePrivateKey } from "../protocol/identity.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
 import {
@@ -513,7 +517,7 @@ class PairingStoreImpl {
 			this.respondToReceiver(current, room, crypto),
 		);
 		await this.submitStep(current, room, 2, response);
-		const receiverPublicKey = await this.usePairingCrypto(current, (crypto) =>
+		const receiverKeys = await this.usePairingCrypto(current, (crypto) =>
 			this.finishSenderAuthentication(current, room, crypto),
 		);
 		this.updatePairing({
@@ -562,7 +566,7 @@ class PairingStoreImpl {
 				epoch: state.epoch,
 				signer: identity.key.publicKey,
 				kind: "enroll",
-				effects: [receiverPublicKey],
+				effects: [receiverKeys[0]],
 			},
 			identity.key.privateCryptoKey,
 		);
@@ -647,6 +651,7 @@ class PairingStoreImpl {
 			throw new Error("Forget the current device before pairing another.");
 		}
 		const { privateKey } = await generatePrivateKey();
+		const encryption = await generateDeviceEncryptionKey();
 		try {
 			const { id, secret } = parsePairingCode(code);
 			const initial = await this.usePairingCrypto(current, (crypto) =>
@@ -661,6 +666,7 @@ class PairingStoreImpl {
 					crypto,
 					context,
 					privateKey.public_key,
+					encryption,
 				),
 			);
 			await this.submitStep(current, room, 3, finish);
@@ -674,7 +680,12 @@ class PairingStoreImpl {
 				this.receiveTransfer(current, room, crypto),
 			);
 			try {
-				const prepared = await pairedDevice(input, privateKey, current.server);
+				const prepared = await pairedDevice(
+					input,
+					privateKey,
+					encryption,
+					current.server,
+				);
 				this.checkTask(current);
 				current.stopWatching();
 				if (
@@ -736,6 +747,7 @@ class PairingStoreImpl {
 			}
 		} finally {
 			privateKey.seed.fill(0);
+			encryption.secret.fill(0);
 		}
 	}
 
@@ -813,12 +825,16 @@ class PairingStoreImpl {
 		crypto: PairingCrypto,
 		context: string,
 		publicKey: Bytes,
+		encryption: DeviceEncryptionKey,
 	) {
 		const finish = await crypto.receiverFinish({
 			message: await this.waitForStep(current, room, 2),
 			context,
 		});
-		return encode([finish, await crypto.bindReceiver({ publicKey })]);
+		return encode([
+			finish,
+			await crypto.bindReceiver({ publicKey, encryption }),
+		]);
 	}
 
 	private async receiveTransfer(

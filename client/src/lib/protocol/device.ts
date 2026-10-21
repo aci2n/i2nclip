@@ -12,7 +12,7 @@ import {
 	type DeviceEncryptionKey,
 	generateDeviceEncryptionKey,
 	loadDeviceEncryptionKey,
-} from "./epoch-envelope.ts";
+} from "./device-encryption.ts";
 import { generatePrivateKey, type PrivateKeyDocument } from "./identity.ts";
 import { decode, encode } from "./msgpack.ts";
 import { createLibraryRecovery, parseRecoveryGenesis } from "./recovery-key.ts";

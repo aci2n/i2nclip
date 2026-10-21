@@ -8,7 +8,7 @@ import {
 	verifyRecord,
 } from "./chain.ts";
 import { type DeviceIdentity, decodeDevice, encodeDevice } from "./device.ts";
-import { generateDeviceEncryptionKey } from "./epoch-envelope.ts";
+import type { DeviceEncryptionKey } from "./device-encryption.ts";
 import type { PrivateKeyDocument } from "./identity.ts";
 import { parseRecoveryGenesis } from "./recovery-key.ts";
 
@@ -34,6 +34,7 @@ function invalid(): never {
 export async function pairedDevice(
 	input: unknown,
 	privateKey: PrivateKeyDocument,
+	encryption: DeviceEncryptionKey,
 	origin: string,
 ) {
 	if (
@@ -69,7 +70,6 @@ export async function pairedDevice(
 	) {
 		invalid();
 	}
-	const encryption = await generateDeviceEncryptionKey();
 	const encoded = encodeDevice({
 		serverUrl: origin,
 		genesis: genesis.bytes,
@@ -85,7 +85,6 @@ export async function pairedDevice(
 		return await decodeDevice(encoded);
 	} finally {
 		encoded.fill(0);
-		encryption.secret.fill(0);
 	}
 }
 export function acceptedEnrollment(

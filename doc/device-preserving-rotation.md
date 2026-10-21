@@ -71,6 +71,31 @@ official RFC base-mode fixture, and focused tests cover context separation,
 tampering, invalid inputs, and non-extractable runtime private keys.
 See [RFC 9180](https://www.rfc-editor.org/rfc/rfc9180.html).
 
+### Pairing encryption-key possession
+
+Preserve the seven existing relay phases. Phase 3's authenticated receiver binding
+is `[1, signing_public_key, encryption_public_key]`. The receiver generates both
+keypairs locally before this phase and preserves those exact keys through local
+preparation and enrollment verification.
+
+Inside phase 4's existing PAKE-authenticated transfer, send
+`[1, hpke_encapsulation, hpke_ciphertext]`. Its HPKE plaintext is
+`[1, credential_bundle, random_32_byte_challenge]`, with info MessagePack
+`["i2nclip/pairing-device/1", pairing_context]` and AAD MessagePack
+`[signing_public_key, encryption_public_key]`. The pairing context already binds
+the server origin and room instance. The PAKE layer remains mandatory: HPKE alone
+does not authenticate the sender or the intended library.
+
+The receiver opens this with its locally generated encryption private key,
+validates the bundle and preserves credentials durably, then sends phase 5's
+PAKE-authenticated acknowledgment `[1, challenge]`. The sender compares the exact
+challenge before publishing enrollment. A public-key-only claimant cannot produce
+this proof without decrypting the packet. Phase 6 still carries the exact accepted
+enrollment receipt; phase 7 still confirms verified activation. Bound all packets
+as today, wipe owned plaintext/challenge buffers, and never transfer private device
+keys. No extra relay phase, endpoint, persistent server secret, or background
+workflow is introduced.
+
 ## Membership and fixed frames
 
 Extend genesis's initial-device field to `[signing_public_key,

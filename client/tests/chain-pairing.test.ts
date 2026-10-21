@@ -367,13 +367,19 @@ test("receiver rejects bundles with another origin, parent, epoch history, or ta
 		const changed = structuredClone(original);
 		changed[index] = value;
 		await assert.rejects(
-			pairedDevice(changed, privateKey, "https://example.test"),
+			pairedDevice(
+				changed,
+				privateKey,
+				f.receiver.identity().device.encryption,
+				"https://example.test",
+			),
 		);
 	}
 	await assert.rejects(
 		pairedDevice(
 			original,
 			f.sender.identity().privateKey,
+			f.sender.identity().device.encryption,
 			"https://example.test",
 		),
 	);
