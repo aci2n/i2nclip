@@ -4,6 +4,14 @@ Current architecture and wire contracts: [chain storage](blockchain-storage.md),
 
 Other design notes record earlier changes. Where they conflict with these specifications, the current chain specifications take precedence.
 
+Planned follow-up, to apply only after the current implementation is complete:
+[device-preserving epoch rotation](device-preserving-rotation.md). It specifies
+per-device encrypted epoch keys and compares separate encryption keys with
+Ed25519-to-X25519 conversion; it does not change current runtime behavior.
+The approved [canonical genesis and separate enrollment](genesis-and-recovery-enrollment.md)
+follow-up refines that proposal: genesis contains no device, recovery may sign
+enrollment, and rotation changes no membership.
+
 
 - [Protocol](protocol.md): HTTP API, signatures, frames, quotas, concurrency, and transfer limits.
 - [Cryptography](crypto.md): keys, encrypted formats, and security boundaries.
