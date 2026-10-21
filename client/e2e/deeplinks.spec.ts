@@ -11,6 +11,7 @@ import {
 	openUploadPreferences,
 	PASSWORD,
 	recovery,
+	recoveryPassword,
 	shot,
 	test,
 } from "./fixtures.ts";
@@ -77,7 +78,7 @@ test("private links restore remembered access and show native media, escaped tex
 					style.height,
 				];
 			};
-			await expect(first.link).toHaveText("Link");
+			await expect(first.link).toHaveText("Private link");
 			expect(await first.link.evaluate(appearance)).toEqual(
 				await card
 					.getByRole("button", { name: "Download", exact: true })
@@ -258,9 +259,14 @@ test("direct links preserve the target through password unlock, navigation, relo
 			mimeType: "application/msgpack",
 			buffer: backup,
 		});
-		await fresh.getByLabel("Recovery password", { exact: true }).fill(PASSWORD);
+		await fresh
+			.getByLabel("Recovery password", { exact: true })
+			.fill(recoveryPassword(backup));
 		await fresh
 			.getByRole("button", { name: "Restore library", exact: true })
+			.click();
+		await fresh
+			.getByRole("button", { name: "Submit recovery reset", exact: true })
 			.click();
 		await expect(
 			fresh.getByRole("img", { name: "Target.png", exact: true }),
@@ -299,9 +305,9 @@ test("invalid, missing and failed file links offer local errors and retry", asyn
 		expect(metadata).toBe(0);
 		await viewer.goto(`${app.origin}/#/media/${"a".repeat(64)}`);
 		await expect(viewer.getByRole("alert")).toHaveText(
-			"File not found in this library.",
+			"File not found in the selected library state.",
 		);
-		await viewer.route(/\/api\/media\/[0-9a-f]{64}\/chunks\/0$/, (route) =>
+		await viewer.route(/\/api\/blobs\/[0-9a-f]{64}\/[0-9a-f]{64}$/, (route) =>
 			route.fulfill({
 				status: 503,
 				contentType: "application/msgpack",
@@ -309,7 +315,9 @@ test("invalid, missing and failed file links offer local errors and retry", asyn
 			}),
 		);
 		await viewer.goto(`${app.origin}/${href}`);
-		await expect(viewer.getByRole("alert")).toHaveText("Transfer unavailable");
+		await expect(viewer.getByRole("alert")).toHaveText(
+			"Server request failed (HTTP 503).",
+		);
 		await expect(
 			viewer.getByRole("button", { name: "Download", exact: true }),
 		).toBeDisabled();
@@ -345,7 +353,7 @@ test("Lock cancels a loading viewer locally and ignores its late content", async
 	const release = deferred();
 	const finished = deferred();
 	await viewer.route(
-		/\/api\/media\/[0-9a-f]{64}\/chunks\/0$/,
+		/\/api\/blobs\/[0-9a-f]{64}\/[0-9a-f]{64}$/,
 		async (route) => {
 			try {
 				const response = await route.fetch();

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { decode } from "../src/lib/protocol/msgpack.ts";
 import { setKeyLimits } from "../tests/process.ts";
 import {
 	createLibrary,
@@ -17,9 +18,9 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 	await createLibrary(page, app, 10 * 1024 ** 3);
 	const usage = page.getByLabel("Library usage");
 	await expect(usage).toContainText("Storage: 0 B of 10.0 GB");
-	await expect(usage).toContainText("Files: 0 of 10,000");
+	await expect(usage).toContainText("Retained files: 0 of 10000");
 	await expect(usage).toContainText(
-		"Storage includes reservations for uploads in progress.",
+		"Usage includes staged uploads and retained deleted files.",
 	);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.getByLabel("Upload", { exact: true }).setInputFiles({
@@ -30,7 +31,7 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 	await expect(page.getByRole("article")).toHaveCount(1);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(usage).toContainText("Storage: 1.0 MB of 10.0 GB");
-	await expect(usage).toContainText("Files: 1 of 10,000");
+	await expect(usage).toContainText("Retained files: 1 of 10000");
 	await shot(page, "quota-desktop");
 	for (const width of [320, 360]) {
 		await page.setViewportSize({ width, height: 800 });
@@ -44,21 +45,38 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await context.setOffline(true);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
+	await usage
+		.getByRole("button", { name: "Refresh usage", exact: true })
+		.click();
 	await expect(usage.getByRole("alert")).toBeVisible();
 	await shot(page, "quota-offline-360");
 	await context.setOffline(false);
-	await usage.getByRole("button", { name: "Retry", exact: true }).click();
-	await expect(usage).toContainText("Files: 1 of 10,000");
+	await usage
+		.getByRole("button", { name: "Refresh usage", exact: true })
+		.click();
+	await expect(usage).toContainText("Retained files: 1 of 10000");
 	await page.getByRole("link", { name: "Library", exact: true }).click();
-	page.once("dialog", (dialog) => dialog.accept());
 	await page
 		.getByRole("article")
 		.getByRole("button", { name: "Delete", exact: true })
 		.click();
-	await expect(page.getByRole("article")).toHaveClass(/deleted/);
+	await expect(page.getByRole("article")).toHaveCount(0);
+	await page.getByRole("link", { name: "Settings", exact: true }).click();
+	await expect(usage).toContainText("Retained files: 1 of 10000");
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	await page
+		.getByRole("button", { name: "Deleted files", exact: true })
+		.click();
+	page.once("dialog", (dialog) => dialog.accept());
+	await page
+		.getByRole("article")
+		.getByRole("button", { name: "Permanently delete", exact: true })
+		.click();
+	await expect(page.getByRole("article")).toHaveCount(0);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(usage).toContainText("Storage: 0 B of 10.0 GB");
-	await expect(usage).toContainText("Files: 0 of 10,000");
+	await expect(usage).toContainText("Retained files: 0 of 10000");
+
 	expect(await page.locator("[id]").count()).toBe(0);
 });
 
@@ -67,7 +85,11 @@ test("files above 32 MiB stream through library and deeplink downloads after quo
 	app,
 }) => {
 	await createLibrary(page, app, 128 * 1024 * 1024);
-	const key = (await page.locator("code").first().innerText()).trim();
+	const full = page.locator(".devices li").first().locator("details code");
+	await expect(full).toHaveText(/^[a-f0-9]{64}$/);
+	const key = Buffer.from((await full.textContent()) ?? "", "hex").toString(
+		"base64url",
+	);
 	expect(key).toMatch(/^[A-Za-z0-9_-]{43}$/);
 	await expect(page.getByLabel("Library usage")).toContainText(
 		"Storage: 0 B of 128.0 MB",
@@ -87,13 +109,21 @@ test("files above 32 MiB stream through library and deeplink downloads after quo
 	});
 	const card = page.getByRole("article");
 	await expect(card).toHaveCount(1);
-	await setKeyLimits(app.data, key, {
-		maxBytes: 32 * 1024 * 1024 + 1 + 9 * 16 + 17,
-		maxFiles: 10000,
-	});
+	await page.getByRole("link", { name: "Settings", exact: true }).click();
+	const reading = page.waitForResponse(
+		(response) => response.url().endsWith("/api/quota") && response.ok(),
+	);
+	await page
+		.getByRole("button", { name: "Refresh usage", exact: true })
+		.click();
+	const frame = decode(new Uint8Array(await (await reading).body()));
+	if (!Array.isArray(frame) || typeof frame[2] !== "number") {
+		throw new Error("Invalid quota frame");
+	}
+	await setKeyLimits(app.data, key, { maxBytes: frame[2], maxFiles: 10000 });
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(page.getByLabel("Library usage")).toContainText(
-		"Files: 1 of 10,000",
+		"Retained files: 1 of 10000",
 	);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const downloading = page.waitForEvent("download");
@@ -125,7 +155,7 @@ test("files above 32 MiB stream through library and deeplink downloads after quo
 	} finally {
 		await linked.close();
 	}
-	// The remaining quota admits a one-byte file plus its GCM tag.
+	// No storage remains; neither content nor its metadata/manifest can be staged.
 	await page.getByLabel("Upload", { exact: true }).setInputFiles([
 		{
 			name: "Too large.bin",
@@ -139,7 +169,11 @@ test("files above 32 MiB stream through library and deeplink downloads after quo
 		},
 	]);
 	await expect(
-		page.getByText("Library storage limit reached.", { exact: false }),
+		page
+			.getByText("This file exceeds the available storage quota.", {
+				exact: false,
+			})
+			.first(),
 	).toBeVisible();
-	await expect(page.getByRole("article")).toHaveCount(2);
+	await expect(page.getByRole("article")).toHaveCount(1);
 });

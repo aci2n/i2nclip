@@ -50,7 +50,7 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	]);
 	await expect(draft).toHaveValue("");
 	await expect(draft).toBeFocused();
-	await page.route("**/api/media/*/meta", (route) =>
+	await page.route("**/api/blocks", (route) =>
 		route.fulfill({
 			status: 503,
 			contentType: "application/msgpack",
@@ -60,11 +60,11 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	await draft.fill("Remember");
 	await draft.press("Enter");
 	await expect(
-		card.getByText("Tag edits unavailable", { exact: true }),
+		card.getByText("Server request failed (HTTP 503).", { exact: true }),
 	).toBeVisible();
 	await expect(draft).toHaveValue("Remember");
 	await expect(draft).toBeFocused();
-	await page.unroute("**/api/media/*/meta");
+	await page.unroute("**/api/blocks");
 	await draft.press("Enter");
 	await expect(card.locator(".tag-text")).toHaveText([
 		"image",
@@ -119,16 +119,14 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	await page.getByRole("button", { name: "Close preview" }).click();
 	page.once("dialog", (dialog) => dialog.accept());
 	await card.getByRole("button", { name: "Delete", exact: true }).click();
+	await expect(card).toHaveCount(0);
+	await page
+		.getByRole("button", { name: "Deleted files", exact: true })
+		.click();
 	await expect(card).toHaveCount(1);
 	await expect(card).toHaveClass(/deleted/);
-	await expect(card).toHaveCSS("opacity", "0.2");
-	for (const button of await card.getByRole("button").all()) {
-		await expect(button).toBeDisabled();
-	}
-	await shot(page, "deleted-card-desktop");
-	await page.emulateMedia({ colorScheme: "dark" });
-	await page.setViewportSize({ width: 320, height: 800 });
-	await shot(page, "deleted-card-dark-narrow");
+	await shot(page, "deleted-files");
+	await page.getByRole("button", { name: "Files", exact: true }).click();
 	await page.reload();
 	await master(page);
 	await expect(card).toHaveCount(0);
@@ -191,13 +189,13 @@ test("encrypted singleton recovery, password change, reload, and forget", async 
 		await expect(
 			other.getByRole("heading", { name: "Your library", exact: true }),
 		).toBeVisible();
-		await other.getByText("Forget this library", { exact: true }).click();
+		await other.getByText("Forget this device", { exact: true }).click();
 		other.once("dialog", (dialog) => dialog.accept());
 		await other
-			.getByRole("button", { name: "Forget library", exact: true })
+			.getByRole("button", { name: "Forget device", exact: true })
 			.click();
 		await expect(
-			other.getByRole("button", { name: "Create library", exact: true }),
+			other.getByRole("button", { name: "Prepare library", exact: true }),
 		).toBeVisible();
 	} finally {
 		await context.close();
@@ -239,10 +237,10 @@ test("tabs unlock independently and retain loaded access after another tab chang
 			}),
 		).toBeVisible();
 		await second.getByRole("link", { name: "Settings", exact: true }).click();
-		await second.getByText("Forget this library", { exact: true }).click();
+		await second.getByText("Forget this device", { exact: true }).click();
 		second.once("dialog", (dialog) => dialog.accept());
 		await second
-			.getByRole("button", { name: "Forget library", exact: true })
+			.getByRole("button", { name: "Forget device", exact: true })
 			.click();
 		await expect(second.getByRole("alert")).toContainText("Refresh");
 		await second.reload();
@@ -269,7 +267,7 @@ test("upload failures survive navigation and files can be selected again", async
 	const holding = new Promise<void>((resolve) => {
 		releaseSecond = resolve;
 	});
-	await page.route("**/api/media", async (route) => {
+	await page.route("**/api/blobs", async (route) => {
 		if (route.request().method() !== "POST") {
 			await route.continue();
 			return;
@@ -358,10 +356,10 @@ test("mixed media and feedback render in both themes at desktop and narrow width
 	]);
 	await expect(page.getByRole("article")).toHaveCount(6);
 	await page.getByRole("button", { name: "Dismiss completed uploads" }).click();
-	await page.getByRole("button", { name: "Play Voice memo.wav" }).click();
+	await page.getByRole("button", { name: "Open Voice memo.wav" }).click();
 	await expect(page.locator("audio")).toBeVisible();
 	await page.getByRole("button", { name: "Close preview" }).click();
-	await page.getByRole("button", { name: "Play Video.webm" }).click();
+	await page.getByRole("button", { name: "Open Video.webm" }).click();
 	await expect(page.locator("video")).toBeVisible();
 	await page.getByRole("button", { name: "Close preview" }).click();
 	for (const width of [1100, 360, 320]) {
@@ -413,7 +411,7 @@ test("mixed media and feedback render in both themes at desktop and narrow width
 	await expect(page.getByRole("alert")).toContainText("Wrong password");
 	await shot(page, `${test.info().project.name}-settings-error-320`);
 });
-test("pairing transfers the single identity only after explicit verification", async ({
+test("pairing enrolls a fresh device only after explicit verification", async ({
 	page,
 	app,
 	browser,

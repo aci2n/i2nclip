@@ -17,16 +17,28 @@ test("preview opens immediately and arrows, keys, swipes and close cancel stalle
 			await imageFixture(page, "Portrait.png", 360, 640),
 		]);
 	await expect(page.getByRole("article")).toHaveCount(2);
+	await expect(page.locator("article .preview img")).toHaveCount(2);
 	await page.getByRole("button", { name: "Dismiss completed uploads" }).click();
 	const held: {
 		gate: ReturnType<typeof deferred<string | undefined>>;
 		request: Request;
 	}[] = [];
+	const manifests = new Map<string, string>();
 	const failed = new Set();
 	page.on("requestfailed", (request) => failed.add(request));
 	await page.route(
-		/\/api\/media\/[0-9a-f]{64}\/chunks\/\d+$/,
+		/\/api\/blobs\/[0-9a-f]{64}\/[0-9a-f]{64}$/,
 		async (route) => {
+			const parts = new URL(route.request().url()).pathname.split("/");
+			const file = parts.at(-2) ?? "";
+			const hash = parts.at(-1) ?? "";
+			if (!manifests.has(file)) {
+				manifests.set(file, hash);
+			}
+			if (manifests.get(file) !== hash) {
+				await route.continue();
+				return;
+			}
 			const gate = deferred<string | undefined>();
 			held.push({ gate, request: route.request() });
 			const response = await route.fetch({ timeout: 10000 });

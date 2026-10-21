@@ -115,7 +115,7 @@ test("preview stops at loaded boundaries and More loads the submitted search", a
 	await search.press("Enter");
 	await expect(page.getByRole("article")).toHaveCount(40);
 	await search.fill("Unsubmitted draft");
-	await page.getByRole("button", { name: "More", exact: true }).click();
+	await page.getByRole("button", { name: "Load more", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(41);
 	const opener = page
 		.getByRole("article")

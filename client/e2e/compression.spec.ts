@@ -127,16 +127,16 @@ test("oversized images can encode below quota and progress uses the converted fi
 	page,
 	app,
 }) => {
-	await createLibrary(page, app, 6000);
+	await createLibrary(page, app, 10000);
 	await expect(
 		page.getByRole("region", { name: "Library usage" }),
-	).toContainText("Storage: 0 B of 5.9 KB");
+	).toContainText("Storage: 0 B of 9.8 KB");
 	const image = await imageFixture(page, "Quota image.png", 1920, 1080);
-	expect(image.buffer.length).toBeGreaterThan(6000);
+	expect(image.buffer.length).toBeGreaterThan(10000);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const held = deferred();
 	const started = deferred();
-	await page.route("**/api/media", async (route) => {
+	await page.route("**/api/blobs", async (route) => {
 		if (route.request().method() === "POST") {
 			started.resolve();
 			await held.promise;

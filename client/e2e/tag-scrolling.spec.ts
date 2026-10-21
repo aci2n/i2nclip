@@ -100,7 +100,7 @@ async function scrollSuggestions(
 	await expect(list).toHaveCount(0);
 	await expect(input).toHaveValue("suggest");
 }
-test("autocomplete scrolls with wheel and keyboard in search and tag editing", async ({
+test("tag editing suggestions scroll with wheel and keyboard", async ({
 	page,
 	app,
 }) => {
@@ -114,29 +114,6 @@ test("autocomplete scrolls with wheel and keyboard in search and tag editing", a
 			buffer: Buffer.from(name),
 		})),
 	);
-	await expect(page.getByRole("article")).toHaveCount(2);
-	const search = page.getByRole("searchbox", {
-		name: "Search tags",
-		exact: true,
-	});
-	const form = page.getByRole("form", { name: "Search library", exact: true });
-	for (const width of [1100, 320, 360]) {
-		await page.setViewportSize({ width, height: width === 320 ? 500 : 800 });
-		await scrollSuggestions(page, search, form, `search-${width}`);
-	}
-	await search.press("ArrowDown");
-	for (let index = 1; index < 10; index++) {
-		await page.keyboard.press("ArrowDown");
-	}
-	await page.keyboard.press("Enter");
-	await expect(
-		form.getByRole("button", {
-			name: "Remove search tag suggest09",
-			exact: true,
-		}),
-	).toBeVisible();
-	await expect(page.getByRole("article")).toHaveCount(1);
-	await form.getByRole("button", { name: "Clear search", exact: true }).click();
 	await expect(page.getByRole("article")).toHaveCount(2);
 	const target = page.getByRole("article").filter({ hasText: "Target.txt" });
 	await target

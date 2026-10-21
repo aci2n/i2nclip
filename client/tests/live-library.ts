@@ -1,4 +1,4 @@
-import { IDBFactory } from "fake-indexeddb";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { get } from "svelte/store";
 import { createChainApi } from "../src/lib/chain-api.ts";
 import { createChainStorage } from "../src/lib/chain-storage.ts";
@@ -6,6 +6,8 @@ import { createFiles } from "../src/lib/files.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
 import { createLibraryDevice } from "../src/lib/protocol/device.ts";
 import { createChain } from "../src/lib/stores/chain.ts";
+
+Object.assign(globalThis, { IDBKeyRange });
 
 /** A test-owned real protocol client; no browser credentials are exported. */
 export async function liveLibrary(

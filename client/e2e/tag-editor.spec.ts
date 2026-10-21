@@ -1,5 +1,4 @@
-import { decode, encode } from "../src/lib/protocol/msgpack.ts";
-import { document } from "../src/lib/protocol/value.ts";
+import { encode } from "../src/lib/protocol/msgpack.ts";
 import { createLibrary, expect, shot, test } from "./fixtures.ts";
 
 test("tag suggestions save immediately, retain failed drafts and disappear after their last use", async ({
@@ -34,7 +33,7 @@ test("tag suggestions save immediately, retain failed drafts and disappear after
 		await page.setViewportSize({ width, height: 800 });
 		await shot(page, `tag-editor-suggestions-${width}`);
 	}
-	await page.route("**/api/media/*/meta", (route) =>
+	await page.route("**/api/blocks", (route) =>
 		route.fulfill({
 			status: 503,
 			contentType: "application/msgpack",
@@ -43,11 +42,11 @@ test("tag suggestions save immediately, retain failed drafts and disappear after
 	);
 	await alpha.getByRole("button", { name: "beta", exact: true }).click();
 	await expect(
-		alpha.getByText("Tag update unavailable", { exact: true }),
+		alpha.getByText("Server request failed (HTTP 503).", { exact: true }),
 	).toBeVisible();
 	await expect(input).toHaveValue("beta");
 	await expect(input).toBeFocused();
-	await page.unroute("**/api/media/*/meta");
+	await page.unroute("**/api/blocks");
 	await input.press("Enter");
 	await expect(
 		alpha.getByRole("button", { name: "Remove tag beta", exact: true }),
@@ -76,42 +75,4 @@ test("tag suggestions save immediately, retain failed drafts and disappear after
 	await expect(
 		alpha.getByRole("button", { name: "Remove tag beta", exact: true }),
 	).toBeVisible();
-});
-
-test("a corrupt catalog label leaves valid suggestions usable and offers retry", async ({
-	page,
-	app,
-}) => {
-	await createLibrary(page, app);
-	await page.getByRole("link", { name: "Library", exact: true }).click();
-	await page.route("**/api/tags", async (route) => {
-		const response = await route.fetch();
-		const body = document(decode(await response.body()));
-		if (!Array.isArray(body.tags)) {
-			throw new Error("Invalid catalog");
-		}
-		if (body.tags.length) {
-			body.tags.push({ ...document(body.tags[0]), label: "invalid" });
-		}
-		await route.fulfill({ response, body: Buffer.from(encode(body)) });
-	});
-	await page.getByLabel("Upload", { exact: true }).setInputFiles({
-		name: "Useful notes.txt",
-		mimeType: "text/plain",
-		buffer: Buffer.from("Useful note"),
-	});
-	await expect(
-		page.getByText("Some tag suggestions are unavailable.", { exact: true }),
-	).toBeVisible();
-	const search = page.getByRole("searchbox", { name: "Search tags" });
-	await search.fill("use");
-	await page.getByRole("button", { name: "useful", exact: true }).click();
-	await expect(page.getByRole("article")).toHaveCount(1);
-	await page.unroute("**/api/tags");
-	await page
-		.getByRole("button", { name: "Retry tag suggestions", exact: true })
-		.click();
-	await expect(
-		page.getByText("Some tag suggestions are unavailable.", { exact: true }),
-	).toHaveCount(0);
 });

@@ -56,7 +56,7 @@ test("an upload survives navigation through Settings", async ({
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const pending = deferred();
 	const started = deferred();
-	await page.route("**/api/media", async (route) => {
+	await page.route("**/api/blobs", async (route) => {
 		if (route.request().method() === "POST") {
 			started.resolve();
 			await pending.promise;

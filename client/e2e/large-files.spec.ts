@@ -111,7 +111,9 @@ test("encrypted upload and native download above 1 GiB survive view navigation",
 		const reading = page.waitForRequest(
 			(request) =>
 				request.method() === "GET" &&
-				/\/chunks\/\d+$/.test(new URL(request.url()).pathname),
+				/\/api\/blobs\/[0-9a-f]{64}\/[0-9a-f]{64}$/.test(
+					new URL(request.url()).pathname,
+				),
 		);
 		await card.getByRole("button", { name: "Download", exact: true }).click();
 		const download = await saving;
@@ -129,7 +131,7 @@ test("encrypted upload and native download above 1 GiB survive view navigation",
 			contentType: "application/json",
 		});
 		await expect(page.getByLabel("Library usage")).toContainText(
-			"Files: 1 of 10,000",
+			"Retained files: 1 of 10000",
 		);
 	} finally {
 		monitoring.abort();

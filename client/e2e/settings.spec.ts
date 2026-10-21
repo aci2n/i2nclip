@@ -6,15 +6,12 @@ import {
 	test,
 } from "./fixtures.ts";
 
-test("Settings opens only the library section and disclosures reset after navigation", async ({
+test("Settings keeps upload preferences collapsed after navigation", async ({
 	page,
 	app,
 }) => {
 	await createLibrary(page, app);
-	await expect(page.locator(".settings > details[open]")).toHaveCount(1);
-	await expect(page.locator(".settings > details[open] > summary")).toHaveText(
-		"Your library",
-	);
+
 	await expect(
 		page.getByRole("checkbox", {
 			name: "Compress images to WebP",
@@ -30,7 +27,6 @@ test("Settings opens only the library section and disclosures reset after naviga
 	).toBeVisible();
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
-	await expect(page.locator(".settings > details[open]")).toHaveCount(1);
 	for (const width of [1100, 320, 360]) {
 		await page.setViewportSize({ width, height: 800 });
 		await shot(page, `settings-collapsed-${width}`);

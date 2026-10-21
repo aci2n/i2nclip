@@ -85,7 +85,7 @@ test("mobile tags wrap with usable touch controls and retain failed drafts", asy
 		tag,
 		"Remember",
 	]);
-	await page.route("**/api/media/*/meta", (route) =>
+	await page.route("**/api/blocks", (route) =>
 		route.fulfill({
 			status: 503,
 			contentType: "application/msgpack",
@@ -95,7 +95,7 @@ test("mobile tags wrap with usable touch controls and retain failed drafts", asy
 	await input.fill("Keep my draft");
 	await input.press("Enter");
 	await expect(
-		card.getByText("Tag update unavailable", { exact: true }),
+		card.getByText("Server request failed (HTTP 503).", { exact: true }),
 	).toBeVisible();
 	await expect(input).toHaveValue("Keep my draft");
 	await expect(input).toBeFocused();
@@ -116,7 +116,7 @@ test("mobile tags wrap with usable touch controls and retain failed drafts", asy
 		).toBe(true);
 		await shot(page, `tag-editor-${width}`);
 	}
-	await page.unroute("**/api/media/*/meta");
+	await page.unroute("**/api/blocks");
 	await input.press("Escape");
 	await expect(add).toBeFocused();
 	await card
@@ -256,7 +256,7 @@ test("touch gestures browse loaded previews and close media without hijacking ot
 		.getByRole("button", { name: "Close preview", exact: true })
 		.click();
 	await page
-		.getByRole("button", { name: "Play Video.webm", exact: true })
+		.getByRole("button", { name: "Open Video.webm", exact: true })
 		.click();
 	await visibleName("Video.webm");
 	const video = dialog.locator("video");
@@ -279,7 +279,7 @@ test("touch gestures browse loaded previews and close media without hijacking ot
 	await gesture(video, 0, -100);
 	await expect(dialog).not.toBeVisible();
 	await expect(
-		page.getByRole("button", { name: "Play Video.webm", exact: true }),
+		page.getByRole("button", { name: "Open Video.webm", exact: true }),
 	).toBeFocused();
 	await page
 		.getByRole("button", { name: "Open Notes.txt", exact: true })

@@ -45,7 +45,10 @@ test("filenames edit inline, save on Enter, retain failed drafts, and do not sav
 	}
 	let updates = 0;
 	page.on("request", (request) => {
-		if (request.method() === "PUT" && request.url().endsWith("/meta")) {
+		if (
+			request.method() === "POST" &&
+			new URL(request.url()).pathname === "/api/blocks"
+		) {
 			updates++;
 		}
 	});
@@ -67,7 +70,7 @@ test("filenames edit inline, save on Enter, retain failed drafts, and do not sav
 	await input().press("Enter");
 	await expect(label()).toBeFocused();
 	expect(updates).toBe(0);
-	const pattern = "**/api/media/*/meta";
+	const pattern = "**/api/blocks";
 	await page.route(pattern, (route) =>
 		route.fulfill({
 			status: 503,
@@ -79,7 +82,7 @@ test("filenames edit inline, save on Enter, retain failed drafts, and do not sav
 	await input().fill("Renamed landscape.png");
 	await input().press("Enter");
 	await expect(
-		card.getByText("Filename update unavailable", { exact: true }),
+		card.getByText("Server request failed (HTTP 503).", { exact: true }),
 	).toBeVisible();
 	await expect(input()).toHaveValue("Renamed landscape.png");
 	await expect(input()).toBeFocused();

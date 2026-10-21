@@ -100,7 +100,7 @@ test("a second drop cannot overlap an upload batch", async ({ page, app }) => {
 	await createLibrary(page, app);
 	const held = deferred();
 	const started = deferred();
-	await page.route("**/api/media", async (route) => {
+	await page.route("**/api/blobs", async (route) => {
 		if (route.request().method() === "POST") {
 			started.resolve();
 			await held.promise;

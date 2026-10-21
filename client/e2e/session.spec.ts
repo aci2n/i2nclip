@@ -32,7 +32,11 @@ test("remembered access survives all tabs closing, refresh and a real browser re
 		context = await launch();
 		const page = context.pages()[0] ?? (await context.newPage());
 		await createLibrary(page, app, undefined, true);
-		const publicKey = await page.locator("code").textContent();
+		const publicKey = await page
+			.locator(".devices li")
+			.first()
+			.locator("details code")
+			.textContent();
 		await openUploadPreferences(page);
 		await page
 			.getByRole("checkbox", { name: "Compress images to WebP" })
@@ -75,7 +79,9 @@ test("remembered access survives all tabs closing, refresh and a real browser re
 		await expect(
 			restored.getByRole("heading", { name: "Your library", exact: true }),
 		).toBeVisible();
-		await expect(restored.locator("code")).toHaveText(publicKey ?? "");
+		await expect(
+			restored.locator(".devices li").first().locator("details code"),
+		).toHaveText(publicKey ?? "");
 		await openUploadPreferences(restored);
 		await expect(
 			restored.getByRole("checkbox", { name: "Compress images to WebP" }),
