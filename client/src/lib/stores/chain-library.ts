@@ -453,6 +453,11 @@ class ChainLibraryImpl {
 	}
 	private async openFile(id: string, opener?: HTMLElement) {
 		this.closeFile();
+		if (!/^[0-9a-f]{64}$/.test(id)) {
+			this.error = "Invalid media link.";
+			this.publish();
+			return false;
+		}
 		this.previewId = id;
 		this.opener = opener;
 		this.opening = true;
@@ -571,6 +576,7 @@ class ChainLibraryImpl {
 				this.prepared.set(id, { draft, change });
 				await this.files.commit(change, signal);
 				this.prepared.delete(id);
+				await this.view.file(id, signal);
 			} else {
 				const operation =
 					kind === "delete"

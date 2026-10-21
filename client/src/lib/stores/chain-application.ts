@@ -1,4 +1,5 @@
 import { get, writable } from "svelte/store";
+import { bytesToHex } from "../protocol/bytes.ts";
 import { createChainPairing } from "./chain-pairing.ts";
 import {
 	type ChainWorkspace,
@@ -126,16 +127,26 @@ class ChainApplicationImpl {
 
 	private captureUploads() {
 		const workspace = this.workspace;
+		const session = get(this.session);
 		if (
 			!workspace ||
 			get(workspace.view).historical ||
-			get(this.session).pendingRotation ||
-			(get(workspace.view).selected && get(workspace.library).readonly)
+			session.pendingRotation
+		) {
+			return null;
+		}
+		const live = get(workspace.chain).live;
+		if (
+			live &&
+			session.context &&
+			live.devices.get(bytesToHex(session.context.key.publicKey))?.revokedAt !==
+				null
 		) {
 			return null;
 		}
 		return workspace.uploads;
 	}
+
 	private uploadDroppedFiles(files: File[]) {
 		if (!files.length || !this.acceptsFiles() || !this.workspace) {
 			return;

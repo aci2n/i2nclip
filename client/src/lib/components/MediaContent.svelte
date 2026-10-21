@@ -2,16 +2,16 @@
 import type { MediaDisplay } from "../media/display.ts";
 
 interface Props {
-	media: MediaDisplay;
+	media: MediaDisplay | null | undefined;
 	presentation?: "dialog" | "page";
 }
 let { media, presentation = "page" }: Props = $props();
-const name = $derived(media.metadata?.name || media.id);
+const name = $derived(media?.metadata?.name || media?.id || "");
 const type = $derived(
-	media.metadata?.content_type || "application/octet-stream",
+	media?.metadata?.content_type || "application/octet-stream",
 );
-const text = $derived(media.text);
-const url = $derived(media.url);
+const text = $derived(media?.text);
+const url = $derived(media?.url);
 const autoplay = $derived(presentation === "dialog");
 let player = $state<HTMLMediaElement>();
 let failed = $state(false);
@@ -27,59 +27,39 @@ $effect(() => {
 </script>
 
 <div class="content" class:page={presentation === "page"}>
-	{#key media.id}
-		{#if text !== null && text !== undefined}
-			<section class="text-preview" aria-label={name}>
-				<p class="text-name">{name}</p>
-				<pre>{text}</pre>
-				{#if media.textTruncated}
-					<p>
-						Preview limited to the first 256 KiB. Download the file to read it
-						all.
-					</p>
-				{/if}
-			</section>
-		{:else if type.startsWith("image/") && (media.url || media.preview)}
-			{#if media.url}
-				{#if loading && media.preview}
+	{#if media}
+		{#key media.id}
+			{#if text !== null && text !== undefined}
+				<section class="text-preview" aria-label={name}>
+					<p class="text-name">{name}</p>
+					<pre>{text}</pre>
+					{#if media.textTruncated}
+						<p>
+							Preview limited to the first 256 KiB. Download the file to read it
+							all.
+						</p>
+					{/if}
+				</section>
+			{:else if type.startsWith("image/") && (media.url || media.preview)}
+				{#if media.url}
+					{#if loading && media.preview}
+						<img src={media.preview} alt={name}>
+					{/if}
+					<img
+						class:pending={loading && Boolean(media.preview)}
+						src={media.url}
+						alt={loading && media.preview ? "" : name}
+						onload={() => (loading = false)}
+						onerror={() => {
+							failed = true;
+							loading = false;
+						}}
+					>
+				{:else if media.preview}
 					<img src={media.preview} alt={name}>
 				{/if}
-				<img
-					class:pending={loading && Boolean(media.preview)}
-					src={media.url}
-					alt={loading && media.preview ? "" : name}
-					onload={() => (loading = false)}
-					onerror={() => {
-						failed = true;
-						loading = false;
-					}}
-				>
-			{:else if media.preview}
-				<img src={media.preview} alt={name}>
-			{/if}
-		{:else if type.startsWith("video/") && media.url}
-			<video
-				bind:this={player}
-				onloadeddata={() => (loading = false)}
-				src={media.url}
-				aria-label={name}
-				onerror={() => {
-					failed = true;
-					loading = false;
-				}}
-				controls
-				{autoplay}
-				playsinline
-			>
-				<track kind="captions">
-			</video>
-		{:else if type.startsWith("audio/") && media.url}
-			<div class="audio">
-				{#if media.preview}
-					<img src={media.preview} alt={name}>
-				{/if}
-				<p>{name}</p>
-				<audio
+			{:else if type.startsWith("video/") && media.url}
+				<video
 					bind:this={player}
 					onloadeddata={() => (loading = false)}
 					src={media.url}
@@ -90,22 +70,44 @@ $effect(() => {
 					}}
 					controls
 					{autoplay}
-				></audio>
+					playsinline
+				>
+					<track kind="captions">
+				</video>
+			{:else if type.startsWith("audio/") && media.url}
+				<div class="audio">
+					{#if media.preview}
+						<img src={media.preview} alt={name}>
+					{/if}
+					<p>{name}</p>
+					<audio
+						bind:this={player}
+						onloadeddata={() => (loading = false)}
+						src={media.url}
+						aria-label={name}
+						onerror={() => {
+							failed = true;
+							loading = false;
+						}}
+						controls
+						{autoplay}
+					></audio>
+				</div>
+			{:else if media.preview}
+				<img src={media.preview} alt={name}>
+			{:else if media.ready}
+				<p>This file is ready to download.</p>
+			{/if}
+		{/key}
+		{#if loading && !media.error}
+			<div class="loading stack" role="status">
+				<p>{name}</p>
+				<p>Loading…</p>
 			</div>
-		{:else if media.preview}
-			<img src={media.preview} alt={name}>
-		{:else if media.ready}
-			<p>This file is ready to download.</p>
 		{/if}
-	{/key}
-	{#if loading && !media.error}
-		<div class="loading stack" role="status">
-			<p>{name}</p>
-			<p>Loading…</p>
-		</div>
-	{/if}
-	{#if failed && !media.error}
-		<p class="error" role="alert">This browser could not display the file.</p>
+		{#if failed && !media.error}
+			<p class="error" role="alert">This browser could not display the file.</p>
+		{/if}
 	{/if}
 </div>
 <style>

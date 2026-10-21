@@ -190,7 +190,7 @@ fieldset {
 	margin-bottom: 1rem;
 }
 .search {
-	flex: 1;
+	flex: 1 1 22rem;
 	min-width: 0;
 }
 .actions,
