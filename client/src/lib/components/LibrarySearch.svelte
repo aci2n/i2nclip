@@ -1,0 +1,70 @@
+<script lang="ts">
+interface Props {
+	query: string;
+	suggestions: readonly string[];
+	onsearch: (query: string) => void;
+}
+let { query, suggestions, onsearch }: Props = $props();
+let draft = $state("");
+$effect(() => {
+	draft = query;
+});
+</script>
+<div class="stack">
+	<form
+		onsubmit={(event) => {
+			event.preventDefault();
+			onsearch(draft);
+		}}
+	>
+		<label class="field"
+			>Search files<input
+				type="search"
+				placeholder="Name or tag"
+				bind:value={draft}
+			></label
+		>
+		<button type="submit" class="secondary">Search</button>
+		{#if query}
+			<button type="button" class="secondary" onclick={() => onsearch("")}>
+				Clear search
+			</button>
+		{/if}
+	</form>
+	{#if suggestions.length}
+		<fieldset class="suggestions" aria-label="Tag suggestions">
+			{#each suggestions.slice(0, 12) as tag}
+				<button type="button" class="secondary" onclick={() => onsearch(tag)}>
+					{tag}
+				</button>
+			{/each}
+		</fieldset>
+	{/if}
+</div>
+<style>
+fieldset {
+	border: 0;
+	padding: 0;
+	min-width: 0;
+}
+form {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.75rem;
+	align-items: end;
+}
+label {
+	flex: 1;
+	min-width: 10rem;
+}
+.suggestions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+}
+.suggestions button {
+	padding: 0.125rem 0.375rem;
+	min-height: 2rem;
+	font-size: 0.875rem;
+}
+</style>

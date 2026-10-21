@@ -9,8 +9,9 @@ interface Props {
 	suggestions?: string[];
 	disabled?: boolean;
 	name: string;
+	revision: string;
 	onsearch: (tag: string) => void;
-	onsave: (tags: string[]) => Promise<boolean>;
+	onsave: (tags: string[], revision: string) => Promise<boolean>;
 }
 
 let {
@@ -18,10 +19,12 @@ let {
 	suggestions = [],
 	disabled = false,
 	name,
+	revision,
 	onsearch,
 	onsave,
 }: Props = $props();
 let editing = $state(false);
+let sourceRevision = $state("");
 let expanded = $state(false);
 let draft = $state("");
 let saving = $state(false);
@@ -30,6 +33,7 @@ let button = $state<HTMLButtonElement>();
 const locked = $derived(disabled || saving);
 async function open() {
 	editing = true;
+	sourceRevision = revision;
 	await tick();
 	input?.focus();
 }
@@ -49,10 +53,15 @@ async function persist(next: string[], clear = false) {
 	const submitted = draft;
 	saving = true;
 	try {
-		if ((await onsave(next)) && clear && draft === submitted) {
+		if (
+			(await onsave(next, editing ? sourceRevision : revision)) &&
+			clear &&
+			draft === submitted
+		) {
 			draft = "";
 		}
 	} finally {
+		sourceRevision = revision;
 		saving = false;
 		await tick();
 		input?.focus();

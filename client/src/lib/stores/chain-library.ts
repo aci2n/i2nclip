@@ -28,6 +28,7 @@ import type {
 
 export interface LibraryCard extends MediaDisplay {
 	readonly createdSequence: number;
+	readonly revision: string;
 	readonly deleted: boolean;
 	readonly unavailable: boolean;
 }
@@ -341,6 +342,7 @@ class ChainLibraryImpl {
 			...resource,
 			id,
 			createdSequence: file.createdSequence,
+			revision: source.selected ? bytesToHex(source.selected.head) : "",
 			metadata: metadata?.attributes ?? null,
 			deleted: file.deleted,
 			unavailable: file.purged || source.unavailable.has(id),
@@ -498,8 +500,8 @@ class ChainLibraryImpl {
 		this.opening = false;
 		this.publish();
 	}
-	private editFile(id: string, patch: Metadata) {
-		return this.mutateFile("metadata", id, patch);
+	private editFile(id: string, patch: Metadata, revision: string) {
+		return this.mutateFile("metadata", id, patch, revision);
 	}
 	private deleteFile(id: string) {
 		return this.mutateFile("delete", id);
@@ -528,6 +530,7 @@ class ChainLibraryImpl {
 		kind: "metadata" | "delete" | "restore" | "purge",
 		id: string,
 		patch?: Metadata,
+		revision?: string,
 	) {
 		if (this.mutation || this.signal.aborted) {
 			return false;
@@ -539,6 +542,11 @@ class ChainLibraryImpl {
 		this.publish();
 		try {
 			const { file, expected } = this.writableFile(id);
+			if (kind === "metadata" && expected.hash !== revision) {
+				throw new Error(
+					"The library changed. Review your draft and save again.",
+				);
+			}
 			if (
 				kind === "purge" &&
 				!this.confirm(

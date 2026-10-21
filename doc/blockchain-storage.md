@@ -780,6 +780,12 @@ Disable upload/edit/delete/restore/purge in historical views, including drop,
 paste, extension handoff, and keyboard entry points. A mutation's source head
 must remain the viewed head; never substitute the live one. Thus an accidentally
 enabled mutation based on an older block is rejected by compare-and-append.
+Editors capture the selected head as an opaque revision token when a draft is
+opened. Pass that token back with Save; reject a changed source before staging
+or publishing. Keep a failed draft visible. After reporting a stale-source
+failure, a further explicit Save may use the newly displayed revision; never
+retry or rebase automatically. One-click delete/restore/purge capture the
+currently selected head at the click.
 UI read-only guards still matter when the selected block happens to be the live
 head. No historical editing, automatic rebasing, or fork creation is included.
 

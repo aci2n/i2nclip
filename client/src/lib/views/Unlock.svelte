@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Session } from "../stores/session.ts";
+import type { Session } from "../stores/identity.ts";
 
 interface Props {
 	session: Session;

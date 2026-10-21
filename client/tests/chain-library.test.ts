@@ -230,7 +230,11 @@ test("metadata changes render only after acceptance and historical views reject 
 	const f = await fixture(t);
 	const pending = deferred();
 	f.waitForCommit(pending.promise);
-	const update = f.library.updateMetadata(f.id, { name: "updated.txt" });
+	const update = f.library.updateMetadata(
+		f.id,
+		{ name: "updated.txt" },
+		stateCheckpoint(f.current()).hash,
+	);
 	await new Promise((resolve) => setTimeout(resolve, 0));
 	assert.equal(get(f.library).cards[0].metadata?.name, "original.txt");
 	pending.resolve();
@@ -242,7 +246,11 @@ test("metadata changes render only after acceptance and historical views reject 
 	assert.equal(get(f.library).cards[0].metadata?.name, "original.txt");
 	assert.equal(get(f.library).readonly, true);
 	assert.equal(
-		await f.library.updateMetadata(f.id, { name: "forbidden" }),
+		await f.library.updateMetadata(
+			f.id,
+			{ name: "forbidden" },
+			stateCheckpoint(f.current()).hash,
+		),
 		false,
 	);
 	assert.equal(await f.library.remove(f.id), false);
@@ -290,4 +298,31 @@ test("root-owned downloads survive preview closure and time travel but abort on 
 	assert.equal(await f.library.purge(f.id), true);
 	assert.equal(signal.aborted, true);
 	assert.equal(await result, false);
+});
+
+test("an editor's old source revision is rejected before staging and requires explicit retry", async (t) => {
+	const f = await fixture(t);
+	const original = stateCheckpoint(f.current()).hash;
+	assert.equal(
+		await f.library.updateMetadata(f.id, { name: "first.txt" }, original),
+		true,
+	);
+	await f.view.index();
+	assert.equal(
+		await f.library.updateMetadata(f.id, { name: "draft.txt" }, original),
+		false,
+	);
+	assert.equal(f.stats().stages, 1);
+	assert.equal(f.stats().commits, 1);
+	assert.match(get(f.library).cards[0].message, /Review your draft/);
+	assert.equal(
+		await f.library.updateMetadata(
+			f.id,
+			{ name: "draft.txt" },
+			stateCheckpoint(f.current()).hash,
+		),
+		true,
+	);
+	await f.view.index();
+	assert.equal(get(f.library).cards[0].metadata?.name, "draft.txt");
 });

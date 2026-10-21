@@ -1,31 +1,26 @@
 <script lang="ts">
+import { onDestroy } from "svelte";
 import MediaViewer from "../components/MediaViewer.svelte";
-import type { ContentStreams } from "../stores/content-streams.ts";
-import { createMediaViewer } from "../stores/media-viewer.ts";
-import type { LibraryContext } from "../stores/session.ts";
+import type { ChainLibrary } from "../stores/chain-library.ts";
 
 interface Props {
 	id: string;
-	context: LibraryContext;
-	streams: ContentStreams;
+	library: ChainLibrary;
 }
-let { id, context, streams }: Props = $props();
-let viewer = $state.raw<ReturnType<typeof createMediaViewer> | null>(null);
+let { id, library }: Props = $props();
 $effect(() => {
-	const current = createMediaViewer(id, context, { streams });
-	viewer = current;
-	void current.retry();
-	return () => current.dispose();
+	void library.reveal(id);
 });
+onDestroy(() => library.closePreview());
 </script>
-{#if $viewer}
-	<MediaViewer
-		value={$viewer}
-		onretry={() => {
-			void viewer?.retry();
-		}}
-		ondownload={() => {
-			void viewer?.download();
-		}}
-	/>
-{/if}
+<MediaViewer
+	value={{
+		media: $library.preview,
+		loading:
+			(!$library.preview && !$library.status) ||
+			Boolean($library.preview?.busy),
+		error: $library.preview?.error ? $library.preview.message : $library.status,
+	}}
+	onretry={() => library.reveal(id)}
+	ondownload={() => library.download(id)}
+/>

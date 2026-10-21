@@ -3,12 +3,14 @@ import { tick } from "svelte";
 
 interface Props {
 	name: string;
+	revision: string;
 	disabled?: boolean;
-	onsave: (name: string) => Promise<boolean>;
+	onsave: (name: string, revision: string) => Promise<boolean>;
 }
 
-let { name, disabled = false, onsave }: Props = $props();
+let { name, revision, disabled = false, onsave }: Props = $props();
 let editing = $state(false);
+let sourceRevision = $state("");
 let draft = $state<string | null>(null);
 let saving = $state(false);
 let input = $state<HTMLInputElement>();
@@ -16,6 +18,7 @@ let button = $state<HTMLButtonElement>();
 
 async function open() {
 	draft = name;
+	sourceRevision = revision;
 	editing = true;
 	await tick();
 	input?.focus();
@@ -38,7 +41,7 @@ async function submit(event: SubmitEvent) {
 	const submitted = (draft ?? "").trim();
 	saving = true;
 	try {
-		if (submitted === name || (await onsave(submitted))) {
+		if (submitted === name || (await onsave(submitted, sourceRevision))) {
 			const restoreFocus = editing && document.activeElement === input;
 			draft = null;
 			editing = false;
@@ -49,6 +52,7 @@ async function submit(event: SubmitEvent) {
 			}
 		}
 	} finally {
+		sourceRevision = revision;
 		saving = false;
 	}
 }

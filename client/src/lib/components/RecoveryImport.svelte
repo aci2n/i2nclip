@@ -3,8 +3,16 @@ interface Props {
 	busy: boolean;
 	error: string;
 	onrestore: (file: File, password: string) => void;
+	label?: string;
+	description?: string;
 }
-let { busy, error, onrestore }: Props = $props();
+let {
+	busy,
+	error,
+	onrestore,
+	label = "Restore library",
+	description = "Restore your library from its encrypted recovery file.",
+}: Props = $props();
 let file = $state<File | null>(null);
 let password = $state("");
 </script>
@@ -17,7 +25,7 @@ let password = $state("");
 		}
 	}}
 >
-	<p>Restore your library from an encrypted recovery file.</p>
+	<p>{description}</p>
 	<label class="field"
 		>Recovery file<input
 			type="file"
@@ -36,7 +44,7 @@ let password = $state("");
 			disabled={busy}
 		></label
 	>
-	<button type="submit" disabled={busy || !file}>Restore library</button>
+	<button type="submit" disabled={busy || !file}>{label}</button>
 	{#if error}
 		<p class="error" role="alert">{error}</p>
 	{/if}

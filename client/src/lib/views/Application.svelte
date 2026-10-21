@@ -1,7 +1,7 @@
 <script lang="ts">
 import { onDestroy } from "svelte";
 import { routeHref } from "../routes.ts";
-import { createApplication } from "../stores/application.ts";
+import { createChainApplication as createApplication } from "../stores/chain-application.ts";
 import Library from "./Library.svelte";
 import Media from "./Media.svelte";
 import Settings from "./Settings.svelte";
@@ -83,7 +83,7 @@ function pasteFiles(event: ClipboardEvent) {
 				</svg>
 			</button>
 		</header>
-		{#if $session.notice}
+		{#if $session.notice && $routing.page !== "settings"}
 			<p class="error session-notice" role="alert">{$session.notice}</p>
 		{/if}
 	{/if}
@@ -96,12 +96,10 @@ function pasteFiles(event: ClipboardEvent) {
 		<Unlock {session} />
 	{:else if $routing.page === "media"}
 		{#if $session.context}
-			{#if $application.streams}
-				<Media
-					id={$routing.id}
-					context={$session.context}
-					streams={$application.streams}
-				/>
+			{#if workspace}
+				<Media id={$routing.id} library={workspace.library} />
+			{:else}
+				<p role="status">Loading library…</p>
 			{/if}
 		{:else}
 			<p>Connect the library that contains this file to open it.</p>
@@ -115,15 +113,17 @@ function pasteFiles(event: ClipboardEvent) {
 				quota={workspace?.quota ?? null}
 				uploads={workspace?.uploads ?? null}
 				{preferences}
+				devices={workspace?.devices ?? null}
+				chain={workspace?.chain ?? null}
 			/>
 		{:else if $session.configured && $preferences.loading}
 			<p role="status">Loading library…</p>
 		{:else if workspace}
 			<Library
-				{session}
 				library={workspace.library}
-				tags={workspace.tags}
 				uploads={workspace.uploads}
+				view={workspace.view}
+				chain={workspace.chain}
 			/>
 		{:else}
 			<section class="panel empty stack">

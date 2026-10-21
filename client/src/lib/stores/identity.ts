@@ -88,6 +88,7 @@ export interface SessionState extends SessionSnapshot {
 	recoveryFile: EncryptedBackup | null;
 	recoveryDownloaded: boolean;
 	recoveryStatus: string;
+	lastAction: string;
 	status: "new" | "locked" | "unlocked";
 	serverUrl: string;
 	context: LibraryContext | null;
@@ -196,6 +197,7 @@ class SessionStoreImpl {
 			recoveryFile: null,
 			recoveryDownloaded: false,
 			recoveryStatus: "",
+			lastAction: "",
 			configured: false,
 			unlocked: false,
 			busy: false,
@@ -356,7 +358,7 @@ class SessionStoreImpl {
 		this.log.info("started", { action: name, operation });
 		const own = new AbortController();
 		this.command = own;
-		this.publishSession({ busy: true, error: "" });
+		this.publishSession({ busy: true, error: "", lastAction: name });
 		try {
 			await work(own.signal);
 			own.signal.throwIfAborted();

@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { PairingState } from "../stores/pairing.ts";
+import type { PairingState } from "../stores/chain-pairing.ts";
 
 interface Props {
 	state: PairingState;

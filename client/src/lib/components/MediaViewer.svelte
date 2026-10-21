@@ -1,10 +1,10 @@
 <script lang="ts">
+import type { MediaDisplay } from "../media/display.ts";
 import { routeHref } from "../routes.ts";
-import type { ViewerState } from "../stores/media-viewer.ts";
 import MediaContent from "./MediaContent.svelte";
 
 interface Props {
-	value: ViewerState;
+	value: { media: MediaDisplay | null; loading: boolean; error: string };
 	onretry: () => void;
 	ondownload: () => void;
 }

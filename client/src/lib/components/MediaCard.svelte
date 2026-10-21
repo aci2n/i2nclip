@@ -1,253 +1,190 @@
 <script lang="ts">
-import { canPreview, fileSize, fileType, uploadedAt } from "../media/format.ts";
+import { fileSize, fileType } from "../media/format.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
-import { routeHref } from "../routes.ts";
-import type { MediaState } from "../stores/media-item.ts";
+import type { LibraryCard } from "../stores/chain-library.ts";
 import FilenameEditor from "./FilenameEditor.svelte";
 import TagEditor from "./TagEditor.svelte";
 
 interface Props {
-	media: MediaState;
-	suggestions?: string[];
+	media: LibraryCard;
+	suggestions?: readonly string[];
+	readonly?: boolean;
 	onsearch: (tag: string) => void;
 	onreveal: (opener: HTMLElement) => void;
 	ondownload: () => void;
 	onremove: () => void;
-	onupdate: (patch: Metadata) => Promise<boolean>;
+	onrestore: () => void;
+	onpurge: () => void;
+	onupdate: (patch: Metadata, revision: string) => Promise<boolean>;
 }
-
 let {
 	media,
 	suggestions = [],
+	readonly = false,
 	onsearch,
 	onreveal,
 	ondownload,
 	onremove,
+	onrestore,
+	onpurge,
 	onupdate,
 }: Props = $props();
-const type = $derived(media.metadata?.content_type || "");
-const playable = $derived(/^(audio|video)\//.test(type));
-const image = $derived(type.startsWith("image/"));
 const name = $derived(media.metadata?.name || media.id);
+const type = $derived(media.metadata?.content_type || "");
+const editable = $derived(
+	!readonly &&
+		!media.busy &&
+		!media.deleted &&
+		!media.unavailable &&
+		Boolean(media.metadata),
+);
 const source = $derived.by(() => {
 	try {
 		const url = new URL(media.metadata?.source_url || "");
-		return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+		return ["https:", "http:"].includes(url.protocol) ? url.href : "";
 	} catch {
 		return "";
 	}
 });
-const summary = $derived(
-	[fileType(type), fileSize(media.metadata?.size)].filter(Boolean).join(" · "),
-);
 </script>
-
 <article class="panel card" class:deleted={media.deleted}>
-	<div class="media">
-		{#if canPreview(type, name)}
-			<button
-				type="button"
-				class="preview-button"
-				aria-label={`${playable ? "Play" : "Open"} ${name}`}
-				onclick={(event) => onreveal(event.currentTarget)}
-				disabled={media.busy || media.deleted}
-			>
-				{#if media.preview || (image && media.url)}
-					<img src={media.preview || media.url} alt={name}>
-				{:else}
-					<span class="file-type">{fileType(type)}</span>
-				{/if}
-				{#if playable}
-					<span class="play" aria-hidden="true">▶</span>
-				{/if}
-			</button>
-		{:else if media.preview}
+	<button
+		type="button"
+		class="preview"
+		aria-label={`Open ${name}`}
+		onclick={(event) => onreveal(event.currentTarget)}
+		disabled={media.busy || media.unavailable || !media.metadata}
+	>
+		{#if media.preview}
 			<img src={media.preview} alt={name}>
 		{:else}
-			<span class="file-type">{fileType(type)}</span>
+			<span>{media.unavailable ? "Permanently purged" : fileType(type)}</span>
 		{/if}
-	</div>
+	</button>
 	<FilenameEditor
 		{name}
-		disabled={media.busy || media.deleted || !media.metadata}
-		onsave={(name) => onupdate({ name })}
+		revision={media.revision}
+		disabled={!editable}
+		onsave={(name, revision) => onupdate({ name }, revision)}
 	/>
-	<p class="meta">{summary}</p>
+	<p class="meta">
+		{[fileType(type), fileSize(media.metadata?.size)]
+			.filter(Boolean)
+			.join(" · ")}
+	</p>
 	{#if media.metadata}
 		<TagEditor
 			tags={media.metadata.tags || []}
-			{suggestions}
+			suggestions={[...suggestions]}
 			{name}
+			disabled={!editable}
 			{onsearch}
-			disabled={media.busy || media.deleted}
-			onsave={(tags) => onupdate({ tags })}
+			revision={media.revision}
+			onsave={(tags, revision) => onupdate({ tags }, revision)}
 		/>
 	{/if}
-	<details class="card-details">
-		<summary>File details</summary>
-		<dl>
-			<dt>Filename</dt>
-			<dd>{name}</dd>
+	<details>
+		<summary>Details</summary>
+		<div class="stack details">
+			<p>Added in block {media.createdSequence}</p>
 			{#if source}
-				<dt>Source</dt>
-				<dd>
-					<a href={source} title={source} target="_blank" rel="noreferrer">
-						{media.metadata?.source_title || source}
-					</a>
-				</dd>
+				<a href={source} target="_blank" rel="noreferrer"
+					>{media.metadata?.source_title || source}</a
+				>
 			{/if}
-			<dt>Uploaded</dt>
-			<dd>{uploadedAt(media.createdAt)}</dd>
-			{#if type}
-				<dt>Type</dt>
-				<dd>{type}</dd>
-			{/if}
-			{#if media.metadata?.image}
-				<dt>Dimensions</dt>
-				<dd>{media.metadata.image.width} × {media.metadata.image.height}</dd>
-			{/if}
-		</dl>
+			<p class="identifier">{media.id}</p>
+		</div>
 	</details>
-	<output class="feedback" class:error={media.error}>{media.message}</output>
-	<div class="bar actions">
-		{#if !media.deleted}
-			<!-- biome-ignore lint/a11y/noAmbiguousAnchorText: The accessible label includes the filename. -->
-			<a
-				class="button secondary"
-				aria-label={`Link to ${name}`}
-				href={routeHref({ page: "media", id: media.id })}
-				target="_blank"
-				rel="noopener noreferrer"
-				>Link</a
-			>
-		{/if}
+	<div class="actions">
 		<button
 			type="button"
 			class="secondary"
-			data-act="download"
 			onclick={ondownload}
-			disabled={media.busy || media.deleted}
+			disabled={media.busy || media.unavailable || !media.metadata}
 		>
 			Download
 		</button>
-		<button
-			type="button"
-			class="secondary danger"
-			data-act="delete"
-			onclick={() => onremove()}
-			disabled={media.busy || media.deleted}
-		>
-			Delete
-		</button>
+		{#if media.deleted}
+			<button
+				type="button"
+				class="secondary"
+				onclick={onrestore}
+				disabled={readonly || media.busy || media.unavailable}
+			>
+				Restore
+			</button><button
+				type="button"
+				class="secondary danger"
+				onclick={onpurge}
+				disabled={readonly || media.busy || media.unavailable}
+			>
+				Permanently delete
+			</button>
+		{:else}
+			<button
+				type="button"
+				class="secondary danger"
+				onclick={onremove}
+				disabled={readonly || media.busy || media.unavailable}
+			>
+				Delete
+			</button>
+		{/if}
 	</div>
+	{#if media.busy}
+		<p role="status">Working…</p>
+	{/if}
+	{#if media.message}
+		<p class:error={media.error} role={media.error ? "alert" : "status"}>
+			{media.message}
+		</p>
+	{/if}
 </article>
-
 <style>
 .card {
-	padding: 0.75rem;
 	display: flex;
 	flex-direction: column;
-	gap: 0.5rem;
+	gap: 0.75rem;
+	min-width: 0;
 }
-.meta {
-	font-size: 0.85rem;
-	margin: 0;
-}
-.card.deleted {
-	opacity: 0.2;
-}
-.media {
-	position: relative;
-	aspect-ratio: 16 / 10;
-	grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+.preview {
 	display: grid;
 	place-items: center;
+	aspect-ratio: 16 / 10;
 	overflow: hidden;
-	border-radius: 0.3rem;
-	background: var(--line);
+	padding: 0;
+	background: var(--soft);
+	color: var(--muted);
+	border: 0;
 }
-.media img {
+.preview img {
 	width: 100%;
 	height: 100%;
 	object-fit: contain;
-	display: block;
 }
-.preview-button {
-	grid-template: minmax(0, 1fr) / minmax(0, 1fr);
-	min-width: 0;
-	min-height: 0;
-	border: 0;
-	padding: 0;
-	background: transparent;
-	width: 100%;
-	height: 100%;
-	display: grid;
-	place-items: center;
-	color: inherit;
+.preview span {
+	padding: 1rem;
 }
-.file-type {
-	color: var(--accent);
-	font-size: 1.1rem;
-	letter-spacing: 0.08em;
-}
-.play {
-	position: absolute;
-	inset: 0;
-	display: grid;
-	place-items: center;
-	background: transparent;
-	color: var(--accent);
-	font-size: 2rem;
-}
-.media:has(img) .play {
-	background: #0004;
-	color: white;
-}
-.media:has(.play) .file-type {
-	position: absolute;
-	top: 0.5rem;
-	left: 0.75rem;
-	font-size: 0.8rem;
-}
-
-.card-details {
-	margin: 0;
+.meta {
 	color: var(--muted);
-	font-size: 0.85rem;
-}
-dl {
-	display: grid;
-	gap: 0.25rem;
-	margin: 0.75rem 0;
-	font-size: 0.85rem;
-}
-dt {
-	color: var(--muted);
-}
-dd {
-	margin: 0 0 0.5rem;
-	overflow-wrap: anywhere;
-}
-.actions button,
-.actions a {
-	font-size: 0.85rem;
-	padding: 0.25rem 0.5rem;
+	font-size: 0.875rem;
 }
 .actions {
+	display: flex;
 	flex-wrap: wrap;
-	padding-top: 0.5rem;
+	gap: 0.5rem;
 	margin-top: auto;
 }
-output {
-	display: block;
-	margin: 0;
+.details {
+	padding-top: 0.75rem;
+	gap: 0.5rem;
+	overflow-wrap: anywhere;
 }
-@media (max-width: 32rem), (pointer: coarse) {
-	.actions button,
-	.actions a {
-		min-height: 3rem;
-		padding: 0.5rem 0.75rem;
-		font-size: 1rem;
-	}
+.identifier {
+	font-family: monospace;
+	font-size: 0.75rem;
+}
+.deleted {
+	border-style: dashed;
 }
 </style>
