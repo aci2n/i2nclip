@@ -2,7 +2,6 @@
 
 use std::fmt;
 
-use curve25519_dalek::montgomery::MontgomeryPoint;
 use serde::{
     de::{self, SeqAccess, Visitor},
     ser::SerializeTuple,
@@ -14,7 +13,6 @@ use sha2::{Digest, Sha256};
 use crate::{auth::validate_public_key, codec, crypto, Error, MAX_SAFE_INTEGER};
 
 pub type Hash = [u8; 32];
-pub const MAX_AUTHORIZED_DEVICES: i64 = 128;
 pub const MAX_BLOCK_BYTES: usize = 64 * 1024;
 pub const MAX_BLOB_BYTES: usize = 4 * 1024 * 1024 + 64;
 pub const MAX_PAGE_BYTES: usize = 1024 * 1024;
@@ -50,58 +48,24 @@ pub fn parse_hash(text: &str) -> Result<Hash, Error> {
     Ok(result)
 }
 
-/// Genesis pins immutable recovery authority and the initial public epoch salt.
-/// X25519 accepts noncanonical field encodings, but low-order inputs yield an all-zero secret.
-/// This public fixed scalar is only a validation probe, never key material.
-pub fn validate_encryption_key(bytes: &[u8]) -> Result<Hash, Error> {
-    let key: Hash = bytes.try_into().map_err(|_| invalid())?;
-    if MontgomeryPoint(key).mul_clamped([0x42; 32]).to_bytes() == [0; 32] {
-        return Err(invalid());
-    }
-    Ok(key)
+/// Canonical genesis pins the single immutable library signing authority.
+pub fn genesis(public: &Hash) -> Result<Hash, Error> {
+    Ok(digest(&[GENESIS_DOMAIN, &genesis_bytes(public)?].concat()))
 }
-
-pub fn genesis(recovery: &Hash, epoch_salt: &Hash) -> Result<Hash, Error> {
-    let bytes = genesis_bytes(recovery, epoch_salt)?;
-    Ok(digest(&[GENESIS_DOMAIN, &bytes].concat()))
+pub fn genesis_bytes(public: &Hash) -> Result<Vec<u8>, Error> {
+    validate_public_key(public)?;
+    rmp_serde::to_vec(&(1u8, serde_bytes::Bytes::new(public))).map_err(|_| invalid())
 }
-
-pub fn genesis_bytes(recovery: &Hash, epoch_salt: &Hash) -> Result<Vec<u8>, Error> {
-    validate_public_key(recovery)?;
-    rmp_serde::to_vec(&(
-        1u8,
-        serde_bytes::Bytes::new(recovery),
-        serde_bytes::Bytes::new(epoch_salt),
-    ))
-    .map_err(|_| invalid())
-}
-
-/// Canonical public authority and initial epoch salt, independent of SQL projections.
-pub fn parse_genesis(bytes: &[u8]) -> Result<(Hash, Hash), Error> {
+pub fn parse_genesis(bytes: &[u8]) -> Result<Hash, Error> {
     if bytes.len() > 128 {
         return Err(invalid());
     }
-    let (version, recovery, salt): (u8, ByteBuf, ByteBuf) =
-        rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
-    let recovery: Hash = recovery.as_ref().try_into().map_err(|_| invalid())?;
-    let salt: Hash = salt.as_ref().try_into().map_err(|_| invalid())?;
-    if version != 1 || genesis_bytes(&recovery, &salt)? != bytes {
+    let (version, public): (u8, ByteBuf) = codec::decode(bytes)?;
+    let public: Hash = public.as_ref().try_into().map_err(|_| invalid())?;
+    if version != 1 || genesis_bytes(&public)? != bytes {
         return Err(invalid());
     }
-    Ok((recovery, salt))
-}
-
-pub fn genesis_recovery(bytes: &[u8]) -> Result<Hash, Error> {
-    Ok(parse_genesis(bytes)?.0)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Kind {
-    Data,
-    Enroll,
-    Revoke,
-    Rotate,
+    Ok(public)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,18 +183,7 @@ fn next_hashes<'de, A: SeqAccess<'de>>(
     Ok(hashes)
 }
 
-pub type EpochEnvelope = (ByteBuf, ByteBuf, ByteBuf);
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum Effects {
-    Storage(Vec<StorageEffect>),
-    Device((ByteBuf,)),
-    Enrollment((ByteBuf, ByteBuf)),
-    Rotation((u64, ByteBuf, Vec<EpochEnvelope>)),
-}
-
-/// Struct fields serialize to a fixed-position array with `rmp_serde::to_vec`.
+/// Fixed positional MessagePack body; every block is encrypted under one authority.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Body {
     pub version: u8,
@@ -239,16 +192,11 @@ pub struct Body {
     pub sequence: u64,
     #[serde(with = "serde_bytes")]
     pub previous: Hash,
-    pub epoch: u64,
-    #[serde(with = "serde_bytes")]
-    pub signer: Hash,
-    pub kind: Kind,
-    pub effects: Effects,
-    pub salt: Option<ByteBuf>,
-    pub nonce: Option<ByteBuf>,
-    pub encrypted: Option<ByteBuf>,
+    pub effects: Vec<StorageEffect>,
+    pub salt: ByteBuf,
+    pub nonce: ByteBuf,
+    pub encrypted: ByteBuf,
 }
-
 impl Body {
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
         rmp_serde::to_vec(self).map_err(|_| invalid())
@@ -259,9 +207,6 @@ impl Body {
             serde_bytes::Bytes::new(&self.library),
             self.sequence,
             serde_bytes::Bytes::new(&self.previous),
-            self.epoch,
-            serde_bytes::Bytes::new(&self.signer),
-            self.kind,
             &self.effects,
             &self.salt,
             &self.nonce,
@@ -271,51 +216,11 @@ impl Body {
     fn validate(&self) -> Result<(), Error> {
         if self.version != 1
             || self.sequence == 0
-            || self.epoch == 0
             || self.sequence > MAX_SAFE_INTEGER as u64
-            || self.epoch > MAX_SAFE_INTEGER as u64
-        {
-            return Err(invalid());
-        }
-        validate_public_key(&self.signer)?;
-        match (&self.kind, &self.effects) {
-            (Kind::Data, Effects::Storage(effects)) if effects.len() <= 1 => {
-                if self.salt.as_ref().map(|value| value.len()) != Some(32)
-                    || self.nonce.as_ref().map(|value| value.len()) != Some(12)
-                    || self.encrypted.as_ref().is_none_or(|v| v.len() < 16)
-                {
-                    return Err(invalid());
-                }
-            }
-            (Kind::Revoke, Effects::Device((key,))) => {
-                validate_public_key(key)?;
-            }
-            (Kind::Enroll, Effects::Enrollment((signing, encryption))) => {
-                validate_public_key(signing)?;
-                validate_encryption_key(encryption)?;
-            }
-            (Kind::Rotate, Effects::Rotation((epoch, salt, envelopes)))
-                if *epoch >= 2
-                    && *epoch <= MAX_SAFE_INTEGER as u64
-                    && salt.len() == 32
-                    && envelopes.len() <= MAX_AUTHORIZED_DEVICES as usize =>
-            {
-                let mut previous: Option<&[u8]> = None;
-                for (recipient, encapsulated, ciphertext) in envelopes {
-                    validate_public_key(recipient)?;
-                    if encapsulated.len() != 32
-                        || ciphertext.len() != 48
-                        || previous.is_some_and(|key| key >= recipient.as_ref())
-                    {
-                        return Err(invalid());
-                    }
-                    previous = Some(recipient.as_ref());
-                }
-            }
-            _ => return Err(invalid()),
-        }
-        if self.kind != Kind::Data
-            && (self.salt.is_some() || self.nonce.is_some() || self.encrypted.is_some())
+            || self.effects.len() > 1
+            || self.salt.len() != 32
+            || self.nonce.len() != 12
+            || self.encrypted.len() < 16
         {
             return Err(invalid());
         }
@@ -332,7 +237,7 @@ pub struct Record {
 }
 
 /// Canonical framing, public shape and strict Ed25519 validation; no membership lookup.
-pub fn verify_record(bytes: &[u8]) -> Result<Record, Error> {
+pub fn verify_record(bytes: &[u8], public: &Hash) -> Result<Record, Error> {
     if bytes.len() > MAX_BLOCK_BYTES {
         return Err(invalid());
     }
@@ -347,7 +252,7 @@ pub fn verify_record(bytes: &[u8]) -> Result<Record, Error> {
     {
         return Err(invalid());
     }
-    crypto::verify(&body.signer, &[SIGN_DOMAIN, &signed].concat(), &signature)?;
+    crypto::verify(public, &[SIGN_DOMAIN, &signed].concat(), &signature)?;
     Ok(Record {
         bytes: bytes.to_vec(),
         hash: digest(&[BLOCK_DOMAIN, bytes].concat()),
@@ -392,250 +297,81 @@ mod tests {
         aead::{Aead, Payload},
         Aes256Gcm, KeyInit, Nonce,
     };
-    use ed25519_dalek::{Signer, SigningKey};
     use hkdf::Hkdf;
     use serde_json::Value;
 
     use super::*;
-
-    #[test]
-    fn genesis_authority_requires_canonical_valid_public_payload() {
-        let recovery = SigningKey::from_bytes(&[42; 32]).verifying_key().to_bytes();
-
-        let bytes = genesis_bytes(&recovery, &[11; 32]).unwrap();
-        assert_eq!(genesis_recovery(&bytes).unwrap(), recovery);
-        let mut trailing = bytes.clone();
-        trailing.push(0);
-        assert!(genesis_recovery(&trailing).is_err());
-        assert!(genesis_recovery(&[0; 129]).is_err());
-        assert!(genesis_recovery(
-            &rmp_serde::to_vec(&(
-                1,
-                ByteBuf::from(recovery),
-                ByteBuf::from(recovery),
-                ByteBuf::from([11; 32]),
-                1
-            ))
+    fn binary(value: &Value, name: &str) -> Vec<u8> {
+        value[name]
+            .as_str()
             .unwrap()
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn encryption_public_keys_reject_low_order_inputs() {
-        assert!(validate_encryption_key(&[0; 32]).is_err());
-        let mut one = [0; 32];
-        one[0] = 1;
-        assert!(validate_encryption_key(&one).is_err());
-        let mut base = [0; 32];
-        base[0] = 9;
-        assert_eq!(validate_encryption_key(&base).unwrap(), base);
-        assert!(validate_encryption_key(&base[..31]).is_err());
-    }
-
-    fn vectors() -> Value {
-        serde_json::from_str(include_str!("../client/tests/chain-vectors.json")).unwrap()
-    }
-    fn hex_bytes(hex: &str) -> Vec<u8> {
-        hex.as_bytes()
+            .as_bytes()
             .as_chunks::<2>()
             .0
             .iter()
             .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
             .collect()
     }
-    fn bytes(value: &Value, name: &str) -> Vec<u8> {
-        hex_bytes(value[name].as_str().unwrap())
-    }
-    fn hash(value: &Value, name: &str) -> Hash {
-        bytes(value, name).try_into().unwrap()
-    }
-    fn sign(body: &Body, seed: &Hash) -> Vec<u8> {
-        let signed = body.encode().unwrap();
-        let signature = SigningKey::from_bytes(seed).sign(&[SIGN_DOMAIN, &signed].concat());
-        rmp_serde::to_vec(&(
-            ByteBuf::from(signed),
-            ByteBuf::from(signature.to_bytes().to_vec()),
+    #[test]
+    fn shared_seed_vectors_verify_native_signatures_and_independent_hkdf_aead() {
+        let vector: Value =
+            serde_json::from_str(include_str!("../client/tests/shared-seed-vectors.json")).unwrap();
+        let public: Hash = binary(&vector, "publicKey").try_into().unwrap();
+        let genesis = binary(&vector, "genesis");
+        let library = genesis_hash_for_test(&genesis);
+        assert_eq!(parse_genesis(&genesis).unwrap(), public);
+        assert_eq!(genesis_bytes(&public).unwrap(), genesis);
+        assert_eq!(library.as_slice(), binary(&vector, "library"));
+        let info = codec::encode(&(
+            "i2nclip/library-encryption/1",
+            serde_bytes::Bytes::new(&library),
         ))
-        .unwrap()
-    }
-
-    #[test]
-    fn canonical_records_and_inventory_match_javascript_vectors() {
-        let v = vectors();
-        let recovery: Value =
-            serde_json::from_str(include_str!("../client/tests/recovery-vectors.json")).unwrap();
-        assert_eq!(
-            genesis(
-                &hash(&recovery, "recovery_public_key"),
-                &hash(&recovery, "epoch_1_salt")
-            )
-            .unwrap(),
-            hash(&recovery, "library")
-        );
-        let record = verify_record(&bytes(&v, "record")).unwrap();
-        assert_eq!(record.hash, hash(&v, "block_hash"));
-        assert_eq!(record.signed_body, bytes(&v, "signed_body"));
-        assert_eq!(record.body.header().unwrap(), bytes(&v, "header"));
-        assert_eq!(sign(&record.body, &hash(&v, "seed")), record.bytes);
-        {
-            let record = verify_record(&bytes(&v, "enrollment")).unwrap();
-            assert!(record.body.encrypted.is_none());
-            assert_eq!(sign(&record.body, &hash(&v, "seed")), record.bytes);
-        }
-        let reset = verify_record(&bytes(&recovery, "reset")).unwrap();
-        assert_eq!(reset.body.signer, hash(&recovery, "recovery_public_key"));
-        assert_eq!(
-            sign(&reset.body, &hash(&recovery, "signing_seed")),
-            reset.bytes
-        );
-        assert!(verify_record(&bytes(&v, "rotation")).is_err());
-        let mut entries = v["inventory_entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|e| {
-                (
-                    hex_bytes(e[0].as_str().unwrap()).try_into().unwrap(),
-                    e[1].as_u64().unwrap(),
-                )
-            })
-            .collect::<Vec<_>>();
-        entries.reverse();
-        assert_eq!(
-            inventory_digest(&hash(&v, "library"), &hash(&v, "file"), &entries).unwrap(),
-            hash(&v, "inventory")
-        );
-        assert!(inventory_digest(
-            &hash(&v, "library"),
-            &hash(&v, "file"),
-            &[entries[0], entries[0]]
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn recovery_epoch_derivation_matches_independent_native_vectors() {
-        let v: Value =
-            serde_json::from_str(include_str!("../client/tests/recovery-vectors.json")).unwrap();
-        let signing = SigningKey::from_bytes(&hash(&v, "signing_seed"));
-        assert_eq!(
-            signing.verifying_key().to_bytes(),
-            hash(&v, "recovery_public_key")
-        );
-        assert_eq!(
-            signing.sign(&bytes(&v, "probe")).to_bytes().as_slice(),
-            bytes(&v, "signature")
-        );
-        for epoch in [1u64, 2] {
-            let info = rmp_serde::to_vec(&(
-                "i2nclip/epoch-key/1",
-                serde_bytes::Bytes::new(&hash(&v, "library")),
-                epoch,
-            ))
+        .unwrap();
+        let mut root = [0u8; 32];
+        Hkdf::<Sha256>::new(Some(b"i2nclip"), &binary(&vector, "seed"))
+            .expand(&info, &mut root)
             .unwrap();
-            let mut key = [0; 32];
-            Hkdf::<Sha256>::new(
-                Some(&bytes(&v, &format!("epoch_{epoch}_salt"))),
-                &bytes(&v, "epoch_derivation_secret"),
-            )
+        assert_eq!(root.as_slice(), binary(&vector, "encryptionRoot"));
+        let bytes = binary(&vector, "record");
+        let record = verify_record(&bytes, &public).unwrap();
+        assert_eq!(record.hash.as_slice(), binary(&vector, "hash"));
+        let info =
+            codec::encode(&("i2nclip/chain/key/1", serde_bytes::Bytes::new(&library))).unwrap();
+        let mut key = [0u8; 32];
+        Hkdf::<Sha256>::new(Some(&record.body.salt), &root)
             .expand(&info, &mut key)
             .unwrap();
-            assert_eq!(key, hash(&v, &format!("epoch_{epoch}_key")));
-        }
-    }
-
-    #[test]
-    fn independent_reference_hkdf_and_aead_open_client_ciphertexts() {
-        let v = vectors();
-        let record = verify_record(&bytes(&v, "record")).unwrap();
-        let body = record.body;
-        let info = rmp_serde::to_vec(&(
-            "i2nclip/chain/key/1",
-            serde_bytes::Bytes::new(&body.library),
-            body.epoch,
-        ))
-        .unwrap();
-        let mut key = [0; 32];
-        Hkdf::<Sha256>::new(
-            Some(body.salt.as_ref().unwrap()),
-            &bytes(&v, "epoch_secret"),
-        )
-        .expand(&info, &mut key)
-        .unwrap();
-        let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
-        let aad = [b"i2nclip/chain/aad/1\n".as_slice(), &body.header().unwrap()].concat();
-        let plain = cipher
+        assert_eq!(key.as_slice(), binary(&vector, "blockKey"));
+        let aad = [
+            b"i2nclip/chain/aad/1\n".as_slice(),
+            &record.body.header().unwrap(),
+        ]
+        .concat();
+        let opened = Aes256Gcm::new_from_slice(&key)
+            .unwrap()
             .decrypt(
-                Nonce::from_slice(body.nonce.as_ref().unwrap()),
+                Nonce::from_slice(&record.body.nonce),
                 Payload {
-                    msg: body.encrypted.as_ref().unwrap(),
+                    msg: &record.body.encrypted,
                     aad: &aad,
                 },
             )
             .unwrap();
-        assert_eq!(plain, bytes(&v, "plaintext"));
-        let object = bytes(&v, "object");
-        assert_eq!(digest(&object), hash(&v, "object_hash"));
-        let (version, nonce, ct): (u8, ByteBuf, ByteBuf) = codec::decode(&object).unwrap();
-        assert_eq!(version, 1);
-        let aad = rmp_serde::to_vec(&(
-            "i2nclip/object/1",
-            serde_bytes::Bytes::new(&hash(&v, "library")),
-            serde_bytes::Bytes::new(&hash(&v, "file")),
-            "metadata",
-        ))
-        .unwrap();
-        let cipher = Aes256Gcm::new_from_slice(&bytes(&v, "object_key")).unwrap();
-        assert_eq!(
-            cipher
-                .decrypt(
-                    Nonce::from_slice(&nonce),
-                    Payload {
-                        msg: &ct,
-                        aad: &aad
-                    }
-                )
-                .unwrap(),
-            bytes(&v, "object_plaintext")
-        );
-    }
-
-    #[test]
-    fn reject_tampering_noncanonical_encoding_and_signed_invalid_headers() {
-        let v = vectors();
-        let encoded = bytes(&v, "record");
-        for index in [0, encoded.len() / 2, encoded.len() - 1] {
-            let mut changed = encoded.clone();
-            changed[index] ^= 1;
-            assert!(verify_record(&changed).is_err());
-        }
-        let mut extra = encoded.clone();
+        assert_eq!(opened, binary(&vector, "plaintext"));
+        let other = crate::reference_crypto::from_seed([8; 32]);
+        assert!(verify_record(&bytes, &other.public).is_err());
+        let mut bad = bytes.clone();
+        let last = bad.len() - 1;
+        bad[last] ^= 1;
+        assert!(verify_record(&bad, &public).is_err());
+        let mut extra = bytes;
         extra.push(0);
-        assert!(verify_record(&extra).is_err());
-        assert!(verify_record(&vec![0; MAX_BLOCK_BYTES + 1]).is_err());
-        let record = verify_record(&encoded).unwrap();
-        for change in 0..6 {
-            let mut body = record.body.clone();
-            match change {
-                0 => body.version = 2,
-                1 => body.sequence = 0,
-                2 => body.epoch = 0,
-                3 => body.salt = None,
-                4 => body.kind = Kind::Rotate,
-                _ => body.sequence = MAX_SAFE_INTEGER as u64 + 1,
-            }
-            assert!(verify_record(&sign(&body, &hash(&v, "seed"))).is_err());
-        }
-        let mut noncanonical = record.signed_body.clone();
-        noncanonical.splice(1..2, [0xcc, 1]);
-        let signature =
-            SigningKey::from_bytes(&hash(&v, "seed")).sign(&[SIGN_DOMAIN, &noncanonical].concat());
-        let encoded = rmp_serde::to_vec(&(
-            ByteBuf::from(noncanonical),
-            ByteBuf::from(signature.to_bytes().to_vec()),
-        ))
-        .unwrap();
-        assert!(verify_record(&encoded).is_err());
+        assert!(verify_record(&extra, &public).is_err());
+        let mut extra = genesis;
+        extra.push(0);
+        assert!(parse_genesis(&extra).is_err());
+    }
+    fn genesis_hash_for_test(bytes: &[u8]) -> Hash {
+        digest(&[GENESIS_DOMAIN, bytes].concat())
     }
 }

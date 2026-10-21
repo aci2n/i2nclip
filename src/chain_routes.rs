@@ -3,7 +3,7 @@
 use axum::{extract::State, http::StatusCode, response::Response, routing::get, Router};
 
 use crate::{
-    auth::ProofRequest,
+    auth::SignedRequest,
     chain::{self, Hash},
     routes::{document_response, fail, SHORT_BODY_DEADLINE},
     AppState, Error,
@@ -13,7 +13,7 @@ pub(crate) fn router() -> Router<AppState> {
     Router::new().route("/api/blocks", get(page).post(append))
 }
 
-async fn append(State(state): State<AppState>, ProofRequest(request): ProofRequest) -> Response {
+async fn append(State(state): State<AppState>, request: SignedRequest) -> Response {
     if let Err(response) = request.check_size(chain::MAX_BLOCK_BYTES) {
         return *response;
     }
@@ -50,7 +50,7 @@ fn page_query(query: Option<&str>) -> Result<(Hash, Option<Hash>), Error> {
     ))
 }
 
-async fn page(State(state): State<AppState>, ProofRequest(request): ProofRequest) -> Response {
+async fn page(State(state): State<AppState>, request: SignedRequest) -> Response {
     let (after, until) = match page_query(request.query()) {
         Ok(query) => query,
         Err(error) => return fail(error),

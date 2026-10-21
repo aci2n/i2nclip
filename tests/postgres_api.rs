@@ -15,39 +15,7 @@ use tower::ServiceExt;
 #[path = "../src/reference_crypto.rs"]
 pub mod reference_crypto;
 
-fn recovery_identity() -> Identity {
-    reference_crypto::from_seed([42; 32])
-}
-
 static N: AtomicU64 = AtomicU64::new(0);
-
-fn signed_membership_record(
-    identity: &Identity,
-    library: i2nclip::chain::Hash,
-    previous: i2nclip::chain::Hash,
-    sequence: u64,
-    target: &Identity,
-) -> Vec<u8> {
-    use i2nclip::chain::{Body as BlockBody, Effects, Kind};
-    use serde_bytes::ByteBuf;
-    let body = BlockBody {
-        version: 1,
-        library,
-        sequence,
-        previous,
-        epoch: 1,
-        signer: identity.public,
-        kind: Kind::Enroll,
-        effects: Effects::Enrollment((
-            ByteBuf::from(target.public.to_vec()),
-            ByteBuf::from(target.public.to_vec()),
-        )),
-        salt: None,
-        nonce: None,
-        encrypted: None,
-    };
-    sign_public_record(identity, &body)
-}
 
 fn sign_public_record(identity: &Identity, body: &i2nclip::chain::Body) -> Vec<u8> {
     use ed25519_dalek::{Signer, SigningKey};
@@ -64,257 +32,79 @@ fn sign_public_record(identity: &Identity, body: &i2nclip::chain::Body) -> Vec<u
 }
 
 #[tokio::test]
-async fn chain_http_registration_paging_append_and_membership_admission() {
+async fn chain_http_registration_paging_and_fixed_authority() {
+    use i2nclip::chain::Body as BlockBody;
     use serde_bytes::ByteBuf;
-    let initial = new_identity();
-    let second = new_identity();
-    let third = new_identity();
-    let (db, app) = app(&[]).await;
-    let code = i2nclip::issue_registration_otc(&db.0, 3600, i2nclip::StorageLimits::default())
-        .await
-        .unwrap();
-    assert_eq!(
-        call(
-            &app,
-            &initial,
-            "POST",
-            "/api/register-key",
-            registration_body(&code, &initial)
-        )
-        .await
-        .0,
-        StatusCode::NO_CONTENT
-    );
-    let library = i2nclip::chain::genesis(&recovery_identity().public, &[11; 32]).unwrap();
-    let hex = library
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
-    let path = format!("/api/blocks?after={hex}");
-    let (status, bytes) = call(&app, &initial, "GET", &path, vec![]).await;
-    assert_eq!(status, StatusCode::OK);
-    let (head, sequence, records, next): (ByteBuf, u64, Vec<ByteBuf>, Option<ByteBuf>) =
-        codec::decode(&bytes).unwrap();
-    assert_eq!(
-        head.as_ref(),
-        bootstrap_head(&initial, &recovery_identity())
-    );
-    assert_eq!(sequence, 1);
-    assert_eq!(records.len(), 1);
-    assert!(next.is_none());
-    let record = signed_membership_record(
-        &initial,
-        library,
-        bootstrap_head(&initial, &recovery_identity()),
-        2,
-        &second,
-    );
-    for _ in 0..2 {
-        assert_eq!(
-            call(&app, &initial, "POST", "/api/blocks", record.clone())
-                .await
-                .0,
-            StatusCode::OK
-        );
-    }
-    let (status, bytes) = call(&app, &second, "GET", &path, vec![]).await;
-    assert_eq!(status, StatusCode::OK);
-    let (_, sequence, records, _): (ByteBuf, u64, Vec<ByteBuf>, Option<ByteBuf>) =
-        codec::decode(&bytes).unwrap();
-    assert_eq!(sequence, 2);
-    assert_eq!(records[1].as_ref(), record);
-    let conflict = signed_membership_record(
-        &initial,
-        library,
-        bootstrap_head(&initial, &recovery_identity()),
-        2,
-        &third,
-    );
-    assert_eq!(
-        call(&app, &initial, "POST", "/api/blocks", conflict)
-            .await
-            .0,
-        StatusCode::CONFLICT
-    );
-    assert_eq!(
-        call(&app, &second, "POST", "/api/blocks", record).await.0,
-        StatusCode::UNAUTHORIZED
-    );
-    assert_eq!(
-        call(&app, &third, "GET", &path, vec![]).await.0,
-        StatusCode::UNAUTHORIZED
-    );
-    assert_eq!(
-        call(&app, &second, "GET", "/api/blocks", vec![]).await.0,
-        StatusCode::BAD_REQUEST
-    );
-    assert_eq!(
-        call(
-            &app,
-            &second,
-            "GET",
-            &format!("/api/blocks?after={}", "00".repeat(32)),
-            vec![]
-        )
-        .await
-        .0,
-        StatusCode::CONFLICT
-    );
-    assert_eq!(
-        call(
-            &app,
-            &second,
-            "POST",
-            "/api/blocks",
-            vec![0; i2nclip::chain::MAX_BLOCK_BYTES + 1]
-        )
-        .await
-        .0,
-        StatusCode::PAYLOAD_TOO_LARGE
-    );
-}
-
-#[tokio::test]
-async fn chain_http_recovery_enrollment_revocation_and_device_preserving_rotation() {
-    use i2nclip::chain::{Body as BlockBody, Effects, Kind};
-    use serde_bytes::ByteBuf;
-    let initial = new_identity();
-    let restored = new_identity();
-    let root = recovery_identity();
+    let key = new_identity();
     let outsider = new_identity();
     let (db, app) = app(&[]).await;
     let code = i2nclip::issue_registration_otc(&db.0, 3600, i2nclip::StorageLimits::default())
         .await
         .unwrap();
+    let registration = registration_body(&code, &key);
     assert_eq!(
         call(
             &app,
-            &initial,
+            &key,
             "POST",
             "/api/register-key",
-            registration_with_root(&code, &initial, &root)
+            registration.clone()
         )
         .await
         .0,
         StatusCode::NO_CONTENT
     );
-    let library = i2nclip::chain::genesis(&root.public, &[11; 32]).unwrap();
-    let path = format!(
-        "/api/blocks?after={}",
-        library
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    );
     assert_eq!(
-        call(&app, &root, "GET", &path, vec![]).await.0,
-        StatusCode::OK
+        call(&app, &key, "POST", "/api/register-key", registration)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
     );
-    for endpoint in ["/api/ping", "/api/quota"] {
-        assert_eq!(
-            call(&app, &root, "GET", endpoint, vec![]).await.0,
-            StatusCode::UNAUTHORIZED
-        );
-    }
-    let mut body = BlockBody {
+    let library = i2nclip::chain::genesis(&key.public).unwrap();
+    let hex = library
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let path = format!("/api/blocks?after={hex}");
+    let (status, bytes) = call(&app, &key, "GET", &path, vec![]).await;
+    assert_eq!(status, StatusCode::OK);
+    let (head, sequence, records, next): (ByteBuf, u64, Vec<ByteBuf>, Option<ByteBuf>) =
+        codec::decode(&bytes).unwrap();
+    assert_eq!(head.as_ref(), library);
+    assert_eq!(sequence, 0);
+    assert!(records.is_empty() && next.is_none());
+    let body = BlockBody {
         version: 1,
         library,
-        sequence: 2,
-        previous: bootstrap_head(&initial, &root),
-        epoch: 1,
-        signer: root.public,
-        kind: Kind::Revoke,
-        effects: Effects::Device((ByteBuf::from(initial.public.to_vec()),)),
-        salt: None,
-        nonce: None,
-        encrypted: None,
+        sequence: 1,
+        previous: library,
+        effects: vec![],
+        salt: ByteBuf::from(vec![1; 32]),
+        nonce: ByteBuf::from(vec![2; 12]),
+        encrypted: ByteBuf::from(vec![3; 16]),
     };
-    let revoke = sign_public_record(&root, &body);
-    assert_eq!(
-        call(&app, &outsider, "POST", "/api/blocks", revoke.clone())
-            .await
-            .0,
-        StatusCode::UNAUTHORIZED
-    );
-    assert_eq!(
-        call(&app, &root, "POST", "/api/blocks", revoke.clone())
-            .await
-            .0,
-        StatusCode::OK
-    );
-    let enrollment = signed_membership_record(
-        &root,
-        library,
-        i2nclip::chain::verify_record(&revoke).unwrap().hash,
-        3,
-        &restored,
-    );
-    assert_eq!(
-        call(&app, &outsider, "POST", "/api/blocks", enrollment.clone())
-            .await
-            .0,
-        StatusCode::UNAUTHORIZED
-    );
-    assert_eq!(
-        call(&app, &restored, "POST", "/api/blocks", enrollment.clone())
-            .await
-            .0,
-        StatusCode::OK
-    );
-    body.sequence = 4;
-    body.previous = i2nclip::chain::verify_record(&enrollment).unwrap().hash;
-    body.kind = Kind::Rotate;
-    body.effects = Effects::Rotation((
-        2,
-        ByteBuf::from(vec![12; 32]),
-        vec![(
-            ByteBuf::from(restored.public.to_vec()),
-            ByteBuf::from(vec![5; 32]),
-            ByteBuf::from(vec![6; 48]),
-        )],
-    ));
-    body.signer = restored.public;
-    assert_eq!(
-        call(
-            &app,
-            &restored,
-            "POST",
-            "/api/blocks",
-            sign_public_record(&restored, &body)
-        )
-        .await
-        .0,
-        StatusCode::UNAUTHORIZED
-    );
-    body.signer = root.public;
-    let rotation = sign_public_record(&root, &body);
-    assert_eq!(
-        call(&app, &outsider, "POST", "/api/blocks", rotation.clone())
-            .await
-            .0,
-        StatusCode::UNAUTHORIZED
-    );
-    for signer in [&root, &restored] {
+    let record = sign_public_record(&key, &body);
+    for _ in 0..2 {
         assert_eq!(
-            call(&app, signer, "POST", "/api/blocks", rotation.clone())
+            call(&app, &key, "POST", "/api/blocks", record.clone())
                 .await
                 .0,
             StatusCode::OK
         );
     }
     assert_eq!(
-        call(&app, &restored, "GET", "/api/ping", vec![]).await.0,
-        StatusCode::NO_CONTENT
+        call(&app, &outsider, "GET", &path, vec![]).await.0,
+        StatusCode::UNAUTHORIZED
     );
     assert_eq!(
-        call(&app, &initial, "GET", &path, vec![]).await.0,
+        call(&app, &outsider, "POST", "/api/blocks", record).await.0,
         StatusCode::UNAUTHORIZED
     );
 }
 
 #[tokio::test]
 async fn chain_http_blob_staging_publication_and_live_quota_frames() {
-    use i2nclip::chain::{Body as BlockBody, Effects, Kind, StorageEffect};
+    use i2nclip::chain::{Body as BlockBody, StorageEffect};
     use serde_bytes::ByteBuf;
     let initial = new_identity();
     let (db, app) = app(&[]).await;
@@ -333,7 +123,7 @@ async fn chain_http_blob_staging_publication_and_live_quota_frames() {
         .0,
         StatusCode::NO_CONTENT
     );
-    let library = i2nclip::chain::genesis(&recovery_identity().public, &[11; 32]).unwrap();
+    let library = i2nclip::chain::genesis(&initial.public).unwrap();
     let file = [7u8; 32];
     let ciphertext = vec![9u8; 16];
     let request = codec::encode(&(
@@ -358,12 +148,9 @@ async fn chain_http_blob_staging_publication_and_live_quota_frames() {
     let body = BlockBody {
         version: 1,
         library,
-        sequence: 2,
-        previous: bootstrap_head(&initial, &recovery_identity()),
-        epoch: 1,
-        signer: initial.public,
-        kind: Kind::Data,
-        effects: Effects::Storage(vec![StorageEffect::Publish {
+        sequence: 1,
+        previous: library,
+        effects: vec![StorageEffect::Publish {
             file,
             inventory: i2nclip::chain::inventory_digest(
                 &library,
@@ -371,10 +158,10 @@ async fn chain_http_blob_staging_publication_and_live_quota_frames() {
                 &[(i2nclip::chain::digest(&ciphertext), 16)],
             )
             .unwrap(),
-        }]),
-        salt: Some(ByteBuf::from(vec![1; 32])),
-        nonce: Some(ByteBuf::from(vec![2; 12])),
-        encrypted: Some(ByteBuf::from(vec![3; 16])),
+        }],
+        salt: ByteBuf::from(vec![1; 32]),
+        nonce: ByteBuf::from(vec![2; 12]),
+        encrypted: ByteBuf::from(vec![3; 16]),
     };
     assert_eq!(
         call(
@@ -559,8 +346,7 @@ async fn app(keys: &[&Identity]) -> (TestDatabase, axum::Router) {
         let code = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
             .await
             .unwrap();
-        let root = new_identity();
-        let body = registration_with_root(&code, key, &root);
+        let body = registration_body(&code, key);
         assert_eq!(
             call(&router, key, "POST", "/api/register-key", body)
                 .await
@@ -581,21 +367,13 @@ async fn enroll_key(app: &axum::Router, key: &Identity, otc: &str) {
     );
 }
 
-fn registration_with_root(otc: &str, device: &Identity, root: &Identity) -> Vec<u8> {
+fn registration_body(otc: &str, identity: &Identity) -> Vec<u8> {
     use serde_bytes::ByteBuf;
-    let genesis = i2nclip::chain::genesis_bytes(&root.public, &[11; 32]).unwrap();
-    let library = i2nclip::chain::genesis(&root.public, &[11; 32]).unwrap();
-    let first = signed_membership_record(root, library, library, 1, device);
-    codec::encode(&(otc, ByteBuf::from(genesis), ByteBuf::from(first))).unwrap()
-}
-fn registration_body(otc: &str, device: &Identity) -> Vec<u8> {
-    registration_with_root(otc, device, &recovery_identity())
-}
-fn bootstrap_head(device: &Identity, root: &Identity) -> i2nclip::chain::Hash {
-    let library = i2nclip::chain::genesis(&root.public, &[11; 32]).unwrap();
-    i2nclip::chain::verify_record(&signed_membership_record(root, library, library, 1, device))
-        .unwrap()
-        .hash
+    codec::encode(&(
+        otc,
+        ByteBuf::from(i2nclip::chain::genesis_bytes(&identity.public).unwrap()),
+    ))
+    .unwrap()
 }
 
 async fn register(app: &axum::Router, key: &Identity, otc: &str) -> (StatusCode, Vec<u8>) {
@@ -952,7 +730,7 @@ async fn weak_key_forgery_is_rejected_before_body_and_nonce() {
         0
     );
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM library_keys WHERE public_key=$1")
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM libraries WHERE signing_public_key=$1")
             .bind(public.as_slice())
             .fetch_one(conn)
             .await
@@ -1117,7 +895,7 @@ async fn registration_requires_possession_and_preserves_invitations_on_verificat
             _ => StatusCode::UNAUTHORIZED,
         };
         assert_eq!(response.status(), expected, "{case}");
-        let counts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM registration_codes), (SELECT count(*) FROM library_keys), (SELECT count(*) FROM libraries)")
+        let counts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM registration_codes), (SELECT count(*) FROM nonces), (SELECT count(*) FROM libraries)")
             .fetch_one(&dir.1).await.unwrap();
         assert_eq!(counts, (1, 0, 0), "{case}");
     }
@@ -1131,11 +909,8 @@ async fn registration_requires_possession_and_preserves_invitations_on_verificat
         &body,
     );
     for replay in [false, true] {
-        let request_body = if replay {
-            Body::new(Body::from(body.clone()).map_frame(|_| panic!("replay body was read")))
-        } else {
-            Body::from(body.clone())
-        };
+        // Registration reserves nonces transactionally after verifying its body.
+        let request_body = Body::from(body.clone());
         let response = app
             .clone()
             .oneshot(
@@ -1164,5 +939,145 @@ async fn registration_requires_possession_and_preserves_invitations_on_verificat
     assert_eq!(
         call(&app, &other, "GET", "/api/ping", vec![]).await.0,
         StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn unknown_chain_keys_never_poll_bodies_or_spend_nonces() {
+    let owner = new_identity();
+    let (db, app) = app(&[&owner]).await;
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM nonces")
+        .fetch_one(&db.1)
+        .await
+        .unwrap();
+    for _ in 0..5 {
+        let outsider = new_identity();
+        let payload = b"unread";
+        let authorization = client_crypto::authorization(
+            &outsider,
+            "http://i2nclip.test",
+            crypto::now_secs(),
+            &client_crypto::fresh_nonce(),
+            "POST",
+            "/api/blocks",
+            payload,
+        );
+        let body = Body::new(
+            Body::from(payload.as_slice()).map_frame(|_| panic!("unknown key body was polled")),
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/blocks")
+                    .header("authorization", authorization)
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM nonces")
+            .fetch_one(&db.1)
+            .await
+            .unwrap(),
+        before
+    );
+    assert_eq!(
+        call(&app, &owner, "GET", "/api/quota", vec![]).await.0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn stalled_registration_has_separate_bounded_admission_and_no_nonce_writes() {
+    use std::sync::Arc;
+
+    use axum::body::Bytes;
+    use http_body_util::Channel;
+    let owner = new_identity();
+    let (db, app) = app(&[&owner]).await;
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM nonces")
+        .fetch_one(&db.1)
+        .await
+        .unwrap();
+    let mut jobs = tokio::task::JoinSet::new();
+    let mut senders = Vec::new();
+    for _ in 0..4 {
+        let key = new_identity();
+        let payload = registration_body("invalid", &key);
+        let auth = client_crypto::authorization(
+            &key,
+            "http://i2nclip.test",
+            crypto::now_secs(),
+            &client_crypto::fresh_nonce(),
+            "POST",
+            "/api/register-key",
+            &payload,
+        );
+        let (mut sender, channel) = Channel::<Bytes>::new(1);
+        sender.send_data(Bytes::from(payload)).await.unwrap();
+        let polled = Arc::new(tokio::sync::Notify::new());
+        let observed = polled.clone();
+        let body = Body::new(channel.map_frame(move |frame| {
+            observed.notify_one();
+            frame
+        }));
+        jobs.spawn(
+            app.clone().oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/register-key")
+                    .header("authorization", auth)
+                    .body(body)
+                    .unwrap(),
+            ),
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(5), polled.notified())
+            .await
+            .unwrap();
+        senders.push(sender);
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM nonces")
+            .fetch_one(&db.1)
+            .await
+            .unwrap(),
+        before
+    );
+    let fifth = new_identity();
+    assert_eq!(
+        call(
+            &app,
+            &fifth,
+            "POST",
+            "/api/register-key",
+            registration_body("invalid", &fifth)
+        )
+        .await
+        .0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        call(&app, &owner, "GET", "/api/quota", vec![]).await.0,
+        StatusCode::OK
+    );
+    jobs.abort_all();
+    while jobs.join_next().await.is_some() {}
+    drop(senders);
+    assert_eq!(
+        call(
+            &app,
+            &fifth,
+            "POST",
+            "/api/register-key",
+            registration_body("invalid", &fifth)
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
     );
 }

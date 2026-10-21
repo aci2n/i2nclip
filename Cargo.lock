@@ -1258,7 +1258,6 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "clap",
- "curve25519-dalek",
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.2.17",

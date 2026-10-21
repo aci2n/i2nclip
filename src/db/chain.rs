@@ -6,7 +6,7 @@ use sqlx::{Postgres, Row, Transaction};
 
 use super::Database;
 use crate::{
-    chain::{self, Effects, Hash, Kind, Record, StorageEffect},
+    chain::{self, Hash, Record, StorageEffect},
     Error,
 };
 
@@ -15,17 +15,16 @@ pub(super) struct Library {
     pub(super) id: Vec<u8>,
     pub(super) head_hash: Vec<u8>,
     pub(super) head_sequence: i64,
-    pub(super) epoch: i64,
-    pub(super) recovery_public_key: Vec<u8>,
+    signing_public_key: Vec<u8>,
     genesis: Vec<u8>,
 }
-
 impl Library {
-    fn validate_authority(&self) -> Result<(), Error> {
-        if chain::genesis_recovery(&self.genesis)?.as_slice() != self.recovery_public_key {
+    fn validate_authority(&self) -> Result<Hash, Error> {
+        let public = chain::parse_genesis(&self.genesis)?;
+        if public.as_slice() != self.signing_public_key {
             return Err(Error::Crypto);
         }
-        Ok(())
+        Ok(public)
     }
 }
 
@@ -34,19 +33,13 @@ pub(crate) struct AppendReceipt(ByteBuf, u64, ByteBuf, u64);
 #[derive(Serialize)]
 pub(crate) struct BlockPage(ByteBuf, u64, Vec<ByteBuf>, Option<ByteBuf>);
 
-pub(super) async fn lock_member(
+pub(super) async fn lock_library(
     tx: &mut Transaction<'_, Postgres>,
     signer: &Hash,
 ) -> Result<Library, Error> {
-    let library = sqlx::query_as::<_,Library>("SELECT l.id,l.head_hash,l.head_sequence,l.epoch,l.genesis,r.public_key AS recovery_public_key FROM libraries l JOIN library_keys r ON r.library_id=l.id AND r.kind='recovery' JOIN library_keys d ON d.library_id=l.id WHERE d.public_key=$1 FOR UPDATE OF l")
+    let library = sqlx::query_as::<_, Library>("SELECT id,head_hash,head_sequence,signing_public_key,genesis FROM libraries WHERE signing_public_key=$1 FOR UPDATE")
         .bind(signer.as_slice()).fetch_optional(&mut **tx).await?.ok_or(Error::Unauthorized)?;
     library.validate_authority()?;
-    // A joining device row can be a pre-lock snapshot. Recheck after owning the lock.
-    let active: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM library_keys WHERE public_key=$1 AND library_id=$2 AND kind='device' AND revoked_at_sequence IS NULL)")
-        .bind(signer.as_slice()).bind(&library.id).fetch_one(&mut **tx).await?;
-    if !active {
-        return Err(Error::Unauthorized);
-    }
     Ok(library)
 }
 
@@ -56,33 +49,10 @@ impl Database {
         signer: Hash,
         bytes: &[u8],
     ) -> Result<AppendReceipt, Error> {
-        let record = chain::verify_record(bytes)?;
+        let record = chain::verify_record(bytes, &signer)?;
         let mut tx = self.pool.begin().await?;
-        // Resolve by the signed library, not the HTTP signer: a prepared replacement
-        // can submit its exact recovery-approved reset without an old device.
-        let library = sqlx::query_as::<_,Library>("SELECT l.id,l.head_hash,l.head_sequence,l.epoch,l.genesis,r.public_key AS recovery_public_key FROM libraries l JOIN library_keys r ON r.library_id=l.id AND r.kind='recovery' WHERE l.id=$1 FOR UPDATE OF l")
-            .bind(record.body.library.as_slice()).fetch_optional(&mut *tx).await?.ok_or(Error::Unauthorized)?;
-        library.validate_authority()?;
-        let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM library_keys WHERE public_key=$1 AND library_id=$2 AND kind='device' AND revoked_at_sequence IS NULL)")
-            .bind(signer.as_slice()).bind(&library.id).fetch_one(&mut *tx).await?;
-        let recovery_signed = record.body.signer.as_slice() == library.recovery_public_key;
-        if recovery_signed {
-            let candidate = match (&record.body.kind, &record.body.effects) {
-                (Kind::Enroll, Effects::Enrollment((key, _))) => Some(key.as_ref()),
-                (Kind::Rotate, _) => None,
-                (Kind::Revoke, _) => None,
-                _ => return Err(Error::Unauthorized),
-            };
-            if !(signer.as_slice() == library.recovery_public_key
-                || active
-                || candidate == Some(signer.as_slice()))
-            {
-                return Err(Error::Unauthorized);
-            }
-        } else if record.body.kind == Kind::Rotate || signer != record.body.signer || !active {
-            return Err(Error::Unauthorized);
-        }
-        if library.head_sequence == 0 && (record.body.kind != Kind::Enroll || !recovery_signed) {
+        let library = lock_library(&mut tx, &signer).await?;
+        if library.id != record.body.library {
             return Err(Error::Unauthorized);
         }
         let duplicate: bool = sqlx::query_scalar(
@@ -102,23 +72,19 @@ impl Database {
         }
         if library.head_hash != record.body.previous
             || library.head_sequence + 1 != record.body.sequence as i64
-            || library.epoch != record.body.epoch as i64
         {
             return Err(Error::Conflict);
         }
-        sqlx::query("INSERT INTO blocks(library_id,sequence,hash,previous_hash,signer_key,signed_body,signature) VALUES($1,$2,$3,$4,$5,$6,$7)")
+        sqlx::query("INSERT INTO blocks(library_id,sequence,hash,previous_hash,signed_body,signature) VALUES($1,$2,$3,$4,$5,$6)")
             .bind(&library.id).bind(record.body.sequence as i64).bind(record.hash.as_slice()).bind(record.body.previous.as_slice())
-            .bind(record.body.signer.as_slice()).bind(&record.signed_body).bind(&record.signature).execute(&mut *tx).await?;
-        apply_effects(&mut tx, &record, recovery_signed).await?;
-        let epoch = match &record.body.effects {
-            Effects::Rotation((epoch, _, _)) => *epoch,
-            _ => record.body.epoch,
-        };
-        sqlx::query("UPDATE libraries SET head_hash=$2,head_sequence=$3,epoch=$4 WHERE id=$1")
+            .bind(&record.signed_body).bind(&record.signature).execute(&mut *tx).await?;
+        for effect in &record.body.effects {
+            storage_effect(&mut tx, &record, effect).await?;
+        }
+        sqlx::query("UPDATE libraries SET head_hash=$2,head_sequence=$3 WHERE id=$1")
             .bind(&library.id)
             .bind(record.hash.as_slice())
             .bind(record.body.sequence as i64)
-            .bind(epoch as i64)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
@@ -136,7 +102,7 @@ impl Database {
         after: Hash,
         until: Option<Hash>,
     ) -> Result<BlockPage, Error> {
-        let library=sqlx::query_as::<_,Library>("SELECT l.id,l.head_hash,l.head_sequence,l.epoch,l.genesis,r.public_key AS recovery_public_key FROM libraries l JOIN library_keys r ON r.library_id=l.id AND r.kind='recovery' JOIN library_keys d ON d.library_id=l.id WHERE d.public_key=$1 AND (d.kind='recovery' OR (d.kind='device' AND d.revoked_at_sequence IS NULL))")
+        let library=sqlx::query_as::<_,Library>("SELECT id,head_hash,head_sequence,signing_public_key,genesis FROM libraries WHERE signing_public_key=$1")
             .bind(signer.as_slice()).fetch_optional(&self.pool).await?.ok_or(Error::Unauthorized)?;
         library.validate_authority()?;
         let target = until.map_or_else(|| library.head_hash.clone(), |hash| hash.to_vec());
@@ -190,78 +156,6 @@ impl Database {
             .await?
             .ok_or(Error::Conflict)
     }
-}
-
-async fn apply_effects(
-    tx: &mut Transaction<'_, Postgres>,
-    record: &Record,
-    recovery_signed: bool,
-) -> Result<(), Error> {
-    let library = &record.body.library;
-    let sequence = record.body.sequence as i64;
-    match (&record.body.kind, &record.body.effects) {
-        (Kind::Data, Effects::Storage(effects)) => {
-            for effect in effects {
-                storage_effect(tx, record, effect).await?;
-            }
-        }
-        (Kind::Enroll, Effects::Enrollment((key, encryption))) => {
-            enroll(tx, library, key, encryption, sequence).await?;
-        }
-        (Kind::Revoke, Effects::Device((key,))) => {
-            let count: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM library_keys WHERE library_id=$1 AND kind='device' AND revoked_at_sequence IS NULL",
-            )
-            .bind(library.as_slice())
-            .fetch_one(&mut **tx)
-            .await?;
-            if count <= 1 && !recovery_signed {
-                return Err(Error::Conflict);
-            }
-            let revoked=sqlx::query("UPDATE library_keys SET revoked_at_sequence=$3 WHERE library_id=$1 AND public_key=$2 AND kind='device' AND revoked_at_sequence IS NULL")
-                .bind(library.as_slice()).bind(key.as_ref()).bind(sequence).execute(&mut **tx).await?;
-            if revoked.rows_affected() != 1 {
-                return Err(Error::Conflict);
-            }
-        }
-        (Kind::Rotate, Effects::Rotation((next, _, envelopes))) => {
-            if *next != record.body.epoch + 1 {
-                return Err(Error::Conflict);
-            }
-            let members: Vec<Vec<u8>> = sqlx::query_scalar("SELECT public_key FROM library_keys WHERE library_id=$1 AND kind='device' AND revoked_at_sequence IS NULL ORDER BY public_key")
-                .bind(library.as_slice()).fetch_all(&mut **tx).await?;
-            if members.len() != envelopes.len()
-                || members
-                    .iter()
-                    .zip(envelopes)
-                    .any(|(member, (recipient, _, _))| member.as_slice() != recipient.as_ref())
-            {
-                return Err(Error::Conflict);
-            }
-        }
-        _ => return Err(Error::BadRequest("invalid public effects".into())),
-    }
-    Ok(())
-}
-
-async fn enroll(
-    tx: &mut Transaction<'_, Postgres>,
-    library: &Hash,
-    key: &[u8],
-    encryption: &[u8],
-    sequence: i64,
-) -> Result<(), Error> {
-    let active: i64 = sqlx::query_scalar("SELECT count(*) FROM library_keys WHERE library_id=$1 AND kind='device' AND revoked_at_sequence IS NULL")
-        .bind(library.as_slice()).fetch_one(&mut **tx).await?;
-    if active >= chain::MAX_AUTHORIZED_DEVICES {
-        return Err(Error::Conflict);
-    }
-    let inserted=sqlx::query("INSERT INTO library_keys(public_key,library_id,encryption_public_key,authorized_at_sequence) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING")
-        .bind(key).bind(library.as_slice()).bind(encryption).bind(sequence).execute(&mut **tx).await?;
-    if inserted.rows_affected() != 1 {
-        return Err(Error::Conflict);
-    }
-    Ok(())
 }
 
 async fn storage_effect(

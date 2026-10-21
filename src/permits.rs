@@ -22,6 +22,7 @@ pub(crate) struct Permits {
     user_uploads: UserSlots,
     user_downloads: UserSlots,
     pairing_bodies: Arc<Semaphore>,
+    registrations: Arc<Semaphore>,
 }
 
 pub(crate) struct TransferPermit {
@@ -37,6 +38,7 @@ impl Permits {
             user_uploads: UserSlots::new(1),
             user_downloads: UserSlots::new(2),
             pairing_bodies: Arc::new(Semaphore::new(PAIRING_BODY_SLOTS)),
+            registrations: Arc::new(Semaphore::new(4)),
         }
     }
 
@@ -46,6 +48,13 @@ impl Permits {
 
     pub(crate) async fn download(&self, owner: [u8; 32]) -> Result<TransferPermit, Error> {
         acquire(&self.user_downloads, &self.downloads, owner).await
+    }
+
+    pub(crate) fn try_registration(&self) -> Result<OwnedSemaphorePermit, Error> {
+        self.registrations
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| Error::Unavailable)
     }
 
     pub(crate) fn try_pairing_body(&self) -> Result<OwnedSemaphorePermit, Error> {

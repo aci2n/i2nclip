@@ -8,8 +8,8 @@
 //!
 //! The signature covers the origin, time, nonce, method, path, and that body
 //! hash. [`verify_request`] checks the clock and signature, plus the allow-list
-//! for ordinary requests, then remembers the nonce. Registration and chain requests prove key possession before endpoint-specific
-//! admission; ordinary requests also check active device membership. No body byte is read until that
+//! for ordinary requests, then remembers the nonce. Only registration defers admission until invitation validation; ordinary
+//! requests require a registered library signing key. No body byte is read until that
 //! succeeds, so knowing a public key is not enough to make the server read a
 //! payload. [`verify_body`] then hashes the bytes and compares them to the
 //! hash from the header.
@@ -26,6 +26,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ed25519_dalek::VerifyingKey;
+use tokio::sync::OwnedSemaphorePermit;
 
 use crate::{
     crypto,
@@ -34,7 +35,7 @@ use crate::{
 };
 
 /// Header-authenticated request. Direct extraction also requires a registered key.
-/// ProofRequest wraps this value without the active-device lookup.
+/// RegistrationRequest wraps this value without the library lookup, retaining a separate registration admission guard.
 /// Endpoint handlers own body/query policy; the body hash is checked on reading.
 pub(crate) struct SignedRequest {
     verified: VerifiedRequest,
@@ -53,16 +54,17 @@ impl FromRequest<AppState> for SignedRequest {
 }
 
 /// A verified key holder; endpoint-specific authority is checked after reading the body.
-pub(crate) struct ProofRequest(pub(crate) SignedRequest);
+pub(crate) struct RegistrationRequest(pub(crate) SignedRequest, pub(crate) OwnedSemaphorePermit);
 
-impl FromRequest<AppState> for ProofRequest {
+impl FromRequest<AppState> for RegistrationRequest {
     type Rejection = Response;
 
     async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
-        authenticate_request(req, state, KeyPolicy::Possession)
+        let permit = state.permits.try_registration().map_err(fail)?;
+        let request = authenticate_request(req, state, KeyPolicy::Registration)
             .await
-            .map(Self)
-            .map_err(fail)
+            .map_err(fail)?;
+        Ok(Self(request, permit))
     }
 }
 
@@ -81,6 +83,9 @@ async fn authenticate_request(
 }
 
 impl SignedRequest {
+    pub(crate) fn registration_proof(&self) -> (String, u64) {
+        (self.verified.nonce.clone(), self.verified.ts)
+    }
     pub(crate) fn owner(&self) -> [u8; 32] {
         self.verified.owner()
     }
@@ -161,6 +166,8 @@ pub(crate) fn validate_public_key(bytes: &[u8]) -> Result<[u8; 32], Error> {
 /// hex digest the client put in the header and inside the signed message.
 /// The body itself has not been read yet.
 pub(crate) struct VerifiedRequest {
+    nonce: String,
+    ts: u64,
     public: [u8; 32],
     body_hash: String,
 }
@@ -191,7 +198,7 @@ pub(crate) fn check_timestamp(ts: u64, now: u64) -> Result<(), Error> {
 /// Possession-only requests defer membership/record authority to their endpoint.
 enum KeyPolicy {
     Registered,
-    Possession,
+    Registration,
 }
 
 /// Check the key, the clock, and the signature. Remember the nonce.
@@ -273,18 +280,20 @@ async fn verify_request(
     // Spent here, before the body, so a captured header cannot be aimed at a
     // new payload. A body that does not match the signed hash still uses up
     // the nonce.
-    match state.db.remember_nonce(&bearer.nonce, bearer.ts).await {
-        Ok(()) => {}
-        Err(Error::Unauthorized) => {
-            tracing::debug!(
-                method = %method,
-                path = %uri.path(),
-                reason = "nonce_replay",
-                "request rejected as unauthorized"
-            );
-            return Err(Error::Unauthorized);
+    if matches!(policy, KeyPolicy::Registered) {
+        match state.db.remember_nonce(&bearer.nonce, bearer.ts).await {
+            Ok(()) => {}
+            Err(Error::Unauthorized) => {
+                tracing::debug!(
+                    method = %method,
+                    path = %uri.path(),
+                    reason = "nonce_replay",
+                    "request rejected as unauthorized"
+                );
+                return Err(Error::Unauthorized);
+            }
+            Err(error) => return Err(error),
         }
-        Err(error) => return Err(error),
     }
     // A request can pass the first check, stall before reserving its nonce,
     // then resume after a legitimate copy's nonce has expired and maintenance
@@ -305,6 +314,8 @@ async fn verify_request(
         return Err(Error::Unauthorized);
     }
     Ok(VerifiedRequest {
+        nonce: bearer.nonce,
+        ts: bearer.ts,
         public: bearer.public,
         body_hash: bearer.body_hash,
     })

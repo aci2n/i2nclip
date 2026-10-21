@@ -21,7 +21,7 @@ use tower_http::{
 };
 
 use crate::{
-    auth::{ProofRequest, SignedRequest},
+    auth::{RegistrationRequest, SignedRequest},
     blob_routes, chain_routes, codec, pairing, AppState, Error, MAX_REGISTER_BODY,
 };
 
@@ -101,27 +101,41 @@ async fn ping(request: SignedRequest) -> Response {
 
 async fn register_key(
     State(state): State<AppState>,
-    ProofRequest(request): ProofRequest,
+    RegistrationRequest(request, _permit): RegistrationRequest,
 ) -> Response {
     if let Err(response) = request.check_size(MAX_REGISTER_BODY) {
         return *response;
     }
+    let (nonce, ts) = request.registration_proof();
     let (signer, bytes) = match request.read(MAX_REGISTER_BODY, SHORT_BODY_DEADLINE).await {
         Ok(value) => value,
         Err(response) => return *response,
     };
-    match register_key_body(&state, signer, &bytes).await {
+    match register_key_body(&state, signer, &bytes, &nonce, ts).await {
         Ok(()) => empty(StatusCode::NO_CONTENT),
         Err(err) => fail(err),
     }
 }
 
-async fn register_key_body(state: &AppState, signer: [u8; 32], body: &[u8]) -> Result<(), Error> {
-    let (otc, genesis, first): (String, ByteBuf, ByteBuf) = codec::decode(body)?;
-    if codec::encode(&(&otc, &genesis, &first))? != body || otc.len() > 512 {
+async fn register_key_body(
+    state: &AppState,
+    signer: [u8; 32],
+    body: &[u8],
+    nonce: &str,
+    ts: u64,
+) -> Result<(), Error> {
+    let (otc, genesis): (String, ByteBuf) = codec::decode(body)?;
+    if codec::encode(&(&otc, &genesis))? != body || otc.len() > 512 {
         return Err(Error::BadRequest("invalid canonical registration".into()));
     }
-    state.db.consume_code(&otc, &signer, &genesis, &first).await
+    let public = crate::chain::parse_genesis(&genesis)?;
+    if public != signer {
+        return Err(Error::RegistrationFailed);
+    }
+    state
+        .db
+        .consume_code(&otc, &signer, &genesis, nonce, ts)
+        .await
 }
 
 pub(crate) fn document_response(status: StatusCode, body: impl Serialize) -> Response {
@@ -392,7 +406,7 @@ mod request_tests {
             .unwrap(),
         ] {
             assert!(matches!(
-                register_key_body(&state, signer, &body).await,
+                register_key_body(&state, signer, &body, "test", crate::crypto::now_secs()).await,
                 Err(Error::BadRequest(_))
             ));
         }
