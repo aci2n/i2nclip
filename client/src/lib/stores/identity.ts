@@ -516,6 +516,10 @@ class SessionStoreImpl {
 				}),
 			);
 			await this.applyIdentity(next, signal);
+			this.publishSession({
+				notice:
+					"Epoch rotated. Every other device must re-pair. Download a finalized device backup.",
+			});
 		});
 	}
 
