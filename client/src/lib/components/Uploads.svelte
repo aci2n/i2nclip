@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { UploadState } from "../stores/uploads.ts";
+import type { UploadState } from "../media/upload-state.ts";
 
 interface Props {
 	uploading: boolean;
