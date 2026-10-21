@@ -398,7 +398,7 @@ class ChainLibraryImpl {
 							: "library"
 					: null,
 			status: this.error || source.selectionError || source.chainError,
-			readonly: this.readonlyView(),
+			readonly: this.readonlyView() || Boolean(this.mutation),
 			preview: previewFile ? this.display(previewFile) : null,
 			opener: this.opener,
 		});

@@ -222,6 +222,7 @@ class ChainUploadsImpl {
 					this.progress(current, "preparing", 0);
 					thumb = await this.thumbnail(prepared, signal);
 					signal.throwIfAborted();
+					this.progress(current, "uploading", 0);
 					const { id } = await this.files.upload({
 						file: prepared,
 						attributes: {
