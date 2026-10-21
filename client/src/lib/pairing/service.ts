@@ -73,6 +73,22 @@ class PairingCryptoService implements PairingCrypto {
 		args: Parameters<PairingCrypto["verifyAcknowledgment"]>[0],
 	) => this.call((crypto) => crypto.verifyAcknowledgment(args));
 	readonly dispose = this.disposeCrypto.bind(this);
+	readonly bindReceiver = (
+		args: Parameters<PairingCrypto["bindReceiver"]>[0],
+	) => this.call((crypto) => crypto.bindReceiver(args));
+	readonly verifyReceiverBinding = (
+		args: Parameters<PairingCrypto["verifyReceiverBinding"]>[0],
+	) => this.call((crypto) => crypto.verifyReceiverBinding(args));
+	readonly complete = (args: Parameters<PairingCrypto["complete"]>[0]) =>
+		this.call((crypto) => crypto.complete(args));
+	readonly receiveCompletion = (
+		args: Parameters<PairingCrypto["receiveCompletion"]>[0],
+	) => this.call((crypto) => crypto.receiveCompletion(args));
+	readonly activate = () => this.call((crypto) => crypto.activate());
+	readonly verifyActivation = (
+		args: Parameters<PairingCrypto["verifyActivation"]>[0],
+	) => this.call((crypto) => crypto.verifyActivation(args));
+
 	private async call<T>(
 		operation: (executor: PairingCrypto) => Promise<T>,
 	): Promise<T> {
