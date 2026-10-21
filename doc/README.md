@@ -31,3 +31,9 @@ enrollment, and rotation changes no membership.
 Current behavior is documented separately from proposed work. The Rust server is
 in `src/`; the web app and extension are in `client/`. Historical change specifications remain in this directory and Git history;
 use the documents linked above for current behavior.
+
+## Review notes
+
+- [Branch review — 2026-10-21](branch-review-2026-10-21.md): findings against
+  `a70fceb` covering storage redundancy, ownership, crypto design, and security;
+  observations for later review, not an implementation specification.

@@ -8,6 +8,11 @@ key described here supersedes the earlier equal-authority epoch-reset proposal.
 The authoritative amendment is [Library recovery](library-recovery.md), including
 deterministic epoch keys and recovery without any authorized device.
 
+Review reminder: assess the [2026-10-21 branch review findings](branch-review-2026-10-21.md)
+before final integration verification. The review records admission, ownership,
+test coverage, and crypto integration concerns against `a70fceb`; reassess them
+against subsequent changes and explicitly review the documented security limitations.
+
 ## Goal and boundaries
 
 Make the authenticated operation chain authoritative. Clients independently
