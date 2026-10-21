@@ -131,7 +131,7 @@ impl Database {
         let allowed = sqlx::query_scalar(
             r#"
             SELECT EXISTS(
-                SELECT 1 FROM devices WHERE public_key = $1 AND revoked_at_sequence IS NULL
+                SELECT 1 FROM library_keys WHERE public_key = $1 AND kind = 'device' AND revoked_at_sequence IS NULL
             )
             "#,
         )
@@ -188,19 +188,25 @@ impl Database {
         Ok(code)
     }
 
-    /// Consume a valid invitation and initialize one library, idempotently.
-    pub(crate) async fn consume_code(&self, code: &str, public: &[u8; 32]) -> Result<(), Error> {
-        let library = crate::chain::genesis(public)?;
+    /// Consume an invitation and atomically pin both public principals.
+    pub(crate) async fn consume_code(
+        &self,
+        code: &str,
+        public: &[u8; 32],
+        recovery: &[u8; 32],
+        salt: &[u8; 32],
+    ) -> Result<(), Error> {
+        let library = crate::chain::genesis(recovery, public, salt)?;
         let hash = crypto::body_hash_bytes(code.trim().as_bytes());
         let mut tx = self.pool.begin().await?;
-        if let Some(revoked) = sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT revoked_at_sequence FROM devices WHERE public_key=$1",
+        let existing: Option<(Vec<u8>, String, Option<i64>)> = sqlx::query_as(
+            "SELECT library_id,kind,revoked_at_sequence FROM library_keys WHERE public_key=$1",
         )
         .bind(public.as_slice())
         .fetch_optional(&mut *tx)
-        .await?
-        {
-            return if revoked.is_none() {
+        .await?;
+        if let Some((id, kind, revoked)) = existing {
+            return if id == library && kind == "device" && revoked.is_none() {
                 Ok(())
             } else {
                 Err(Error::RegistrationFailed)
@@ -208,19 +214,19 @@ impl Database {
         }
         let limits = sqlx::query("DELETE FROM registration_codes WHERE code_hash=$1 AND expires_at>$2 RETURNING max_content_bytes,max_files")
             .bind(hash.as_slice()).bind(crypto::now_secs() as i64).fetch_optional(&mut *tx).await?.ok_or(Error::RegistrationFailed)?;
-        let created = sqlx::query("INSERT INTO libraries(id,genesis_device_key,head_hash,max_blob_bytes,max_files) VALUES($1,$2,$1,$3,$4) ON CONFLICT DO NOTHING")
-            .bind(library.as_slice()).bind(public.as_slice()).bind(limits.try_get::<i64,_>("max_content_bytes")?).bind(limits.try_get::<i64,_>("max_files")?)
-            .execute(&mut *tx).await?;
+        let created = sqlx::query("INSERT INTO libraries(id,genesis_device_key,recovery_public_key,epoch_1_salt,head_hash,max_blob_bytes,max_files) VALUES($1,$2,$3,$4,$1,$5,$6) ON CONFLICT DO NOTHING")
+            .bind(library.as_slice()).bind(public.as_slice()).bind(recovery.as_slice()).bind(salt.as_slice())
+            .bind(limits.try_get::<i64,_>("max_content_bytes")?).bind(limits.try_get::<i64,_>("max_files")?).execute(&mut *tx).await?;
         if created.rows_affected() != 1 {
             return Err(Error::Conflict);
         }
-        sqlx::query(
-            "INSERT INTO devices(public_key,library_id,authorized_at_sequence) VALUES($1,$2,0)",
-        )
-        .bind(public.as_slice())
-        .bind(library.as_slice())
-        .execute(&mut *tx)
-        .await?;
+        for (key, kind) in [(public, "device"), (recovery, "recovery")] {
+            let inserted = sqlx::query("INSERT INTO library_keys(public_key,library_id,kind,authorized_at_sequence) VALUES($1,$2,$3,0) ON CONFLICT DO NOTHING")
+                .bind(key.as_slice()).bind(library.as_slice()).bind(kind).execute(&mut *tx).await?;
+            if inserted.rows_affected() != 1 {
+                return Err(Error::Conflict);
+            }
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -232,7 +238,7 @@ impl Database {
         limits: StorageLimits,
     ) -> Result<(), Error> {
         limits.validate()?;
-        let result = sqlx::query("UPDATE libraries SET max_blob_bytes=$2,max_files=$3 WHERE id=(SELECT library_id FROM devices WHERE public_key=$1)")
+        let result = sqlx::query("UPDATE libraries SET max_blob_bytes=$2,max_files=$3 WHERE id=(SELECT library_id FROM library_keys WHERE public_key=$1)")
             .bind(public.as_slice()).bind(limits.max_content_bytes).bind(limits.max_files).execute(&self.pool).await
             .map_err(|error| match &error {
                 sqlx::Error::Database(cause) if cause.code().as_deref()==Some("23514") => Error::BadRequest("Storage limits cannot be lower than current usage.".into()),
@@ -245,7 +251,7 @@ impl Database {
     }
 
     pub(crate) async fn quota(&self, signer: [u8; 32]) -> Result<Quota, Error> {
-        let row=sqlx::query("SELECT l.max_blob_bytes,l.max_files,l.used_blob_bytes,l.retained_files FROM libraries l JOIN devices d ON d.library_id=l.id WHERE d.public_key=$1 AND d.revoked_at_sequence IS NULL")
+        let row=sqlx::query("SELECT l.max_blob_bytes,l.max_files,l.used_blob_bytes,l.retained_files FROM libraries l JOIN library_keys d ON d.library_id=l.id WHERE d.public_key=$1 AND d.kind='device' AND d.revoked_at_sequence IS NULL")
             .bind(signer.as_slice()).fetch_optional(&self.pool).await?.ok_or(Error::Unauthorized)?;
         Ok(Quota {
             max_content_bytes: row.try_get("max_blob_bytes")?,
@@ -640,10 +646,13 @@ mod tests {
         first.unwrap();
         second.unwrap();
         let initial = crate::reference_crypto::from_seed([7; 32]);
-        let library = crate::chain::genesis(&initial.public).unwrap();
-        sqlx::query("INSERT INTO libraries(id,genesis_device_key,head_hash) VALUES($1,$2,$1)")
+        let library =
+            crate::chain::genesis(&recovery().public, &initial.public, &[11; 32]).unwrap();
+        sqlx::query("INSERT INTO libraries(id,genesis_device_key,recovery_public_key,epoch_1_salt,head_hash) VALUES($1,$2,$3,$4,$1)")
             .bind(library.as_slice())
             .bind(initial.public.as_slice())
+            .bind(recovery().public.as_slice())
+            .bind([11u8;32].as_slice())
             .execute(&db.pool)
             .await
             .unwrap();
@@ -667,15 +676,18 @@ mod tests {
         let (db, admin, guard) = empty_fixture().await;
         db.initialize().await.unwrap();
         let initial = crate::reference_crypto::from_seed([7; 32]);
-        let library = crate::chain::genesis(&initial.public).unwrap();
-        sqlx::query("INSERT INTO libraries(id,genesis_device_key,head_hash) VALUES($1,$2,$1)")
+        let library =
+            crate::chain::genesis(&recovery().public, &initial.public, &[11; 32]).unwrap();
+        sqlx::query("INSERT INTO libraries(id,genesis_device_key,recovery_public_key,epoch_1_salt,head_hash) VALUES($1,$2,$3,$4,$1)")
             .bind(library.as_slice())
             .bind(initial.public.as_slice())
+            .bind(recovery().public.as_slice())
+            .bind([11u8;32].as_slice())
             .execute(&db.pool)
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO devices(public_key,library_id,authorized_at_sequence) VALUES($1,$2,0)",
+            "INSERT INTO library_keys(public_key,library_id,authorized_at_sequence) VALUES($1,$2,0)",
         )
         .bind(initial.public.as_slice())
         .bind(library.as_slice())
@@ -695,7 +707,7 @@ mod tests {
             "DELETE FROM blocks",
             "UPDATE blobs SET ciphertext = decode(repeat('07',16),'hex')",
             "UPDATE libraries SET used_blob_bytes = max_blob_bytes + 1",
-            "UPDATE devices SET public_key = decode(repeat('08',32),'hex')",
+            "UPDATE library_keys SET public_key = decode(repeat('08',32),'hex')",
         ] {
             assert!(
                 sqlx::query(query).execute(&db.pool).await.is_err(),
@@ -736,14 +748,16 @@ mod tests {
             .execute(&db.pool)
             .await
             .is_err());
-        sqlx::query("UPDATE devices SET revoked_at_sequence=2")
+        sqlx::query("UPDATE library_keys SET revoked_at_sequence=2")
             .execute(&db.pool)
             .await
             .unwrap();
-        assert!(sqlx::query("UPDATE devices SET revoked_at_sequence=NULL")
-            .execute(&db.pool)
-            .await
-            .is_err());
+        assert!(
+            sqlx::query("UPDATE library_keys SET revoked_at_sequence=NULL")
+                .execute(&db.pool)
+                .await
+                .is_err()
+        );
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT count(*) FROM blocks")
                 .fetch_one(&db.pool)
@@ -752,6 +766,10 @@ mod tests {
             1
         );
         dispose(db, admin, guard).await;
+    }
+
+    fn recovery() -> crate::reference_crypto::Identity {
+        crate::reference_crypto::from_seed([42; 32])
     }
 
     async fn chain_fixture() -> (
@@ -765,10 +783,11 @@ mod tests {
         db.initialize().await.unwrap();
         let identity = crate::reference_crypto::from_seed([7; 32]);
         let invitation = db.issue_code(3600, StorageLimits::default()).await.unwrap();
-        db.consume_code(&invitation, &identity.public)
+        db.consume_code(&invitation, &identity.public, &recovery().public, &[11; 32])
             .await
             .unwrap();
-        let library = crate::chain::genesis(&identity.public).unwrap();
+        let library =
+            crate::chain::genesis(&recovery().public, &identity.public, &[11; 32]).unwrap();
         (db, admin, guard, identity, library)
     }
 
@@ -807,6 +826,44 @@ mod tests {
             serde_bytes::ByteBuf::from(signature.to_bytes().to_vec()),
         ))
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn chain_registration_keeps_one_global_key_namespace() {
+        let (db, admin, guard, first, _) = chain_fixture().await;
+        let other = crate::reference_crypto::from_seed([81; 32]);
+        let other_recovery = crate::reference_crypto::from_seed([82; 32]);
+        let code = db.issue_code(3600, StorageLimits::default()).await.unwrap();
+        assert!(matches!(
+            db.consume_code(&code, &recovery().public, &other_recovery.public, &[12; 32])
+                .await,
+            Err(Error::RegistrationFailed)
+        ));
+        assert!(matches!(
+            db.consume_code(&code, &other.public, &first.public, &[12; 32])
+                .await,
+            Err(Error::Conflict)
+        ));
+        assert!(matches!(
+            db.consume_code(&code, &other.public, &recovery().public, &[12; 32])
+                .await,
+            Err(Error::Conflict)
+        ));
+        // All failed attempts roll back consumption of this invitation.
+        db.consume_code(&code, &other.public, &other_recovery.public, &[12; 32])
+            .await
+            .unwrap();
+        assert!(db.allowed(&other.public).await.unwrap());
+        assert!(!db.allowed(&other_recovery.public).await.unwrap());
+        assert!(matches!(
+            db.consume_code("unused", &other.public, &other_recovery.public, &[13; 32])
+                .await,
+            Err(Error::RegistrationFailed)
+        ));
+        db.consume_code("unused", &other.public, &other_recovery.public, &[12; 32])
+            .await
+            .unwrap();
+        dispose(db, admin, guard).await;
     }
 
     #[tokio::test]
@@ -857,7 +914,7 @@ mod tests {
             1
         );
         assert_eq!(
-            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM devices")
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM library_keys WHERE kind='device'")
                 .fetch_one(&db.pool)
                 .await
                 .unwrap(),
@@ -931,34 +988,80 @@ mod tests {
             db.append_record(second.public, &last).await,
             Err(Error::Conflict)
         ));
-        let invalid = signed_chain(
+        let device_reset = signed_chain(
             &membership_body(
                 library,
                 &second,
                 3,
                 head,
                 Kind::Rotate,
-                Effects::Rotation((2, ByteBuf::from(first.public.to_vec()))),
+                Effects::Rotation((
+                    2,
+                    ByteBuf::from(replacement.public.to_vec()),
+                    ByteBuf::from(vec![12; 32]),
+                )),
             ),
             &second,
         );
         assert!(matches!(
-            db.append_record(second.public, &invalid).await,
+            db.append_record(second.public, &device_reset).await,
+            Err(Error::Unauthorized)
+        ));
+        let invalid = signed_chain(
+            &membership_body(
+                library,
+                &recovery(),
+                3,
+                head,
+                Kind::Rotate,
+                Effects::Rotation((
+                    2,
+                    ByteBuf::from(first.public.to_vec()),
+                    ByteBuf::from(vec![12; 32]),
+                )),
+            ),
+            &recovery(),
+        );
+        assert!(matches!(
+            db.append_record(recovery().public, &invalid).await,
             Err(Error::Conflict)
         ));
         assert!(db.allowed(&second.public).await.unwrap());
         let rotation = signed_chain(
             &membership_body(
                 library,
-                &second,
+                &recovery(),
                 3,
                 head,
                 Kind::Rotate,
-                Effects::Rotation((2, ByteBuf::from(replacement.public.to_vec()))),
+                Effects::Rotation((
+                    2,
+                    ByteBuf::from(replacement.public.to_vec()),
+                    ByteBuf::from(vec![12; 32]),
+                )),
             ),
-            &second,
+            &recovery(),
         );
-        db.append_record(second.public, &rotation).await.unwrap();
+        let stranger = crate::reference_crypto::from_seed([99; 32]);
+        assert!(matches!(
+            db.append_record(stranger.public, &rotation).await,
+            Err(Error::Unauthorized)
+        ));
+        assert!(!db.allowed(&recovery().public).await.unwrap());
+        assert!(db
+            .block_page(recovery().public, library, None)
+            .await
+            .is_ok());
+        // Exact fresh replacement can publish without old device credentials.
+        db.append_record(replacement.public, &rotation)
+            .await
+            .unwrap();
+        db.append_record(replacement.public, &rotation)
+            .await
+            .unwrap();
+        db.append_record(recovery().public, &rotation)
+            .await
+            .unwrap();
         assert!(!db.allowed(&second.public).await.unwrap());
         assert!(db.allowed(&replacement.public).await.unwrap());
         assert_eq!(
@@ -980,8 +1083,39 @@ mod tests {
             .await
             .is_ok());
         assert!(matches!(
-            db.consume_code("unused", &first.public).await,
+            db.consume_code("unused", &first.public, &recovery().public, &[11; 32])
+                .await,
             Err(Error::RegistrationFailed)
+        ));
+        assert!(matches!(
+            db.quota(recovery().public).await,
+            Err(Error::Unauthorized)
+        ));
+        assert!(
+            sqlx::query("UPDATE library_keys SET revoked_at_sequence=4 WHERE kind='recovery'")
+                .execute(&db.pool)
+                .await
+                .is_err()
+        );
+        let recovery_enroll = signed_chain(
+            &membership_body(
+                library,
+                &replacement,
+                4,
+                crate::chain::verify_record(&rotation).unwrap().hash,
+                Kind::Enroll,
+                Effects::Device((ByteBuf::from(recovery().public.to_vec()),)),
+            ),
+            &replacement,
+        );
+        // Use the actual post-reset epoch; the public key namespace still forbids
+        // turning the offline authority into an ordinary device.
+        let mut body = crate::chain::verify_record(&recovery_enroll).unwrap().body;
+        body.epoch = 2;
+        assert!(matches!(
+            db.append_record(replacement.public, &signed_chain(&body, &replacement))
+                .await,
+            Err(Error::Conflict)
         ));
         dispose(db, admin, guard).await;
     }
@@ -1371,7 +1505,8 @@ mod tests {
         .await
         .unwrap();
         assert!(matches!(
-            db.consume_code(&code, &[1; 32]).await,
+            db.consume_code(&code, &[1; 32], &recovery().public, &[11; 32])
+                .await,
             Err(Error::Db(_))
         ));
         assert!(!db.allowed(&[1; 32]).await.unwrap());
@@ -1379,10 +1514,13 @@ mod tests {
             .execute(&db.pool)
             .await
             .unwrap();
-        db.consume_code(&code, &[1; 32]).await.unwrap();
+        db.consume_code(&code, &[1; 32], &recovery().public, &[11; 32])
+            .await
+            .unwrap();
         assert!(db.allowed(&[1; 32]).await.unwrap());
         assert!(matches!(
-            db.consume_code(&code, &[2; 32]).await,
+            db.consume_code(&code, &[2; 32], &recovery().public, &[11; 32])
+                .await,
             Err(Error::RegistrationFailed)
         ));
         dispose(db, admin, name).await;

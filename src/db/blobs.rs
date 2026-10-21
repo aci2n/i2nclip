@@ -89,7 +89,7 @@ impl Database {
         file: Hash,
         hash: Hash,
     ) -> Result<Vec<u8>, Error> {
-        sqlx::query_scalar("SELECT b.ciphertext FROM blobs b JOIN devices d ON d.library_id=b.library_id JOIN files f ON f.library_id=b.library_id AND f.file_id=b.file_id WHERE d.public_key=$1 AND d.revoked_at_sequence IS NULL AND b.file_id=$2 AND b.hash=$3 AND b.committed_at_sequence IS NOT NULL AND f.status='retained'")
+        sqlx::query_scalar("SELECT b.ciphertext FROM blobs b JOIN library_keys d ON d.library_id=b.library_id JOIN files f ON f.library_id=b.library_id AND f.file_id=b.file_id WHERE d.public_key=$1 AND d.kind='device' AND d.revoked_at_sequence IS NULL AND b.file_id=$2 AND b.hash=$3 AND b.committed_at_sequence IS NOT NULL AND f.status='retained'")
             .bind(signer.as_slice()).bind(file.as_slice()).bind(hash.as_slice()).fetch_optional(&self.pool).await?.ok_or(Error::NotFound)
     }
 
@@ -136,7 +136,7 @@ impl Database {
     }
 
     pub(crate) async fn log_bytes(&self, signer: Hash) -> Result<i64, Error> {
-        let row=sqlx::query("SELECT COALESCE((SELECT sum(octet_length(b.signed_body)+octet_length(b.signature)) FROM blocks b WHERE b.library_id=d.library_id),0)::bigint AS bytes FROM devices d WHERE d.public_key=$1 AND d.revoked_at_sequence IS NULL")
+        let row=sqlx::query("SELECT COALESCE((SELECT sum(octet_length(b.signed_body)+octet_length(b.signature)) FROM blocks b WHERE b.library_id=d.library_id),0)::bigint AS bytes FROM library_keys d WHERE d.public_key=$1 AND d.kind='device' AND d.revoked_at_sequence IS NULL")
             .bind(signer.as_slice()).fetch_optional(&self.pool).await?.ok_or(Error::Unauthorized)?;
         Ok(row.try_get("bytes")?)
     }

@@ -48,11 +48,21 @@ pub fn parse_hash(text: &str) -> Result<Hash, Error> {
     Ok(result)
 }
 
-/// Genesis is fixed by the initial public key; it confers no permanent privilege.
-pub fn genesis(initial: &Hash) -> Result<Hash, Error> {
+/// Genesis pins independent recovery authority, initial device and public epoch salt.
+pub fn genesis(recovery: &Hash, initial: &Hash, epoch_salt: &Hash) -> Result<Hash, Error> {
+    validate_public_key(recovery)?;
     validate_public_key(initial)?;
-    let bytes =
-        rmp_serde::to_vec(&(1u8, serde_bytes::Bytes::new(initial), 1u8)).map_err(|_| invalid())?;
+    if recovery == initial {
+        return Err(invalid());
+    }
+    let bytes = rmp_serde::to_vec(&(
+        1u8,
+        serde_bytes::Bytes::new(recovery),
+        serde_bytes::Bytes::new(initial),
+        serde_bytes::Bytes::new(epoch_salt),
+        1u8,
+    ))
+    .map_err(|_| invalid())?;
     Ok(digest(&[GENESIS_DOMAIN, &bytes].concat()))
 }
 
@@ -185,7 +195,7 @@ fn next_hashes<'de, A: SeqAccess<'de>>(
 pub enum Effects {
     Storage(Vec<StorageEffect>),
     Device((ByteBuf,)),
-    Rotation((u64, ByteBuf)),
+    Rotation((u64, ByteBuf, ByteBuf)),
 }
 
 /// Struct fields serialize to a fixed-position array with `rmp_serde::to_vec`.
@@ -248,8 +258,8 @@ impl Body {
             (Kind::Enroll | Kind::Revoke, Effects::Device((key,))) => {
                 validate_public_key(key)?;
             }
-            (Kind::Rotate, Effects::Rotation((epoch, key)))
-                if *epoch >= 2 && *epoch <= MAX_SAFE_INTEGER as u64 =>
+            (Kind::Rotate, Effects::Rotation((epoch, key, salt)))
+                if *epoch >= 2 && *epoch <= MAX_SAFE_INTEGER as u64 && salt.len() == 32 =>
             {
                 validate_public_key(key)?;
             }
@@ -369,20 +379,34 @@ mod tests {
     #[test]
     fn canonical_records_and_inventory_match_javascript_vectors() {
         let v = vectors();
+        let recovery: Value =
+            serde_json::from_str(include_str!("../client/tests/recovery-vectors.json")).unwrap();
         assert_eq!(
-            genesis(&hash(&v, "public_key")).unwrap(),
-            hash(&v, "library")
+            genesis(
+                &hash(&recovery, "recovery_public_key"),
+                &hash(&recovery, "initial_device_public_key"),
+                &hash(&recovery, "epoch_1_salt")
+            )
+            .unwrap(),
+            hash(&recovery, "library")
         );
         let record = verify_record(&bytes(&v, "record")).unwrap();
         assert_eq!(record.hash, hash(&v, "block_hash"));
         assert_eq!(record.signed_body, bytes(&v, "signed_body"));
         assert_eq!(record.body.header().unwrap(), bytes(&v, "header"));
         assert_eq!(sign(&record.body, &hash(&v, "seed")), record.bytes);
-        for name in ["enrollment", "rotation"] {
-            let record = verify_record(&bytes(&v, name)).unwrap();
+        {
+            let record = verify_record(&bytes(&v, "enrollment")).unwrap();
             assert!(record.body.encrypted.is_none());
             assert_eq!(sign(&record.body, &hash(&v, "seed")), record.bytes);
         }
+        let reset = verify_record(&bytes(&recovery, "reset")).unwrap();
+        assert_eq!(reset.body.signer, hash(&recovery, "recovery_public_key"));
+        assert_eq!(
+            sign(&reset.body, &hash(&recovery, "signing_seed")),
+            reset.bytes
+        );
+        assert!(verify_record(&bytes(&v, "rotation")).is_err());
         let mut entries = v["inventory_entries"]
             .as_array()
             .unwrap()
@@ -405,6 +429,37 @@ mod tests {
             &[entries[0], entries[0]]
         )
         .is_err());
+    }
+
+    #[test]
+    fn recovery_epoch_derivation_matches_independent_native_vectors() {
+        let v: Value =
+            serde_json::from_str(include_str!("../client/tests/recovery-vectors.json")).unwrap();
+        let signing = SigningKey::from_bytes(&hash(&v, "signing_seed"));
+        assert_eq!(
+            signing.verifying_key().to_bytes(),
+            hash(&v, "recovery_public_key")
+        );
+        assert_eq!(
+            signing.sign(&bytes(&v, "probe")).to_bytes().as_slice(),
+            bytes(&v, "signature")
+        );
+        for epoch in [1u64, 2] {
+            let info = rmp_serde::to_vec(&(
+                "i2nclip/epoch-key/1",
+                serde_bytes::Bytes::new(&hash(&v, "library")),
+                epoch,
+            ))
+            .unwrap();
+            let mut key = [0; 32];
+            Hkdf::<Sha256>::new(
+                Some(&bytes(&v, &format!("epoch_{epoch}_salt"))),
+                &bytes(&v, "epoch_derivation_secret"),
+            )
+            .expand(&info, &mut key)
+            .unwrap();
+            assert_eq!(key, hash(&v, &format!("epoch_{epoch}_key")));
+        }
     }
 
     #[test]

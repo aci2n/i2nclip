@@ -16,6 +16,7 @@ pub(super) struct Library {
     pub(super) head_hash: Vec<u8>,
     pub(super) head_sequence: i64,
     pub(super) epoch: i64,
+    pub(super) recovery_public_key: Vec<u8>,
 }
 
 #[derive(Serialize)]
@@ -27,10 +28,10 @@ pub(super) async fn lock_member(
     tx: &mut Transaction<'_, Postgres>,
     signer: &Hash,
 ) -> Result<Library, Error> {
-    let library = sqlx::query_as::<_,Library>("SELECT l.id,l.head_hash,l.head_sequence,l.epoch FROM libraries l JOIN devices d ON d.library_id=l.id WHERE d.public_key=$1 FOR UPDATE OF l")
+    let library = sqlx::query_as::<_,Library>("SELECT l.id,l.head_hash,l.head_sequence,l.epoch,l.recovery_public_key FROM libraries l JOIN library_keys d ON d.library_id=l.id WHERE d.public_key=$1 FOR UPDATE OF l")
         .bind(signer.as_slice()).fetch_optional(&mut **tx).await?.ok_or(Error::Unauthorized)?;
     // A joining device row can be a pre-lock snapshot. Recheck after owning the lock.
-    let active: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM devices WHERE public_key=$1 AND library_id=$2 AND revoked_at_sequence IS NULL)")
+    let active: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM library_keys WHERE public_key=$1 AND library_id=$2 AND kind='device' AND revoked_at_sequence IS NULL)")
         .bind(signer.as_slice()).bind(&library.id).fetch_one(&mut **tx).await?;
     if !active {
         return Err(Error::Unauthorized);
@@ -45,12 +46,24 @@ impl Database {
         bytes: &[u8],
     ) -> Result<AppendReceipt, Error> {
         let record = chain::verify_record(bytes)?;
-        if signer != record.body.signer {
-            return Err(Error::Unauthorized);
-        }
         let mut tx = self.pool.begin().await?;
-        let library = lock_member(&mut tx, &signer).await?;
-        if library.id != record.body.library {
+        // Resolve by the signed library, not the HTTP signer: a prepared replacement
+        // can submit its exact recovery-approved reset without an old device.
+        let library = sqlx::query_as::<_,Library>("SELECT id,head_hash,head_sequence,epoch,recovery_public_key FROM libraries WHERE id=$1 FOR UPDATE")
+            .bind(record.body.library.as_slice()).fetch_optional(&mut *tx).await?.ok_or(Error::Unauthorized)?;
+        let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM library_keys WHERE public_key=$1 AND library_id=$2 AND kind='device' AND revoked_at_sequence IS NULL)")
+            .bind(signer.as_slice()).bind(&library.id).fetch_one(&mut *tx).await?;
+        if let (Kind::Rotate, Effects::Rotation((_, initial, _))) =
+            (&record.body.kind, &record.body.effects)
+        {
+            if library.recovery_public_key != record.body.signer
+                || !(signer.as_slice() == library.recovery_public_key
+                    || active
+                    || signer.as_slice() == initial.as_ref())
+            {
+                return Err(Error::Unauthorized);
+            }
+        } else if signer != record.body.signer || !active {
             return Err(Error::Unauthorized);
         }
         let duplicate: bool = sqlx::query_scalar(
@@ -76,10 +89,10 @@ impl Database {
         }
         sqlx::query("INSERT INTO blocks(library_id,sequence,hash,previous_hash,signer_key,signed_body,signature) VALUES($1,$2,$3,$4,$5,$6,$7)")
             .bind(&library.id).bind(record.body.sequence as i64).bind(record.hash.as_slice()).bind(record.body.previous.as_slice())
-            .bind(signer.as_slice()).bind(&record.signed_body).bind(&record.signature).execute(&mut *tx).await?;
+            .bind(record.body.signer.as_slice()).bind(&record.signed_body).bind(&record.signature).execute(&mut *tx).await?;
         apply_effects(&mut tx, &record).await?;
         let epoch = match &record.body.effects {
-            Effects::Rotation((epoch, _)) => *epoch,
+            Effects::Rotation((epoch, _, _)) => *epoch,
             _ => record.body.epoch,
         };
         sqlx::query("UPDATE libraries SET head_hash=$2,head_sequence=$3,epoch=$4 WHERE id=$1")
@@ -104,7 +117,7 @@ impl Database {
         after: Hash,
         until: Option<Hash>,
     ) -> Result<BlockPage, Error> {
-        let library=sqlx::query_as::<_,Library>("SELECT l.id,l.head_hash,l.head_sequence,l.epoch FROM libraries l JOIN devices d ON d.library_id=l.id WHERE d.public_key=$1 AND d.revoked_at_sequence IS NULL")
+        let library=sqlx::query_as::<_,Library>("SELECT l.id,l.head_hash,l.head_sequence,l.epoch,l.recovery_public_key FROM libraries l JOIN library_keys d ON d.library_id=l.id WHERE d.public_key=$1 AND (d.kind='recovery' OR (d.kind='device' AND d.revoked_at_sequence IS NULL))")
             .bind(signer.as_slice()).fetch_optional(&self.pool).await?.ok_or(Error::Unauthorized)?;
         let target = until.map_or_else(|| library.head_hash.clone(), |hash| hash.to_vec());
         let after_seq = self.anchor_sequence(&library, &after).await?;
@@ -173,7 +186,7 @@ async fn apply_effects(tx: &mut Transaction<'_, Postgres>, record: &Record) -> R
         }
         (Kind::Revoke, Effects::Device((key,))) => {
             let count: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM devices WHERE library_id=$1 AND revoked_at_sequence IS NULL",
+                "SELECT count(*) FROM library_keys WHERE library_id=$1 AND kind='device' AND revoked_at_sequence IS NULL",
             )
             .bind(library.as_slice())
             .fetch_one(&mut **tx)
@@ -181,17 +194,17 @@ async fn apply_effects(tx: &mut Transaction<'_, Postgres>, record: &Record) -> R
             if count <= 1 {
                 return Err(Error::Conflict);
             }
-            let revoked=sqlx::query("UPDATE devices SET revoked_at_sequence=$3 WHERE library_id=$1 AND public_key=$2 AND revoked_at_sequence IS NULL")
+            let revoked=sqlx::query("UPDATE library_keys SET revoked_at_sequence=$3 WHERE library_id=$1 AND public_key=$2 AND kind='device' AND revoked_at_sequence IS NULL")
                 .bind(library.as_slice()).bind(key.as_ref()).bind(sequence).execute(&mut **tx).await?;
             if revoked.rows_affected() != 1 {
                 return Err(Error::Conflict);
             }
         }
-        (Kind::Rotate, Effects::Rotation((next, key))) => {
+        (Kind::Rotate, Effects::Rotation((next, key, _))) => {
             if *next != record.body.epoch + 1 {
                 return Err(Error::Conflict);
             }
-            sqlx::query("UPDATE devices SET revoked_at_sequence=$2 WHERE library_id=$1 AND revoked_at_sequence IS NULL")
+            sqlx::query("UPDATE library_keys SET revoked_at_sequence=$2 WHERE library_id=$1 AND kind='device' AND revoked_at_sequence IS NULL")
                 .bind(library.as_slice()).bind(sequence).execute(&mut **tx).await?;
             enroll(tx, library, key, sequence).await?;
         }
@@ -206,7 +219,7 @@ async fn enroll(
     key: &[u8],
     sequence: i64,
 ) -> Result<(), Error> {
-    let inserted=sqlx::query("INSERT INTO devices(public_key,library_id,authorized_at_sequence) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
+    let inserted=sqlx::query("INSERT INTO library_keys(public_key,library_id,authorized_at_sequence) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
         .bind(key).bind(library.as_slice()).bind(sequence).execute(&mut **tx).await?;
     if inserted.rows_affected() != 1 {
         return Err(Error::Conflict);

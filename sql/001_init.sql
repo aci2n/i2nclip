@@ -1,5 +1,7 @@
 CREATE TABLE libraries (
     id BYTEA PRIMARY KEY CHECK (octet_length(id) = 32),
+    recovery_public_key BYTEA NOT NULL UNIQUE CHECK (octet_length(recovery_public_key) = 32),
+    epoch_1_salt BYTEA NOT NULL CHECK (octet_length(epoch_1_salt) = 32),
     genesis_device_key BYTEA NOT NULL UNIQUE CHECK (octet_length(genesis_device_key) = 32),
     head_hash BYTEA NOT NULL CHECK (octet_length(head_hash) = 32),
     head_sequence BIGINT NOT NULL DEFAULT 0 CHECK (head_sequence BETWEEN 0 AND 9007199254740991),
@@ -11,20 +13,22 @@ CREATE TABLE libraries (
     CHECK (head_sequence <> 0 OR (head_hash = id AND epoch = 1))
 );
 
-CREATE TABLE devices (
+CREATE TABLE library_keys (
     public_key BYTEA PRIMARY KEY CHECK (octet_length(public_key) = 32),
     library_id BYTEA NOT NULL REFERENCES libraries(id),
+    kind TEXT NOT NULL DEFAULT 'device' CHECK (kind IN ('device', 'recovery')),
+    CHECK (kind <> 'recovery' OR (authorized_at_sequence = 0 AND revoked_at_sequence IS NULL)),
     authorized_at_sequence BIGINT NOT NULL CHECK (authorized_at_sequence BETWEEN 0 AND 9007199254740991),
     revoked_at_sequence BIGINT CHECK (revoked_at_sequence BETWEEN authorized_at_sequence AND 9007199254740991)
 );
-CREATE INDEX devices_active_library ON devices(library_id) WHERE revoked_at_sequence IS NULL;
+CREATE INDEX devices_active_library ON library_keys(library_id) WHERE kind = 'device' AND revoked_at_sequence IS NULL;
 
 CREATE TABLE blocks (
     library_id BYTEA NOT NULL REFERENCES libraries(id),
     sequence BIGINT NOT NULL CHECK (sequence BETWEEN 1 AND 9007199254740991),
     hash BYTEA NOT NULL CHECK (octet_length(hash) = 32),
     previous_hash BYTEA NOT NULL CHECK (octet_length(previous_hash) = 32),
-    signer_key BYTEA NOT NULL REFERENCES devices(public_key),
+    signer_key BYTEA NOT NULL REFERENCES library_keys(public_key),
     signed_body BYTEA NOT NULL CHECK (octet_length(signed_body) BETWEEN 1 AND 65536),
     signature BYTEA NOT NULL CHECK (octet_length(signature) = 64),
     PRIMARY KEY (library_id, sequence),
@@ -86,15 +90,15 @@ BEGIN
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'device history is permanent' USING ERRCODE = '23514';
     END IF;
-    IF (NEW.public_key, NEW.library_id, NEW.authorized_at_sequence)
-       IS DISTINCT FROM (OLD.public_key, OLD.library_id, OLD.authorized_at_sequence)
+    IF (NEW.public_key, NEW.library_id, NEW.kind, NEW.authorized_at_sequence)
+       IS DISTINCT FROM (OLD.public_key, OLD.library_id, OLD.kind, OLD.authorized_at_sequence)
        OR (OLD.revoked_at_sequence IS NOT NULL AND NEW.revoked_at_sequence IS DISTINCT FROM OLD.revoked_at_sequence) THEN
         RAISE EXCEPTION 'device identity and revocation are immutable' USING ERRCODE = '23514';
     END IF;
     RETURN NEW;
 END;
 $$;
-CREATE TRIGGER devices_immutable_identity BEFORE UPDATE OR DELETE ON devices
+CREATE TRIGGER devices_immutable_identity BEFORE UPDATE OR DELETE ON library_keys
     FOR EACH ROW EXECUTE FUNCTION preserve_device();
 
 CREATE FUNCTION preserve_file() RETURNS trigger LANGUAGE plpgsql AS $$

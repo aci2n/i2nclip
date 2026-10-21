@@ -8,8 +8,8 @@
 //!
 //! The signature covers the origin, time, nonce, method, path, and that body
 //! hash. [`verify_request`] checks the clock and signature, plus the allow-list
-//! for ordinary requests, then remembers the nonce. Registration skips only
-//! the allow-list lookup. No body byte is read until that
+//! for ordinary requests, then remembers the nonce. Registration and chain requests prove key possession before endpoint-specific
+//! admission; ordinary requests also check active device membership. No body byte is read until that
 //! succeeds, so knowing a public key is not enough to make the server read a
 //! payload. [`verify_body`] then hashes the bytes and compares them to the
 //! hash from the header.
@@ -34,7 +34,7 @@ use crate::{
 };
 
 /// Header-authenticated request. Direct extraction also requires a registered key.
-/// RegistrationRequest wraps this value without the registered-key lookup.
+/// ProofRequest wraps this value without the active-device lookup.
 /// Endpoint handlers own body/query policy; the body hash is checked on reading.
 pub(crate) struct SignedRequest {
     verified: VerifiedRequest,
@@ -52,14 +52,14 @@ impl FromRequest<AppState> for SignedRequest {
     }
 }
 
-/// A verified signer enrolling with an invitation; no registered-key lookup.
-pub(crate) struct RegistrationRequest(pub(crate) SignedRequest);
+/// A verified key holder; endpoint-specific authority is checked after reading the body.
+pub(crate) struct ProofRequest(pub(crate) SignedRequest);
 
-impl FromRequest<AppState> for RegistrationRequest {
+impl FromRequest<AppState> for ProofRequest {
     type Rejection = Response;
 
     async fn from_request(req: Request, state: &AppState) -> Result<Self, Self::Rejection> {
-        authenticate_request(req, state, KeyPolicy::Registering)
+        authenticate_request(req, state, KeyPolicy::Possession)
             .await
             .map(Self)
             .map_err(fail)
@@ -188,10 +188,10 @@ pub(crate) fn check_timestamp(ts: u64, now: u64) -> Result<(), Error> {
     Ok(())
 }
 
-/// Registration proves key possession before it can join the allow-list.
+/// Possession-only requests defer membership/record authority to their endpoint.
 enum KeyPolicy {
     Registered,
-    Registering,
+    Possession,
 }
 
 /// Check the key, the clock, and the signature. Remember the nonce.

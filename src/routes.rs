@@ -20,7 +20,7 @@ use tower_http::{
 };
 
 use crate::{
-    auth::{RegistrationRequest, SignedRequest},
+    auth::{ProofRequest, SignedRequest},
     blob_routes, chain_routes, codec, media, pairing, AppState, Error, MAX_REGISTER_BODY,
 };
 
@@ -101,7 +101,7 @@ async fn ping(request: SignedRequest) -> Response {
 
 async fn register_key(
     State(state): State<AppState>,
-    RegistrationRequest(request): RegistrationRequest,
+    ProofRequest(request): ProofRequest,
 ) -> Response {
     if let Err(response) = request.check_size(MAX_REGISTER_BODY) {
         return *response;
@@ -117,11 +117,20 @@ async fn register_key(
 }
 
 async fn register_key_body(state: &AppState, signer: [u8; 32], body: &[u8]) -> Result<(), Error> {
-    let (otc,): (String,) = codec::decode(body)?;
+    let (otc, recovery, salt): (String, serde_bytes::ByteBuf, serde_bytes::ByteBuf) =
+        codec::decode(body)?;
+    if codec::encode(&(&otc, &recovery, &salt))? != body {
+        return Err(Error::BadRequest("noncanonical registration".into()));
+    }
+    let recovery = crate::auth::validate_public_key(&recovery)?;
+    let salt: [u8; 32] = salt
+        .as_ref()
+        .try_into()
+        .map_err(|_| Error::BadRequest("invalid epoch salt".into()))?;
     if otc.len() > 512 {
         return Err(Error::BadRequest("invalid registration payload".into()));
     }
-    state.db.consume_code(&otc, &signer).await
+    state.db.consume_code(&otc, &signer, &recovery, &salt).await
 }
 
 pub(crate) fn document_response(status: StatusCode, body: impl Serialize) -> Response {

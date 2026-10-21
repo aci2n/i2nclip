@@ -15,6 +15,10 @@ use tower::ServiceExt;
 #[path = "../src/reference_crypto.rs"]
 pub mod reference_crypto;
 
+fn recovery_identity() -> Identity {
+    reference_crypto::from_seed([42; 32])
+}
+
 static N: AtomicU64 = AtomicU64::new(0);
 
 fn signed_membership_record(
@@ -72,13 +76,19 @@ async fn chain_http_registration_paging_append_and_membership_admission() {
             &initial,
             "POST",
             "/api/register-key",
-            codec::encode(&(code,)).unwrap()
+            codec::encode(&(
+                code,
+                ByteBuf::from(recovery_identity().public.to_vec()),
+                ByteBuf::from(vec![11; 32])
+            ))
+            .unwrap()
         )
         .await
         .0,
         StatusCode::NO_CONTENT
     );
-    let library = i2nclip::chain::genesis(&initial.public).unwrap();
+    let library =
+        i2nclip::chain::genesis(&recovery_identity().public, &initial.public, &[11; 32]).unwrap();
     let hex = library
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -153,6 +163,117 @@ async fn chain_http_registration_paging_append_and_membership_admission() {
 }
 
 #[tokio::test]
+async fn chain_http_recovery_authority_and_device_free_reset() {
+    use i2nclip::chain::{Body as BlockBody, Effects, Kind};
+    use serde_bytes::ByteBuf;
+    let initial = new_identity();
+    let replacement = new_identity();
+    let recovery = recovery_identity();
+    let outsider = new_identity();
+    let (db, app) = app(&[]).await;
+    let code = i2nclip::issue_registration_otc(&db.0, 3600, i2nclip::StorageLimits::default())
+        .await
+        .unwrap();
+    let registration = codec::encode(&(
+        code,
+        ByteBuf::from(recovery.public.to_vec()),
+        ByteBuf::from(vec![11; 32]),
+    ))
+    .unwrap();
+    assert_eq!(
+        call(&app, &initial, "POST", "/api/register-key", registration)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    let library = i2nclip::chain::genesis(&recovery.public, &initial.public, &[11; 32]).unwrap();
+    let path = format!(
+        "/api/blocks?after={}",
+        library
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    assert_eq!(
+        call(&app, &recovery, "GET", &path, vec![]).await.0,
+        StatusCode::OK
+    );
+    for path in ["/api/ping", "/api/quota"] {
+        assert_eq!(
+            call(&app, &recovery, "GET", path, vec![]).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let mut body = BlockBody {
+        version: 1,
+        library,
+        sequence: 1,
+        previous: library,
+        epoch: 1,
+        signer: initial.public,
+        kind: Kind::Rotate,
+        effects: Effects::Rotation((
+            2,
+            ByteBuf::from(replacement.public.to_vec()),
+            ByteBuf::from(vec![12; 32]),
+        )),
+        salt: None,
+        nonce: None,
+        encrypted: None,
+    };
+    assert_eq!(
+        call(
+            &app,
+            &initial,
+            "POST",
+            "/api/blocks",
+            sign_public_record(&initial, &body)
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    body.signer = recovery.public;
+    let reset = sign_public_record(&recovery, &body);
+    assert_eq!(
+        call(&app, &outsider, "POST", "/api/blocks", reset.clone())
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    // The fresh candidate submits a pre-signed reset with only its own key.
+    assert_eq!(
+        call(&app, &replacement, "POST", "/api/blocks", reset.clone())
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&app, &replacement, "POST", "/api/blocks", reset.clone())
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&app, &recovery, "POST", "/api/blocks", reset).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&app, &initial, "GET", &path, vec![]).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&app, &replacement, "GET", &path, vec![]).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&app, &recovery, "GET", &path, vec![]).await.0,
+        StatusCode::OK
+    );
+    let _ = db;
+}
+
+#[tokio::test]
 async fn chain_http_blob_staging_publication_and_live_quota_frames() {
     use i2nclip::chain::{Body as BlockBody, Effects, Kind, StorageEffect};
     use serde_bytes::ByteBuf;
@@ -167,13 +288,19 @@ async fn chain_http_blob_staging_publication_and_live_quota_frames() {
             &initial,
             "POST",
             "/api/register-key",
-            codec::encode(&(code,)).unwrap()
+            codec::encode(&(
+                code,
+                ByteBuf::from(recovery_identity().public.to_vec()),
+                ByteBuf::from(vec![11; 32])
+            ))
+            .unwrap()
         )
         .await
         .0,
         StatusCode::NO_CONTENT
     );
-    let library = i2nclip::chain::genesis(&initial.public).unwrap();
+    let library =
+        i2nclip::chain::genesis(&recovery_identity().public, &initial.public, &[11; 32]).unwrap();
     let file = [7u8; 32];
     let ciphertext = vec![9u8; 16];
     let request = codec::encode(&(
