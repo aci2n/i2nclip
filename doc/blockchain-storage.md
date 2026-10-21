@@ -1,9 +1,12 @@
 # Blockchain storage specification
 
-Status: proposed; not implemented. This is the specification for the greenfield
+Status: implementation in progress. This is the specification for the greenfield
 replacement of the current server-managed media records and tag index. It
 supersedes the abandoned cryptography redesign and the intermediate proposals
-for owner authority, permissions, recovery envelopes, and chain rewind.
+for permission systems, recovery envelopes, and chain rewind. The offline recovery
+key described here supersedes the earlier equal-authority epoch-reset proposal.
+The authoritative amendment is [Library recovery](library-recovery.md), including
+deterministic epoch keys and recovery without any authorized device.
 
 ## Goal and boundaries
 
@@ -20,9 +23,14 @@ is resolved from the request signer, not selected through an API URL.
 
 ### Trust model
 
-- Every active device has full authority, including enrollment, revocation,
-  file mutation, permanent purge, and epoch rotation. There are no permissions,
-  roles, permanent owners, or privileged recovery credentials.
+- Active devices have equal authority over enrollment, device revocation,
+  file mutation, and permanent purge. Only a separate offline recovery signing key
+  can authorize an epoch reset (`rotate`). This is one fixed authority boundary,
+  not a device permission language or hierarchy of enrolled device roles.
+- Genesis pins the recovery public key independently of the initial device. The
+  recovery signing key is not an enrolled device; device enrollment and revocation cannot
+  replace, revoke, or acquire its reset authority. Recovery-key replacement is out
+  of scope for this implementation.
 - Enrolled writers are trusted to create valid operations. A compromised device
   can destroy data, revoke other devices, or interrupt replay. This design does
   not attempt to contain an authorized malicious writer.
@@ -45,7 +53,7 @@ is resolved from the request signer, not selected through an API URL.
 ### Exclusions
 
 No distributed consensus, proof of work, CRDT, multi-library UI, server-side
-search, global deduplication, permission language, permanent recovery authority,
+search, global deduplication, permission language, recovery-key replacement,
 chain truncation/rewind, automatic GC of committed objects, persistent decrypted
 search index, or speculative snapshots. No legacy format readers or migrations
 of existing application data. Read-only time travel is a separate final feature.
@@ -55,9 +63,11 @@ Whole-library state restoration is excluded.
 
 ### Library and genesis
 
-Generate an independent Ed25519 signing seed and a random 32-byte epoch-1
-encryption secret locally. Canonical genesis is the MessagePack array
-`[1, initial_device_public_key, 1]`. Its hash is:
+Generate a random 32-byte recovery key, an independent initial-device signing
+seed, and a fresh public 32-byte epoch-1 salt. Derive the recovery signing keypair
+and epoch key as specified in `library-recovery.md`. Canonical genesis is
+`[1, recovery_public_key, initial_device_public_key, epoch_1_salt, 1]`.
+The recovery and device public keys must be distinct. Its hash is:
 
 ```text
 SHA256(UTF8("i2nclip/chain/genesis/1\n") || genesis_bytes)
@@ -65,11 +75,13 @@ SHA256(UTF8("i2nclip/chain/genesis/1\n") || genesis_bytes)
 
 This hash is both the stable library ID and sequence-zero head. Genesis
 authorizes the initial device and establishes epoch 1. The initial key has no
-permanent privilege and may later be revoked. Neither the library ID nor genesis
-changes during rotation.
+permanent privilege and may later be revoked. The separate recovery public key is
+immutable and exclusively authorizes epoch resets. Neither the library ID nor
+genesis changes during a reset.
 
 Registration retains invitation-code admission and signed proof of key
-possession. The server derives genesis from the registering key and atomically
+possession. The signed registration frame includes the recovery public key. The server derives
+genesis from the recovery public key, registering device key, and epoch-1 salt and atomically
 creates the library, membership, and quota record while consuming the invitation.
 The encryption secret never reaches it. Registration retries reuse the same
 candidate, check whether it is already registered, and do not spend another code
@@ -81,19 +93,35 @@ does not lose its credentials.
 
 | Material | Purpose and location |
 | --- | --- |
-| Device signing seed | HTTP and block signatures; password-protected local identity and device backup |
-| Epoch secrets | Per-block encryption key derivation; protected identity, authenticated pairing, and backups |
+| Recovery key | Single secret in the separate recovery file; derives recovery signing keypair and all epoch keys; never transferred to devices |
+| Recovery signing keypair | Derived reset authority and recovery chain-read signatures; public key fixed in genesis, private runtime handle temporary |
+| Device signing seed | HTTP and ordinary block signatures; password-protected local identity and device backup |
+| Epoch keys | Per-block encryption key derivation; protected identity, authenticated pairing, and backups |
 | Manifest key | Fresh random AES key per immutable manifest; inside encrypted `AddFile` |
 | Content key | Fresh random AES key per file; inside its encrypted manifest |
 | Metadata key | Fresh random AES key per metadata version; inside its encrypted operation |
 | Thumbnail key | Fresh random AES key per thumbnail version; inside encrypted metadata |
 
-Signing keys and epoch secrets are independent. Paired devices generate their
+The recovery key is separate from every device signing key. Paired devices generate their
 own signing keys; pairing never clones the sender's signing seed. Retain all
-historical epoch secrets needed for full replay. Epoch secrets are not derived
-from one another. Use non-extractable runtime keys where practical and wipe
+historical epoch keys needed for full replay. Epoch keys are derived independently from the recovery key using their public
+salts and epoch/library contexts, never from one another. Use non-extractable runtime keys where practical and wipe
 temporary owned byte buffers; browser memory and strings cannot be reliably
 erased.
+
+### Recovery-key lifecycle
+
+The recovery key is the single backed-up secret. It derives both the recovery
+signing keypair and numbered epoch keys through distinct HKDF contexts. Genesis
+contains its derived public key and the first public epoch salt; reset records
+contain subsequent salts. The recovery file can reconstruct the historical keyring
+and restore control without an authorized device. It does not restore purged
+objects or fix an invalid operation written by a trusted device.
+
+The recovery key is not stored in ordinary device credentials, transferred by
+pairing, or persisted in IndexedDB. Use it only during creation and explicit reset
+or recovery workflows. See `library-recovery.md` for the precise derivations,
+recovery-read admission, pending reset identities, and lifecycle/failure rules.
 
 ## Chain protocol
 
@@ -173,7 +201,7 @@ remain separate and cover method, origin, exact target, timestamp, nonce, and
 body digest using the existing request protocol.
 
 For `data` blocks, generate a fresh 32-byte public salt and 12-byte nonce. Derive
-an AES-256-GCM key with HKDF-SHA256: input is the current epoch secret, salt is
+an AES-256-GCM key with HKDF-SHA256: input is the current epoch key, salt is
 the public block salt, and info is MessagePack
 `["i2nclip/chain/key/1", library_id, epoch]`. AAD is
 `UTF8("i2nclip/chain/aad/1\n") || MessagePack(public_header)`.
@@ -259,12 +287,25 @@ enrolled, including in another library. For `revoke`, effects are
 revocation must leave at least one active device. A signer may revoke itself
 when another active device remains.
 
-For `rotate`, effects are `[next_epoch, new_device_public_key]`. The next epoch is
-exactly the previous epoch plus one, and the replacement key is fresh. Atomically
+For `rotate`, effects are `[next_epoch, new_device_public_key, next_epoch_salt]`. The next epoch is
+exactly the previous epoch plus one, the replacement key is fresh, and the public
+epoch salt is a fresh random 32-byte value. Atomically
 revoke every old device and authorize the replacement. Genesis and library ID
-stay unchanged. No epoch secret or recovery envelope appears in the public
-transition. The initiating client already holds the new secret; other devices
-must re-pair to get it. All transitions use ordinary active-device authority.
+stay unchanged. No epoch key or recovery envelope appears in the public transition. The initiating
+recovery operation derives the next epoch key from the recovery key and signed
+public salt; other devices
+must re-pair to get it. Unlike enrollment and revocation, `rotate` must be signed
+by the immutable recovery public key from genesis. An ordinary device signature is
+invalid for a reset, even when that device was the initial device. The recovery signing key
+has no ordinary device membership and cannot sign file/enrollment/revocation
+operations unless separately authorized through a future explicitly specified
+change; enrolling the recovery signing key as a device is forbidden.
+
+The reset still extends the current head with an exact parent/sequence/epoch
+comparison. It does not rewind the log, erase invalid history, or restore deleted
+objects. The recovery key can rederive historical epoch keys and hence decrypt
+retained objects through their authenticated references; ordinary devices cannot
+perform that derivation.
 
 ## Encrypted file objects
 
@@ -311,8 +352,8 @@ nonnegative/accounting constraints in the numbered migration:
 
 | Table | Columns and constraints |
 | --- | --- |
-| `libraries` | `id` PK, `genesis_device_key`, `head_hash`, `head_sequence`, `epoch`, `max_blob_bytes`, `used_blob_bytes`, `max_files`, `retained_files` |
-| `devices` | `public_key` globally unique PK, `library_id` FK, `authorized_at_sequence`, nullable `revoked_at_sequence` |
+| `libraries` | `id` PK, `recovery_public_key`, `genesis_device_key`, `epoch_1_salt`, `head_hash`, `head_sequence`, `epoch`, `max_blob_bytes`, `used_blob_bytes`, `max_files`, `retained_files` |
+| `library_keys` | `public_key` globally unique PK, `library_id` FK, fixed `kind` (`device` or `recovery`), `authorized_at_sequence`, nullable `revoked_at_sequence`; recovery rows are immutable sequence-zero authority |
 | `blocks` | `library_id` FK, `sequence`, `hash`, `previous_hash`, `signer_key`, exact `signed_body`, `signature`; PK `(library_id, sequence)`, unique `(library_id, hash)` and `(library_id, previous_hash)` |
 | `files` | `library_id` FK, `file_id`, `status`, nullable `staging_expires_at`; PK `(library_id, file_id)` |
 | `blobs` | `library_id`, `file_id`, `hash`, `ciphertext BYTEA STORAGE EXTERNAL`, nullable `committed_at_sequence`, nullable `staging_expires_at`; PK `(library_id, file_id, hash)`, FK to file |
@@ -366,8 +407,11 @@ state merely to make intermediate commits independently deployable.
 
 ## HTTP API
 
-All core routes require the existing signed request envelope. Resolve the current
-device membership from the signer. Keep health, registration, signed ping/quota,
+All core routes require the existing signed request envelope. Resolve current
+authority from the signer: ordinary routes require active devices, chain reads
+also allow the recovery signing key, and reset submission admits the exact
+replacement device as specified in `library-recovery.md`. Keep health,
+registration, signed ping/quota,
 and pairing routes; registration is the sole invitation-based enrollment path
 outside an existing library. Normal device enrollment occurs in the chain.
 
@@ -482,14 +526,14 @@ the result, including its read-only and availability states.
 Scope history by normalized server origin and library ID even though the UI
 supports one library. Persist exact encrypted records and the trusted accepted
 head atomically in dedicated stores; do not rewrite the entire chain as one
-session value. Keep device keys, epoch secrets, initialization candidates, and
+session value. Keep device keys, epoch keys, initialization candidates, and
 pending rotation protected by the existing local password envelope. Preserve
 Remember this device and revision-checked session replacement semantics.
 
 Materialized operations, decrypted metadata, search indexes, thumbnails, and
 upload queues stay in memory. No persistent blob cache is added. Replay cached
 history on unlock; stream/batch records from IndexedDB rather than requiring the
-whole log in RAM. Historical epoch secrets remain in the protected identity.
+whole log in RAM. Historical epoch keys remain in the protected identity.
 
 Validate a bounded batch before committing it and its head, then expose accepted
 state. On storage failure, retain the old durable head, show a local storage
@@ -579,7 +623,7 @@ secrets and trust anchors, never the sender's signing key.
 
 After authenticated approval, the logical exchange is:
 
-1. Sender transfers genesis/library identity, historical epoch secrets, trusted
+1. Sender transfers genesis/library identity, historical epoch keys, trusted
    head, and the proposed enrollment record through the encrypted channel.
 2. Receiver checks its own public key and selected origin, validates the bundle,
    and durably saves pending credentials before acknowledging preparation.
@@ -628,21 +672,27 @@ about all newer server history.
 Use a new password-encrypted MessagePack device-backup document, protected by the
 existing PBKDF2-HMAC-SHA256/AES-GCM envelope and iteration/size bounds with a new
 backup-specific AAD context. No cryptographic KDF redesign is included here.
+Each recovery-file or device-backup export generates a fresh random 256-bit
+password and displays it for storage separately from the file. The user needs
+both to restore. Do not embed that password in the file or persist it in
+IndexedDB. The ordinary local unlock password remains user-selected and separate.
+Keep a file/password pair stable across download retries; generate a new pair
+only for a new export.
 
 The credential plaintext includes version, normalized server origin, genesis,
-library ID, device signing seed/public key, epoch-number/secret pairs, and trusted
+library ID, device signing seed/public key, epoch-number/key pairs, and trusted
 head/sequence. Validate signing-key correspondence, genesis identity, distinct
-epochs, and bounds before installation. Epoch secrets, not merely the current
+epochs, and bounds before installation. Epoch keys, not merely the current
 secret, are needed for full history replay.
 
 The credential frame is `[1, server_origin, genesis_bytes, library_id,
-[signing_seed, signing_public_key], [[epoch, secret], ...],
+[signing_seed, signing_public_key], [[epoch, key], ...],
 [trusted_sequence, trusted_hash], phase, pending_rotation_or_null]`.
 Epoch pairs are complete and ordered from 1. `phase` is `registering`, `pairing`,
-or `active`; only an active device can hold a pending rotation. Its frame is
-`[[replacement_seed, replacement_public_key], new_epoch_secret,
+`active`, or `resetting`; an active device or a `resetting` recovery candidate can hold a pending reset. Its frame is
+`[[replacement_seed, replacement_public_key], new_epoch_key,
 exact_signed_transition_bytes]`. Validate that the transition extends the saved
-head and names the saved old signer, next epoch, and replacement key.
+head and names the genesis recovery signer, next epoch, and replacement key.
 Registration candidates must describe their own genesis and epoch 1.
 
 The portable backup frame is `["i2nclip-device-backup", 1,
@@ -651,7 +701,7 @@ the nonce is 12 bytes, and the KDF bounds remain 600,000–2,000,000 iterations.
 Local AES envelopes use `[1, nonce, ciphertext]`. These are fresh formats with
 no map-format fallback.
 
-A backup restores that logical device. It is not a perpetual master credential
+A backup restores that logical device. It is not a permanent recovery authority
 and does not contain file blobs. A revoked backup cannot restore server authority;
 an old backup cannot decrypt a later epoch without re-pairing. A still-active
 backup must verify through its pinned head before readiness. Never enroll a
@@ -659,11 +709,13 @@ fresh key automatically merely because an old backup was imported.
 
 ### Rotation and interrupted outcomes
 
-Rotation is a session-owned operation and requires no owner key:
+Epoch reset is a session-owned operation requiring a recovery signature. The
+recovery key is never included in the pending device backup or pairing transfer.
+Its durable pending plan contains the exact recovery-signed transition:
 
-1. Synchronize and capture the expected head. Generate a fresh signing keypair
-   and independent epoch secret.
-2. Construct the exact old-device-signed transition and persist a protected
+1. Synchronize and capture the expected head. Generate a fresh device signing keypair and public epoch salt. Derive the next
+   epoch key using the explicitly unlocked recovery file.
+2. Obtain the recovery signature over the exact transition and persist a protected
    pending record containing old credentials, replacement credentials, all epoch
    secrets, expected parent, and transition bytes/hash.
 3. Download a password-encrypted pending device backup. Include the same pending
@@ -733,7 +785,7 @@ make an intermediate branch independently deployable.
 | 10 | Implement encrypted manifests, separate metadata/thumbnails, sequential staged upload, and hash-based reads | Content, metadata, download, and upload-store tests |
 | 11 | Cut library/tag/media/deeplink workflows over to the selected materialized-view rendering contract; remove obsolete server media/tag routes and indexes | Relevant store/API tests, selection isolation tests, backend static checks, frontend checker/build |
 | 12 | Implement fresh-device pairing, durable receiver preparation, trusted-head handoff, and relay phase/size changes | Real OPAQUE unit tests, pairing-store tests, focused Rust relay tests |
-| 13 | Add device listing/revocation and crash-safe epoch rotation with pending backups | Membership, rotation, outcome reconciliation, and session lifecycle tests |
+| 13 | Add device listing/revocation and crash-safe recovery-authorized epoch reset with pending device backups | Membership, rotation, outcome reconciliation, and session lifecycle tests |
 | 14 | Add deleted-file browsing, explicit restore, purge UI, and quota/history explanations | Lifecycle, stream invalidation, and relevant store tests; frontend checker/build |
 | 15 | Add read-only time-travel selection through the existing materialized-view/UI path | Historical replay, selection changes, lazy old metadata, purge availability, and stale-parent rejection tests; frontend checker/build |
 | 16 | After the chain features are complete, perform the dedicated legacy cleanup described below | Reference/import audit and smallest affected tests/checks; keep builds warning-free |
@@ -756,8 +808,9 @@ content-chunk AEAD, HTTP request-signature construction, password protection,
 OPAQUE primitives, and their meaningful regression coverage. Search for obsolete
 endpoints/formats/imports and confirm every remaining match has a current use.
 
-Do not implement the old owner/recovery-envelope/permission proposals along the
-way. The runtime and test reference crypto remain separate: production Rust
+Do not reintroduce the abandoned recovery-envelope or device-permission
+proposals. The recovery signing key authorizes resets and recovery history reads;
+ordinary device authority stays separate. The runtime and test reference crypto remain separate: production Rust
 verifies public records and manages storage; test-only helpers may encrypt data
 to produce cross-language fixtures.
 
@@ -804,7 +857,7 @@ Required scenarios:
 - Initial creation and pending rotation survive restart and server acceptance
   followed by local save failure. Test both accepted and unaccepted pending
   backups, moved parents, revoked backups, wrong passwords, and oversized bundles.
-- Pairing uses different signing keys, transfers all necessary epoch secrets and
+- Pairing uses different signing keys, transfers all necessary epoch keys and
   the trusted minimum head, acknowledges durable preparation, and reports
   committed enrollment despite a lost final acknowledgment.
 - Historical mutation entry points stay disabled and retain historical parent
