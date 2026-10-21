@@ -454,8 +454,9 @@ class SessionStoreImpl {
 		});
 	}
 
-	private activatePairedDevice(minimum?: Checkpoint) {
-		return this.sessionAction("activatePairing", async (signal) => {
+	private activatePairedDevice(minimum?: Checkpoint, caller?: AbortSignal) {
+		return this.sessionAction("activatePairing", async (own) => {
+			const signal = caller ? AbortSignal.any([own, caller]) : own;
 			const prepared = this.loadedDevice();
 			if (prepared.identity.phase !== "pairing") {
 				throw new Error("No pairing is awaiting enrollment.");

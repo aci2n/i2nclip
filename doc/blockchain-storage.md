@@ -644,6 +644,28 @@ steps. Derive independent directional AES keys and bind each packet's phase to
 its AAD. The phase-3 public-key binding is authenticated after OPAQUE finishes;
 it never relies on an unsigned public-key field supplied by the relay.
 
+The phase-3 message is `[opaque_finish_bytes, encrypted_binding_bytes]`;
+binding plaintext is `[1, receiver_public_key]`. Transfer plaintext is
+`[1, server_origin, genesis_bytes, library_id, [[epoch, key], ...],
+[parent_sequence, parent_hash], exact_proposed_enrollment_bytes]`. The receiver
+supplies its own locally generated private key; no signing secret appears in the
+transfer. Check canonical framing, origin/library/genesis, contiguous epoch keys,
+valid enrollment signature, target key, epoch, and exact parent/sequence before
+saving. The pending receiver pins the proposed enrollment's hash/sequence, which
+also authenticates its parent. It stays unready until replay verifies that record
+and its membership. The phase-5 and phase-7 acknowledgment plaintexts are
+`[1, true]`. Phase 6 is `[1, accepted_sequence, accepted_enrollment_hash]`, and must
+match the exact pending enrollment. A sender creates/signs the proposal once,
+publishes those exact bytes after durable preparation, and verifies acceptance;
+no automatic rebase or substitute enrollment is allowed.
+
+The pairing store owns the disposable relay/PAKE attempt and receiver key until
+pending credentials have been durably saved. Session owns that local pending
+identity afterward. Sender synchronization remains workspace-owned; pairing
+cancellation must not cancel shared synchronization. Pending receiver activation
+is cancellable and checks stale results. Cancellation after attempted enrollment
+must say that membership may have committed and can be explicitly revoked.
+
 Fixed relay requests are `[1]` (create), `[message]` (join), and `[step, message]`
 (submit). Snapshots are `[1, room_id, instance, remaining_seconds, step,
 message_or_null, capability_or_null]`. Only phase 4 can carry a credential-sized
