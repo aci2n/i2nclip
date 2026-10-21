@@ -212,16 +212,11 @@ submission. Wipe recovery secrets after preparation; retain enough local state
 to retry and reconcile without reopening the file. Recovery replay derives epoch
 keys from verified salts and does not need another device's encryption key.
 
-Capacity edge case to resolve before implementation: at 128 authorized devices,
-adding a fresh recovery device would exceed the cap. Do not silently revoke a
-device, omit an envelope, or invent a one-time overflow exception. An existing
-usable device can revoke an obsolete device before recovery rotation. If none
-exists, recovery can decrypt history but cannot complete enrollment under the
-specified cap. Before implementation, choose between a separately specified
-root-authorized revocation path and a different bounded recipient representation.
-This is the one outstanding policy decision; the normal rotation protocol does
-not depend on its resolution. The UI must not promise unconditional device-free
-restoration until it is resolved.
+Approved capacity policy: at most 128 devices are simultaneously authorized.
+The offline recovery key may sign revocations to free capacity before a fresh
+recovery enrollment, even without any usable device. The separate-enrollment
+specification defines this authority and explicit user selection; rotation never
+implicitly revokes devices. Revoked devices do not count toward the limit.
 
 ## Races, failures, and cancellation
 
@@ -269,7 +264,7 @@ After the current implementation is finished, make separate cohesive commits:
    Test two retained devices, one revoked device, offline multi-rotation catch-up,
    key-save failure/restart, stale parent, lost response, and cancellation.
 6. Update root-only restore and pending recovery enrollment. Test zero usable
-   devices, preservation of existing membership, candidate-only retry, the resolved capacity policy,
+   devices, preservation of existing membership, candidate-only retry, recovery-signed revocation at capacity,
    and recovery-file derivation of all epoch keys without envelopes.
 7. Update UI wording and operational readiness, remove revoke-all/reset-replacement
    code, update normative docs and shared vectors, and remove stale fixtures.

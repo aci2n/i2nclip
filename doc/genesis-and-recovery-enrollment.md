@@ -19,7 +19,7 @@ and their tests. Preserve the approved separate Ed25519 signing and X25519
 encryption keypairs per device.
 
 Exclude permissions, recovery-key replacement, recovery-signed file operations,
-recovery-signed revocation, membership changes inside rotation, device backups,
+membership changes inside rotation, device backups,
 chain rewrites, historical blob re-encryption, and compatibility formats. This
 remains a greenfield change: use fresh databases and update `sql/001_init.sql`
 as part of the authorized cutover, without conversion migrations or fallback
@@ -56,7 +56,19 @@ by the rotation proposal. An enrollment may be signed by either:
 - The immutable recovery signing key pinned in genesis, including when no device
   is authorized.
 
-The latter grants enrollment authority only. It does not grant ordinary blob,
+The recovery key may also sign revocation records, including revocation of the
+last authorized device. This explicitly permits device-free recovery to free
+capacity at the approved limit of 128 authorized devices. Ordinary device-signed
+revocation still requires a surviving authorized device. Recovery revocation
+uses the existing `revoke` kind, requires an active target, and never revokes the
+recovery principal. HTTP submission must be signed by the recovery key or an
+active device; the target key receives no submission exception. A prepared
+recovery-signed revocation can therefore be relayed by an active device, but
+device-free restore keeps the recovery signer temporarily until those records
+are submitted or durably stores their exact recovery-signed HTTP-independent
+plans for later submission after re-unlock. Do not persist recovery secrets.
+
+These rights do not grant ordinary blob,
 quota, pairing, or file-operation access to the recovery principal. Rotation
 remains recovery-only. No separate owner/admin device role is introduced.
 
@@ -190,10 +202,14 @@ succeeds and rotation fails, the device remains authorized in the current epoch;
 show partial completion and retain the pending rotation for reconciliation.
 Never imply that recovery enrollment itself rotates secrets or revokes devices.
 
-The existing device-cap policy still applies. Separating enrollment does not
-resolve the rotation proposal's full-cap/no-usable-device recovery edge case.
-Do not introduce recovery-signed revocation or silently bypass limits here;
-resolve that explicitly before implementing the combined proposals.
+At the 128-authorized-device cap, offline recovery explicitly prepares and submits
+recovery-signed revocation of a user-selected obsolete device before enrollment.
+Never silently choose or revoke a device. Show the resulting membership change
+and require that workflow's explicit action. Verify the accepted revocation head
+before constructing enrollment; parent conflicts require replay and reauthorization.
+Revocation does not erase old secrets: rotate afterward to exclude revoked
+devices from the next epoch. The recovery key can revoke every device if explicitly
+requested, and remains able to authorize a new enrollment afterward.
 
 ## Failures and cancellation
 
@@ -228,7 +244,8 @@ After the current implementation is ready, make separate cohesive commits:
    authorization at sequence 1. Remove decomposed genesis columns and their reads.
 3. Recovery enrollment admission and membership projection: focused backend tests
    for root/device authority, candidate-only submission, cross-library substitution,
-   limits, parent races, and no accidental ordinary recovery/candidate API access.
+   128-device capacity and recovery-signed revocation (including the last device),
+   parent races, and no accidental ordinary recovery/candidate API access.
 4. Creation and restart ownership: focused client tests for durable exact plans,
    recovery download gating, storage failure, cancellation, lost responses, and
    verification of block 1 before activation.
