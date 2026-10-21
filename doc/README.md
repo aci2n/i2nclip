@@ -22,7 +22,7 @@ The current wire and credential formats are consolidated in
 - [Improvement priorities](priorities.md): open topics requiring separate specifications.
 - [Chunk uploads specification](chunk-uploads.md): independently encrypted chunks and browser streaming; implemented.
 - [Transfer and shutdown deadlines](transfer-shutdown-proposal.md): implemented resource and shutdown limits.
-- [Blockchain storage specification](blockchain-storage.md): encrypted operation chain, device authority, deletable blobs, and implementation commits; implemented; final integration verification pending.
+- [Blockchain storage specification](blockchain-storage.md): encrypted operation chain, device authority, deletable blobs, and implementation commits; implemented; see [verification results](chain-verification.md).
 - [Library recovery](library-recovery.md): fixed recovery authority, deterministic epoch keys, recovery without an authorized device, and generated backup passwords; authoritative amendment to the chain specification.
 
 Current behavior is documented separately from proposed work. The Rust server is

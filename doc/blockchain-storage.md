@@ -104,6 +104,7 @@ does not lose its credentials.
 | Recovery key | Credential containing independent signing and epoch derivation secrets in the separate recovery file; never transferred to devices |
 | Recovery signing keypair | Independently generated rotation authority and recovery chain-read signatures; public key fixed in genesis, private runtime handle temporary |
 | Device signing seed | HTTP and ordinary block signatures; password-protected local identity only |
+| Device encryption private key | Opens X25519 HPKE epoch envelopes; protected local identity only |
 | Epoch keys | Per-block encryption key derivation; protected identity, authenticated pairing, and local identities |
 | Manifest key | Fresh random AES key per immutable manifest; inside encrypted `AddFile` |
 | Content key | Fresh random AES key per file; inside its encrypted manifest |
@@ -127,7 +128,7 @@ and restore control without an authorized device. It does not restore purged
 objects or fix an invalid operation written by a trusted device.
 
 The recovery key is not stored in ordinary device credentials, transferred by
-pairing, or persisted in IndexedDB. Use it only during creation and explicit recovery
+pairing, or persisted in IndexedDB. Use it only during creation and explicit rotation
 or recovery workflows. See `library-recovery.md` for the precise derivations,
 recovery-read admission, pending recovery enrollments, and lifecycle/failure rules.
 

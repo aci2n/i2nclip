@@ -1,6 +1,6 @@
 # Canonical genesis and separate device enrollment
 
-Status: implemented; final integration verification pending. This greenfield
+Status: implemented and integration-verified. See [verification results](chain-verification.md). This greenfield
 refinement accompanies [device-preserving rotation](device-preserving-rotation.md).
 The consolidated current contract is [library recovery](library-recovery.md).
 

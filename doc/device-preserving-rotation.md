@@ -1,6 +1,6 @@
 # Device-preserving epoch rotation
 
-Status: implemented; final integration verification pending. This greenfield
+Status: implemented and integration-verified. See [verification results](chain-verification.md). This greenfield
 change replaces revoke-all rotation. The consolidated current wire and credential
 contract is [library recovery](library-recovery.md). No compatibility readers or
 migrations for earlier development formats are provided.
