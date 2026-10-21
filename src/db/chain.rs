@@ -242,7 +242,7 @@ async fn enroll(
 ) -> Result<(), Error> {
     let active: i64 = sqlx::query_scalar("SELECT count(*) FROM library_keys WHERE library_id=$1 AND kind='device' AND revoked_at_sequence IS NULL")
         .bind(library.as_slice()).fetch_one(&mut **tx).await?;
-    if active >= 128 {
+    if active >= chain::MAX_AUTHORIZED_DEVICES {
         return Err(Error::Conflict);
     }
     let inserted=sqlx::query("INSERT INTO library_keys(public_key,library_id,authorized_at_sequence) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")

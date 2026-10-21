@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use crate::{auth::validate_public_key, codec, crypto, Error, MAX_SAFE_INTEGER};
 
 pub type Hash = [u8; 32];
+pub const MAX_AUTHORIZED_DEVICES: i64 = 128;
 pub const MAX_BLOCK_BYTES: usize = 64 * 1024;
 pub const MAX_BLOB_BYTES: usize = 4 * 1024 * 1024 + 64;
 pub const MAX_PAGE_BYTES: usize = 1024 * 1024;

@@ -9,12 +9,19 @@ import {
 } from "hpke";
 import { hexToBytes } from "../src/lib/protocol/bytes.ts";
 import {
+	MAX_AUTHORIZED_DEVICES,
+	MAX_BLOCK_BYTES,
+} from "../src/lib/protocol/chain.ts";
+import {
 	type EpochEnvelopeContext,
 	generateDeviceEncryptionKey,
 	loadDeviceEncryptionKey,
 	openEpochKey,
 	sealEpochKey,
+	sealEpochKeys,
+	validateEpochEnvelopes,
 } from "../src/lib/protocol/epoch-envelope.ts";
+import { encode } from "../src/lib/protocol/msgpack.ts";
 
 test("pinned native HPKE suite opens the independent RFC base-mode vector", async () => {
 	const vector = JSON.parse(
@@ -108,4 +115,105 @@ test("only the recipient can open a context-bound epoch envelope", async () => {
 	device.secret.fill(0);
 	other.secret.fill(0);
 	secret.fill(0);
+});
+
+test("rotation envelopes cover exactly the sorted active membership and fit at capacity", async () => {
+	const credentials = await Promise.all(
+		Array.from({ length: MAX_AUTHORIZED_DEVICES }, () =>
+			generateDeviceEncryptionKey(),
+		),
+	);
+	try {
+		const devices = credentials.map((device, index) => ({
+			publicKey: new Uint8Array(32).fill(index),
+			encryptionPublicKey: device.publicKey,
+			revokedAt: null,
+		}));
+		const transition = {
+			library: new Uint8Array(32).fill(9),
+			previous: new Uint8Array(32).fill(8),
+			sequence: Number.MAX_SAFE_INTEGER,
+			epoch: 3,
+			nextEpoch: 4,
+			salt: new Uint8Array(32).fill(7),
+		};
+		const secret = crypto.getRandomValues(new Uint8Array(32));
+		const envelopes = await sealEpochKeys(
+			transition,
+			devices.slice().reverse(),
+			secret,
+		);
+		assert.equal(envelopes.length, 128);
+		assert.deepEqual(validateEpochEnvelopes(envelopes, devices), envelopes);
+		const signedBody = encode([
+			1,
+			transition.library,
+			transition.sequence,
+			transition.previous,
+			transition.epoch,
+			new Uint8Array(32),
+			"rotate",
+			[transition.nextEpoch, transition.salt, envelopes],
+			null,
+			null,
+			null,
+		]);
+		assert(encode([signedBody, new Uint8Array(64)]).length < MAX_BLOCK_BYTES);
+		for (const index of [0, 127]) {
+			assert.deepEqual(
+				await openEpochKey(
+					{
+						...transition,
+						recipient: devices[index].publicKey,
+						encryptionPublicKey: devices[index].encryptionPublicKey,
+					},
+					await loadDeviceEncryptionKey(credentials[index]),
+					envelopes[index],
+				),
+				secret,
+			);
+		}
+		assert.throws(
+			() => validateEpochEnvelopes(envelopes.slice(1), devices),
+			/every/,
+		);
+		assert.throws(
+			() => validateEpochEnvelopes(envelopes.slice().reverse(), devices),
+			/sorted/,
+		);
+		assert.throws(
+			() =>
+				validateEpochEnvelopes([envelopes[1], ...envelopes.slice(1)], devices),
+			/sorted/,
+		);
+		const revoked = devices.map((device, index) => ({
+			...device,
+			revokedAt: index === 0 ? 1 : null,
+		}));
+		const next = await sealEpochKeys(transition, revoked, secret);
+		assert.equal(next.length, 127);
+		assert.deepEqual(next[0][0], devices[1].publicKey);
+		assert.throws(() => validateEpochEnvelopes(envelopes, revoked), /every/);
+		await assert.rejects(
+			sealEpochKeys(
+				transition,
+				[
+					...devices,
+					{ ...devices[0], publicKey: new Uint8Array(32).fill(200) },
+				],
+				secret,
+			),
+			/count/,
+		);
+		await assert.rejects(
+			sealEpochKeys(transition, [devices[0], devices[0]], secret),
+			/Duplicate/,
+		);
+		assert.deepEqual(await sealEpochKeys(transition, [], secret), []);
+		assert.deepEqual(validateEpochEnvelopes([], []), []);
+	} finally {
+		for (const device of credentials) {
+			device.secret.fill(0);
+		}
+	}
 });

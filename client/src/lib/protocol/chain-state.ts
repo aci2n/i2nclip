@@ -3,6 +3,7 @@ import {
 	type Bytes,
 	compareBytes,
 	fixedBytes,
+	MAX_AUTHORIZED_DEVICES,
 	MAX_BLOCK_BYTES,
 	MAX_PURGE_FILES,
 	type StorageEffect,
@@ -308,7 +309,7 @@ export function reduceBlock(
 			}
 			if (
 				[...next.values()].filter((device) => device.revokedAt === null)
-					.length >= 128
+					.length >= MAX_AUTHORIZED_DEVICES
 			) {
 				invalid("authorized device limit reached");
 			}

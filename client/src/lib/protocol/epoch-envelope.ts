@@ -4,7 +4,15 @@ import {
 	KDF_HKDF_SHA256,
 	KEM_DHKEM_X25519_HKDF_SHA256,
 } from "hpke";
-import { type Bytes, fixedBytes, safeInteger } from "./chain.ts";
+import { bytesToHex } from "./bytes.ts";
+import {
+	type Bytes,
+	compareBytes,
+	fixedBytes,
+	MAX_AUTHORIZED_DEVICES,
+	safeInteger,
+	sameBytes,
+} from "./chain.ts";
 import { encode } from "./msgpack.ts";
 
 // HPKE base mode; the recovery signature authenticates the complete rotation.
@@ -29,6 +37,86 @@ export interface EpochEnvelopeContext {
 	readonly encryptionPublicKey: Bytes;
 }
 export type EpochEnvelope = readonly [Bytes, Bytes, Bytes];
+export interface EpochRecipient {
+	readonly publicKey: Bytes;
+	readonly encryptionPublicKey: Bytes;
+	readonly revokedAt: number | null;
+}
+export type EpochTransition = Omit<
+	EpochEnvelopeContext,
+	"recipient" | "encryptionPublicKey"
+>;
+
+function authorizedRecipients(devices: readonly EpochRecipient[]) {
+	const active = devices
+		.filter((device) => device.revokedAt === null)
+		.sort((left, right) => compareBytes(left.publicKey, right.publicKey));
+	if (active.length > MAX_AUTHORIZED_DEVICES) {
+		throw new Error("Invalid authorized device count.");
+	}
+	const encryptionKeys = new Set<string>();
+	for (let index = 0; index < active.length; index++) {
+		const device = active[index];
+		fixedBytes(device.publicKey);
+		fixedBytes(device.encryptionPublicKey);
+		const encryptionId = bytesToHex(device.encryptionPublicKey);
+		if (
+			(index > 0 && sameBytes(active[index - 1].publicKey, device.publicKey)) ||
+			encryptionKeys.has(encryptionId)
+		) {
+			throw new Error("Duplicate device key binding.");
+		}
+		encryptionKeys.add(encryptionId);
+	}
+	return active;
+}
+
+/** Public validation does not establish correctness of other devices' ciphertexts. */
+export function validateEpochEnvelopes(
+	input: unknown,
+	devices: readonly EpochRecipient[],
+): readonly EpochEnvelope[] {
+	const recipients = authorizedRecipients(devices);
+	if (!Array.isArray(input) || input.length !== recipients.length) {
+		throw new Error("Epoch envelopes must cover every authorized device.");
+	}
+	return input.map((entry: unknown, index: number) => {
+		if (
+			!Array.isArray(entry) ||
+			entry.length !== 3 ||
+			!sameBytes(fixedBytes(entry[0]), recipients[index].publicKey)
+		) {
+			throw new Error("Epoch envelopes must match sorted authorized devices.");
+		}
+		return [
+			fixedBytes(entry[0]),
+			fixedBytes(entry[1]),
+			fixedBytes(entry[2], 48),
+		] as const;
+	});
+}
+
+/** Seal independently to the complete membership at the rotation's exact parent. */
+export async function sealEpochKeys(
+	transition: EpochTransition,
+	devices: readonly EpochRecipient[],
+	epochKey: Bytes,
+): Promise<readonly EpochEnvelope[]> {
+	const result: EpochEnvelope[] = [];
+	for (const device of authorizedRecipients(devices)) {
+		result.push(
+			await sealEpochKey(
+				{
+					...transition,
+					recipient: device.publicKey,
+					encryptionPublicKey: device.encryptionPublicKey,
+				},
+				epochKey,
+			),
+		);
+	}
+	return result;
+}
 
 function options(context: EpochEnvelopeContext) {
 	const epoch = safeInteger(context.epoch, 1);

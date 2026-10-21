@@ -2,6 +2,7 @@ import { concat, utf8 } from "./bytes.ts";
 import { decode, encode } from "./msgpack.ts";
 
 export type Bytes = Uint8Array<ArrayBuffer>;
+export const MAX_AUTHORIZED_DEVICES = 128;
 export const MAX_BLOCK_BYTES = 64 * 1024;
 export const MAX_BLOB_BYTES = 4 * 1024 * 1024 + 64;
 export const MAX_PAGE_BYTES = 1024 * 1024;
