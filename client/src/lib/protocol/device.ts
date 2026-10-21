@@ -13,7 +13,8 @@ import { decode, encode } from "./msgpack.ts";
 import { createLibraryRecovery, parseRecoveryGenesis } from "./recovery-key.ts";
 import { checkServer } from "./server.ts";
 
-export const MAX_CREDENTIAL_BYTES = 1024 * 1024;
+// Leave room for the authenticated pairing packet around local credential fields.
+export const MAX_CREDENTIAL_BYTES = 1024 * 1024 - 1024;
 export type DevicePhase = "registering" | "pairing" | "active" | "resetting";
 export interface PendingRotation {
 	readonly replacement: PrivateKeyDocument;
@@ -176,6 +177,9 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 		}
 		rotation = { replacement, secret, record };
 	}
+	if (phase === "resetting" && !rotation) {
+		throw new Error("Recovery candidate requires its signed reset.");
+	}
 	const identity: DeviceIdentity = {
 		serverUrl,
 		genesis: genesisBytes,
@@ -223,4 +227,28 @@ export async function createLibraryDevice(server: string) {
 		privateKey.seed.fill(0);
 		created.epochKey.fill(0);
 	}
+}
+
+/** Construct the exact replacement credential without changing the pending identity. */
+export async function rotationReplacement(
+	current: LoadedDevice,
+): Promise<LoadedDevice> {
+	const pending = current.identity.rotation;
+	if (!pending) {
+		throw new Error("No pending reset.");
+	}
+	const record = await verifyRecord(pending.record);
+	return decodeDevice(
+		encodeDevice({
+			...current.identity,
+			privateKey: pending.replacement,
+			epochs: [
+				...current.identity.epochs,
+				[current.identity.epochs.length + 1, pending.secret],
+			],
+			head: { sequence: record.body.sequence, hash: bytesToHex(record.hash) },
+			phase: "active",
+			rotation: null,
+		}),
+	);
 }

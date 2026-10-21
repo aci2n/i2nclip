@@ -46,6 +46,7 @@ export interface ChainCredentials {
 	readonly signingKey: CryptoKey;
 	readonly secrets: ReadonlyMap<number, Bytes>;
 	readonly minimum: Checkpoint;
+	readonly recoverEpoch?: (epoch: number, salt: Bytes) => Promise<Bytes>;
 }
 export interface ChainView {
 	readonly live: ChainState | null;
@@ -165,6 +166,9 @@ class ChainStoreImpl {
 				);
 			}
 			const next = reduceBlock(state, record, plaintext);
+			if (next.epoch !== state.epoch && this.credentials.recoverEpoch) {
+				await this.credentials.recoverEpoch(next.epoch, next.epochSalt);
+			}
 			this.check();
 			return { next, record };
 		} finally {

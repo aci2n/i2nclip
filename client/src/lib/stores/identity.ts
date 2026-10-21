@@ -3,6 +3,7 @@ import { createChainApi } from "../chain-api.ts";
 import type { Checkpoint } from "../chain-storage.ts";
 import { verifyDevice } from "../device-verification.ts";
 import { errorMessage } from "../error.ts";
+import { prepareRecoveryDevice } from "../library-recovery.ts";
 import { createLog, failureFields } from "../log.ts";
 import { createPersistence, type SavedIdentity } from "../persistence.ts";
 import {
@@ -19,6 +20,7 @@ import {
 	encodeDevice,
 	type LoadedDevice,
 	type PendingRotation,
+	rotationReplacement,
 } from "../protocol/device.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
 import {
@@ -154,6 +156,9 @@ class SessionStoreImpl {
 	readonly create = this.createIdentity.bind(this);
 	readonly prepareCreation = this.prepareNewLibrary.bind(this);
 	readonly resumeCreation = this.resumeNewLibrary.bind(this);
+	readonly restore = this.restoreLibrary.bind(this);
+	readonly submitRecovery = this.submitLibraryRecovery.bind(this);
+	readonly reconcileRecovery = this.reconcileLibraryRecovery.bind(this);
 	readonly downloadRecovery = this.downloadCreationRecovery.bind(this);
 	readonly changePassword = this.changeSessionPassword.bind(this);
 	readonly forget = this.forgetIdentity.bind(this);
@@ -529,6 +534,7 @@ class SessionStoreImpl {
 					],
 					head: stateCheckpoint(verified),
 					rotation: null,
+					phase: "active",
 				}),
 			);
 			await this.applyIdentity(next, signal);
@@ -863,6 +869,136 @@ class SessionStoreImpl {
 				`${errorMessage(error)} The prepared credentials are saved. Retry Create after reopening or unlocking this client.`,
 			);
 		}
+	}
+
+	private restoreLibrary(file: Blob, password: string) {
+		return this.sessionAction("restore", async (signal) => {
+			this.unlockedSession();
+			if (this.library && this.library.identity.phase !== "resetting") {
+				throw new Error("Forget the current library before recovery.");
+			}
+			if (file.size > 1024 * 1024) {
+				throw new Error("Recovery file is too large.");
+			}
+			const recovery = await openRecoveryFile(
+				new Uint8Array(await file.arrayBuffer()),
+				password,
+			);
+			try {
+				signal.throwIfAborted();
+				if (
+					this.library &&
+					bytesToHex(this.library.identity.library) !==
+						bytesToHex(recovery.genesis.hash)
+				) {
+					throw new Error("Recovery file belongs to another library.");
+				}
+				const candidate = await prepareRecoveryDevice(recovery, signal);
+				signal.throwIfAborted();
+				await this.applyIdentity(candidate, signal);
+				this.publishSession({
+					notice:
+						"History verified. The recovery-approved reset is saved locally and ready to submit.",
+				});
+			} finally {
+				recovery.identity.signingKey.seed.fill(0);
+				recovery.identity.epochDerivationSecret.fill(0);
+			}
+		});
+	}
+	private recoveryCandidate() {
+		const current = this.loadedDevice();
+		if (current.identity.phase !== "resetting" || !current.identity.rotation) {
+			throw new Error("No pending library recovery.");
+		}
+		return current;
+	}
+	private submitLibraryRecovery() {
+		return this.sessionAction("submitRecovery", async (signal) => {
+			const current = this.recoveryCandidate();
+			const pending = current.identity.rotation;
+			if (!pending) {
+				throw new Error("No pending recovery reset.");
+			}
+			const replacement = await rotationReplacement(current);
+			const api = createChainApi(
+				current.identity.serverUrl,
+				current.key,
+				signal,
+			);
+			try {
+				if (await api.registered(signal)) {
+					await this.activateRecoveredDevice(replacement, signal);
+					return;
+				}
+				let failure: unknown;
+				try {
+					const receipt = await api.append(pending.record, signal);
+					if (
+						receipt.accepted.hash !== replacement.identity.head.hash ||
+						receipt.accepted.sequence !== replacement.identity.head.sequence
+					) {
+						throw new Error("Server acknowledged a different reset.");
+					}
+				} catch (error) {
+					signal.throwIfAborted();
+					failure = error;
+				}
+				if (!(await api.registered(signal))) {
+					throw new Error(
+						`${failure ? errorMessage(failure) : "Reset acceptance is not verified."} The local pending plan is preserved. Retry the exact reset, or restore the recovery file again if the parent changed.`,
+					);
+				}
+				await this.activateRecoveredDevice(replacement, signal);
+			} finally {
+				api.dispose();
+			}
+		});
+	}
+	private reconcileLibraryRecovery() {
+		return this.sessionAction("reconcileRecovery", async (signal) => {
+			const current = this.recoveryCandidate();
+			const pending = current.identity.rotation;
+			if (!pending) {
+				throw new Error("No pending recovery reset.");
+			}
+			const replacement = await rotationReplacement(current);
+			const api = createChainApi(
+				current.identity.serverUrl,
+				current.key,
+				signal,
+			);
+			try {
+				if (!(await api.registered(signal))) {
+					throw new Error(
+						"The saved candidate is not authorized. Retry the exact reset or restore the recovery file to prepare against the current head.",
+					);
+				}
+				await this.activateRecoveredDevice(replacement, signal);
+			} finally {
+				api.dispose();
+			}
+		});
+	}
+	private async activateRecoveredDevice(
+		replacement: LoadedDevice,
+		signal: AbortSignal,
+	) {
+		const state = await this.verify(
+			replacement,
+			replacement.identity.head,
+			signal,
+		);
+		await this.applyIdentity(
+			{
+				...replacement,
+				identity: { ...replacement.identity, head: stateCheckpoint(state) },
+			},
+			signal,
+		);
+		this.publishSession({
+			notice: "Recovery complete. Every other device must re-pair.",
+		});
 	}
 
 	private async performChangeSessionPassword(
