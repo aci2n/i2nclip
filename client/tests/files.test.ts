@@ -9,10 +9,7 @@ import {
 	inventoryDigest,
 	sha256,
 } from "../src/lib/protocol/chain.ts";
-import {
-	initialChainState,
-	reduceBlock,
-} from "../src/lib/protocol/chain-state.ts";
+import { reduceBlock } from "../src/lib/protocol/chain-state.ts";
 import { CHUNK_BYTES } from "../src/lib/protocol/content.ts";
 import {
 	type ChainMutation,
@@ -20,11 +17,11 @@ import {
 	type ChainView,
 	stateCheckpoint,
 } from "../src/lib/stores/chain.ts";
-import { createDevice } from "./library-fixture.ts";
+import { createDevice, initialDeviceState } from "./library-fixture.ts";
 
 async function fixture(t: test.TestContext) {
 	const device = await createDevice("https://example.test");
-	let state = await initialChainState(device.identity.genesis);
+	let state = await initialDeviceState(device.identity);
 	const view = writable<ChainView>({
 		live: state,
 		syncing: false,

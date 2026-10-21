@@ -9,7 +9,10 @@ use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 mod blobs;
 mod chain;
 
-use crate::{crypto, Error, StorageLimits, SKEW_SECS};
+use crate::{
+    chain::{genesis as genesis_hash, parse_genesis, verify_record, Effects, Kind},
+    crypto, Error, StorageLimits, SKEW_SECS,
+};
 
 // A busy pool is retryable. Other database errors retain their cause for logs;
 // handlers choose the HTTP response without exposing database details.
@@ -140,25 +143,39 @@ impl Database {
         Ok(code)
     }
 
-    /// Consume an invitation and atomically pin both public principals.
+    /// Register canonical genesis and its exact root-authorized first enrollment atomically.
     pub(crate) async fn consume_code(
         &self,
         code: &str,
         public: &[u8; 32],
-        recovery: &[u8; 32],
-        salt: &[u8; 32],
+        genesis: &[u8],
+        first: &[u8],
     ) -> Result<(), Error> {
-        let library = crate::chain::genesis(recovery, public, salt)?;
+        let (recovery, salt) = parse_genesis(genesis)?;
+        let library = genesis_hash(&recovery, &salt)?;
+        let first = verify_record(first)?;
+        if first.body.kind != Kind::Enroll
+            || first.body.sequence != 1
+            || first.body.previous != library
+            || first.body.library != library
+            || first.body.epoch != 1
+            || first.body.signer != recovery
+            || public == &recovery
+            || !matches!(&first.body.effects, Effects::Device((key,)) if key.as_ref() == public)
+        {
+            return Err(Error::RegistrationFailed);
+        }
         let hash = crypto::body_hash_bytes(code.trim().as_bytes());
         let mut tx = self.pool.begin().await?;
-        let existing: Option<(Vec<u8>, String, Option<i64>)> = sqlx::query_as(
-            "SELECT library_id,kind,revoked_at_sequence FROM library_keys WHERE public_key=$1",
-        )
-        .bind(public.as_slice())
-        .fetch_optional(&mut *tx)
-        .await?;
-        if let Some((id, kind, revoked)) = existing {
-            return if id == library && kind == "device" && revoked.is_none() {
+        let existing: Option<(Vec<u8>, String)> =
+            sqlx::query_as("SELECT library_id,kind FROM library_keys WHERE public_key=$1")
+                .bind(public.as_slice())
+                .fetch_optional(&mut *tx)
+                .await?;
+        if let Some((id, kind)) = existing {
+            let exact: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM blocks WHERE library_id=$1 AND sequence=1 AND hash=$2)")
+                .bind(library.as_slice()).bind(first.hash.as_slice()).fetch_one(&mut *tx).await?;
+            return if id == library && kind == "device" && exact {
                 Ok(())
             } else {
                 Err(Error::RegistrationFailed)
@@ -166,20 +183,24 @@ impl Database {
         }
         let limits = sqlx::query("DELETE FROM registration_codes WHERE code_hash=$1 AND expires_at>$2 RETURNING max_content_bytes,max_files")
             .bind(hash.as_slice()).bind(crypto::now_secs() as i64).fetch_optional(&mut *tx).await?.ok_or(Error::RegistrationFailed)?;
-        let genesis = crate::chain::genesis_bytes(recovery, public, salt)?;
-        let created = sqlx::query("INSERT INTO libraries(id,genesis,head_hash,max_blob_bytes,max_files) VALUES($1,$2,$1,$3,$4) ON CONFLICT DO NOTHING")
-            .bind(library.as_slice()).bind(genesis)
+        let created = sqlx::query("INSERT INTO libraries(id,genesis,head_hash,head_sequence,max_blob_bytes,max_files) VALUES($1,$2,$3,1,$4,$5) ON CONFLICT DO NOTHING")
+            .bind(library.as_slice()).bind(genesis).bind(first.hash.as_slice())
             .bind(limits.try_get::<i64,_>("max_content_bytes")?).bind(limits.try_get::<i64,_>("max_files")?).execute(&mut *tx).await?;
         if created.rows_affected() != 1 {
             return Err(Error::Conflict);
         }
-        for (key, kind) in [(public, "device"), (recovery, "recovery")] {
-            let inserted = sqlx::query("INSERT INTO library_keys(public_key,library_id,kind,authorized_at_sequence) VALUES($1,$2,$3,0) ON CONFLICT DO NOTHING")
-                .bind(key.as_slice()).bind(library.as_slice()).bind(kind).execute(&mut *tx).await?;
+        for (key, kind, sequence) in [
+            (recovery.as_slice(), "recovery", 0i64),
+            (public.as_slice(), "device", 1i64),
+        ] {
+            let inserted = sqlx::query("INSERT INTO library_keys(public_key,library_id,kind,authorized_at_sequence) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING")
+                .bind(key).bind(library.as_slice()).bind(kind).bind(sequence).execute(&mut *tx).await?;
             if inserted.rows_affected() != 1 {
                 return Err(Error::Conflict);
             }
         }
+        sqlx::query("INSERT INTO blocks(library_id,sequence,hash,previous_hash,signer_key,signed_body,signature) VALUES($1,1,$2,$1,$3,$4,$5)")
+            .bind(library.as_slice()).bind(first.hash.as_slice()).bind(recovery.as_slice()).bind(&first.signed_body).bind(&first.signature).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -305,15 +326,10 @@ mod tests {
         let (first, second) = tokio::join!(db.initialize(), db.initialize());
         first.unwrap();
         second.unwrap();
-        let initial = crate::reference_crypto::from_seed([7; 32]);
-        let library =
-            crate::chain::genesis(&recovery().public, &initial.public, &[11; 32]).unwrap();
+        let library = crate::chain::genesis(&recovery().public, &[11; 32]).unwrap();
         sqlx::query("INSERT INTO libraries(id,genesis,head_hash) VALUES($1,$2,$1)")
             .bind(library.as_slice())
-            .bind(
-                crate::chain::genesis_bytes(&recovery().public, &initial.public, &[11; 32])
-                    .unwrap(),
-            )
+            .bind(crate::chain::genesis_bytes(&recovery().public, &[11; 32]).unwrap())
             .execute(&db.pool)
             .await
             .unwrap();
@@ -337,14 +353,10 @@ mod tests {
         let (db, admin, guard) = empty_fixture().await;
         db.initialize().await.unwrap();
         let initial = crate::reference_crypto::from_seed([7; 32]);
-        let library =
-            crate::chain::genesis(&recovery().public, &initial.public, &[11; 32]).unwrap();
+        let library = crate::chain::genesis(&recovery().public, &[11; 32]).unwrap();
         sqlx::query("INSERT INTO libraries(id,genesis,head_hash) VALUES($1,$2,$1)")
             .bind(library.as_slice())
-            .bind(
-                crate::chain::genesis_bytes(&recovery().public, &initial.public, &[11; 32])
-                    .unwrap(),
-            )
+            .bind(crate::chain::genesis_bytes(&recovery().public, &[11; 32]).unwrap())
             .execute(&db.pool)
             .await
             .unwrap();
@@ -431,6 +443,50 @@ mod tests {
         dispose(db, admin, guard).await;
     }
 
+    fn first_enrollment(
+        library: crate::chain::Hash,
+        device: &[u8; 32],
+        root: &crate::reference_crypto::Identity,
+    ) -> Vec<u8> {
+        let body = crate::chain::Body {
+            version: 1,
+            library,
+            sequence: 1,
+            previous: library,
+            epoch: 1,
+            signer: root.public,
+            kind: Kind::Enroll,
+            effects: Effects::Device((serde_bytes::ByteBuf::from(device.to_vec()),)),
+            salt: None,
+            nonce: None,
+            encrypted: None,
+        };
+        signed_chain(&body, root)
+    }
+    impl Database {
+        async fn register_test_device(
+            &self,
+            code: &str,
+            public: &[u8; 32],
+            recovery: &[u8; 32],
+            salt: &[u8; 32],
+        ) -> Result<(), Error> {
+            let root = (0u8..=255)
+                .map(|seed| crate::reference_crypto::from_seed([seed; 32]))
+                .find(|key| &key.public == recovery)
+                .expect("fixture root seed");
+            let genesis = crate::chain::genesis_bytes(recovery, salt)?;
+            let library = crate::chain::genesis(recovery, salt)?;
+            self.consume_code(
+                code,
+                public,
+                &genesis,
+                &first_enrollment(library, public, &root),
+            )
+            .await
+        }
+    }
+
     fn recovery() -> crate::reference_crypto::Identity {
         crate::reference_crypto::from_seed([42; 32])
     }
@@ -446,17 +502,74 @@ mod tests {
         db.initialize().await.unwrap();
         let identity = crate::reference_crypto::from_seed([7; 32]);
         let invitation = db.issue_code(3600, StorageLimits::default()).await.unwrap();
-        db.consume_code(&invitation, &identity.public, &recovery().public, &[11; 32])
+        db.register_test_device(&invitation, &identity.public, &recovery().public, &[11; 32])
             .await
             .unwrap();
-        let library =
-            crate::chain::genesis(&recovery().public, &identity.public, &[11; 32]).unwrap();
+        let library = crate::chain::genesis(&recovery().public, &[11; 32]).unwrap();
         (db, admin, guard, identity, library)
     }
 
     #[tokio::test]
+    async fn first_enrollment_validation_preserves_registration_invitation() {
+        let (db, admin, guard) = fixture().await;
+        let root = recovery();
+        let first = crate::reference_crypto::from_seed([7; 32]);
+        let other = crate::reference_crypto::from_seed([8; 32]);
+        let genesis = crate::chain::genesis_bytes(&root.public, &[11; 32]).unwrap();
+        let library = crate::chain::genesis(&root.public, &[11; 32]).unwrap();
+        let bytes = first_enrollment(library, &first.public, &root);
+        let valid = verify_record(&bytes).unwrap();
+        let code = db.issue_code(3600, StorageLimits::default()).await.unwrap();
+        for mutation in 0..4 {
+            let mut body = valid.body.clone();
+            let signer = if mutation == 0 { &other } else { &root };
+            if mutation == 0 {
+                body.signer = other.public;
+            }
+            if mutation == 1 {
+                body.sequence = 2;
+            }
+            if mutation == 2 {
+                body.previous = [0; 32];
+            }
+            if mutation == 3 {
+                body.epoch = 2;
+            }
+            assert!(matches!(
+                db.consume_code(&code, &first.public, &genesis, &signed_chain(&body, signer))
+                    .await,
+                Err(Error::RegistrationFailed)
+            ));
+        }
+        assert!(matches!(
+            db.consume_code(&code, &other.public, &genesis, &bytes)
+                .await,
+            Err(Error::RegistrationFailed)
+        ));
+        db.consume_code(&code, &first.public, &genesis, &bytes)
+            .await
+            .unwrap();
+        let row: (i64, Vec<u8>) =
+            sqlx::query_as("SELECT head_sequence,head_hash FROM libraries WHERE id=$1")
+                .bind(library.as_slice())
+                .fetch_one(&db.pool)
+                .await
+                .unwrap();
+        assert_eq!(row, (1, valid.hash.to_vec()));
+        let sequence: i64 = sqlx::query_scalar(
+            "SELECT authorized_at_sequence FROM library_keys WHERE public_key=$1",
+        )
+        .bind(first.public.as_slice())
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
+        assert_eq!(sequence, 1);
+        dispose(db, admin, guard).await;
+    }
+
+    #[tokio::test]
     async fn canonical_genesis_and_recovery_projection_are_immutable_and_unique() {
-        let (db, admin, guard, identity, library) = chain_fixture().await;
+        let (db, admin, guard, _identity, library) = chain_fixture().await;
         let bytes: Vec<u8> = sqlx::query_scalar("SELECT genesis FROM libraries WHERE id=$1")
             .bind(library.as_slice())
             .fetch_one(&db.pool)
@@ -464,7 +577,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             bytes,
-            crate::chain::genesis_bytes(&recovery().public, &identity.public, &[11; 32]).unwrap()
+            crate::chain::genesis_bytes(&recovery().public, &[11; 32]).unwrap()
         );
         for query in [
             "UPDATE libraries SET genesis = decode('00','hex')",
@@ -491,14 +604,24 @@ mod tests {
         signer: &crate::reference_crypto::Identity,
         sequence: u64,
         previous: crate::chain::Hash,
-        kind: crate::chain::Kind,
-        effects: crate::chain::Effects,
+        kind: Kind,
+        effects: Effects,
     ) -> crate::chain::Body {
         crate::chain::Body {
             version: 1,
             library,
-            sequence,
-            previous,
+            sequence: sequence + 1,
+            previous: if previous == library {
+                verify_record(&first_enrollment(
+                    library,
+                    &crate::reference_crypto::from_seed([7; 32]).public,
+                    &recovery(),
+                ))
+                .unwrap()
+                .hash
+            } else {
+                previous
+            },
             epoch: 1,
             signer: signer.public,
             kind,
@@ -530,32 +653,32 @@ mod tests {
         let other_recovery = crate::reference_crypto::from_seed([82; 32]);
         let code = db.issue_code(3600, StorageLimits::default()).await.unwrap();
         assert!(matches!(
-            db.consume_code(&code, &recovery().public, &other_recovery.public, &[12; 32])
+            db.register_test_device(&code, &recovery().public, &other_recovery.public, &[12; 32])
                 .await,
             Err(Error::RegistrationFailed)
         ));
         assert!(matches!(
-            db.consume_code(&code, &other.public, &first.public, &[12; 32])
+            db.register_test_device(&code, &other.public, &first.public, &[12; 32])
                 .await,
             Err(Error::Conflict)
         ));
         assert!(matches!(
-            db.consume_code(&code, &other.public, &recovery().public, &[12; 32])
+            db.register_test_device(&code, &other.public, &recovery().public, &[12; 32])
                 .await,
             Err(Error::Conflict)
         ));
         // All failed attempts roll back consumption of this invitation.
-        db.consume_code(&code, &other.public, &other_recovery.public, &[12; 32])
+        db.register_test_device(&code, &other.public, &other_recovery.public, &[12; 32])
             .await
             .unwrap();
         assert!(db.allowed(&other.public).await.unwrap());
         assert!(!db.allowed(&other_recovery.public).await.unwrap());
         assert!(matches!(
-            db.consume_code("unused", &other.public, &other_recovery.public, &[13; 32])
+            db.register_test_device("unused", &other.public, &other_recovery.public, &[13; 32])
                 .await,
             Err(Error::RegistrationFailed)
         ));
-        db.consume_code("unused", &other.public, &other_recovery.public, &[12; 32])
+        db.register_test_device("unused", &other.public, &other_recovery.public, &[12; 32])
             .await
             .unwrap();
         dispose(db, admin, guard).await;
@@ -606,7 +729,7 @@ mod tests {
                 .fetch_one(&db.pool)
                 .await
                 .unwrap(),
-            1
+            2
         );
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT count(*) FROM library_keys WHERE kind='device'")
@@ -619,8 +742,8 @@ mod tests {
         let wire = codec::encode(&page).unwrap();
         let (_, sequence, records, next): (ByteBuf, u64, Vec<ByteBuf>, Option<ByteBuf>) =
             codec::decode(&wire).unwrap();
-        assert_eq!(sequence, 1);
-        assert_eq!(records[0].as_ref(), winner);
+        assert_eq!(sequence, 2);
+        assert_eq!(records[1].as_ref(), winner);
         assert!(next.is_none());
         assert!(matches!(
             db.block_page(identity.public, [0; 32], None).await,
@@ -656,7 +779,7 @@ mod tests {
         db.append_record(root.public, &revoke).await.unwrap();
         assert!(!db.allowed(&first.public).await.unwrap());
         assert!(!db.allowed(&root.public).await.unwrap());
-        let parent = crate::chain::verify_record(&revoke).unwrap().hash;
+        let parent = verify_record(&revoke).unwrap().hash;
         let enroll = signed_chain(
             &membership_body(
                 library,
@@ -679,7 +802,7 @@ mod tests {
             library,
             &root,
             3,
-            crate::chain::verify_record(&enroll).unwrap().hash,
+            verify_record(&enroll).unwrap().hash,
             Kind::Data,
             Effects::Storage(vec![]),
         );
@@ -740,7 +863,7 @@ mod tests {
                 library,
                 &root,
                 2,
-                crate::chain::verify_record(&revoke).unwrap().hash,
+                verify_record(&revoke).unwrap().hash,
                 Kind::Enroll,
                 Effects::Device((ByteBuf::from(next.public.to_vec()),)),
             ),
@@ -777,7 +900,7 @@ mod tests {
             &first,
         );
         db.append_record(first.public, &enroll).await.unwrap();
-        let head = crate::chain::verify_record(&enroll).unwrap().hash;
+        let head = verify_record(&enroll).unwrap().hash;
         let revoke = signed_chain(
             &membership_body(
                 library,
@@ -795,7 +918,7 @@ mod tests {
             db.append_record(first.public, &enroll).await,
             Err(Error::Unauthorized)
         ));
-        let head = crate::chain::verify_record(&revoke).unwrap().hash;
+        let head = verify_record(&revoke).unwrap().hash;
         let last = signed_chain(
             &membership_body(
                 library,
@@ -899,17 +1022,16 @@ mod tests {
                 .fetch_one(&db.pool)
                 .await
                 .unwrap(),
-            3
+            4
         );
         assert!(db
             .block_page(replacement.public, library, None)
             .await
             .is_ok());
-        assert!(matches!(
-            db.consume_code("unused", &first.public, &recovery().public, &[11; 32])
-                .await,
-            Err(Error::RegistrationFailed)
-        ));
+        db.register_test_device("unused", &first.public, &recovery().public, &[11; 32])
+            .await
+            .unwrap();
+        assert!(!db.allowed(&first.public).await.unwrap());
         assert!(matches!(
             db.quota(recovery().public).await,
             Err(Error::Unauthorized)
@@ -925,7 +1047,7 @@ mod tests {
                 library,
                 &replacement,
                 4,
-                crate::chain::verify_record(&rotation).unwrap().hash,
+                verify_record(&rotation).unwrap().hash,
                 Kind::Enroll,
                 Effects::Device((ByteBuf::from(recovery().public.to_vec()),)),
             ),
@@ -933,7 +1055,7 @@ mod tests {
         );
         // Use the actual post-reset epoch; the public key namespace still forbids
         // turning the offline authority into an ordinary device.
-        let mut body = crate::chain::verify_record(&recovery_enroll).unwrap().body;
+        let mut body = verify_record(&recovery_enroll).unwrap().body;
         body.epoch = 2;
         assert!(matches!(
             db.append_record(replacement.public, &signed_chain(&body, &replacement))
@@ -1009,7 +1131,7 @@ mod tests {
                 .fetch_one(&db.pool)
                 .await
                 .unwrap(),
-            0
+            1
         );
         let inventory = inventory_digest(&library, &file, &[(first, 16), (second, 17)]).unwrap();
         let publish = storage_record(
@@ -1332,7 +1454,7 @@ mod tests {
         .await
         .unwrap();
         assert!(matches!(
-            db.consume_code(
+            db.register_test_device(
                 &code,
                 &crate::reference_crypto::from_seed([1; 32]).public,
                 &recovery().public,
@@ -1349,7 +1471,7 @@ mod tests {
             .execute(&db.pool)
             .await
             .unwrap();
-        db.consume_code(
+        db.register_test_device(
             &code,
             &crate::reference_crypto::from_seed([1; 32]).public,
             &recovery().public,
@@ -1362,7 +1484,7 @@ mod tests {
             .await
             .unwrap());
         assert!(matches!(
-            db.consume_code(
+            db.register_test_device(
                 &code,
                 &crate::reference_crypto::from_seed([2; 32]).public,
                 &recovery().public,

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { verifyDevice } from "../src/lib/device-verification.ts";
-import { bytesToHex } from "../src/lib/protocol/bytes.ts";
+import { bytesToHex, hexToBytes } from "../src/lib/protocol/bytes.ts";
 import { createRecord } from "../src/lib/protocol/chain.ts";
 import { decodeDevice, encodeDevice } from "../src/lib/protocol/device.ts";
 import { encode } from "../src/lib/protocol/msgpack.ts";
@@ -31,8 +31,8 @@ test("restored-device verification replays membership and cannot trust server ad
 	const record = await createRecord(
 		{
 			library: old.identity.library,
-			sequence: 1,
-			previous: old.identity.library,
+			sequence: old.identity.head.sequence + 1,
+			previous: hexToBytes(old.identity.head.hash),
 			epoch: 1,
 			signer: old.recovery.key.publicKey,
 			kind: "rotate",
@@ -45,8 +45,12 @@ test("restored-device verification replays membership and cannot trust server ad
 		return new Response(
 			encode([
 				record.hash,
-				1,
-				after === bytesToHex(old.identity.library) ? [record.bytes] : [],
+				record.body.sequence,
+				after === bytesToHex(old.identity.library)
+					? [old.identity.registration, record.bytes]
+					: after === old.identity.head.hash
+						? [record.bytes]
+						: [],
 				null,
 			]),
 		);
@@ -56,12 +60,16 @@ test("restored-device verification replays membership and cannot trust server ad
 		verifyDevice(old, old.identity.head, signal),
 		/not authorized in the verified chain/,
 	);
-	const minimum = { sequence: 1, hash: bytesToHex(record.hash) };
+	const minimum = {
+		sequence: record.body.sequence,
+		hash: bytesToHex(record.hash),
+	};
 	const next = await decodeDevice(
 		encodeDevice({
 			...old.identity,
 			privateKey: replacement.identity.privateKey,
 			phase: "active",
+			registration: null,
 			head: minimum,
 			epochs: [
 				...old.identity.epochs,
@@ -76,7 +84,11 @@ test("restored-device verification replays membership and cannot trust server ad
 		null,
 	);
 	await assert.rejects(
-		verifyDevice(next, { sequence: 1, hash: "00".repeat(32) }, signal),
+		verifyDevice(
+			next,
+			{ sequence: minimum.sequence, hash: "00".repeat(32) },
+			signal,
+		),
 		/trusted head/,
 	);
 });
@@ -88,8 +100,8 @@ test("a corrupt signed chain never establishes restored authority", async (t) =>
 	const record = await createRecord(
 		{
 			library: device.identity.library,
-			sequence: 1,
-			previous: device.identity.library,
+			sequence: device.identity.head.sequence + 1,
+			previous: hexToBytes(device.identity.head.hash),
 			epoch: 1,
 			signer: device.key.publicKey,
 			kind: "enroll",
@@ -102,7 +114,15 @@ test("a corrupt signed chain never establishes restored authority", async (t) =>
 	t.mock.method(
 		globalThis,
 		"fetch",
-		async () => new Response(encode([record.hash, 1, [corrupted], null])),
+		async () =>
+			new Response(
+				encode([
+					record.hash,
+					record.body.sequence,
+					[device.identity.registration, corrupted],
+					null,
+				]),
+			),
 	);
 	await assert.rejects(
 		verifyDevice(device, device.identity.head, new AbortController().signal),

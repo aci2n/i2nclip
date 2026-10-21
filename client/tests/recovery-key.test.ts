@@ -35,11 +35,7 @@ test("recovery derivations match independent native Ed25519 and HKDF vectors", a
 		bytes("probe"),
 	);
 	assert.equal(bytesToHex(new Uint8Array(signature)), vectors.signature);
-	const genesis = await recoveryGenesis(
-		key.publicKey,
-		bytes("initial_device_public_key"),
-		bytes("epoch_1_salt"),
-	);
+	const genesis = await recoveryGenesis(key.publicKey, bytes("epoch_1_salt"));
 	assert.equal(bytesToHex(genesis.bytes), vectors.genesis);
 	assert.equal(bytesToHex(genesis.hash), vectors.library);
 	for (const epoch of [1, 2]) {
@@ -61,8 +57,8 @@ test("recovery derivations match independent native Ed25519 and HKDF vectors", a
 test("recovery genesis rejects ambiguous authority and noncanonical encodings", async () => {
 	const pub = bytes("recovery_public_key");
 	await assert.rejects(
-		recoveryGenesis(pub, pub, bytes("epoch_1_salt")),
-		/separate/,
+		parseRecoveryGenesis(encode([1, pub, pub, bytes("epoch_1_salt"), 1])),
+		/Invalid/,
 	);
 	await assert.rejects(parseRecoveryGenesis(encode([1, pub, 1])), /Invalid/);
 	await assert.rejects(

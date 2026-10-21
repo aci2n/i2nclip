@@ -5,10 +5,7 @@ import { createPersistence } from "../src/lib/persistence.ts";
 import type { EncryptedBackup } from "../src/lib/protocol/backup.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
 import { createRecord, verifyRecord } from "../src/lib/protocol/chain.ts";
-import {
-	initialChainState,
-	reduceBlock,
-} from "../src/lib/protocol/chain-state.ts";
+import { reduceBlock } from "../src/lib/protocol/chain-state.ts";
 import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
 import {
 	type ChainStore,
@@ -17,7 +14,7 @@ import {
 } from "../src/lib/stores/chain.ts";
 import { createDevices } from "../src/lib/stores/devices.ts";
 import { createSession } from "../src/lib/stores/identity.ts";
-import { registerSession } from "./library-fixture.ts";
+import { initialSessionState, registerSession } from "./library-fixture.ts";
 import { memoryStorage } from "./memory-database.ts";
 
 async function fixture(t: test.TestContext) {
@@ -38,7 +35,7 @@ async function fixture(t: test.TestContext) {
 		otc: "invite",
 	});
 	const original = session.device();
-	let server = await initialChainState(original.identity.genesis);
+	let server = await initialSessionState(session);
 	const view = writable<ChainView>({
 		live: server,
 		syncing: false,

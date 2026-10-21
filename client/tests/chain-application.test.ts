@@ -3,12 +3,12 @@ import test from "node:test";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { get } from "svelte/store";
 import { createPersistence } from "../src/lib/persistence.ts";
-import { hexToBytes } from "../src/lib/protocol/bytes.ts";
+import { bytesToHex } from "../src/lib/protocol/bytes.ts";
 import { encode } from "../src/lib/protocol/msgpack.ts";
 import { createChainApplication as createApplication } from "../src/lib/stores/chain-application.ts";
 import { createSession } from "../src/lib/stores/identity.ts";
 import { createPreferences } from "../src/lib/stores/preferences.ts";
-import { registerSession } from "./library-fixture.ts";
+import { registerSession, sessionEnrollment } from "./library-fixture.ts";
 import { memoryStorage } from "./memory-database.ts";
 
 function browserFixture(t: test.TestContext) {
@@ -240,7 +240,15 @@ test("one root workspace survives navigation, including deep links, and historic
 		}
 		const after = url.searchParams.get("after");
 		assert.ok(after);
-		return new Response(encode([hexToBytes(after), 0, [], null]));
+		const first = await sessionEnrollment(session);
+		return new Response(
+			encode([
+				first.hash,
+				first.body.sequence,
+				after === bytesToHex(first.body.library) ? [first.bytes] : [],
+				null,
+			]),
+		);
 	});
 	app.start();
 	await Promise.all([session.load(), app.preferences.load()]);

@@ -8,7 +8,6 @@ import { createRecord } from "../src/lib/protocol/chain.ts";
 import {
 	type ChainState,
 	encodeOperation,
-	initialChainState,
 	reduceBlock,
 } from "../src/lib/protocol/chain-state.ts";
 import {
@@ -22,7 +21,7 @@ import type { ContentStreams } from "../src/lib/stores/content-streams.ts";
 import { createSession } from "../src/lib/stores/identity.ts";
 import { createMaterializedView } from "../src/lib/stores/materialized-view.ts";
 import { deferred } from "./helpers.ts";
-import { registerSession } from "./library-fixture.ts";
+import { initialSessionState, registerSession } from "./library-fixture.ts";
 import { memoryStorage } from "./memory-database.ts";
 
 const filled = (n: number) => new Uint8Array(32).fill(n);
@@ -41,8 +40,8 @@ async function fixture(t: test.TestContext) {
 	});
 	const context = get(session).context;
 	assert.ok(context);
-	let state = await initialChainState(context.identity.genesis);
-	const history = new Map<number, ChainState>([[0, state]]);
+	let state = await initialSessionState(session);
+	const history = new Map<number, ChainState>([[state.sequence, state]]);
 	const source = writable<ChainView>({
 		live: state,
 		syncing: false,
@@ -241,7 +240,7 @@ test("metadata changes render only after acceptance and historical views reject 
 	assert.equal(await update, true);
 	await f.view.index();
 	assert.equal(get(f.library).cards[0].metadata?.name, "updated.txt");
-	assert.equal(await f.view.select(1), true);
+	assert.equal(await f.view.select(2), true);
 	await f.view.index();
 	assert.equal(get(f.library).cards[0].metadata?.name, "original.txt");
 	assert.equal(get(f.library).readonly, true);
@@ -257,7 +256,7 @@ test("metadata changes render only after acceptance and historical views reject 
 	assert.equal(await f.library.restore(f.id), false);
 	assert.equal(await f.library.purge(f.id), false);
 	assert.equal(f.stats().commits, 1);
-	assert.equal(await f.view.select(2), true);
+	assert.equal(await f.view.select(3), true);
 	assert.equal(get(f.library).readonly, true);
 });
 

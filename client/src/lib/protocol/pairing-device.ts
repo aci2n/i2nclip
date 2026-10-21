@@ -80,6 +80,7 @@ export async function pairedDevice(
 		head: { sequence: body.sequence, hash: bytesToHex(enrollment.hash) },
 		phase: "pairing",
 		rotation: null,
+		registration: null,
 	});
 	try {
 		return await decodeDevice(encoded);

@@ -235,18 +235,14 @@ class ChainApiImpl implements ChainTransport {
 	}
 	private async registerDevice(
 		code: string,
-		recoveryPublicKey: Bytes,
-		epochSalt: Bytes,
+		genesis: Bytes,
+		firstEnrollment: Bytes,
 		signal: AbortSignal,
 	) {
 		const response = await this.request(
 			"POST",
 			"/api/register-key",
-			encode([
-				code.trim(),
-				fixedBytes(recoveryPublicKey),
-				fixedBytes(epochSalt),
-			]),
+			encode([code.trim(), genesis, firstEnrollment]),
 			signal,
 		);
 		await response.body?.cancel();

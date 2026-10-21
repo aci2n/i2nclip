@@ -66,7 +66,7 @@ Whole-library state restoration is excluded.
 Generate an independent recovery signing keypair, random 32-byte epoch
 derivation secret, initial-device signing keypair, and fresh public 32-byte
 epoch-1 salt. Derive the epoch key as specified in `library-recovery.md`. Canonical genesis is
-`[1, recovery_public_key, initial_device_public_key, epoch_1_salt, 1]`.
+`[1, recovery_public_key, epoch_1_salt]`.
 The recovery and device public keys must be distinct. Its hash is:
 
 ```text
@@ -74,16 +74,19 @@ SHA256(UTF8("i2nclip/chain/genesis/1\n") || genesis_bytes)
 ```
 
 This hash is both the stable library ID and sequence-zero head. Genesis
-authorizes the initial device and establishes epoch 1. The initial key has no
+establishes epoch 1 with no authorized devices. A recovery-signed enrollment at
+block 1 authorizes the initial device. The initial key has no
 permanent privilege and may later be revoked. The separate recovery public key is
 immutable and exclusively authorizes epoch resets. Neither the library ID nor
 genesis changes during a reset.
 
 Registration retains invitation-code admission and signed proof of key
-possession. The signed registration frame includes the recovery public key. The server derives
-genesis from the recovery public key, registering device key, and epoch-1 salt and atomically
-creates the library, membership, and quota record while consuming the invitation.
-The encryption secret never reaches it. Registration retries reuse the same
+possession. Its fixed frame is `[invitation_code, genesis_bytes,
+signed_first_enrollment_bytes]`, signed at HTTP level by the enrolled device.
+The server validates the canonical genesis and recovery-signed first block, and
+atomically stores genesis, both public principals, block 1, membership, and quota
+while consuming the invitation. `libraries` stores immutable canonical genesis;
+`library_keys` projects recovery authority and membership. The encryption secret never reaches it. Registration retries reuse the same
 candidate, check whether it is already registered, and do not spend another code
 after successful registration. Preserve the candidate in the protected local
 session before sending registration, so an accepted-but-lost response or reload

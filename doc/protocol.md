@@ -8,7 +8,7 @@ The pre-chain media/tag protocol has been removed; there are no compatibility re
 | --- | --- |
 | `GET /api/health` | Public health response |
 | `GET /api/ping` | Active device proof; empty body |
-| `POST /api/register-key` | New device proof and invitation; fixed recovery public key and epoch-one salt |
+| `POST /api/register-key` | New device proof and invitation; canonical genesis and recovery-signed enrollment block 1 |
 | `GET /api/blocks?after=<hash>&until=<hash>` | Active device or fixed recovery principal; bounded canonical pages, required `after`, optional fixed target `until` |
 | `POST /api/blocks` | Signed canonical record with an exact parent; authority and storage effects checked atomically |
 | `POST /api/blobs` | Active device; fixed `[fileID, ciphertext]` frame; stages a hash-addressed encrypted object |

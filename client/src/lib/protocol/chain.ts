@@ -169,27 +169,13 @@ function bodyBytes(body: BlockBody) {
 export async function sha256(bytes: Bytes): Promise<Bytes> {
 	return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
 }
-export async function genesis(
-	recoveryPublicKey: Bytes,
-	initialPublicKey: Bytes,
-	epochSalt: Bytes,
-) {
-	if (sameBytes(recoveryPublicKey, initialPublicKey)) {
-		throw new Error(
-			"Recovery authority must be separate from the initial device.",
-		);
-	}
+export async function genesis(recoveryPublicKey: Bytes, epochSalt: Bytes) {
 	const document = encode([
 		1,
 		fixedBytes(recoveryPublicKey),
-		fixedBytes(initialPublicKey),
 		fixedBytes(epochSalt),
-		1,
 	]);
-	return {
-		bytes: document,
-		hash: await genesisHash(document),
-	};
+	return { bytes: document, hash: await genesisHash(document) };
 }
 export function genesisHash(document: Bytes) {
 	return sha256(concat([GENESIS_DOMAIN, document]));

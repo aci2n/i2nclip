@@ -36,7 +36,10 @@ async function fixture() {
 		"https://example.test",
 		first.publicKey,
 	);
-	const initial = await initialChainState(recovery.recovery.genesis.bytes);
+	const initial = reduceBlock(
+		await initialChainState(recovery.recovery.genesis.bytes),
+		recovery.enrollment,
+	);
 	function header(state: ChainState, signer = first): BlockHeader {
 		return {
 			library: state.library,
@@ -108,7 +111,10 @@ test("file operations deterministically replay without fetching objects or mutat
 	assert.equal(updated.state.files.get(key)?.deleted, false);
 	assert.equal(deleted.state.files.get(key)?.deleted, true);
 	assert.equal(purged.state.files.get(key)?.purged, true);
-	let replay = await initialChainState(f.recovery.recovery.genesis.bytes);
+	let replay = reduceBlock(
+		await initialChainState(f.recovery.recovery.genesis.bytes),
+		f.recovery.enrollment,
+	);
 	for (const item of [
 		added,
 		updated,
@@ -178,7 +184,7 @@ test("invalid storage effects and lifecycle transitions leave the accepted state
 		/lifecycle/,
 	);
 	assert.equal(deleted.state.files.get(bytesToHex(id))?.purged, false);
-	assert.equal(deleted.state.sequence, 2);
+	assert.equal(deleted.state.sequence, f.initial.sequence + 2);
 });
 
 test("membership is checked before each operation and rotation replaces all active keys", async () => {
@@ -191,7 +197,7 @@ test("membership is checked before each operation and rotation replaces all acti
 	const revoked = reduceBlock(enrolled, revoke);
 	assert.equal(
 		revoked.devices.get(bytesToHex(f.first.publicKey))?.revokedAt,
-		2,
+		revoke.body.sequence,
 	);
 	const oldSigner = await f.admin(revoked, "enroll", replacement.publicKey);
 	assert.throws(() => reduceBlock(revoked, oldSigner), /unauthorized/);
@@ -232,7 +238,7 @@ test("forks, gaps, wrong libraries, wrong epochs and unauthorized valid signatur
 	const second = await device();
 	for (const changes of [
 		{ previous: filled(0) },
-		{ sequence: 2 },
+		{ sequence: f.initial.sequence + 2 },
 		{ library: filled(0) },
 		{ epoch: 2 },
 		{ signer: second.publicKey },
@@ -291,7 +297,10 @@ test("only the pinned recovery signer can reset and cannot acquire device author
 	const state = reduceBlock(f.initial, reset);
 	assert.deepEqual(state.epochSalt, filled(12));
 	assert.deepEqual(state.recoveryPublicKey, f.initial.recoveryPublicKey);
-	assert.equal(state.devices.get(bytesToHex(next.publicKey))?.authorizedAt, 1);
+	assert.equal(
+		state.devices.get(bytesToHex(next.publicKey))?.authorizedAt,
+		state.sequence,
+	);
 });
 
 test("recovery can revoke the last device and enroll again without gaining data authority", async () => {
@@ -348,4 +357,26 @@ test("128 active devices is the enrollment limit and revoked devices release cap
 		[...restored.devices.values()].filter((d) => d.revokedAt === null).length,
 		128,
 	);
+});
+
+test("genesis has no device authority and only recovery enrollment can bootstrap it", async () => {
+	const f = await fixture();
+	const empty = await initialChainState(f.recovery.recovery.genesis.bytes);
+	assert.equal(empty.sequence, 0);
+	assert.equal(empty.devices.size, 0);
+	const unsignedAuthority = await f.admin(
+		empty,
+		"enroll",
+		f.first.publicKey,
+		f.first,
+	);
+	assert.throws(() => reduceBlock(empty, unsignedAuthority), /first block/);
+	const reset = await f.admin(empty, "rotate", (await device()).publicKey);
+	assert.throws(() => reduceBlock(empty, reset), /first block/);
+	const state = reduceBlock(empty, f.recovery.enrollment);
+	assert.equal(
+		state.devices.get(bytesToHex(f.first.publicKey))?.authorizedAt,
+		1,
+	);
+	assert.deepEqual(state, f.initial);
 });

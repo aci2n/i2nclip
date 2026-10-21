@@ -125,9 +125,14 @@ async function fixture(t: test.TestContext) {
 		}
 	});
 	const created = await createLibraryDevice("https://example.test");
+	assert(created.device.identity.registration);
 	const server = new Server(
-		await initialChainState(created.device.identity.genesis),
+		reduceBlock(
+			await initialChainState(created.device.identity.genesis),
+			await verifyRecord(created.device.identity.registration),
+		),
 	);
+	server.records.push(await verifyRecord(created.device.identity.registration));
 	server.keys.set(1, created.device.identity.epochs[0][1]);
 	const id = filled(1);
 	const plaintext = encodeOperation({
@@ -139,7 +144,7 @@ async function fixture(t: test.TestContext) {
 	const add = await createRecord(
 		{
 			library: server.state.library,
-			sequence: 1,
+			sequence: server.state.sequence + 1,
 			previous: server.state.head,
 			epoch: 1,
 			signer: created.device.key.publicKey,
@@ -155,7 +160,7 @@ async function fixture(t: test.TestContext) {
 	const reset = await createRecord(
 		{
 			library: server.state.library,
-			sequence: 2,
+			sequence: server.state.sequence + 1,
 			previous: server.state.head,
 			epoch: 1,
 			signer: created.recovery.key.publicKey,
@@ -178,7 +183,7 @@ async function fixture(t: test.TestContext) {
 	const deletion = await createRecord(
 		{
 			library: server.state.library,
-			sequence: 3,
+			sequence: server.state.sequence + 1,
 			previous: server.state.head,
 			epoch: 2,
 			signer: device.publicKey,
@@ -239,7 +244,7 @@ test("offline recovery decrypts every epoch and persists only a fresh local cand
 		bytesToHex(f.server.state.library),
 	);
 	t.after(cache.dispose);
-	assert.equal((await cache.head(new AbortController().signal))?.sequence, 3);
+	assert.equal((await cache.head(new AbortController().signal))?.sequence, 4);
 	assert.equal(f.server.posts, 0);
 });
 
@@ -288,7 +293,7 @@ test("no-device recovery survives restart, lost responses, and loss of an accept
 	assert.notEqual(resumed.device().key.registrationKey, firstCandidate);
 	assert.equal(await resumed.submitRecovery(), true);
 	assert.equal(f.server.state.epoch, 4);
-	assert.equal(f.server.state.sequence, 5);
+	assert.equal(f.server.state.sequence, 6);
 	assert.equal(resumed.identity().device.epochs.length, 4);
 });
 

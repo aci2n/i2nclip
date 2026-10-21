@@ -12,6 +12,7 @@ const response = (value: unknown) => new Response(encode(value));
 
 test("chain API signs the exact query and uses fixed registration, pagination and receipt frames", async (t) => {
 	const device = await createDevice("https://example.test");
+	assert(device.identity.registration);
 	const verifier = await crypto.subtle.importKey(
 		"raw",
 		device.key.publicKey,
@@ -57,7 +58,11 @@ test("chain API signs the exact query and uses fixed registration, pagination an
 			assert.equal(options.redirect, "error");
 			assert.equal(options.credentials, "omit");
 			if (url.pathname === "/api/register-key") {
-				assert.deepEqual(decode(body), ["invite", binary(3), binary(4)]);
+				assert.deepEqual(decode(body), [
+					"invite",
+					device.identity.genesis,
+					device.identity.registration,
+				]);
 				return new Response(null, { status: 204 });
 			}
 			if (options.method === "GET") {
@@ -70,8 +75,8 @@ test("chain API signs the exact query and uses fixed registration, pagination an
 	t.after(api.dispose);
 	await api.register(
 		" invite ",
-		binary(3),
-		binary(4),
+		device.identity.genesis,
+		device.identity.registration,
 		new AbortController().signal,
 	);
 	const page = await api.read(

@@ -12,6 +12,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde::Serialize;
+use serde_bytes::ByteBuf;
 #[cfg(test)]
 use serde_json::json;
 use tower_http::{
@@ -116,20 +117,11 @@ async fn register_key(
 }
 
 async fn register_key_body(state: &AppState, signer: [u8; 32], body: &[u8]) -> Result<(), Error> {
-    let (otc, recovery, salt): (String, serde_bytes::ByteBuf, serde_bytes::ByteBuf) =
-        codec::decode(body)?;
-    if codec::encode(&(&otc, &recovery, &salt))? != body {
-        return Err(Error::BadRequest("noncanonical registration".into()));
+    let (otc, genesis, first): (String, ByteBuf, ByteBuf) = codec::decode(body)?;
+    if codec::encode(&(&otc, &genesis, &first))? != body || otc.len() > 512 {
+        return Err(Error::BadRequest("invalid canonical registration".into()));
     }
-    let recovery = crate::auth::validate_public_key(&recovery)?;
-    let salt: [u8; 32] = salt
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::BadRequest("invalid epoch salt".into()))?;
-    if otc.len() > 512 {
-        return Err(Error::BadRequest("invalid registration payload".into()));
-    }
-    state.db.consume_code(&otc, &signer, &recovery, &salt).await
+    state.db.consume_code(&otc, &signer, &genesis, &first).await
 }
 
 pub(crate) fn document_response(status: StatusCode, body: impl Serialize) -> Response {
@@ -394,10 +386,8 @@ mod request_tests {
             codec::encode(&json!({})).unwrap(),
             codec::encode(&(
                 "x".repeat(513),
-                serde_bytes::ByteBuf::from(
-                    crate::reference_crypto::from_seed([2; 32]).public.to_vec(),
-                ),
-                serde_bytes::ByteBuf::from(vec![11; 32]),
+                ByteBuf::from(crate::reference_crypto::from_seed([2; 32]).public.to_vec()),
+                ByteBuf::from(vec![11; 32]),
             ))
             .unwrap(),
         ] {

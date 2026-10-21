@@ -49,43 +49,39 @@ pub fn parse_hash(text: &str) -> Result<Hash, Error> {
     Ok(result)
 }
 
-/// Genesis pins independent recovery authority, initial device and public epoch salt.
-pub fn genesis(recovery: &Hash, initial: &Hash, epoch_salt: &Hash) -> Result<Hash, Error> {
-    let bytes = genesis_bytes(recovery, initial, epoch_salt)?;
+/// Genesis pins immutable recovery authority and the initial public epoch salt.
+pub fn genesis(recovery: &Hash, epoch_salt: &Hash) -> Result<Hash, Error> {
+    let bytes = genesis_bytes(recovery, epoch_salt)?;
     Ok(digest(&[GENESIS_DOMAIN, &bytes].concat()))
 }
 
-pub fn genesis_bytes(recovery: &Hash, initial: &Hash, epoch_salt: &Hash) -> Result<Vec<u8>, Error> {
+pub fn genesis_bytes(recovery: &Hash, epoch_salt: &Hash) -> Result<Vec<u8>, Error> {
     validate_public_key(recovery)?;
-    validate_public_key(initial)?;
-    if recovery == initial {
-        return Err(invalid());
-    }
-    let bytes = rmp_serde::to_vec(&(
+    rmp_serde::to_vec(&(
         1u8,
         serde_bytes::Bytes::new(recovery),
-        serde_bytes::Bytes::new(initial),
         serde_bytes::Bytes::new(epoch_salt),
-        1u8,
     ))
-    .map_err(|_| invalid())?;
-    Ok(bytes)
+    .map_err(|_| invalid())
 }
 
-/// Canonical public authority, verified independently of the membership projection.
-pub fn genesis_recovery(bytes: &[u8]) -> Result<Hash, Error> {
+/// Canonical public authority and initial epoch salt, independent of SQL projections.
+pub fn parse_genesis(bytes: &[u8]) -> Result<(Hash, Hash), Error> {
     if bytes.len() > 128 {
         return Err(invalid());
     }
-    let (version, recovery, initial, salt, epoch): (u8, ByteBuf, ByteBuf, ByteBuf, u8) =
+    let (version, recovery, salt): (u8, ByteBuf, ByteBuf) =
         rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
     let recovery: Hash = recovery.as_ref().try_into().map_err(|_| invalid())?;
-    let initial: Hash = initial.as_ref().try_into().map_err(|_| invalid())?;
     let salt: Hash = salt.as_ref().try_into().map_err(|_| invalid())?;
-    if version != 1 || epoch != 1 || genesis_bytes(&recovery, &initial, &salt)? != bytes {
+    if version != 1 || genesis_bytes(&recovery, &salt)? != bytes {
         return Err(invalid());
     }
-    Ok(recovery)
+    Ok((recovery, salt))
+}
+
+pub fn genesis_recovery(bytes: &[u8]) -> Result<Hash, Error> {
+    Ok(parse_genesis(bytes)?.0)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -374,8 +370,8 @@ mod tests {
     #[test]
     fn genesis_authority_requires_canonical_valid_public_payload() {
         let recovery = SigningKey::from_bytes(&[42; 32]).verifying_key().to_bytes();
-        let initial = SigningKey::from_bytes(&[7; 32]).verifying_key().to_bytes();
-        let bytes = genesis_bytes(&recovery, &initial, &[11; 32]).unwrap();
+
+        let bytes = genesis_bytes(&recovery, &[11; 32]).unwrap();
         assert_eq!(genesis_recovery(&bytes).unwrap(), recovery);
         let mut trailing = bytes.clone();
         trailing.push(0);
@@ -429,7 +425,6 @@ mod tests {
         assert_eq!(
             genesis(
                 &hash(&recovery, "recovery_public_key"),
-                &hash(&recovery, "initial_device_public_key"),
                 &hash(&recovery, "epoch_1_salt")
             )
             .unwrap(),

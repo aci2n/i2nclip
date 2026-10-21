@@ -111,8 +111,10 @@ async function fixture(t: TestContext, minimum?: Checkpoint) {
 		"https://example.test",
 		key.publicKey,
 	);
-	const initial = await initialChainState(recovery.recovery.genesis.bytes);
-	const transport = new Transport(stateCheckpoint(initial));
+	const genesis = await initialChainState(recovery.recovery.genesis.bytes);
+	const initial = reduceBlock(genesis, recovery.enrollment);
+	const transport = new Transport(stateCheckpoint(genesis));
+	transport.records.push(recovery.enrollment);
 	const factory = new IDBFactory();
 	const storage = createChainStorage(
 		"https://example.test",
@@ -176,7 +178,7 @@ test("bounded encrypted replay persists state and restarts from verified cache",
 	const b = f.store.sync();
 	assert.equal(a, b);
 	assert.deepEqual(await a, expected);
-	assert.equal(f.transport.reads, 2);
+	assert.equal(f.transport.reads, 3);
 	assert.equal(get(f.store).live?.files.size, 2);
 	f.store.dispose();
 	const storage = createChainStorage(
@@ -192,7 +194,7 @@ test("bounded encrypted replay persists state and restarts from verified cache",
 	);
 	t.after(restarted.dispose);
 	assert.deepEqual(await restarted.sync(), expected);
-	assert.equal(f.transport.reads, 3);
+	assert.equal(f.transport.reads, 4);
 });
 
 test("fresh client cannot publish a prefix below its trusted head or accept a fork", async (t) => {
@@ -224,7 +226,7 @@ test("fresh client cannot publish a prefix below its trusted head or accept a fo
 	await storage.discardRecords(new AbortController().signal);
 	f.transport.records.pop();
 	await assert.rejects(pinned.sync(), /stale/);
-	assert.equal((await storage.head(new AbortController().signal))?.sequence, 2);
+	assert.equal((await storage.head(new AbortController().signal))?.sequence, 3);
 });
 
 test("invalid pages and signatures never advance the persisted head", async (t) => {
@@ -234,7 +236,7 @@ test("invalid pages and signatures never advance the persisted head", async (t) 
 	await assert.rejects(f.store.sync(), /pagination/);
 	assert.equal(
 		(await f.storage.head(new AbortController().signal))?.sequence,
-		0,
+		1,
 	);
 	f.transport.pageOverride = (page) => ({
 		...page,
@@ -268,11 +270,11 @@ test("a persistence failure prevents accepted state from reaching the UI", async
 	);
 	t.after(store.dispose);
 	await assert.rejects(store.sync(), /Disk full/);
-	assert.equal(get(store).live?.sequence, 0);
+	assert.equal(get(store).live, null);
 	assert.match(get(store).storageError, /Disk full/);
 	assert.equal(
 		(await f.storage.head(new AbortController().signal))?.sequence,
-		0,
+		1,
 	);
 });
 
@@ -301,7 +303,7 @@ test("mutations reject stale drafts and reconcile a lost append response by exac
 	assert.equal(f.transport.writes, 1);
 	assert.equal(
 		(await f.storage.head(new AbortController().signal))?.sequence,
-		2,
+		3,
 	);
 });
 
@@ -353,7 +355,7 @@ test("a valid signature from an unenrolled device is rejected during synchroniza
 		await createRecord(
 			{
 				library: f.initial.library,
-				sequence: 1,
+				sequence: f.initial.sequence + 1,
 				previous: f.initial.head,
 				epoch: 1,
 				signer: outsider.publicKey,
@@ -366,7 +368,7 @@ test("a valid signature from an unenrolled device is rejected during synchroniza
 	await assert.rejects(f.store.sync(), /unauthorized/);
 	assert.equal(
 		(await f.storage.head(new AbortController().signal))?.sequence,
-		0,
+		1,
 	);
 });
 
@@ -392,10 +394,10 @@ test("a live tab retains its observed head when another tab explicitly forgets s
 	await f.storage.clear(new AbortController().signal);
 	f.transport.records.length = 0;
 	await assert.rejects(f.store.sync(), /stale/);
-	assert.equal(get(f.store).live?.sequence, 1);
+	assert.equal(get(f.store).live?.sequence, 2);
 	assert.equal(
 		(await f.storage.head(new AbortController().signal))?.sequence,
-		1,
+		2,
 	);
 });
 
@@ -405,7 +407,10 @@ test("historical replay reaches the live trusted head without changing live stat
 	const second = await f.addFile(11);
 	await f.store.sync();
 	const reads = f.transport.reads;
-	assert.deepEqual(await f.store.at(1, new AbortController().signal), first);
+	assert.deepEqual(
+		await f.store.at(first.sequence, new AbortController().signal),
+		first,
+	);
 	assert.equal(
 		(await f.store.at(0, new AbortController().signal)).files.size,
 		0,
@@ -413,7 +418,7 @@ test("historical replay reaches the live trusted head without changing live stat
 	assert.deepEqual(get(f.store).live, second);
 	assert.equal(f.transport.reads, reads);
 	await assert.rejects(
-		f.store.at(3, new AbortController().signal),
+		f.store.at(second.sequence + 1, new AbortController().signal),
 		/verified chain/,
 	);
 	await f.storage.discardRecords(new AbortController().signal);
@@ -421,5 +426,5 @@ test("historical replay reaches the live trusted head without changing live stat
 		f.store.at(1, new AbortController().signal),
 		/incomplete/,
 	);
-	assert.equal(get(f.store).live?.sequence, 2);
+	assert.equal(get(f.store).live?.sequence, 3);
 });

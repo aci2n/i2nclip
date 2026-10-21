@@ -20,7 +20,6 @@ import {
 } from "../src/lib/protocol/chain.ts";
 import {
 	type ChainState,
-	initialChainState,
 	reduceBlock,
 } from "../src/lib/protocol/chain-state.ts";
 import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
@@ -29,7 +28,11 @@ import { pairedDevice } from "../src/lib/protocol/pairing-device.ts";
 import { createChain } from "../src/lib/stores/chain.ts";
 import { createChainPairing } from "../src/lib/stores/chain-pairing.ts";
 import { createSession } from "../src/lib/stores/identity.ts";
-import { registerSession } from "./library-fixture.ts";
+import {
+	initialSessionState,
+	registerSession,
+	sessionEnrollment,
+} from "./library-fixture.ts";
 import { memoryStorage } from "./memory-database.ts";
 
 Object.defineProperty(globalThis, "IDBKeyRange", { value: IDBKeyRange });
@@ -177,7 +180,8 @@ async function fixture(t: test.TestContext) {
 	await receiver.load();
 	await receiver.initialize("receiver password");
 	const original = sender.device();
-	const server = new Server(await initialChainState(original.identity.genesis));
+	const server = new Server(await initialSessionState(sender));
+	server.records.push(await sessionEnrollment(sender));
 	t.mock.method(globalThis, "fetch", server.fetch);
 	const controller = new AbortController();
 	t.after(() => controller.abort());
@@ -265,7 +269,7 @@ test("pairing enrolls a fresh receiver only after durable preparation and verifi
 		if (step === 5) {
 			assert.equal(f.receiver.device().identity.phase, "pairing");
 			assert.equal(get(f.receiver).context, null);
-			assert.equal(f.server.records.length, 0);
+			assert.equal(f.server.records.length, 1);
 		}
 	};
 	assert.deepEqual(await f.pair(), [true, true]);
@@ -277,10 +281,10 @@ test("pairing enrolls a fresh receiver only after durable preparation and verifi
 		f.sender.identity().device.epochs,
 		f.receiver.identity().device.epochs,
 	);
-	assert.equal(f.server.records.length, 1);
+	assert.equal(f.server.records.length, 2);
 	assert.equal(
 		f.receiver.identity().device.head.hash,
-		bytesToHex(f.server.records[0].hash),
+		bytesToHex(f.server.records[1].hash),
 	);
 	const bundle = f.bundle();
 	assert.ok(Array.isArray(bundle));
@@ -300,7 +304,7 @@ test("failed receiver persistence never acknowledges preparation or publishes en
 		throw new Error("Disk full");
 	});
 	assert.deepEqual(await f.pair(), [false, false]);
-	assert.equal(f.server.records.length, 0);
+	assert.equal(f.server.records.length, 1);
 	assert.equal(f.relay.submissions.includes(5), false);
 	assert.equal(get(f.receiver).context, null);
 });
@@ -313,7 +317,7 @@ test("lost completion preserves pending credentials that can independently activ
 		}
 	};
 	assert.deepEqual(await f.pair(), [false, false]);
-	assert.equal(f.server.records.length, 1);
+	assert.equal(f.server.records.length, 2);
 	assert.equal(f.receiver.device().identity.phase, "pairing");
 	assert.match(get(f.senderPairing).status, /Enrollment may have committed/);
 	assert.equal(await f.receiver.activatePairing(), true);
@@ -333,7 +337,7 @@ test("head changes after proposal require a new pairing attempt without silent r
 			const competing = await createRecord(
 				{
 					library: state.library,
-					sequence: 1,
+					sequence: state.sequence + 1,
 					previous: state.head,
 					epoch: 1,
 					signer: original.key.publicKey,
@@ -346,8 +350,8 @@ test("head changes after proposal require a new pairing attempt without silent r
 		}
 	};
 	assert.deepEqual(await f.pair(), [false, false]);
-	assert.equal(f.server.records.length, 1);
-	assert.deepEqual(f.server.records[0].body.effects[0], target);
+	assert.equal(f.server.records.length, 2);
+	assert.deepEqual(f.server.records[1].body.effects[0], target);
 	assert.equal(f.receiver.device().identity.phase, "pairing");
 	assert.equal(get(f.receiver).context, null);
 });

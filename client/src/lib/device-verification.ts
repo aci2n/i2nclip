@@ -45,6 +45,7 @@ export async function verifyDevice(
 		return state;
 	} finally {
 		chain.dispose();
+		storage.dispose();
 		api.dispose();
 	}
 }

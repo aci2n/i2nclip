@@ -2,14 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { get, writable } from "svelte/store";
 import { createPersistence } from "../src/lib/persistence.ts";
-import { initialChainState } from "../src/lib/protocol/chain-state.ts";
 import type { ChainStore, ChainView } from "../src/lib/stores/chain.ts";
 import { createChainUploads } from "../src/lib/stores/chain-uploads.ts";
 import { createSession } from "../src/lib/stores/identity.ts";
 import { createMaterializedView } from "../src/lib/stores/materialized-view.ts";
 import { createPreferences } from "../src/lib/stores/preferences.ts";
 import { deferred } from "./helpers.ts";
-import { registerSession } from "./library-fixture.ts";
+import { initialSessionState, registerSession } from "./library-fixture.ts";
 import { memoryStorage } from "./memory-database.ts";
 
 async function fixture(t: test.TestContext, uninitialized = false) {
@@ -27,7 +26,7 @@ async function fixture(t: test.TestContext, uninitialized = false) {
 	});
 	const context = get(session).context;
 	assert.ok(context);
-	const initial = await initialChainState(context.identity.genesis);
+	const initial = await initialSessionState(session);
 	const state = writable<ChainView>({
 		live: uninitialized ? null : initial,
 		syncing: false,

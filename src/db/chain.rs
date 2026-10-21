@@ -82,6 +82,9 @@ impl Database {
         } else if record.body.kind == Kind::Rotate || signer != record.body.signer || !active {
             return Err(Error::Unauthorized);
         }
+        if library.head_sequence == 0 && (record.body.kind != Kind::Enroll || !recovery_signed) {
+            return Err(Error::Unauthorized);
+        }
         let duplicate: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM blocks WHERE library_id=$1 AND hash=$2)",
         )

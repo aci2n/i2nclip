@@ -104,6 +104,7 @@ class RecoveryReplay {
 					epochs: [...this.secrets.entries()],
 					head: stateCheckpoint(state),
 					phase: "resetting",
+					registration: null,
 					rotation: { replacement: privateKey, secret, record: record.bytes },
 				});
 				return await decodeDevice(encoded);

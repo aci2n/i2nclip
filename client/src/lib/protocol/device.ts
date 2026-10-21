@@ -36,12 +36,12 @@ export interface DeviceIdentity {
 	readonly head: Checkpoint;
 	readonly phase: DevicePhase;
 	readonly rotation: PendingRotation | null;
+	readonly registration: Bytes | null;
 }
 export interface LoadedDevice {
 	readonly identity: DeviceIdentity;
 	readonly key: SigningKey;
 	readonly encryptionKey: CryptoKeyPair;
-	readonly initialPublicKey: Bytes;
 }
 function frame(value: unknown, length: number): unknown[] {
 	if (!Array.isArray(value) || value.length !== length) {
@@ -78,6 +78,7 @@ export function encodeDevice(identity: DeviceIdentity): Bytes {
 		pending
 			? [keyValues(pending.replacement), pending.secret, pending.record]
 			: null,
+		identity.registration,
 	]);
 	if (bytes.length > MAX_CREDENTIAL_BYTES) {
 		throw new Error("Device credentials exceed the supported size.");
@@ -96,7 +97,7 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 	if (input.length > MAX_CREDENTIAL_BYTES) {
 		throw new Error("Device credentials exceed the supported size.");
 	}
-	const values = frame(decode(input), 9);
+	const values = frame(decode(input), 10);
 	if (values[0] !== 1 || typeof values[1] !== "string") {
 		throw new Error("Invalid device credentials.");
 	}
@@ -107,7 +108,6 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 	}
 	const genesisBytes = fixedBytesVariable(values[2]);
 	const initial = await parseRecoveryGenesis(genesisBytes);
-	const initialPublicKey = initial.initialDevicePublicKey;
 	const library = fixedBytes(values[3]);
 	if (
 		!sameBytes(genesisBytes, initial.bytes) ||
@@ -154,13 +154,28 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 	) {
 		throw new Error("Invalid device preparation phase.");
 	}
-	if (
-		phase === "registering" &&
-		(head.sequence !== 0 ||
-			epochs.length !== 1 ||
-			!sameBytes(key.publicKey, initialPublicKey))
-	) {
-		throw new Error("Invalid pending registration.");
+	const registration =
+		values[9] === null ? null : fixedBytesVariable(values[9]);
+	if (registration) {
+		const record = await verifyRecord(registration);
+		const body = record.body;
+		if (
+			body.kind !== "enroll" ||
+			body.sequence !== 1 ||
+			body.epoch !== 1 ||
+			!sameBytes(body.library, library) ||
+			!sameBytes(body.previous, library) ||
+			!sameBytes(body.signer, initial.recoveryPublicKey) ||
+			!sameBytes(body.effects[0] as Bytes, key.publicKey) ||
+			(phase === "registering" &&
+				(head.sequence !== 1 ||
+					head.hash !== bytesToHex(record.hash) ||
+					epochs.length !== 1))
+		) {
+			throw new Error("Invalid pending registration.");
+		}
+	} else if (phase === "registering") {
+		throw new Error("Missing signed first enrollment.");
 	}
 	let rotation: PendingRotation | null = null;
 	if (values[8] !== null) {
@@ -207,11 +222,12 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 		head,
 		phase,
 		rotation,
+		registration,
 	};
 	if (!sameBytes(input, encodeDevice(identity))) {
 		throw new Error("Noncanonical device credentials.");
 	}
-	return { identity, key, encryptionKey, initialPublicKey };
+	return { identity, key, encryptionKey };
 }
 function fixedBytesVariable(value: unknown): Bytes {
 	if (!(value instanceof Uint8Array)) {
@@ -232,9 +248,10 @@ export async function createLibraryDevice(server: string) {
 		privateKey,
 		encryption,
 		epochs: [[1, created.epochKey]],
-		head: { sequence: 0, hash: bytesToHex(initial.hash) },
+		head: { sequence: 1, hash: bytesToHex(created.enrollment.hash) },
 		phase: "registering",
 		rotation: null,
+		registration: created.enrollment.bytes,
 	});
 	try {
 		return { device: await decodeDevice(encoded), recovery: created.recovery };

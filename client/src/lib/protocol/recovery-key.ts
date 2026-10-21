@@ -1,5 +1,6 @@
 import {
 	type Bytes,
+	createRecord,
 	fixedBytes,
 	genesisHash,
 	safeInteger,
@@ -16,7 +17,6 @@ export interface RecoveryGenesis {
 	readonly bytes: Bytes;
 	readonly hash: Bytes;
 	readonly recoveryPublicKey: Bytes;
-	readonly initialDevicePublicKey: Bytes;
 	readonly epochSalt: Bytes;
 }
 export interface RecoveryIdentity {
@@ -66,51 +66,31 @@ export function epochKey(
 }
 export async function recoveryGenesis(
 	recovery: Bytes,
-	device: Bytes,
 	salt: Bytes,
 ): Promise<RecoveryGenesis> {
 	const recoveryPublicKey = fixedBytes(recovery);
-	const initialDevicePublicKey = fixedBytes(device);
 	const epochSalt = fixedBytes(salt);
-	if (sameBytes(recoveryPublicKey, initialDevicePublicKey)) {
-		throw new Error(
-			"Recovery authority must be separate from the initial device.",
-		);
-	}
-	const bytes = encode([
-		1,
-		recoveryPublicKey,
-		initialDevicePublicKey,
-		epochSalt,
-		1,
-	]);
+	const bytes = encode([1, recoveryPublicKey, epochSalt]);
 	return {
 		bytes,
 		hash: await genesisHash(bytes),
 		recoveryPublicKey,
-		initialDevicePublicKey,
 		epochSalt,
 	};
 }
 export async function parseRecoveryGenesis(
 	input: Bytes,
 ): Promise<RecoveryGenesis> {
-	if (!(input instanceof Uint8Array) || input.length > 256) {
+	if (!(input instanceof Uint8Array) || input.length > 128) {
 		throw new Error("Invalid recovery genesis.");
 	}
 	const value = decode(input);
-	if (
-		!Array.isArray(value) ||
-		value.length !== 5 ||
-		value[0] !== 1 ||
-		value[4] !== 1
-	) {
+	if (!Array.isArray(value) || value.length !== 3 || value[0] !== 1) {
 		throw new Error("Invalid recovery genesis.");
 	}
 	const result = await recoveryGenesis(
 		fixedBytes(value[1]),
 		fixedBytes(value[2]),
-		fixedBytes(value[3]),
 	);
 	if (!sameBytes(input, result.bytes)) {
 		throw new Error("Noncanonical recovery genesis.");
@@ -168,7 +148,6 @@ export async function createLibraryRecovery(
 		const signing = await loadSigningKey(signingKey);
 		const genesis = await recoveryGenesis(
 			signing.publicKey,
-			initialDevicePublicKey,
 			crypto.getRandomValues(new Uint8Array(32)),
 		);
 		const recovery = await loadRecovery({
@@ -178,8 +157,24 @@ export async function createLibraryRecovery(
 			signingKey,
 			epochDerivationSecret,
 		});
+		if (sameBytes(signing.publicKey, initialDevicePublicKey)) {
+			throw new Error("Recovery authority must be separate from devices.");
+		}
+		const enrollment = await createRecord(
+			{
+				library: genesis.hash,
+				sequence: 1,
+				previous: genesis.hash,
+				epoch: 1,
+				signer: signing.publicKey,
+				kind: "enroll",
+				effects: [fixedBytes(initialDevicePublicKey)],
+			},
+			signing.privateCryptoKey,
+		);
 		return {
 			recovery,
+			enrollment,
 			epochKey: await epochKey(
 				epochDerivationSecret,
 				genesis.hash,

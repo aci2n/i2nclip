@@ -76,19 +76,13 @@ async fn chain_http_registration_paging_append_and_membership_admission() {
             &initial,
             "POST",
             "/api/register-key",
-            codec::encode(&(
-                code,
-                ByteBuf::from(recovery_identity().public.to_vec()),
-                ByteBuf::from(vec![11; 32])
-            ))
-            .unwrap()
+            registration_body(&code, &initial)
         )
         .await
         .0,
         StatusCode::NO_CONTENT
     );
-    let library =
-        i2nclip::chain::genesis(&recovery_identity().public, &initial.public, &[11; 32]).unwrap();
+    let library = i2nclip::chain::genesis(&recovery_identity().public, &[11; 32]).unwrap();
     let hex = library
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -98,11 +92,20 @@ async fn chain_http_registration_paging_append_and_membership_admission() {
     assert_eq!(status, StatusCode::OK);
     let (head, sequence, records, next): (ByteBuf, u64, Vec<ByteBuf>, Option<ByteBuf>) =
         codec::decode(&bytes).unwrap();
-    assert_eq!(head.as_ref(), library);
-    assert_eq!(sequence, 0);
-    assert!(records.is_empty());
+    assert_eq!(
+        head.as_ref(),
+        bootstrap_head(&initial, &recovery_identity())
+    );
+    assert_eq!(sequence, 1);
+    assert_eq!(records.len(), 1);
     assert!(next.is_none());
-    let record = signed_membership_record(&initial, library, library, 1, &second);
+    let record = signed_membership_record(
+        &initial,
+        library,
+        bootstrap_head(&initial, &recovery_identity()),
+        2,
+        &second,
+    );
     for _ in 0..2 {
         assert_eq!(
             call(&app, &initial, "POST", "/api/blocks", record.clone())
@@ -115,9 +118,15 @@ async fn chain_http_registration_paging_append_and_membership_admission() {
     assert_eq!(status, StatusCode::OK);
     let (_, sequence, records, _): (ByteBuf, u64, Vec<ByteBuf>, Option<ByteBuf>) =
         codec::decode(&bytes).unwrap();
-    assert_eq!(sequence, 1);
-    assert_eq!(records[0].as_ref(), record);
-    let conflict = signed_membership_record(&initial, library, library, 1, &third);
+    assert_eq!(sequence, 2);
+    assert_eq!(records[1].as_ref(), record);
+    let conflict = signed_membership_record(
+        &initial,
+        library,
+        bootstrap_head(&initial, &recovery_identity()),
+        2,
+        &third,
+    );
     assert_eq!(
         call(&app, &initial, "POST", "/api/blocks", conflict)
             .await
@@ -174,19 +183,14 @@ async fn chain_http_recovery_authority_and_device_free_reset() {
     let code = i2nclip::issue_registration_otc(&db.0, 3600, i2nclip::StorageLimits::default())
         .await
         .unwrap();
-    let registration = codec::encode(&(
-        code,
-        ByteBuf::from(recovery.public.to_vec()),
-        ByteBuf::from(vec![11; 32]),
-    ))
-    .unwrap();
+    let registration = registration_with_root(&code, &initial, &recovery);
     assert_eq!(
         call(&app, &initial, "POST", "/api/register-key", registration)
             .await
             .0,
         StatusCode::NO_CONTENT
     );
-    let library = i2nclip::chain::genesis(&recovery.public, &initial.public, &[11; 32]).unwrap();
+    let library = i2nclip::chain::genesis(&recovery.public, &[11; 32]).unwrap();
     let path = format!(
         "/api/blocks?after={}",
         library
@@ -207,8 +211,8 @@ async fn chain_http_recovery_authority_and_device_free_reset() {
     let mut body = BlockBody {
         version: 1,
         library,
-        sequence: 1,
-        previous: library,
+        sequence: 2,
+        previous: bootstrap_head(&initial, &recovery_identity()),
         epoch: 1,
         signer: initial.public,
         kind: Kind::Rotate,
@@ -288,19 +292,13 @@ async fn chain_http_blob_staging_publication_and_live_quota_frames() {
             &initial,
             "POST",
             "/api/register-key",
-            codec::encode(&(
-                code,
-                ByteBuf::from(recovery_identity().public.to_vec()),
-                ByteBuf::from(vec![11; 32])
-            ))
-            .unwrap()
+            registration_body(&code, &initial)
         )
         .await
         .0,
         StatusCode::NO_CONTENT
     );
-    let library =
-        i2nclip::chain::genesis(&recovery_identity().public, &initial.public, &[11; 32]).unwrap();
+    let library = i2nclip::chain::genesis(&recovery_identity().public, &[11; 32]).unwrap();
     let file = [7u8; 32];
     let ciphertext = vec![9u8; 16];
     let request = codec::encode(&(
@@ -325,8 +323,8 @@ async fn chain_http_blob_staging_publication_and_live_quota_frames() {
     let body = BlockBody {
         version: 1,
         library,
-        sequence: 1,
-        previous: library,
+        sequence: 2,
+        previous: bootstrap_head(&initial, &recovery_identity()),
         epoch: 1,
         signer: initial.public,
         kind: Kind::Data,
@@ -527,13 +525,7 @@ async fn app(keys: &[&Identity]) -> (TestDatabase, axum::Router) {
             .await
             .unwrap();
         let root = new_identity();
-        use serde_bytes::ByteBuf;
-        let body = codec::encode(&(
-            code,
-            ByteBuf::from(root.public.to_vec()),
-            ByteBuf::from(vec![11; 32]),
-        ))
-        .unwrap();
+        let body = registration_with_root(&code, key, &root);
         assert_eq!(
             call(&router, key, "POST", "/api/register-key", body)
                 .await
@@ -554,14 +546,21 @@ async fn enroll_key(app: &axum::Router, key: &Identity, otc: &str) {
     );
 }
 
-fn registration_body(otc: &str) -> Vec<u8> {
+fn registration_with_root(otc: &str, device: &Identity, root: &Identity) -> Vec<u8> {
     use serde_bytes::ByteBuf;
-    codec::encode(&(
-        otc,
-        ByteBuf::from(recovery_identity().public.to_vec()),
-        ByteBuf::from(vec![11; 32]),
-    ))
-    .unwrap()
+    let genesis = i2nclip::chain::genesis_bytes(&root.public, &[11; 32]).unwrap();
+    let library = i2nclip::chain::genesis(&root.public, &[11; 32]).unwrap();
+    let first = signed_membership_record(root, library, library, 1, device);
+    codec::encode(&(otc, ByteBuf::from(genesis), ByteBuf::from(first))).unwrap()
+}
+fn registration_body(otc: &str, device: &Identity) -> Vec<u8> {
+    registration_with_root(otc, device, &recovery_identity())
+}
+fn bootstrap_head(device: &Identity, root: &Identity) -> i2nclip::chain::Hash {
+    let library = i2nclip::chain::genesis(&root.public, &[11; 32]).unwrap();
+    i2nclip::chain::verify_record(&signed_membership_record(root, library, library, 1, device))
+        .unwrap()
+        .hash
 }
 
 async fn register(app: &axum::Router, key: &Identity, otc: &str) -> (StatusCode, Vec<u8>) {
@@ -570,7 +569,7 @@ async fn register(app: &axum::Router, key: &Identity, otc: &str) -> (StatusCode,
         key,
         "POST",
         "/api/register-key",
-        registration_body(otc),
+        registration_body(otc, key),
     )
     .await
 }
@@ -679,7 +678,7 @@ async fn stalled_requests_use_endpoint_deadlines_and_preserve_auth_semantics() {
     ] {
         let registration = path == "/api/register-key";
         let payload = if registration {
-            registration_body(&otc)
+            registration_body(&otc, &new_key)
         } else if method == "GET" || method == "DELETE" {
             vec![]
         } else {
@@ -1010,7 +1009,7 @@ async fn registration_requires_possession_and_preserves_invitations_on_verificat
     let otc = i2nclip::issue_registration_otc(&dir.0, 3600, i2nclip::StorageLimits::default())
         .await
         .unwrap();
-    let body = registration_body(&otc);
+    let body = registration_body(&otc, &key);
     for case in [
         "missing",
         "forged",
@@ -1023,7 +1022,7 @@ async fn registration_requires_possession_and_preserves_invitations_on_verificat
         "malformed",
     ] {
         let sent = match case {
-            "tampered" => registration_body("changed invitation"),
+            "tampered" => registration_body("changed invitation", &key),
             "malformed" => b"not MessagePack".to_vec(),
             _ => body.clone(),
         };

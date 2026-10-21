@@ -31,7 +31,6 @@ import {
 	epochKey,
 	type LoadedRecovery,
 	openRecoveryFile,
-	parseRecoveryGenesis,
 } from "../protocol/recovery-key.ts";
 import { checkServer } from "../protocol/server.ts";
 import { stateCheckpoint } from "./chain.ts";
@@ -41,7 +40,6 @@ export interface LibraryContext {
 	readonly serverUrl: string;
 	readonly key: SigningKey;
 	readonly identity: DeviceIdentity;
-	readonly initialPublicKey: Uint8Array<ArrayBuffer>;
 	readonly signal: AbortSignal;
 }
 export interface IdentityApi {
@@ -56,7 +54,11 @@ const httpApi: IdentityApi = {
 	async registered(device, signal) {
 		const api = createChainApi(device.identity.serverUrl, device.key, signal);
 		try {
-			return await api.registered(signal);
+			const registered = await api.registered(signal);
+			if (registered && device.identity.phase === "registering") {
+				await verifyDevice(device, device.identity.head, signal);
+			}
+			return registered;
 		} finally {
 			api.dispose();
 		}
@@ -64,13 +66,16 @@ const httpApi: IdentityApi = {
 	async register(device, code, signal) {
 		const api = createChainApi(device.identity.serverUrl, device.key, signal);
 		try {
-			const genesis = await parseRecoveryGenesis(device.identity.genesis);
+			if (!device.identity.registration) {
+				throw new Error("Missing signed first enrollment.");
+			}
 			await api.register(
 				code,
-				genesis.recoveryPublicKey,
-				genesis.epochSalt,
+				device.identity.genesis,
+				device.identity.registration,
 				signal,
 			);
+			await verifyDevice(device, device.identity.head, signal);
 		} finally {
 			api.dispose();
 		}
@@ -260,7 +265,6 @@ class SessionStoreImpl {
 						serverUrl: identity.identity.serverUrl,
 						key: identity.key,
 						identity: identity.identity,
-						initialPublicKey: identity.initialPublicKey,
 						signal: this.lifetime.signal,
 					})
 				: null;
@@ -920,7 +924,10 @@ class SessionStoreImpl {
 			}
 			signal.throwIfAborted();
 			await this.applyIdentity(
-				{ ...next, identity: { ...next.identity, phase: "active" } },
+				{
+					...next,
+					identity: { ...next.identity, phase: "active", registration: null },
+				},
 				signal,
 			);
 			this.clearCreationRecovery();

@@ -13,7 +13,11 @@ import {
 import { openRecoveryFile } from "../src/lib/protocol/recovery-key.ts";
 import { stateCheckpoint } from "../src/lib/stores/chain.ts";
 import { createSession, type IdentityApi } from "../src/lib/stores/identity.ts";
-import { createDevice, registerSession } from "./library-fixture.ts";
+import {
+	createDevice,
+	initialSessionState,
+	registerSession,
+} from "./library-fixture.ts";
 import { memoryStorage } from "./memory-database.ts";
 
 const password = "master password";
@@ -191,10 +195,12 @@ test("pairing credentials are durable before readiness and activation requires t
 	const prepared = {
 		...owner.identity,
 		privateKey: receiver.identity.privateKey,
+		encryption: receiver.identity.encryption,
+		registration: null,
 		phase: "pairing" as const,
 	};
 	let allowed = false;
-	const enrollment = { sequence: 1, hash: "ac".repeat(32) };
+	const enrollment = { sequence: 2, hash: "ac".repeat(32) };
 	const f = await fixture(
 		t,
 		{ registered: async () => true, register: async () => {} },
@@ -208,7 +214,7 @@ test("pairing credentials are durable before readiness and activation requires t
 			const initial = await initialChainState(device.identity.genesis);
 			return {
 				...initial,
-				sequence: 1,
+				sequence: enrollment.sequence,
 				head: hexToBytes(enrollment.hash),
 				devices: new Map([
 					...initial.devices,
@@ -252,17 +258,17 @@ test("pending rotation saves both outcomes without replacing the live context an
 		register: async () => {},
 	});
 	await registerSession(f.session, { serverUrl, otc: "invite" });
-	const original = f.session.device();
+	const _original = f.session.device();
 	const context = get(f.session).context;
 	assert.ok(context);
 	const replacement = await createDevice(serverUrl);
-	const initial = await initialChainState(original.identity.genesis);
+	const initial = await initialSessionState(f.session);
 	const backup = f.recoveryFile();
 	const recovery = await openRecoveryFile(backup.bytes, backup.password);
 	const record = await createRecord(
 		{
 			library: initial.library,
-			sequence: 1,
+			sequence: initial.sequence + 1,
 			previous: initial.head,
 			epoch: 1,
 			signer: recovery.key.publicKey,

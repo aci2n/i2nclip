@@ -49,7 +49,6 @@ async function resign(body: unknown) {
 test("canonical genesis, block signatures and encryption match shared vectors", async (t) => {
 	const root = await genesis(
 		hexToBytes(recoveryVectors.recovery_public_key),
-		hexToBytes(recoveryVectors.initial_device_public_key),
 		hexToBytes(recoveryVectors.epoch_1_salt),
 	);
 	assert.equal(bytesToHex(root.bytes), recoveryVectors.genesis);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bytesToHex } from "../src/lib/protocol/bytes.ts";
+import { bytesToHex, hexToBytes } from "../src/lib/protocol/bytes.ts";
 import { createRecord } from "../src/lib/protocol/chain.ts";
 import {
 	decodeDevice,
@@ -18,7 +18,8 @@ test("device initialization separates signing and epoch secrets and has determin
 	const second = await createDevice("https://example.test");
 	assert.equal(first.identity.phase, "registering");
 	assert.equal(first.identity.serverUrl, "https://example.test");
-	assert.equal(first.identity.head.hash, bytesToHex(first.identity.library));
+	assert.equal(first.identity.head.sequence, 1);
+	assert.notEqual(first.identity.head.hash, bytesToHex(first.identity.library));
 	assert.notDeepEqual(
 		first.identity.privateKey.seed,
 		first.identity.epochs[0]?.[1],
@@ -100,8 +101,8 @@ test("local pending rotation credentials bind both devices and the exact old-sig
 	const record = await createRecord(
 		{
 			library: old.identity.library,
-			sequence: 1,
-			previous: old.identity.library,
+			sequence: old.identity.head.sequence + 1,
+			previous: hexToBytes(old.identity.head.hash),
 			epoch: 1,
 			signer: old.recovery.key.publicKey,
 			kind: "rotate",

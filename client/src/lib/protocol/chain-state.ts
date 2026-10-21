@@ -143,7 +143,6 @@ export async function initialChainState(
 	genesisBytes: Bytes,
 ): Promise<ChainState> {
 	const root = await parseRecoveryGenesis(genesisBytes);
-	const publicKey = root.initialDevicePublicKey;
 	return {
 		library: root.hash,
 		head: root.hash,
@@ -151,9 +150,7 @@ export async function initialChainState(
 		epoch: 1,
 		recoveryPublicKey: root.recoveryPublicKey,
 		epochSalt: root.epochSalt,
-		devices: new Map([
-			[bytesToHex(publicKey), { publicKey, authorizedAt: 0, revokedAt: null }],
-		]),
+		devices: new Map(),
 		files: new Map(),
 	};
 }
@@ -247,6 +244,12 @@ export function reduceBlock(
 		body.epoch !== state.epoch
 	) {
 		invalid("parent, sequence, library, or epoch mismatch");
+	}
+	if (
+		state.sequence === 0 &&
+		(body.kind !== "enroll" || !sameBytes(body.signer, state.recoveryPublicKey))
+	) {
+		invalid("first block must be recovery-signed enrollment");
 	}
 	const signer = state.devices.get(bytesToHex(body.signer));
 	const recoverySigned = sameBytes(body.signer, state.recoveryPublicKey);

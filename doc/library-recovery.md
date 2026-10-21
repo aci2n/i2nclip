@@ -32,12 +32,15 @@ needed. Validate imported seed/public-key correspondence by signing and verifyin
 a probe using WebCrypto; reject mismatches. Signing, HKDF, and AEAD use WebCrypto.
 The two secrets are preserved together; neither is derived from the other.
 
-Canonical genesis is `[1, recovery_public_key, initial_device_public_key,
-epoch_1_salt, 1]`. All three binary fields are 32 bytes, and the two public keys
-must be distinct. Keep the existing domain-separated genesis hash; its value
-remains both library ID and sequence-zero head. The initial device is ordinary,
-revocable membership. The recovery public key is immutable and never enrolled
-as a device.
+Canonical genesis is `[1, recovery_public_key, epoch_1_salt]`, with two 32-byte
+binary fields. It defines no device membership. Keep the domain-separated genesis
+hash as the library ID and sequence-zero head. The recovery key signs enrollment
+block 1 for a separate ordinary, revocable initial device; creation stores both
+atomically. The recovery public key is immutable and is never enrolled as a device.
+It may sign enrollment and revocation (including the last device) as well as
+rotation. It gains no ordinary file/blob/quota/pairing access from those rights.
+At most 128 devices may be simultaneously authorized; explicitly selected
+recovery-signed revocation can free capacity before recovery enrollment.
 
 For epoch `e`, derive a 32-byte epoch key with HKDF-SHA256:
 
@@ -90,10 +93,12 @@ Local device credentials do not substitute for it.
 ## Server interfaces and persistence
 
 The server receives the recovery public key and salts, never the recovery key,
-signing seed, epoch derivation secret, or epoch keys. Registration becomes `[invitation_code,
-recovery_public_key, epoch_1_salt]`, signed by the initial device. Atomically save
-genesis, both public principals, initial device membership, and quota while
-consuming the invitation. Keep the fresh `sql/001_init.sql` baseline policy.
+signing seed, epoch derivation secret, or epoch keys. Registration is `[invitation_code, genesis_bytes, signed_first_enrollment_bytes]`,
+with HTTP proof from the enrolled device and a recovery signature on enrollment.
+Atomically save canonical genesis, both public principals, enrollment block 1,
+initial device membership at sequence 1, and quota while consuming the invitation.
+`libraries` retains genesis bytes rather than decomposed genesis columns; recovery
+authority is queried through its unique immutable `library_keys` row. Keep the fresh `sql/001_init.sql` baseline policy.
 
 Keep one global public-key namespace in `library_keys`: public key, library ID,
 fixed kind (`device` or `recovery`), authorization sequence, and optional revocation

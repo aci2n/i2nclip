@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { get } from "svelte/store";
 import { createChainApi } from "../src/lib/chain-api.ts";
@@ -49,10 +50,11 @@ export async function liveLibrary(
 		api.dispose();
 	}
 	try {
+		assert(device.identity.registration);
 		await api.register(
 			invitation,
-			recovery.identity.signingKey.public_key,
-			recovery.genesis.epochSalt,
+			device.identity.genesis,
+			device.identity.registration,
 			controller.signal,
 		);
 		await chain.sync();
