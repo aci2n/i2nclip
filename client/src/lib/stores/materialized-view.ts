@@ -16,6 +16,7 @@ export interface MaterializedViewState {
 	readonly metadata: ReadonlyMap<string, FileMetadata>;
 	readonly errors: ReadonlyMap<string, string>;
 	readonly indexing: boolean;
+	readonly indexScope: "active" | "deleted";
 	readonly indexed: number;
 	readonly total: number;
 	readonly complete: boolean;
@@ -44,6 +45,8 @@ class MaterializedViewImpl {
 	private readonly controller = new AbortController();
 	private selection = new AbortController();
 	private choosing = new AbortController();
+	private indexController = new AbortController();
+	private indexDeleted = false;
 	private unavailable = new Set<string>();
 	private readonly state: Writable<MaterializedViewState> = writable({
 		selected: null,
@@ -55,6 +58,7 @@ class MaterializedViewImpl {
 		metadata: new Map(),
 		errors: new Map(),
 		indexing: false,
+		indexScope: "active",
 		indexed: 0,
 		total: 0,
 		complete: false,
@@ -114,6 +118,7 @@ class MaterializedViewImpl {
 		}
 		this.selection.abort();
 		this.selection = new AbortController();
+		this.indexController.abort();
 		this.indexing = null;
 		const metadata = new Map<string, FileMetadata>();
 		for (const [id, entry] of this.cache) {
@@ -139,6 +144,7 @@ class MaterializedViewImpl {
 			metadata,
 			errors: new Map(),
 			indexing: false,
+			indexScope: "active",
 			indexed: 0,
 			total: 0,
 			complete: false,
@@ -175,22 +181,30 @@ class MaterializedViewImpl {
 		}));
 		return { file, metadata, revision: source.revision };
 	}
-	private indexSelected() {
+	private indexSelected(deletedOnly = false) {
 		this.signal.throwIfAborted();
-		if (this.indexing) {
+		if (this.indexing && this.indexDeleted === deletedOnly) {
 			return this.indexing;
 		}
+		this.indexController.abort();
+		this.indexController = new AbortController();
+		this.indexDeleted = deletedOnly;
 		const source = get(this.state);
 		if (!source.selected) {
 			return Promise.resolve();
 		}
-		const signal = AbortSignal.any([this.signal, this.selection.signal]);
+		const signal = AbortSignal.any([
+			this.signal,
+			this.selection.signal,
+			this.indexController.signal,
+		]);
 		const files = [...source.selected.files.values()].filter(
-			(file) => !file.deleted && !file.purged,
+			(file) => file.deleted === deletedOnly && !file.purged,
 		);
 		this.state.update((state) => ({
 			...state,
 			indexing: true,
+			indexScope: deletedOnly ? "deleted" : "active",
 			indexed: 0,
 			total: files.length,
 			complete: false,
@@ -235,6 +249,7 @@ class MaterializedViewImpl {
 		this.state.update((state) => ({
 			...state,
 			indexing: false,
+			indexScope: "active",
 			complete: errors.size === 0,
 		}));
 	}
@@ -282,6 +297,7 @@ class MaterializedViewImpl {
 		this.controller.abort();
 		this.selection.abort();
 		this.choosing.abort();
+		this.indexController.abort();
 		this.unsubscribe();
 		this.cache.clear();
 		this.state.set({
@@ -294,6 +310,7 @@ class MaterializedViewImpl {
 			metadata: new Map(),
 			errors: new Map(),
 			indexing: false,
+			indexScope: "active",
 			indexed: 0,
 			total: 0,
 			complete: false,
