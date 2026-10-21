@@ -6,9 +6,7 @@ import {
 	createDevice,
 	decodeDevice,
 	encodeDevice,
-	exportDeviceBackup,
 	MAX_CREDENTIAL_BYTES,
-	openDeviceBackup,
 } from "../src/lib/protocol/device.ts";
 import { decode, encode } from "../src/lib/protocol/msgpack.ts";
 import { passwordOpen, passwordSeal } from "../src/lib/protocol/password.ts";
@@ -37,7 +35,7 @@ test("device initialization separates signing and epoch secrets and has determin
 	assert.equal(first.key.privateCryptoKey.extractable, false);
 });
 
-test("device backup retains historical secrets, device key and trusted head with authenticated bounds", async () => {
+test("local credentials preserve historical keys and trusted head within bounds", async () => {
 	const device = await createDevice("https://example.test");
 	const identity = {
 		...device.identity,
@@ -45,30 +43,10 @@ test("device backup retains historical secrets, device key and trusted head with
 		epochs: [...device.identity.epochs, [2, random()] as const],
 		head: { sequence: 4, hash: bytesToHex(random()) },
 	};
-	const backup = await exportDeviceBackup(identity, "backup password");
-	assert.equal(
-		Buffer.from(backup).includes(Buffer.from(identity.privateKey.seed)),
-		false,
+	assert.deepEqual(
+		(await decodeDevice(encodeDevice(identity))).identity,
+		identity,
 	);
-	const restored = await openDeviceBackup(backup, "backup password");
-	assert.deepEqual(restored.identity, identity);
-	assert.equal(restored.key.registrationKey, device.key.registrationKey);
-	await assert.rejects(
-		openDeviceBackup(backup, "wrong password"),
-		/Wrong password/,
-	);
-	const envelope = decode(backup) as unknown[];
-	const encrypted = envelope[2] as unknown[];
-	for (const value of [
-		[2],
-		[1, encrypted[1], 9_000_000, encrypted[3], encrypted[4]],
-		[1, encrypted[1], 600_000, new Uint8Array(11), encrypted[4]],
-	]) {
-		await assert.rejects(
-			openDeviceBackup(encode([envelope[0], 1, value]), "backup password"),
-			/Invalid/,
-		);
-	}
 	await assert.rejects(
 		decodeDevice(new Uint8Array(MAX_CREDENTIAL_BYTES + 1)),
 		/size/,
@@ -107,7 +85,7 @@ test("credential parsing rejects mismatched genesis, duplicate epochs, key subst
 	);
 });
 
-test("pending rotation backups bind both devices and the exact old-signed transition", async () => {
+test("local pending rotation credentials bind both devices and the exact old-signed transition", async () => {
 	const old = await createDevice("https://example.test");
 	const next = await createDevice("https://example.test");
 	const record = await createRecord(
@@ -131,10 +109,7 @@ test("pending rotation backups bind both devices and the exact old-signed transi
 			record: record.bytes,
 		},
 	};
-	const restored = await openDeviceBackup(
-		await exportDeviceBackup(pending, "backup password"),
-		"backup password",
-	);
+	const restored = await decodeDevice(encodeDevice(pending));
 	assert.deepEqual(restored.identity.rotation, pending.rotation);
 	const moved = {
 		...pending,

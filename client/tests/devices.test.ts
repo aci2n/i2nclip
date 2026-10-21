@@ -117,7 +117,6 @@ async function fixture(t: test.TestContext) {
 		},
 	);
 	t.after(devices.dispose);
-	t.mock.method(session, "downloadRecovery", async () => true);
 	return {
 		session,
 		devices,
@@ -133,15 +132,11 @@ async function fixture(t: test.TestContext) {
 	};
 }
 
-test("rotation requires a downloaded backup, submits exact bytes and reconciles replacement admission after a lost response", async (t) => {
+test("rotation uses its durable local plan, submits exact bytes and reconciles replacement admission after a lost response", async (t) => {
 	const f = await fixture(t);
 	assert.equal(await f.devices.prepareRotation(), true);
 	const plan = f.session.device().identity.rotation;
 	assert.ok(plan);
-	assert.equal(await f.devices.submitRotation(), false);
-	assert.equal(f.posts.length, 0);
-	assert.match(get(f.devices).error, /Download/);
-	assert.equal(await f.devices.downloadBackup("backup password"), true);
 	f.outcome("lost");
 	assert.equal(await f.devices.submitRotation(), true);
 	assert.equal(f.posts.length, 1);
@@ -160,7 +155,6 @@ test("rotation requires a downloaded backup, submits exact bytes and reconciles 
 test("a rejected append preserves the pending plan and retries the same transition", async (t) => {
 	const f = await fixture(t);
 	await f.devices.prepareRotation();
-	await f.devices.downloadBackup("backup password");
 	f.outcome("rejected");
 	assert.equal(await f.devices.submitRotation(), true);
 	assert.ok(f.session.device().identity.rotation);
@@ -172,10 +166,9 @@ test("a rejected append preserves the pending plan and retries the same transiti
 	assert.equal(f.session.identity().device.rotation, null);
 });
 
-test("a moved parent requires explicit reconstruction and a new backup", async (t) => {
+test("a moved parent requires explicit reconstruction and a new local plan", async (t) => {
 	const f = await fixture(t);
 	await f.devices.prepareRotation();
-	await f.devices.downloadBackup("backup password");
 	const target = (await generatePrivateKey()).privateKey.public_key;
 	await f.chain.append({
 		expected: stateCheckpoint(f.current()),
@@ -186,15 +179,13 @@ test("a moved parent requires explicit reconstruction and a new backup", async (
 	assert.equal(f.posts.length, 0);
 	assert.match(get(f.devices).error, /new rotation/);
 	assert.equal(await f.devices.prepareRotation(), true);
-	assert.equal(get(f.devices).backupDownloaded, false);
-	assert.equal(await f.devices.submitRotation(), false);
-	assert.equal(f.posts.length, 0);
+	assert.equal(await f.devices.submitRotation(), true);
+	assert.equal(f.posts.length, 1);
 });
 
 test("verified rotation remains recoverable when saving the final identity fails", async (t) => {
 	const f = await fixture(t);
 	await f.devices.prepareRotation();
-	await f.devices.downloadBackup("backup password");
 	const fail = t.mock.method(f.persistence, "save", async () => {
 		throw new Error("Disk full");
 	});

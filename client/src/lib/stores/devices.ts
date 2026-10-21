@@ -32,7 +32,6 @@ export interface DevicesState {
 	readonly error: string;
 	readonly status: string;
 	readonly rotationPrepared: boolean;
-	readonly backupDownloaded: boolean;
 }
 export type Devices = ReturnType<typeof createDevices>;
 export function createDevices(
@@ -61,17 +60,14 @@ class DevicesImpl {
 		error: "",
 		status: "",
 		rotationPrepared: false,
-		backupDownloaded: false,
 	});
 	private readonly subscriptions: Array<() => void> = [];
 	private busy = false;
 	private disposed = false;
-	private backupHash: string | null = null;
 	readonly subscribe = this.state.subscribe;
 	readonly enroll = this.enrollDevice.bind(this);
 	readonly revoke = this.revokeDevice.bind(this);
 	readonly prepareRotation = this.prepareEpoch.bind(this);
-	readonly downloadBackup = this.downloadPendingBackup.bind(this);
 	readonly submitRotation = this.submitEpoch.bind(this);
 	readonly reconcile = this.reconcileEpoch.bind(this);
 	readonly dispose = this.disposeDevices.bind(this);
@@ -216,34 +212,8 @@ class DevicesImpl {
 					get(this.session).error || "Could not preserve rotation credentials.",
 				);
 			}
-			this.backupHash = null;
 			this.update({
-				backupDownloaded: false,
-				status:
-					"Rotation prepared. Download the pending device backup before submitting it.",
-			});
-		});
-	}
-	private downloadPendingBackup(password: string) {
-		return this.action(async () => {
-			const current = this.session.device();
-			const pending = current.identity.rotation;
-			if (!pending) {
-				throw new Error("Prepare an epoch rotation first.");
-			}
-			const record = await verifyRecord(pending.record);
-			if (!(await this.session.downloadRecovery(password))) {
-				throw new Error(
-					get(this.session).error ||
-						"Could not download the pending device backup.",
-				);
-			}
-			this.signal.throwIfAborted();
-			this.backupHash = bytesToHex(record.hash);
-			this.update({
-				backupDownloaded: true,
-				status:
-					"Backup download started. Keep this file: the browser cannot confirm that you saved it. Rotation can now be submitted.",
+				status: "Rotation prepared and saved locally. It can now be submitted.",
 			});
 		});
 	}
@@ -255,17 +225,10 @@ class DevicesImpl {
 				throw new Error("No epoch rotation is prepared.");
 			}
 			const record = await verifyRecord(pending.record);
-			if (this.backupHash !== bytesToHex(record.hash)) {
-				throw new Error(
-					"Download the pending device backup before submitting this rotation.",
-				);
-			}
 			const state = await this.chain.sync();
 			this.signal.throwIfAborted();
 			if (!equalCheckpoint(stateCheckpoint(state), current.identity.head)) {
-				throw new Error(
-					"The library changed. Prepare a new rotation and download a new backup.",
-				);
+				throw new Error("The library changed. Prepare a new rotation.");
 			}
 			try {
 				const receipt = await this.api.append(pending.record, this.signal);
@@ -329,7 +292,7 @@ class DevicesImpl {
 			}
 			this.update({
 				status:
-					"Epoch rotated. Every other device must re-pair. Download a finalized device backup.",
+					"Epoch rotated. Every other device must re-pair. Replacement credentials are saved locally.",
 			});
 			return;
 		}
@@ -345,7 +308,7 @@ class DevicesImpl {
 		);
 		if (!equalCheckpoint(stateCheckpoint(verified), current.identity.head)) {
 			throw new Error(
-				"The library advanced without this rotation. Prepare a new rotation and download a new backup.",
+				"The library advanced without this rotation. Prepare a new rotation.",
 			);
 		}
 		this.update({
@@ -363,6 +326,5 @@ class DevicesImpl {
 		for (const unsubscribe of this.subscriptions) {
 			unsubscribe();
 		}
-		this.backupHash = null;
 	}
 }

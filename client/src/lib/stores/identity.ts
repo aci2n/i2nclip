@@ -1,6 +1,6 @@
 import { get, type Writable, writable } from "svelte/store";
 import { createChainApi } from "../chain-api.ts";
-import { type Checkpoint, createChainStorage } from "../chain-storage.ts";
+import type { Checkpoint } from "../chain-storage.ts";
 import { verifyDevice } from "../device-verification.ts";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
@@ -13,10 +13,7 @@ import {
 	type DeviceIdentity,
 	decodeDevice,
 	encodeDevice,
-	exportDeviceBackup,
 	type LoadedDevice,
-	MAX_DEVICE_BACKUP_BYTES,
-	openDeviceBackup,
 	type PendingRotation,
 } from "../protocol/device.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
@@ -134,11 +131,9 @@ class SessionStoreImpl {
 	readonly initialize = this.initializeSession.bind(this);
 	readonly unlock = this.unlockSession.bind(this);
 	readonly create = this.createIdentity.bind(this);
-	readonly restore = this.restoreIdentity.bind(this);
 	readonly changePassword = this.changeSessionPassword.bind(this);
 	readonly forget = this.forgetIdentity.bind(this);
 	readonly reset = this.resetSession.bind(this);
-	readonly downloadRecovery = this.downloadSessionRecovery.bind(this);
 	readonly dispose = this.disposeSession.bind(this);
 
 	constructor({
@@ -382,15 +377,6 @@ class SessionStoreImpl {
 		this.installSession(next, current.key, identity);
 	}
 
-	private requireSessionSetup() {
-		this.unlockedSession();
-		if (this.library) {
-			throw new Error(
-				"Forget the current library before creating or restoring another.",
-			);
-		}
-	}
-
 	private sessionIdentity(): IdentityCredentials {
 		if (this.library?.identity.phase !== "active" || this.disposed) {
 			throw new Error("Unlock your library first.");
@@ -518,7 +504,7 @@ class SessionStoreImpl {
 			await this.applyIdentity(next, signal);
 			this.publishSession({
 				notice:
-					"Epoch rotated. Every other device must re-pair. Download a finalized device backup.",
+					"Epoch rotated. Every other device must re-pair. Replacement credentials are saved locally.",
 			});
 		});
 	}
@@ -544,12 +530,6 @@ class SessionStoreImpl {
 	}) {
 		return this.sessionAction("create", (signal) =>
 			this.performCreateIdentity({ serverUrl, otc }, signal),
-		);
-	}
-
-	private restoreIdentity(file: Blob, password: string) {
-		return this.sessionAction("restore", (signal) =>
-			this.performRestoreIdentity(file, password, signal),
 		);
 	}
 
@@ -615,12 +595,6 @@ class SessionStoreImpl {
 				);
 			}
 		});
-	}
-
-	private downloadSessionRecovery(password: string) {
-		return this.sessionAction("downloadRecovery", (signal) =>
-			this.performDownloadSessionRecovery(password, signal),
-		);
 	}
 
 	private disposeSession() {
@@ -759,47 +733,6 @@ class SessionStoreImpl {
 		}
 	}
 
-	private async performRestoreIdentity(
-		file: Blob,
-		password: string,
-		signal: AbortSignal,
-	) {
-		this.requireSessionSetup();
-		if (file.size > MAX_DEVICE_BACKUP_BYTES) {
-			throw new Error("Recovery file is too large.");
-		}
-		const next = await openDeviceBackup(
-			new Uint8Array(await file.arrayBuffer()),
-			password,
-		);
-		signal.throwIfAborted();
-		if (next.identity.rotation || next.identity.phase === "pairing") {
-			await this.applyIdentity(next, signal);
-			this.publishSession({
-				notice:
-					"Prepared credentials restored. Finish enrollment or reconcile the pending rotation before using the library.",
-			});
-			return;
-		}
-		if (!(await this.http.registered(next, signal))) {
-			throw new Error(
-				"This device is not authorized. Re-pair it with an active device.",
-			);
-		}
-		const verified = await this.verify(next, next.identity.head, signal);
-		await this.applyIdentity(
-			{
-				...next,
-				identity: {
-					...next.identity,
-					head: stateCheckpoint(verified),
-					phase: "active",
-				},
-			},
-			signal,
-		);
-	}
-
 	private async performChangeSessionPassword(
 		current: string,
 		password: string,
@@ -825,50 +758,5 @@ class SessionStoreImpl {
 		);
 		signal.throwIfAborted();
 		this.installSession(next.saved, next.key, identity);
-	}
-
-	private async performDownloadSessionRecovery(
-		password: string,
-		signal: AbortSignal,
-	) {
-		const current = this.sessionIdentity();
-		const cache = createChainStorage(
-			current.serverUrl,
-			bytesToHex(current.device.library),
-		);
-		let identity = current.device;
-		try {
-			const head = await cache.head(signal);
-			if (
-				!identity.rotation &&
-				head &&
-				head.sequence >= identity.head.sequence
-			) {
-				if (
-					head.sequence === identity.head.sequence &&
-					head.hash !== identity.head.hash
-				) {
-					throw new Error(
-						"Cached trusted head conflicts with the device credentials.",
-					);
-				}
-				identity = { ...identity, head };
-			}
-		} finally {
-			cache.dispose();
-		}
-		const bytes = await exportDeviceBackup(identity, password);
-		signal.throwIfAborted();
-		const url = URL.createObjectURL(
-			new Blob([bytes], { type: "application/msgpack" }),
-		);
-		try {
-			const anchor = document.createElement("a");
-			anchor.href = url;
-			anchor.download = "i2nclip-device-backup.msgpack";
-			anchor.click();
-		} finally {
-			setTimeout(() => URL.revokeObjectURL(url), 1000);
-		}
 	}
 }

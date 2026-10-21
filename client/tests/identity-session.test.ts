@@ -9,10 +9,7 @@ import {
 	initialChainState,
 	reduceBlock,
 } from "../src/lib/protocol/chain-state.ts";
-import {
-	createDevice,
-	exportDeviceBackup,
-} from "../src/lib/protocol/device.ts";
+import { createDevice } from "../src/lib/protocol/device.ts";
 import { stateCheckpoint } from "../src/lib/stores/chain.ts";
 import { createSession, type IdentityApi } from "../src/lib/stores/identity.ts";
 import { memoryStorage } from "./memory-database.ts";
@@ -129,65 +126,13 @@ test("accepted registration with a failed activation write preserves the prepare
 	assert.equal(resumed.identity().device.epochs.length, 1);
 });
 
-test("backup import preserves a logical device, historical epochs, and a pinned head", async (t) => {
-	const device = await createDevice(serverUrl);
-	const identity = {
-		...device.identity,
-		phase: "active" as const,
-		head: { sequence: 3, hash: "ab".repeat(32) },
-		epochs: [
-			...device.identity.epochs,
-			[2, crypto.getRandomValues(new Uint8Array(32))] as const,
-		],
-	};
-	const backup = await exportDeviceBackup(identity, password);
-	const f = await fixture(
-		t,
-		{
-			async registered(value) {
-				assert.equal(value.key.registrationKey, device.key.registrationKey);
-				return true;
-			},
-			async register() {
-				throw new Error("must not enroll a new key");
-			},
-		},
-		false,
-		async (loaded, minimum) => {
-			assert.deepEqual(minimum, identity.head);
-			const initial = await initialChainState(loaded.initialPublicKey);
-			return {
-				...initial,
-				sequence: minimum.sequence,
-				head: hexToBytes(minimum.hash),
-				epoch: 2,
-			};
-		},
-	);
-	assert.equal(await f.session.restore(new Blob([backup]), password), true);
-	assert.deepEqual(f.session.identity().device, identity);
-	const restarted = f.reopen();
-	await restarted.load();
-	await restarted.unlock(password);
-	assert.deepEqual(restarted.identity().device.head, identity.head);
-	assert.deepEqual(restarted.identity().device.epochs, identity.epochs);
-});
-
-test("revoked backups do not install and independent tabs keep their loaded sessions", async (t) => {
-	const device = await createDevice(serverUrl);
-	const backup = await exportDeviceBackup(
-		{ ...device.identity, phase: "active" },
-		password,
-	);
+test("independent tabs retain loaded local sessions", async (t) => {
 	const f = await fixture(t, {
 		async registered() {
 			return false;
 		},
 		async register() {},
 	});
-	assert.equal(await f.session.restore(new Blob([backup]), password), false);
-	assert.match(get(f.session).error, /not authorized/);
-	assert.equal(get(f.session).context, null);
 	assert.equal(await f.session.create({ serverUrl, otc: "invite" }), true);
 	const other = f.reopen();
 	await other.load();

@@ -11,11 +11,9 @@ import {
 import { loadSigningKey, type SigningKey } from "./crypto.ts";
 import { generatePrivateKey, type PrivateKeyDocument } from "./identity.ts";
 import { decode, encode } from "./msgpack.ts";
-import { passwordOpen, passwordSeal } from "./password.ts";
 import { checkServer } from "./server.ts";
 
-export const MAX_DEVICE_BACKUP_BYTES = 1024 * 1024;
-export const MAX_CREDENTIAL_BYTES = MAX_DEVICE_BACKUP_BYTES - 1024;
+export const MAX_CREDENTIAL_BYTES = 1024 * 1024;
 export type DevicePhase = "registering" | "pairing" | "active";
 export interface PendingRotation {
 	readonly replacement: PrivateKeyDocument;
@@ -206,52 +204,4 @@ export async function createDevice(server: string): Promise<LoadedDevice> {
 			rotation: null,
 		}),
 	);
-}
-export async function exportDeviceBackup(
-	identity: DeviceIdentity,
-	password: string,
-): Promise<Bytes> {
-	if (password.length < 8) {
-		throw new Error("Backup password must be at least 8 characters.");
-	}
-	const plaintext = encodeDevice(identity);
-	try {
-		await decodeDevice(plaintext);
-		const bytes = encode([
-			"i2nclip-device-backup",
-			1,
-			await passwordSeal(plaintext, password, "i2nclip/device-backup/1"),
-		]);
-		if (bytes.length > MAX_DEVICE_BACKUP_BYTES) {
-			throw new Error("Device backup exceeds the supported size.");
-		}
-		return bytes;
-	} finally {
-		plaintext.fill(0);
-	}
-}
-export async function openDeviceBackup(
-	bytes: Bytes,
-	password: string,
-): Promise<LoadedDevice> {
-	if (bytes.length > MAX_DEVICE_BACKUP_BYTES) {
-		throw new Error("Device backup exceeds the supported size.");
-	}
-	const values = frame(decode(bytes), 3);
-	if (values[0] !== "i2nclip-device-backup" || values[1] !== 1) {
-		throw new Error("Invalid device backup.");
-	}
-	if (!sameBytes(bytes, encode(values))) {
-		throw new Error("Noncanonical device backup.");
-	}
-	const plaintext = await passwordOpen(
-		values[2],
-		password,
-		"i2nclip/device-backup/1",
-	);
-	try {
-		return await decodeDevice(plaintext);
-	} finally {
-		plaintext.fill(0);
-	}
 }
