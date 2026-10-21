@@ -249,7 +249,6 @@ class MaterializedViewImpl {
 		this.state.update((state) => ({
 			...state,
 			indexing: false,
-			indexScope: "active",
 			complete: errors.size === 0,
 		}));
 	}

@@ -112,6 +112,13 @@ test("metadata indexing distinguishes unavailable data from an empty or complete
 	assert.equal(get(view).complete, true);
 	assert.equal(get(view).metadata.size, 2);
 	assert.equal(reads.filter((id) => id === bytesToHex(a.id)).length, 1);
+	await view.index(true);
+	assert.equal(get(view).indexScope, "deleted");
+	assert.equal(get(view).total, 1);
+	assert.equal(get(view).complete, true);
+	await view.index();
+	assert.equal(get(view).indexScope, "active");
+	assert.equal(get(view).total, 2);
 	live.publish(source([], 2));
 	await view.index();
 	assert.equal(get(view).complete, true);

@@ -1,6 +1,7 @@
 <script lang="ts">
 import { fileSize, fileType } from "../media/format.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
+import { routeHref } from "../routes.ts";
 import type { LibraryCard } from "../stores/chain-library.ts";
 import FilenameEditor from "./FilenameEditor.svelte";
 import TagEditor from "./TagEditor.svelte";
@@ -72,21 +73,25 @@ const source = $derived.by(() => {
 			.filter(Boolean)
 			.join(" · ")}
 	</p>
-	{#if media.metadata}
-		<TagEditor
-			tags={media.metadata.tags || []}
-			suggestions={[...suggestions]}
-			{name}
-			disabled={!editable}
-			{onsearch}
-			revision={media.revision}
-			onsave={(tags, revision) => onupdate({ tags }, revision)}
-		/>
-	{/if}
+	<TagEditor
+		tags={media.metadata?.tags || []}
+		suggestions={[...suggestions]}
+		{name}
+		disabled={!editable}
+		{onsearch}
+		revision={media.revision}
+		onsave={(tags, revision) => onupdate({ tags }, revision)}
+	/>
 	<details>
-		<summary>Details</summary>
+		<summary>File details</summary>
 		<div class="stack details">
 			<p>Added in block {media.createdSequence}</p>
+			{#if type}
+				<p>{type}</p>
+			{/if}
+			{#if media.metadata?.image}
+				<p>{media.metadata.image.width} × {media.metadata.image.height}</p>
+			{/if}
 			{#if source}
 				<a href={source} target="_blank" rel="noreferrer"
 					>{media.metadata?.source_title || source}</a
@@ -96,6 +101,14 @@ const source = $derived.by(() => {
 		</div>
 	</details>
 	<div class="actions">
+		<a
+			class="button secondary"
+			target="_blank"
+			rel="noreferrer"
+			href={routeHref({ page: "media", id: media.id })}
+			aria-label={`Link to ${name}`}
+			>Private link</a
+		>
 		<button
 			type="button"
 			class="secondary"

@@ -67,4 +67,9 @@ label {
 	min-height: 2rem;
 	font-size: 0.875rem;
 }
+@media (max-width: 32rem), (pointer: coarse) {
+	.suggestions button {
+		min-height: 2.75rem;
+	}
+}
 </style>
