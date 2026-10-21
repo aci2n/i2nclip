@@ -1,10 +1,12 @@
 import { get, type Writable, writable } from "svelte/store";
 import { createChainApi } from "../chain-api.ts";
-import { createChainStorage } from "../chain-storage.ts";
+import { type Checkpoint, createChainStorage } from "../chain-storage.ts";
+import { verifyDevice } from "../device-verification.ts";
 import { errorMessage } from "../error.ts";
 import { createLog, failureFields } from "../log.ts";
 import { createPersistence, type SavedIdentity } from "../persistence.ts";
 import { bytesToHex } from "../protocol/bytes.ts";
+import type { ChainState } from "../protocol/chain-state.ts";
 import type { SigningKey } from "../protocol/crypto.ts";
 import {
 	createDevice,
@@ -15,9 +17,11 @@ import {
 	type LoadedDevice,
 	MAX_DEVICE_BACKUP_BYTES,
 	openDeviceBackup,
+	type PendingRotation,
 } from "../protocol/device.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
 import { checkServer } from "../protocol/server.ts";
+import { stateCheckpoint } from "./chain.ts";
 
 // A library consumer never observes changing credentials.
 export interface LibraryContext {
@@ -69,6 +73,7 @@ export interface SessionState extends SessionSnapshot {
 	checking: boolean;
 	storageError: boolean;
 	prepared: boolean;
+	pendingRotation: boolean;
 	lockFailed: boolean;
 	notice: string;
 }
@@ -86,6 +91,7 @@ export function createSession(
 	options: {
 		persistence?: ReturnType<typeof createPersistence>;
 		http?: IdentityApi;
+		verify?: typeof verifyDevice;
 		defaultServerUrl?: string;
 	} = {},
 ): Pick<SessionStoreImpl, keyof SessionStoreImpl> {
@@ -95,6 +101,7 @@ export function createSession(
 class SessionStoreImpl {
 	private readonly persistence: ReturnType<typeof createPersistence>;
 	private readonly http: IdentityApi;
+	private readonly verify: typeof verifyDevice;
 	private readonly defaultServerUrl: string;
 	private readonly log: ReturnType<typeof createLog>;
 	private readonly state: Writable<SessionState>;
@@ -119,6 +126,11 @@ class SessionStoreImpl {
 		);
 	}
 	readonly identity = this.sessionIdentity.bind(this);
+	readonly device = this.loadedDevice.bind(this);
+	readonly preparePairing = this.preparePairedDevice.bind(this);
+	readonly activatePairing = this.activatePairedDevice.bind(this);
+	readonly prepareRotation = this.savePendingRotation.bind(this);
+	readonly finishRotation = this.installRotatedDevice.bind(this);
 	readonly initialize = this.initializeSession.bind(this);
 	readonly unlock = this.unlockSession.bind(this);
 	readonly create = this.createIdentity.bind(this);
@@ -132,14 +144,17 @@ class SessionStoreImpl {
 	constructor({
 		persistence = createPersistence(),
 		http = httpApi,
+		verify = verifyDevice,
 		defaultServerUrl = globalThis.location?.origin || "http://localhost:8080",
 	}: {
 		persistence?: ReturnType<typeof createPersistence>;
 		http?: IdentityApi;
+		verify?: typeof verifyDevice;
 		defaultServerUrl?: string;
 	} = {}) {
 		this.persistence = persistence;
 		this.http = http;
+		this.verify = verify;
 		this.defaultServerUrl = defaultServerUrl;
 		this.log = createLog("session");
 		const lifetime = new AbortController();
@@ -155,6 +170,7 @@ class SessionStoreImpl {
 			checking: true,
 			storageError: false,
 			prepared: false,
+			pendingRotation: false,
 			lockFailed: false,
 			notice: "",
 		});
@@ -214,6 +230,7 @@ class SessionStoreImpl {
 			unlocked: true,
 			configured: Boolean(context),
 			prepared: Boolean(identity && identity.identity.phase !== "active"),
+			pendingRotation: Boolean(identity?.identity.rotation),
 			context,
 			signal: this.lifetime.signal,
 			serverUrl: identity?.identity.serverUrl || this.defaultServerUrl,
@@ -228,6 +245,7 @@ class SessionStoreImpl {
 			unlocked: false,
 			configured: false,
 			prepared: false,
+			pendingRotation: false,
 			context: null,
 			signal: this.lifetime.signal,
 			serverUrl: this.defaultServerUrl,
@@ -384,6 +402,121 @@ class SessionStoreImpl {
 			publicKey: this.library.key.registrationKey,
 			device: this.library.identity,
 		};
+	}
+
+	private loadedDevice(): LoadedDevice {
+		this.unlockedSession();
+		if (!this.library || this.disposed) {
+			throw new Error("No prepared device credentials.");
+		}
+		return this.library;
+	}
+
+	private preparePairedDevice(identity: DeviceIdentity, caller: AbortSignal) {
+		return this.sessionAction("preparePairing", async (own) => {
+			const signal = AbortSignal.any([own, caller]);
+			this.unlockedSession();
+			const next = await decodeDevice(encodeDevice(identity));
+			if (identity.phase !== "pairing" || identity.rotation) {
+				throw new Error("Invalid pairing preparation.");
+			}
+			if (
+				this.library &&
+				(this.library.identity.phase !== "pairing" ||
+					this.library.key.registrationKey !== next.key.registrationKey ||
+					bytesToHex(this.library.identity.library) !==
+						bytesToHex(identity.library))
+			) {
+				throw new Error("Forget the current device before pairing another.");
+			}
+			await this.applyIdentity(next, signal);
+		});
+	}
+
+	private activatePairedDevice(minimum?: Checkpoint) {
+		return this.sessionAction("activatePairing", async (signal) => {
+			const prepared = this.loadedDevice();
+			if (prepared.identity.phase !== "pairing") {
+				throw new Error("No pairing is awaiting enrollment.");
+			}
+			const pinned = minimum ?? prepared.identity.head;
+			if (
+				pinned.sequence < prepared.identity.head.sequence ||
+				(pinned.sequence === prepared.identity.head.sequence &&
+					pinned.hash !== prepared.identity.head.hash)
+			) {
+				throw new Error("Pairing completion conflicts with its trusted head.");
+			}
+			const verified = await this.verify(prepared, pinned, signal);
+			await this.applyIdentity(
+				{
+					...prepared,
+					identity: {
+						...prepared.identity,
+						head: stateCheckpoint(verified),
+						phase: "active",
+					},
+				},
+				signal,
+			);
+		});
+	}
+
+	private savePendingRotation(rotation: PendingRotation, head: Checkpoint) {
+		return this.sessionAction("prepareRotation", async (signal) => {
+			const current = this.loadedDevice();
+			if (current.identity.phase !== "active") {
+				throw new Error("Only an active device can rotate the library.");
+			}
+			const next = await decodeDevice(
+				encodeDevice({ ...current.identity, head, rotation }),
+			);
+			const unlocked = this.unlockedSession();
+			const saved = await this.persistence.save(
+				unlocked.saved,
+				unlocked.key,
+				decode(encodeDevice(next.identity)),
+				signal,
+			);
+			signal.throwIfAborted();
+			// Preparing a transition changes protected credentials, not the active signer.
+			// Preserve its context until acceptance; the pending flag blocks UI writes.
+			this.saved = saved;
+			this.library = next;
+			this.publishSession({ pendingRotation: true });
+		});
+	}
+
+	private installRotatedDevice(verified: ChainState) {
+		return this.sessionAction("finishRotation", async (signal) => {
+			const current = this.loadedDevice();
+			const pending = current.identity.rotation;
+			if (
+				!pending ||
+				verified.epoch !== current.identity.epochs.length + 1 ||
+				verified.sequence <= current.identity.head.sequence ||
+				bytesToHex(verified.library) !== bytesToHex(current.identity.library) ||
+				verified.devices.get(bytesToHex(pending.replacement.public_key))
+					?.revokedAt !== null
+			) {
+				throw new Error(
+					"Rotation has not been verified for the replacement device.",
+				);
+			}
+			const next = await decodeDevice(
+				encodeDevice({
+					...current.identity,
+					privateKey: pending.replacement,
+					epochs: [
+						...current.identity.epochs,
+						[verified.epoch, pending.secret],
+					],
+					head: stateCheckpoint(verified),
+					rotation: null,
+				}),
+			);
+			await this.applyIdentity(next, signal);
+		});
 	}
 
 	private initializeSession(password: string, rememberDevice = false) {
@@ -636,12 +769,31 @@ class SessionStoreImpl {
 			password,
 		);
 		signal.throwIfAborted();
+		if (next.identity.rotation || next.identity.phase === "pairing") {
+			await this.applyIdentity(next, signal);
+			this.publishSession({
+				notice:
+					"Prepared credentials restored. Finish enrollment or reconcile the pending rotation before using the library.",
+			});
+			return;
+		}
 		if (!(await this.http.registered(next, signal))) {
 			throw new Error(
 				"This device is not authorized. Re-pair it with an active device.",
 			);
 		}
-		await this.applyIdentity(next, signal);
+		const verified = await this.verify(next, next.identity.head, signal);
+		await this.applyIdentity(
+			{
+				...next,
+				identity: {
+					...next.identity,
+					head: stateCheckpoint(verified),
+					phase: "active",
+				},
+			},
+			signal,
+		);
 	}
 
 	private async performChangeSessionPassword(
@@ -683,7 +835,19 @@ class SessionStoreImpl {
 		let identity = current.device;
 		try {
 			const head = await cache.head(signal);
-			if (head && head.sequence >= identity.head.sequence) {
+			if (
+				!identity.rotation &&
+				head &&
+				head.sequence >= identity.head.sequence
+			) {
+				if (
+					head.sequence === identity.head.sequence &&
+					head.hash !== identity.head.hash
+				) {
+					throw new Error(
+						"Cached trusted head conflicts with the device credentials.",
+					);
+				}
 				identity = { ...identity, head };
 			}
 		} finally {

@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get } from "svelte/store";
+import type { verifyDevice } from "../src/lib/device-verification.ts";
 import { createPersistence } from "../src/lib/persistence.ts";
+import { bytesToHex, hexToBytes } from "../src/lib/protocol/bytes.ts";
+import { createRecord } from "../src/lib/protocol/chain.ts";
+import {
+	initialChainState,
+	reduceBlock,
+} from "../src/lib/protocol/chain-state.ts";
 import {
 	createDevice,
 	exportDeviceBackup,
 } from "../src/lib/protocol/device.ts";
+import { stateCheckpoint } from "../src/lib/stores/chain.ts";
 import { createSession, type IdentityApi } from "../src/lib/stores/identity.ts";
 import { memoryStorage } from "./memory-database.ts";
 
@@ -16,10 +24,11 @@ async function fixture(
 	t: test.TestContext,
 	http: IdentityApi,
 	remember = false,
+	verify?: typeof verifyDevice,
 ) {
 	const storage = memoryStorage();
 	const persistence = createPersistence(storage.connect());
-	const session = createSession({ persistence, http });
+	const session = createSession({ persistence, http, verify });
 	t.after(session.dispose);
 	await session.load();
 	await session.initialize(password, remember);
@@ -27,6 +36,7 @@ async function fixture(
 		const next = createSession({
 			persistence: createPersistence(storage.connect()),
 			http: nextHttp,
+			verify,
 		});
 		t.after(next.dispose);
 		return next;
@@ -131,15 +141,29 @@ test("backup import preserves a logical device, historical epochs, and a pinned 
 		],
 	};
 	const backup = await exportDeviceBackup(identity, password);
-	const f = await fixture(t, {
-		async registered(value) {
-			assert.equal(value.key.registrationKey, device.key.registrationKey);
-			return true;
+	const f = await fixture(
+		t,
+		{
+			async registered(value) {
+				assert.equal(value.key.registrationKey, device.key.registrationKey);
+				return true;
+			},
+			async register() {
+				throw new Error("must not enroll a new key");
+			},
 		},
-		async register() {
-			throw new Error("must not enroll a new key");
+		false,
+		async (loaded, minimum) => {
+			assert.deepEqual(minimum, identity.head);
+			const initial = await initialChainState(loaded.initialPublicKey);
+			return {
+				...initial,
+				sequence: minimum.sequence,
+				head: hexToBytes(minimum.hash),
+				epoch: 2,
+			};
 		},
-	});
+	);
 	assert.equal(await f.session.restore(new Blob([backup]), password), true);
 	assert.deepEqual(f.session.identity().device, identity);
 	const restarted = f.reopen();
@@ -176,4 +200,121 @@ test("revoked backups do not install and independent tabs keep their loaded sess
 	assert.equal(lifetime.aborted, false);
 	assert.equal(await other.forget(), false);
 	assert.match(get(other).error, /Refresh/);
+});
+
+test("pairing credentials are durable before readiness and activation requires the handed-off head", async (t) => {
+	const owner = await createDevice(serverUrl);
+	const receiver = await createDevice(serverUrl);
+	const prepared = {
+		...owner.identity,
+		privateKey: receiver.identity.privateKey,
+		phase: "pairing" as const,
+	};
+	let allowed = false;
+	const enrollment = { sequence: 1, hash: "ac".repeat(32) };
+	const f = await fixture(
+		t,
+		{ registered: async () => true, register: async () => {} },
+		false,
+		async (device, minimum) => {
+			assert.equal(device.key.registrationKey, receiver.key.registrationKey);
+			assert.deepEqual(minimum, enrollment);
+			if (!allowed) {
+				throw new Error("Enrollment is not yet visible");
+			}
+			const initial = await initialChainState(device.initialPublicKey);
+			return {
+				...initial,
+				sequence: 1,
+				head: hexToBytes(enrollment.hash),
+				devices: new Map([
+					...initial.devices,
+					[
+						bytesToHex(device.key.publicKey),
+						{
+							publicKey: device.key.publicKey,
+							authorizedAt: 1,
+							revokedAt: null,
+						},
+					],
+				]),
+			};
+		},
+	);
+	assert.equal(
+		await f.session.preparePairing(prepared, new AbortController().signal),
+		true,
+	);
+	assert.equal(get(f.session).context, null);
+	assert.equal(get(f.session).prepared, true);
+	const restarted = f.reopen();
+	await restarted.load();
+	await restarted.unlock(password);
+	assert.deepEqual(
+		restarted.device().identity.privateKey,
+		receiver.identity.privateKey,
+	);
+	assert.equal(await restarted.activatePairing(enrollment), false);
+	assert.equal(get(restarted).context, null);
+	assert.equal(restarted.device().identity.phase, "pairing");
+	allowed = true;
+	assert.equal(await restarted.activatePairing(enrollment), true);
+	assert.equal(restarted.identity().publicKey, receiver.key.registrationKey);
+	assert.deepEqual(restarted.identity().device.head, enrollment);
+});
+
+test("pending rotation saves both outcomes without replacing the live context and survives activation write failure", async (t) => {
+	const f = await fixture(t, {
+		registered: async () => false,
+		register: async () => {},
+	});
+	await f.session.create({ serverUrl, otc: "invite" });
+	const original = f.session.device();
+	const context = get(f.session).context;
+	assert.ok(context);
+	const replacement = await createDevice(serverUrl);
+	const initial = await initialChainState(original.initialPublicKey);
+	const record = await createRecord(
+		{
+			library: initial.library,
+			sequence: 1,
+			previous: initial.head,
+			epoch: 1,
+			signer: original.key.publicKey,
+			kind: "rotate",
+			effects: [2, replacement.key.publicKey],
+		},
+		original.key.privateCryptoKey,
+	);
+	const rotation = {
+		replacement: replacement.identity.privateKey,
+		secret: crypto.getRandomValues(new Uint8Array(32)),
+		record: record.bytes,
+	};
+	assert.equal(
+		await f.session.prepareRotation(rotation, stateCheckpoint(initial)),
+		true,
+	);
+	assert.equal(get(f.session).context, context);
+	assert.equal(context.signal.aborted, false);
+	assert.equal(get(f.session).pendingRotation, true);
+	const verified = reduceBlock(initial, record);
+	const save = f.persistence.save;
+	const failure = t.mock.method(f.persistence, "save", async () => {
+		throw new Error("Disk full");
+	});
+	assert.equal(await f.session.finishRotation(verified), false);
+	assert.equal(get(f.session).context, context);
+	assert.deepEqual(f.session.device().identity.rotation, rotation);
+	failure.mock.restore();
+	assert.equal(f.persistence.save, save);
+	const restarted = f.reopen();
+	await restarted.load();
+	await restarted.unlock(password);
+	assert.deepEqual(restarted.device().identity.rotation, rotation);
+	assert.equal(await restarted.finishRotation(verified), true);
+	assert.equal(restarted.identity().publicKey, replacement.key.registrationKey);
+	assert.equal(restarted.identity().device.epochs.length, 2);
+	assert.deepEqual(restarted.identity().device.epochs[1]?.[1], rotation.secret);
+	assert.equal(restarted.identity().device.rotation, null);
 });
