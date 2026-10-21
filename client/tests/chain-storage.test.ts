@@ -4,8 +4,10 @@ import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import {
 	CacheConflict,
 	type CachedBlock,
+	clearChainCaches,
 	createChainStorage,
 } from "../src/lib/chain-storage.ts";
+import { createDatabase } from "../src/lib/database.ts";
 
 Object.defineProperty(globalThis, "IDBKeyRange", { value: IDBKeyRange });
 const hash = (n: number) => n.toString(16).padStart(64, "0");
@@ -120,4 +122,23 @@ test("server and library namespaces isolate local history", async (t) => {
 	await a.append(genesis, genesis, [block(1)], signal());
 	assert.equal(await b.head(signal()), null);
 	assert.equal(await c.head(signal()), null);
+});
+
+test("explicit reset clears owned history and pins without closing other tabs or touching settings", async (t) => {
+	const factory = new IDBFactory();
+	const first = createChainStorage("https://one.test", genesis.hash, factory);
+	const other = createChainStorage("https://two.test", hash(9), factory);
+	const settings = createDatabase(factory, "other-application");
+	t.after(first.dispose);
+	t.after(other.dispose);
+	t.after(settings.dispose);
+	await first.ensureHead(genesis, signal());
+	await first.append(genesis, genesis, [block(1)], signal());
+	await other.ensureHead({ sequence: 4, hash: hash(4) }, signal());
+	await settings.update("value", () => "preserved", signal());
+	await clearChainCaches(signal(), factory);
+	assert.equal(await first.head(signal()), null);
+	assert.deepEqual(await first.read(0, signal()), []);
+	assert.equal(await other.head(signal()), null);
+	assert.equal(await settings.read("value", signal()), "preserved");
 });

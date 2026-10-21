@@ -1,6 +1,10 @@
 import { get, type Writable, writable } from "svelte/store";
 import { createChainApi } from "../chain-api.ts";
-import type { Checkpoint } from "../chain-storage.ts";
+import {
+	type Checkpoint,
+	clearChainCaches,
+	createChainStorage,
+} from "../chain-storage.ts";
 import { verifyDevice } from "../device-verification.ts";
 import { errorMessage } from "../error.ts";
 import { prepareRecoveryDevice } from "../library-recovery.ts";
@@ -83,6 +87,7 @@ export interface SessionSnapshot {
 export interface SessionState extends SessionSnapshot {
 	recoveryFile: EncryptedBackup | null;
 	recoveryDownloaded: boolean;
+	recoveryStatus: string;
 	status: "new" | "locked" | "unlocked";
 	serverUrl: string;
 	context: LibraryContext | null;
@@ -160,6 +165,7 @@ class SessionStoreImpl {
 	readonly submitRecovery = this.submitLibraryRecovery.bind(this);
 	readonly reconcileRecovery = this.reconcileLibraryRecovery.bind(this);
 	readonly downloadRecovery = this.downloadCreationRecovery.bind(this);
+	readonly copyRecoveryPassword = this.copyCreationPassword.bind(this);
 	readonly changePassword = this.changeSessionPassword.bind(this);
 	readonly forget = this.forgetIdentity.bind(this);
 	readonly reset = this.resetSession.bind(this);
@@ -189,6 +195,7 @@ class SessionStoreImpl {
 			status: "new",
 			recoveryFile: null,
 			recoveryDownloaded: false,
+			recoveryStatus: "",
 			configured: false,
 			unlocked: false,
 			busy: false,
@@ -577,9 +584,27 @@ class SessionStoreImpl {
 	}
 
 	private forgetIdentity() {
-		return this.sessionAction("forget", (signal) =>
-			this.applyIdentity(null, signal),
-		);
+		return this.sessionAction("forget", async (signal) => {
+			const previous = this.library?.identity;
+			await this.applyIdentity(null, signal);
+			if (previous && globalThis.indexedDB) {
+				const cache = createChainStorage(
+					previous.serverUrl,
+					bytesToHex(previous.library),
+				);
+				try {
+					await cache.clear(signal);
+				} catch (error) {
+					this.publishSession({
+						notice:
+							"Local credentials were removed, but cached history cleanup failed. Reset this client to retry cleanup.",
+					});
+					throw error;
+				} finally {
+					cache.dispose();
+				}
+			}
+		});
 	}
 
 	private resetSession() {
@@ -596,6 +621,15 @@ class SessionStoreImpl {
 				checking: false,
 			});
 			this.lockedState();
+			try {
+				await clearChainCaches(signal);
+			} catch (error) {
+				this.publishSession({
+					notice:
+						"Local credentials were removed, but history cleanup failed. Retry Reset client.",
+				});
+				throw error;
+			}
 		});
 	}
 
@@ -738,7 +772,11 @@ class SessionStoreImpl {
 		this.creationRecovery = null;
 		const artifact = get(this.state).recoveryFile;
 		artifact?.bytes.fill(0);
-		this.publishSession({ recoveryFile: null, recoveryDownloaded: false });
+		this.publishSession({
+			recoveryFile: null,
+			recoveryDownloaded: false,
+			recoveryStatus: "",
+		});
 	}
 	private prepareNewLibrary(serverUrl: string) {
 		return this.sessionAction("prepareCreation", (signal) =>
@@ -761,6 +799,7 @@ class SessionStoreImpl {
 			this.publishSession({
 				recoveryFile: artifact,
 				recoveryDownloaded: false,
+				recoveryStatus: "",
 			});
 		} catch (error) {
 			created.recovery.identity.signingKey.seed.fill(0);
@@ -779,9 +818,28 @@ class SessionStoreImpl {
 			signal.throwIfAborted();
 			this.download(artifact);
 			signal.throwIfAborted();
-			this.publishSession({ recoveryDownloaded: true });
+			this.publishSession({
+				recoveryDownloaded: true,
+				recoveryStatus:
+					"Recovery file download started. Store the password securely and separately; the browser cannot confirm you retained the file.",
+			});
 		});
 	}
+	private copyCreationPassword() {
+		return this.sessionAction("copyRecoveryPassword", async (signal) => {
+			const file = get(this.state).recoveryFile;
+			if (!file) {
+				throw new Error("No recovery password is available.");
+			}
+			await navigator.clipboard.writeText(file.password);
+			signal.throwIfAborted();
+			this.publishSession({
+				recoveryStatus:
+					"Recovery password copied. Store it securely and separately from the file.",
+			});
+		});
+	}
+
 	private resumeNewLibrary(file: Blob, password: string) {
 		return this.sessionAction("resumeCreation", async (signal) => {
 			this.unlockedSession();

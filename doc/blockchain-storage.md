@@ -546,7 +546,15 @@ polling, focus checks, or application locks. IndexedDB compare-and-update preven
 head regression; a stale tab must reconcile a newer stored prefix before writing
 its own batch. Reset/forget explicitly disposes decrypted resources and removes
 that session's stored identity/history; explain that removing the trusted head
-also removes its local rollback protection.
+also removes its local rollback protection. Forget removes the protected identity
+first, then clears its current-format chain cache. Reset removes local credentials
+and clears all current-format `i2nclip-chain:<origin>:<library>` caches, including
+while locked, using IndexedDB database enumeration and transactions rather than
+waiting for other tabs to close database connections. Failed credential removal
+must not clear trusted history. If history cleanup fails after credentials were
+removed, report the partial outcome and offer Reset again; do not claim success.
+Other live tabs retain their observed in-memory head and reject rollback even if
+the shared durable cache is cleared.
 
 ### Verification and synchronization
 
@@ -792,7 +800,7 @@ make an intermediate branch independently deployable.
 | 6 | Implement registration, signer-to-library resolution, append, pinned pagination, and quota responses | Focused Rust authentication/API/append-race tests |
 | 7 | Implement hash-addressed blob staging, inventory publication, expiration, and transactional purge | Focused blob, accounting, maintenance, and race tests |
 | 8 | Implement IndexedDB records/head transactions and the session-owned synchronizer | Focused storage, cancellation, rollback, and concurrent-tab tests |
-| 9 | Implement device identities, durable initialization candidates, and local device credentials | Session, identity, initialization retry, and backup tests |
+| 9 | Implement device identities, durable initialization candidates, and local device credentials | Session, identity, initialization retry, and recovery-file download tests |
 | 10 | Implement encrypted manifests, separate metadata/thumbnails, sequential staged upload, and hash-based reads | Content, metadata, download, and upload-store tests |
 | 11 | Cut library/tag/media/deeplink workflows over to the selected materialized-view rendering contract; remove obsolete server media/tag routes and indexes | Relevant store/API tests, selection isolation tests, backend static checks, frontend checker/build |
 | 12 | Implement fresh-device pairing, durable receiver preparation, trusted-head handoff, and relay phase/size changes | Real OPAQUE unit tests, pairing-store tests, focused Rust relay tests |

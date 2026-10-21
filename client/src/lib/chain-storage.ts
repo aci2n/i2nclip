@@ -309,3 +309,30 @@ class ChainStorageImpl implements ChainStorage {
 		);
 	}
 }
+
+/** Explicit client reset clears current-format history without deleting open databases. */
+export async function clearChainCaches(
+	signal: AbortSignal,
+	factory: IDBFactory = globalThis.indexedDB,
+) {
+	if (!factory) {
+		return;
+	}
+	signal.throwIfAborted();
+	const databases = await factory.databases();
+	signal.throwIfAborted();
+	for (const database of databases) {
+		const match = /^i2nclip-chain:(.+):([0-9a-f]{64})$/.exec(
+			database.name ?? "",
+		);
+		if (!match) {
+			continue;
+		}
+		const storage = createChainStorage(match[1], match[2], factory);
+		try {
+			await storage.clear(signal);
+		} finally {
+			storage.dispose();
+		}
+	}
+}

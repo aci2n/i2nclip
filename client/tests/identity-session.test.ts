@@ -389,3 +389,53 @@ test("failed recovery downloads retain the same artifact and cannot enable regis
 	assert.equal(get(session).recoveryDownloaded, false);
 	assert.equal(await session.create({ serverUrl, otc: "invite" }), false);
 });
+
+test("failed credential removal preserves trusted history and successful forgetting clears it", async (t) => {
+	const { IDBFactory, IDBKeyRange } = await import("fake-indexeddb");
+	const { createChainStorage } = await import("../src/lib/chain-storage.ts");
+	const descriptor = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+	const range = Object.getOwnPropertyDescriptor(globalThis, "IDBKeyRange");
+	Object.defineProperty(globalThis, "indexedDB", {
+		value: new IDBFactory(),
+		configurable: true,
+	});
+	Object.defineProperty(globalThis, "IDBKeyRange", {
+		value: IDBKeyRange,
+		configurable: true,
+	});
+	t.after(() => {
+		if (descriptor) {
+			Object.defineProperty(globalThis, "indexedDB", descriptor);
+		} else {
+			Reflect.deleteProperty(globalThis, "indexedDB");
+		}
+		if (range) {
+			Object.defineProperty(globalThis, "IDBKeyRange", range);
+		} else {
+			Reflect.deleteProperty(globalThis, "IDBKeyRange");
+		}
+	});
+	const f = await fixture(t, {
+		registered: async () => false,
+		register: async () => {},
+	});
+	await registerSession(f.session, { serverUrl, otc: "invite" });
+	const device = f.session.device();
+	const cache = createChainStorage(
+		serverUrl,
+		bytesToHex(device.identity.library),
+	);
+	t.after(cache.dispose);
+	await cache.ensureHead(device.identity.head, new AbortController().signal);
+	const failure = t.mock.method(f.persistence, "save", async () => {
+		throw new Error("Disk full");
+	});
+	assert.equal(await f.session.forget(), false);
+	assert.deepEqual(
+		await cache.head(new AbortController().signal),
+		device.identity.head,
+	);
+	failure.mock.restore();
+	assert.equal(await f.session.forget(), true);
+	assert.equal(await cache.head(new AbortController().signal), null);
+});
