@@ -12,7 +12,7 @@ import { deferred } from "./helpers.ts";
 import { registerSession } from "./library-fixture.ts";
 import { memoryStorage } from "./memory-database.ts";
 
-async function fixture(t: test.TestContext) {
+async function fixture(t: test.TestContext, uninitialized = false) {
 	const session = createSession({
 		persistence: createPersistence(memoryStorage().connect()),
 		download: () => {},
@@ -29,7 +29,7 @@ async function fixture(t: test.TestContext) {
 	assert.ok(context);
 	const initial = await initialChainState(context.identity.genesis);
 	const state = writable<ChainView>({
-		live: initial,
+		live: uninitialized ? null : initial,
 		syncing: false,
 		mutating: false,
 		error: "",
@@ -38,7 +38,10 @@ async function fixture(t: test.TestContext) {
 	const chain: ChainStore = {
 		subscribe: state.subscribe,
 		at: async () => initial,
-		sync: async () => initial,
+		sync: async () => {
+			state.update((value) => ({ ...value, live: initial }));
+			return initial;
+		},
 		append: async () => {
 			throw new Error("Unused");
 		},
@@ -255,4 +258,31 @@ test("bounded eligible compression can bring an oversized image under quota befo
 	);
 	assert.equal(prepared, 2);
 	assert.equal(uploaded, 1);
+});
+
+test("a capture received on unlock waits for initial verified materialization", async (t) => {
+	const f = await fixture(t, true);
+	let uploads = 0;
+	assert.equal(get(f.view).selected, null);
+	const batch = createChainUploads(
+		f.session,
+		f.view,
+		{
+			upload: async () => {
+				uploads++;
+				return { id: "ab".repeat(32) };
+			},
+		},
+		{ quota: async () => quota },
+		f.preferences,
+		f.context.signal,
+		{ prepare: async ({ file }) => file, thumbnail: async () => null },
+	);
+	t.after(batch.dispose);
+	assert.equal(
+		await batch.upload([new File(["pending"], "capture.txt")]),
+		true,
+	);
+	assert.equal(uploads, 1);
+	assert.ok(get(f.view).selected);
 });

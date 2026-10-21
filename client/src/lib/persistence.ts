@@ -47,7 +47,7 @@ class PersistenceImpl {
 			value.salt.length !== 16
 		) {
 			throw new Error(
-				"Invalid saved identity. Reset this client or restore a device backup.",
+				"Invalid saved identity. Reset this client, then re-pair or restore the offline recovery file.",
 			);
 		}
 		return value;

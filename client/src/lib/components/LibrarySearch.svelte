@@ -63,6 +63,9 @@ label {
 	gap: 0.5rem;
 }
 .suggestions button {
+	max-width: 100%;
+	overflow-wrap: anywhere;
+	text-align: left;
 	padding: 0.125rem 0.375rem;
 	min-height: 2rem;
 	font-size: 0.875rem;

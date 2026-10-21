@@ -400,7 +400,7 @@ mod tests {
             "http://i2nclip.test".into(),
         );
         let method = Method::GET;
-        let uri = Uri::from_static("/api/media");
+        let uri = Uri::from_static("/api/blocks");
         let key = client_crypto::from_seed([1u8; 32]);
         let authorization = client_crypto::authorization(
             &key,

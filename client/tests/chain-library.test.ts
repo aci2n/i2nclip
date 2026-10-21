@@ -326,3 +326,11 @@ test("an editor's old source revision is rejected before staging and requires ex
 	await f.view.index();
 	assert.equal(get(f.library).cards[0].metadata?.name, "draft.txt");
 });
+
+test("invalid private links fail locally before chain or metadata reads", async (t) => {
+	const f = await fixture(t);
+	const sync = t.mock.method(f.chain, "sync");
+	assert.equal(await f.library.reveal("bad"), false);
+	assert.equal(sync.mock.callCount(), 0);
+	assert.equal(get(f.library).status, "Invalid media link.");
+});

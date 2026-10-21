@@ -140,7 +140,15 @@ class ChainUploadsImpl {
 		}));
 	}
 	private async uploadFiles(files: File[], extra: Metadata = {}) {
-		if (!files.length || get(this.state).uploading || !this.allowed()) {
+		if (
+			!files.length ||
+			get(this.state).uploading ||
+			this.signal.aborted ||
+			!get(this.session).context ||
+			get(this.view).historical ||
+			get(this.session).pendingRotation ||
+			(get(this.view).selected && !this.allowed())
+		) {
 			return false;
 		}
 		this.batch = new AbortController();
