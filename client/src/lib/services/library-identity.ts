@@ -88,9 +88,13 @@ export async function openLocalIdentity(
 	sealed: unknown,
 	key: CryptoKey,
 	signal: AbortSignal,
-): Promise<OpenedIdentity> {
+): Promise<OpenedIdentity | null> {
 	const plaintext = await openBytes(key, sealed, LOCAL_PURPOSE);
 	try {
+		if (plaintext.length === 1 && plaintext[0] === 0xc0) {
+			signal.throwIfAborted();
+			return null;
+		}
 		return await LibraryIdentityImpl.open(plaintext, signal);
 	} finally {
 		plaintext.fill(0);
@@ -155,6 +159,15 @@ export async function openPairingIdentity(
 	} finally {
 		plaintext.fill(0);
 	}
+}
+export async function sealEmptyLocalIdentity(
+	key: CryptoKey,
+	signal: AbortSignal,
+): Promise<SealedCredentials> {
+	signal.throwIfAborted();
+	const sealed = await sealBytes(key, encode(null), LOCAL_PURPOSE);
+	signal.throwIfAborted();
+	return sealed;
 }
 export function sealLocalIdentity(
 	identity: LibraryIdentity,

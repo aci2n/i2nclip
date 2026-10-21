@@ -122,6 +122,7 @@ test("local, backup and pairing exports preserve one identity and checkpoint", a
 	const key = await aesKey();
 	const sealed = await sealLocalIdentity(created.identity, head, key, signal());
 	const local = await openLocalIdentity(sealed, key, signal());
+	assert(local);
 	t.after(local.identity.dispose);
 	const backup = await sealLibraryBackup(local.identity, head, signal());
 	assert.equal(backup.password.length, 43);
