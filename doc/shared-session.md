@@ -1,3 +1,5 @@
+> Historical design note. Chain, credential, storage, and API details are superseded by [blockchain storage](blockchain-storage.md), [offline recovery](library-recovery.md), and [the current protocol](protocol.md).
+
 # Shared unlocked sessions
 
 Historical specification, superseded by [IndexedDB sessions](indexeddb-session.md).

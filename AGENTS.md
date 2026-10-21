@@ -40,7 +40,7 @@
 - Allow independent tabs; each loads its session once at startup from IndexedDB. Other tabs retain live access until closed or refreshed. Do not add cross-tab notifications, polling, focus checks, or locks. Reject overlapping session and media-item mutations with local busy state.
 - Media items own decrypted bytes and object URLs. Abort requests and revoke URLs on disposal; stale downloads must not create URLs or open save dialogs.
 - Check local file size before reading bytes. Cap content downloads while streaming; do not trust Content-Length alone.
-- Preserve the encryption protocol when reorganizing code. Rust and JavaScript share `client/tests/test-vectors.json`; v2 uploads use random file IDs and content keys wrapped in immutable descriptors, metadata binds its file ID, and downloads authenticate each complete chunk with file/position/dimension AAD before exposing plaintext.
+- Preserve the encryption protocol when reorganizing code. Follow `doc/blockchain-storage.md` and `doc/library-recovery.md`: native device signing keys stay local, the offline recovery key alone authorizes epoch resets, and clients verify signed hash-linked records before materializing UI state. Fixed frames use positional MessagePack arrays. Immutable encrypted manifests contain explicit ciphertext chunk hashes; metadata and thumbnails are separately encrypted purgeable objects. Downloads authenticate each complete v2 chunk with file/position/dimension AAD before exposing plaintext. Keep Rust/JavaScript signing, chain, recovery, and chunk vectors aligned.
 
 ## UI conventions and visual review
 

@@ -1,3 +1,5 @@
+> Historical design note. Chain, credential, storage, and API details are superseded by [blockchain storage](blockchain-storage.md), [offline recovery](library-recovery.md), and [the current protocol](protocol.md).
+
 # PostgreSQL process resource profile
 
 `make test-profile` is an optional Linux/Podman check. It prepares release-built server/admin helpers and its debug database helper, owns a disposable PostgreSQL container, and uses a fresh database. The server helper binds `127.0.0.1:0`; Node learns its actual origin from the readiness line. No development port must be free.

@@ -1,4 +1,9 @@
-# Project documentation
+# Documentation
+
+Current architecture and wire contracts: [chain storage](blockchain-storage.md), [offline recovery](library-recovery.md), and [protocol](protocol.md). Read these before changing persistence, keys, pairing, or API behavior.
+
+Other design notes record earlier changes. Where they conflict with these specifications, the current chain specifications take precedence.
+
 
 - [Protocol](protocol.md): HTTP API, signatures, frames, quotas, concurrency, and transfer limits.
 - [Cryptography](crypto.md): keys, encrypted formats, and security boundaries.

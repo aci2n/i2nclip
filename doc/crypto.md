@@ -1,3 +1,5 @@
+> Historical design note. Chain, credential, storage, and API details are superseded by [blockchain storage](blockchain-storage.md), [offline recovery](library-recovery.md), and [the current protocol](protocol.md).
+
 # Cryptography and security boundaries
 
 The browser implements client cryptography in `client/src/lib/protocol/crypto.ts`. Rust `src/crypto.rs` contains only server verification, hashing, sealed-blob shape checks, and supporting encoding/time helpers. Test-only `src/reference_crypto.rs` implements identities, encryption/decryption, tag derivation, and request signing for protocol fixtures and integration tests. Its AES-GCM, HKDF, HMAC, and Unicode normalization dependencies are dev dependencies. Shared vectors in `client/tests/test-vectors.json` check byte-for-byte agreement; the production server does not compile the reference helpers.

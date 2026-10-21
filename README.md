@@ -1,54 +1,72 @@
 # i2nclip
 
-An encrypted media library. The browser encrypts files, filenames, tags, and previews before upload. The Rust server stores ciphertext, public keys, and tag fingerprints.
+An encrypted media library with a client-verified, signed append-only history.
+The server stores ciphertext and public authorization/storage effects; filenames,
+tags, thumbnails, manifests, and file contents are encrypted by the browser.
 
 ## Set up a library
 
-Open the web app and create a master password of at least eight characters. In Settings, choose **Create** and enter an invitation code from the administrator. Server configuration is in a disclosure and defaults to the app's origin.
+Create a local master password, then choose **Prepare library** in Settings.
+Download the generated recovery file and store its generated password securely
+and separately. Both are required for recovery. Registration stays disabled
+until the download starts; enter an administrator invitation to create the library.
+The server defaults to the app's origin, with configuration in a disclosure.
 
-Download a recovery file before uploading. Its independently chosen recovery password encrypts your library identity and server URL. Keep the file and its password: the server cannot recover either. **Restore** is available when this client has no library configured.
+Each device has its own local signing key and full library authority. Connect a
+new device through pairing, compare both verification codes, and approve the
+transfer. Pairing enrolls a fresh receiver key and transfers epoch secrets plus a
+trusted chain checkpoint. Device keys cannot be exported. A lost device must
+re-pair; if all devices are lost, **Restore** uses the offline recovery file to
+verify history and prepare an epoch reset. Only that fixed recovery authority can
+reset epochs. A reset revokes every old device and authorizes one fresh initial
+device atomically. Old epoch data must be assumed already copied by revoked devices.
 
-To connect another device, open **Connect another device** in Settings on the unlocked device and create a pairing code. On the new device, create its master password, choose **Pair device**, and enter the code using the same server. Compare both verification codes before choosing **Codes match — send library**. Pairing gives full access to the same library without another invitation. Codes expire after two minutes; HTTPS is required except on loopback development servers. See [device pairing](doc/pairing.md).
+Each browser tab loads its protected device credential once from IndexedDB.
+Remembered access is optional; Lock ends that tab's resources and clears its
+remembered unlock key. Other open tabs retain their loaded access. There are no
+cross-tab notifications, polling, or locks. **Forget device** removes local device
+credentials and its history cache; **Reset client** removes local credentials and
+all current-format history caches. These actions remove local rollback protection
+but leave server data intact. There are no legacy format readers or migrations.
 
-Each browser profile saves one password-protected library identity in IndexedDB. Each tab loads its own session at startup. Select **Remember this device** during setup or unlock to keep access across refreshes and browser restarts; otherwise each new or refreshed tab needs the master password. **Lock** clears remembered access and ends access in that tab. Other open tabs keep their loaded access until closed or refreshed; there are no cross-tab change notifications. **Forget library** removes the local identity and remembered access while keeping the master password; **Reset** removes the saved session. Neither action deletes server files. This storage format starts fresh: old localStorage data is ignored, so reconnect existing installations using a recovery file or paired device.
+## Browse, edit, and recover history
 
-Each file has an **Link** link at `?page=media&id=<file id>`. Bookmark or copy that app URL to open the file directly on a device connected to the same library. The viewer inherits unlocked access from another tab or asks for your master password. Images, audio and video use native browser elements; text is shown safely as text, and other files offer Download. The URL contains no keys and grants no access by itself. See [private media deeplinks](doc/deeplinks.md).
+The client verifies signatures, authority transitions, encryption, and hash links
+before applying operations. It stores encrypted records and its latest trusted
+head in IndexedDB, while materialized state and search indexes stay in memory.
+An incomplete metadata index is reported explicitly rather than as no matches.
+Search files locally by filename or tag; edits use the selected source head and
+conflicts require explicit review and retry.
 
-The server allows one active upload and two active content chunk requests per library
-key, alongside global limits of four uploads and sixteen chunk requests per server
-instance. Further transfers wait; devices sharing a key share its permits.
+Choose a block to browse read-only history. The UI is a projection of that
+selected materialized state. **Live view** returns to current state. Upload,
+metadata edits, deletion, and other file writes are disabled in historical views.
+Current quota and device authority remain operational state and do not rewind.
 
-Uploads run sequentially and continue after individual failures. Failures show status messages; select failed files again through Upload to try again. Upload status survives navigation but is not saved across reloads. After an uncertain upload response, check the library before retrying to avoid duplicate copies.
+Delete moves a file to **Deleted files**, where it can be restored. **Permanently
+delete** appends an explicit purge and removes all retained content, metadata,
+and thumbnail versions. Purged data is unavailable even in historical views.
+Deletion alone does not free storage. The encrypted operation history remains;
+plaintext metadata and file bytes are stored separately so they can be purged.
 
-Select, paste, or drop files to upload immediately. Settings has one device-local
-**Compress images to WebP** checkbox, enabled by default. JPEG, PNG and BMP files
-compress at quality 85 without resizing; only smaller WebP output replaces the
-original. Unsupported or failed compression keeps the original with a notice.
-Other formats, including videos, upload unchanged. Eligible oversized images may
-compress first; the selected output must fit the file limit. Upload progress and
-completion show the actual saved filename.
+Uploads run sequentially, continue after individual failures, and survive view
+navigation. Select failed files again to retry. Files use random IDs and content
+keys; an immutable encrypted manifest lists explicit ciphertext hashes in chunk
+order. Mutable metadata stores the thumbnail reference. Content is encrypted in
+4 MiB slices, each fully authenticated before exposing plaintext. Native media
+previews and downloads use a service worker on the app origin; the owning tab
+must remain open and unlocked. Plaintext is not saved in application caches.
 
-Search by adding tag chips with Enter or choosing a local suggestion. All selected tags must match. Remove a chip to update results, or use **Clear search** to restore all files. **Upload** opens the file picker independently of the search. Progress
-appears below the toolbar; completed filenames expand from the summary, while
-failures stay visible.
+Compression preferences remain local. Supported images up to 32 MiB compress to
+WebP only when smaller; large files skip image compression and image/audio
+thumbnail extraction. Native video thumbnails have a bounded decoder deadline.
+Uploads add ordinary editable automatic tags. Filename and tag edits are inline;
+failed saves retain their draft. Preview text is escaped and bounded to 256 KiB.
 
-Open an image, text/code file, or play audio/video to preview it. Text is shown
-read-only, with a labeled 256 KiB preview limit; Download saves the full file.
-Use the arrow buttons or Left/Right keys to browse previewable files in the loaded results.
-To load another results page, close the preview and choose More. A centered
-percentage appears on the card and in the preview while content downloads.
-Browsing remains available during loading; switching items or closing cancels the
-pending preview download. Completed content stays cached. Escape closes the preview.
-On touch screens, swipe left/right to browse and swipe up to close media previews.
-Text previews retain vertical scrolling; close them with the close button.
-
-Tags edit inline: **+** opens an input, Enter saves, Escape cancels, and **×** removes a tag. Failed edits retain their draft. Tag controls and card actions have larger touch targets on narrow screens; preview arrows sit below the content.
-
-Click a filename to edit it. Enter saves its metadata; blur exits without saving, and Escape cancels the draft.
-
-The project is greenfield; there are no client data or recovery-format migrations.
-
-The navigation contains Library and Settings. **About**, at the bottom of Settings, opens version and project information.
+The root workspace owns uploads, downloads, quota, and verification across
+Library/Settings navigation. Private `#/media/<id>` links contain no keys and
+require a connected device. The default deployment serves the client and API on
+the same domain.
 
 ## Firefox extension
 
@@ -78,56 +96,33 @@ remain in the web app. Pending files exist only in memory and disappear on reloa
 tab close, or identity/session changes. If a handoff fails without a reply,
 check the app before retrying. See the [scope and ownership specification](doc/extension-bridge.md).
 
-Administrators issue invitations with the Rust executable:
+## Administration and storage
 
 ```sh
 i2nclip otc issue
 i2nclip otc issue --ttl-secs 3600
 i2nclip otc issue --max-bytes 2147483648 --max-files 20000
 i2nclip key set-limits PUBLIC_KEY --max-bytes 536870912 --max-files 10000
-podman exec i2nclip i2nclip otc issue
 ```
 
-Settings → **Your library** shows the base64url public key (usable as PUBLIC_KEY
-in the CLI) and storage/file usage, including reservations for pending uploads.
-Quota loads with the workspace and refreshes in Settings; failed reads offer Retry.
+Libraries default to 512 MiB of encrypted blob storage and 10,000 retained files.
+Limits and counters belong to the library, shared by its devices. Quota includes
+staging and retained deleted files; purge or expired staging releases capacity.
+Block-history bytes are reported separately. Lowering limits below current usage
+is rejected. Leave disk headroom for block history, indexes, WAL, and dead tuples.
 
-Each key defaults to 512 MiB (536,870,912 encrypted-content bytes) and 10,000
-files. Increase total storage capacity to support gigabyte files. There is no
-per-file size policy. Both quota flags are required for `key set-limits`; values
-and derived content sizes must fit JavaScript's safe integer range
-(0–9007199254740991). Lowering quota below current usage is rejected.
+The server bounds transfers to one upload and two downloads per device, with
+global limits of four uploads and sixteen downloads. Downloads release database
+connections before sending owned ciphertext. Staged uploads expire after 24 idle
+hours; committed files are never automatically collected. Startup runs embedded
+SQLx migrations from `sql/001_init.sql`. This is a fresh-database baseline; drop
+pre-redesign databases. Keep applied migrations unchanged for future schema work.
 
-The client reads and encrypts 4 MiB slices sequentially. Files above 32 MiB skip
-image compression, image thumbnails and audio artwork extraction. Video thumbnails
-use the native browser decoder at any file size, with an eight-second deadline. Each upload reserves
-its complete encrypted size and a file slot before sending chunks. A file appears
-only when all chunks arrive. Failures restart with a fresh ID/key; abandoned
-partial uploads expire after 24 idle hours during hourly maintenance.
-
-Downloads and native image/audio/video previews use a service worker on the app
-origin (HTTPS or localhost), decrypting authenticated chunks in the owning page.
-Library and deeplink viewers share this path. The owning tab must remain open
-and unlocked; downloads survive view navigation. Inline range responses are bounded
-at 4 MiB. Native browser decoders may need their own media memory, especially for
-large images. Ciphertext remains privately HTTP-cacheable; plaintext is not saved
-in application caches. Deletion frees capacity automatically.
-
-Database checks enforce used bytes and file count at or below their limits.
-Limits and current usage live in a separate `key_quotas` row per public key;
-`registered_keys` remains key-only. Uploads reserve bytes and a file slot, and
-deletes release them, in the same transaction as the media change. Each quota
-check reads one row, without summing the library. Metadata edits do not change usage.
-Quota failures return HTTP 409 with `Library storage limit reached.` beside the
-upload. Sizes include encryption overhead, but exclude metadata and PostgreSQL
-storage overhead. Leave disk headroom for metadata, indexes, WAL, and dead tuples.
-
-Startup runs embedded SQLx migrations from `sql/`, beginning with `001_init.sql`,
-before accepting requests. Applied versions and checksums are recorded in
-`_sqlx_migrations`; restarts skip applied SQL and preserve limits and counters
-without scanning media. Add future changes as new numbered files; keep applied
-migrations unchanged. The schema is consolidated into one fresh-database baseline;
-databases from before this rebuild must be dropped and recreated. See [Database migrations](doc/database-migrations.md).
+The authoritative design is in [chain storage](doc/blockchain-storage.md) and
+[offline recovery](doc/library-recovery.md). The server is untrusted for content
+and freshness: local pins detect rollback, and pairing supplies a trusted head to
+new devices. A server can still deny service or withhold data. Same-origin client
+code delivery remains part of the trust boundary.
 
 ## Build and run
 
@@ -160,7 +155,7 @@ npm run dev --prefix client
 
 `DEV_PORT`, `DEV_DB_PORT`, and `DEV_ORIGIN` override development addresses; `DEV_DB_URL` overrides the database URL. For a separate Vite server, set `DEV_ORIGIN=http://localhost:5173`. Vite proxies `/api/` to port 8080, configurable through `I2N_API_TARGET`.
 
-PostgreSQL holds ciphertext, metadata, keys, invitations, nonces, and tags. Uploads and metadata changes commit atomically. Downloads release database connections before sending owned bytes. The eight-connection SQLx pool has a five-second acquisition timeout. Startup applies the embedded schema transactionally once; maintenance removes expired invitations and nonces on startup and hourly. See [protocol and backend documentation](doc/README.md).
+PostgreSQL holds encrypted blocks, hash-addressed ciphertext blobs, public principals, invitations, and nonces. Chain append, authority transitions, storage effects, and counters commit atomically. Downloads release database connections before sending owned bytes. The eight-connection SQLx pool has a five-second acquisition timeout. Startup applies the embedded schema transactionally once; maintenance removes expired invitations and nonces on startup and hourly. See [protocol and backend documentation](doc/README.md).
 
 ## Verification
 
@@ -181,8 +176,3 @@ Formatting commands use stable Rust 1.99.0 / rustfmt 1.10.0, with import groupin
 
 Client Makefile targets prepare locked dependencies automatically. Browser tests build their Rust helpers and bind isolated listeners to loopback port 0. PostgreSQL uses a disposable container with a random host port unless an administrator URL is explicitly supplied. See [test preparation and isolation](doc/test-pipeline.md) for fresh-clone prerequisites and commands.
 
-Uploads receive up to 40 automatic tags from their stored media type, format and filename words. They are ordinary editable tags; edits never regenerate them. Each file allows 64 tags total. Cards show six tags initially; **Show all tags** reveals the rest. Existing files are unchanged.
-
-The authenticated tag catalog returns opaque search tokens with encrypted labels. Labels are decrypted and verified only in the unlocked client, held in memory, and refreshed after changes. Every tag has a required encrypted label. No legacy-label backfill runs. Deploy the updated client and server together when changing the tag frame format.
-
-Search and tag editing suggest existing library tags as you type. Choose a suggestion to search or save immediately; Enter also accepts a new tag. Invalid catalog entries are skipped with a warning, while valid suggestions remain available.

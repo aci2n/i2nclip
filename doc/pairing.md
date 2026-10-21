@@ -1,3 +1,5 @@
+> Historical design note. Chain, credential, storage, and API details are superseded by [blockchain storage](blockchain-storage.md), [offline recovery](library-recovery.md), and [the current protocol](protocol.md).
+
 # Device pairing
 
 The web app can copy an unlocked library identity to a client with no library configured. Both clients unlock their own password-protected local state first. Pairing copies the full identity: there is no per-device revocation or restricted sharing. Media encryption, request signatures, registration, and pairing packets retain their formats. Recovery independently protects one identity; see [client ownership](session.md).
