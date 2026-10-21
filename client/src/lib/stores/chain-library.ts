@@ -667,9 +667,8 @@ class ChainLibraryImpl {
 		this.failures.clear();
 	}
 }
-function saveDownload(url: string, name: string) {
+function saveDownload(url: string) {
 	const anchor = document.createElement("a");
 	anchor.href = url;
-	anchor.download = name;
 	anchor.click();
 }
