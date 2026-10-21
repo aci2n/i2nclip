@@ -186,6 +186,12 @@ before submission. Candidate-signed HTTP submission permits completion after
 recovery secrets have been wiped from memory. Activation requires verification
 of the exact accepted enrollment, not merely a successful ping.
 
+The minimal restore flow prepares and submits enrollment only. After verified
+activation, rotation is an explicit separate action using the recovery file.
+This restores control without replacing membership or automatically advancing the
+epoch. Recovery-signed revocations remain explicit user-selected operations, and
+are needed to free capacity when the authorized device limit is full.
+
 Rotation is a separate operation after enrollment. It has envelopes for **all**
 devices authorized at its parent and no recovery-device field or membership effect:
 

@@ -17,13 +17,14 @@ export function pairingBundle(
 	identity: DeviceIdentity,
 	parent: Checkpoint,
 	enrollment: Bytes,
+	epochs: DeviceIdentity["epochs"],
 ) {
 	return [
 		1,
 		identity.serverUrl,
 		identity.genesis,
 		identity.library,
-		identity.epochs,
+		epochs,
 		[parent.sequence, hexToBytes(parent.hash)],
 		enrollment,
 	];
@@ -65,6 +66,7 @@ export async function pairedDevice(
 		!sameBytes(body.previous, parent.hash) ||
 		!sameBytes(body.library, library) ||
 		!sameBytes(body.effects[0] as Bytes, privateKey.public_key) ||
+		!sameBytes(body.effects[1] as Bytes, encryption.publicKey) ||
 		body.epoch !== input[4].length ||
 		sameBytes(body.signer, genesis.recoveryPublicKey)
 	) {
@@ -81,6 +83,7 @@ export async function pairedDevice(
 		phase: "pairing",
 		rotation: null,
 		registration: null,
+		recovery: null,
 	});
 	try {
 		return await decodeDevice(encoded);

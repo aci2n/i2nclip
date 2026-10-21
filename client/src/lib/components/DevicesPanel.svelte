@@ -33,11 +33,11 @@ const revoked = $derived(
 );
 </script>
 <details class="panel" open>
-	<summary><h2>Devices and epoch reset</h2></summary>
+	<summary><h2>Devices and epoch rotation</h2></summary>
 	<div class="stack content">
 		<p>
 			Every authorized device has full file access. Only the offline recovery
-			key can reset the encryption epoch.
+			key can rotate the encryption epoch.
 		</p>
 		{#if revoked}
 			<p class="error" role="alert">
@@ -81,33 +81,34 @@ const revoked = $derived(
 			{/each}
 		</ul>
 		<p>
-			Revocation blocks server access but cannot erase copied keys. Reset the
-			epoch to exclude every old device from future encryption keys; then pair
-			the devices you keep.
+			Revocation blocks server access but cannot erase copied keys. Revoke
+			devices before rotating the epoch to exclude them from future encryption
+			keys. Authorized devices receive the new key without re-pairing.
 		</p>
 		{#if state.rotationPrepared}
 			<p>
-				A recovery-approved reset is saved locally. Submission revokes every old
-				device and makes this client's fresh replacement key the initial device.
+				A recovery-approved rotation is saved locally. Submission delivers the
+				new epoch key to every currently authorized device and preserves
+				membership.
 			</p>
 			<div class="actions">
 				<button type="button" disabled={busy || state.busy} onclick={onsubmit}>
-					Submit epoch reset
+					Submit epoch rotation
 				</button><button
 					type="button"
 					class="secondary"
 					disabled={busy || state.busy}
 					onclick={onreconcile}
 				>
-					Check reset outcome
+					Check rotation outcome
 				</button>
 			</div>
 		{/if}
 		<RecoveryImport
 			busy={busy || state.busy}
 			error=""
-			label="Prepare epoch reset"
-			description="Unlock the recovery file to prepare a reset against the current head. The recovery key is used temporarily and is not saved on this device."
+			label="Prepare epoch rotation"
+			description="Unlock the recovery file to prepare a rotation against the current head. The recovery key is used temporarily and is not saved on this device."
 			onrestore={onprepare}
 		/>
 		{#if state.error}

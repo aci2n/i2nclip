@@ -90,22 +90,22 @@ const phase = $derived(
 		>
 			Discard prepared library
 		</button>
-	{:else if phase === "resetting"}
-		<h3>Recovery reset prepared</h3>
+	{:else if phase === "recovering"}
+		<h3>Recovery enrollment prepared</h3>
 		<p>
-			History has been verified. Submitting this reset revokes all previous
-			devices and authorizes this device. Existing file history is retained.
+			History has been verified. Submit this enrollment to authorize this
+			device. Existing devices and file history retain their current state.
 		</p>
 		<div class="actions">
 			<button type="button" disabled={busy} onclick={session.submitRecovery}>
-				Submit recovery reset
+				Submit recovery enrollment
 			</button><button
 				type="button"
 				class="secondary"
 				disabled={busy}
 				onclick={session.reconcileRecovery}
 			>
-				Check reset outcome
+				Check enrollment outcome
 			</button>
 		</div>
 		<details>
@@ -113,8 +113,8 @@ const phase = $derived(
 			<RecoveryImport
 				{busy}
 				error=""
-				label="Prepare another reset"
-				description="If the chain changed, unlock the recovery file again to prepare a fresh reset."
+				label="Prepare another enrollment"
+				description="If the chain changed, unlock the recovery file again to prepare a fresh enrollment."
 				onrestore={session.restore}
 			/>
 		</details>
@@ -194,7 +194,7 @@ const phase = $derived(
 				{busy}
 				error=""
 				onrestore={session.restore}
-				description="Unlock the offline recovery file to verify history and prepare a reset. This works without any authorized device."
+				description="Unlock the offline recovery file to verify history and prepare this device’s enrollment. This works without any authorized device."
 			/>
 		{:else}
 			<PairingReceive

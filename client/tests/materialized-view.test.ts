@@ -43,6 +43,9 @@ function chain(initial: ChainState) {
 		storageError: "",
 	});
 	const store: ChainStore = {
+		keyring() {
+			throw new Error("Key delivery is not used by this fixture.");
+		},
 		subscribe: state.subscribe,
 		async at() {
 			throw new Error("Historical replay is not used by this fixture.");

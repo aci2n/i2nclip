@@ -35,6 +35,7 @@ async function fixture() {
 	const recovery = await createLibraryRecovery(
 		"https://example.test",
 		first.publicKey,
+		first.publicKey,
 	);
 	const initial = reduceBlock(
 		await initialChainState(recovery.recovery.genesis.bytes),
@@ -76,7 +77,30 @@ async function fixture() {
 			{
 				...header(state, signer),
 				kind,
-				effects: kind === "rotate" ? [epoch, target, filled(12)] : [target],
+				effects:
+					kind === "rotate"
+						? [
+								epoch,
+								filled(12),
+								[...state.devices.values()]
+									.filter((device) => device.revokedAt === null)
+									.sort((a, b) =>
+										bytesToHex(a.publicKey).localeCompare(
+											bytesToHex(b.publicKey),
+										),
+									)
+									.map(
+										(device) =>
+											[
+												device.publicKey,
+												filled(7),
+												new Uint8Array(48),
+											] as const,
+									),
+							]
+						: kind === "enroll"
+							? [target, target]
+							: [target],
 			},
 			signer.privateCryptoKey,
 		);
@@ -187,7 +211,7 @@ test("invalid storage effects and lifecycle transitions leave the accepted state
 	assert.equal(deleted.state.sequence, f.initial.sequence + 2);
 });
 
-test("membership is checked before each operation and rotation replaces all active keys", async () => {
+test("membership is checked before each operation and rotation preserves active keys", async () => {
 	const f = await fixture();
 	const second = await device();
 	const replacement = await device();
@@ -217,7 +241,7 @@ test("membership is checked before each operation and rotation replaces all acti
 		[...rotated.devices.values()]
 			.filter((d) => d.revokedAt === null)
 			.map((d) => d.publicKey),
-		[replacement.publicKey],
+		[second.publicKey],
 	);
 	assert.equal(
 		enrolled.devices.get(bytesToHex(f.first.publicKey))?.revokedAt,
@@ -248,7 +272,7 @@ test("forks, gaps, wrong libraries, wrong epochs and unauthorized valid signatur
 			{
 				...f.header(f.initial),
 				kind: "enroll",
-				effects: [second.publicKey],
+				effects: [second.publicKey, second.publicKey],
 				...changes,
 			},
 			signer.privateCryptoKey,
@@ -297,9 +321,10 @@ test("only the pinned recovery signer can reset and cannot acquire device author
 	const state = reduceBlock(f.initial, reset);
 	assert.deepEqual(state.epochSalt, filled(12));
 	assert.deepEqual(state.recoveryPublicKey, f.initial.recoveryPublicKey);
+	assert.equal(state.devices.has(bytesToHex(next.publicKey)), false);
 	assert.equal(
-		state.devices.get(bytesToHex(next.publicKey))?.authorizedAt,
-		state.sequence,
+		state.devices.get(bytesToHex(f.first.publicKey))?.revokedAt,
+		null,
 	);
 });
 
@@ -337,6 +362,7 @@ test("128 active devices is the enrollment limit and revoked devices release cap
 		const publicKey = filled(index);
 		members.set(bytesToHex(publicKey), {
 			publicKey,
+			encryptionPublicKey: publicKey,
 			authorizedAt: 0,
 			revokedAt: null,
 		});

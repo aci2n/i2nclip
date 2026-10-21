@@ -54,6 +54,9 @@ async function fixture(t: test.TestContext) {
 	let commits = 0;
 	let commitWait: Promise<void> = Promise.resolve();
 	const chain: ChainStore = {
+		keyring() {
+			throw new Error("Key delivery is not used by this fixture.");
+		},
 		subscribe: source.subscribe,
 		sync: async () => state,
 		at: async (sequence) => {

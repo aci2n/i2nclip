@@ -15,6 +15,7 @@ import {
 	type EncryptedBackup,
 } from "../protocol/backup.ts";
 import { bytesToHex } from "../protocol/bytes.ts";
+import { sameBytes, verifyRecord } from "../protocol/chain.ts";
 import type { ChainState } from "../protocol/chain-state.ts";
 import type { SigningKey } from "../protocol/crypto.ts";
 import {
@@ -24,7 +25,7 @@ import {
 	encodeDevice,
 	type LoadedDevice,
 	type PendingRotation,
-	rotationReplacement,
+	recoveryEnrollmentResult,
 } from "../protocol/device.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
 import {
@@ -39,6 +40,7 @@ import { stateCheckpoint } from "./chain.ts";
 export interface LibraryContext {
 	readonly serverUrl: string;
 	readonly key: SigningKey;
+	readonly encryptionKey: CryptoKeyPair;
 	readonly identity: DeviceIdentity;
 	readonly signal: AbortSignal;
 }
@@ -264,6 +266,7 @@ class SessionStoreImpl {
 				? Object.freeze({
 						serverUrl: identity.identity.serverUrl,
 						key: identity.key,
+						encryptionKey: identity.encryptionKey,
 						identity: identity.identity,
 						signal: this.lifetime.signal,
 					})
@@ -522,39 +525,49 @@ class SessionStoreImpl {
 		});
 	}
 
-	private installRotatedDevice(verified: ChainState) {
+	private installRotatedDevice(
+		verified: ChainState,
+		epochs: DeviceIdentity["epochs"],
+	) {
 		return this.sessionAction("finishRotation", async (signal) => {
 			const current = this.loadedDevice();
 			const pending = current.identity.rotation;
+			if (!pending) {
+				throw new Error("No pending rotation.");
+			}
+			const record = await verifyRecord(pending.record);
 			if (
-				!pending ||
-				verified.epoch !== current.identity.epochs.length + 1 ||
-				verified.sequence <= current.identity.head.sequence ||
-				bytesToHex(verified.library) !== bytesToHex(current.identity.library) ||
-				verified.devices.get(bytesToHex(pending.replacement.public_key))
-					?.revokedAt !== null
+				verified.sequence !== record.body.sequence ||
+				!sameBytes(verified.head, record.hash) ||
+				verified.epoch !== record.body.epoch + 1 ||
+				verified.devices.get(bytesToHex(current.key.publicKey))?.revokedAt !==
+					null ||
+				epochs.length < verified.epoch ||
+				!sameBytes(epochs[verified.epoch - 1][1], pending.secret)
 			) {
-				throw new Error(
-					"Rotation has not been verified for the replacement device.",
-				);
+				throw new Error("Exact rotation acceptance has not been verified.");
 			}
 			const next = await decodeDevice(
 				encodeDevice({
 					...current.identity,
-					privateKey: pending.replacement,
-					epochs: [
-						...current.identity.epochs,
-						[verified.epoch, pending.secret],
-					],
+					epochs,
 					head: stateCheckpoint(verified),
 					rotation: null,
-					phase: "active",
 				}),
 			);
-			await this.applyIdentity(next, signal);
+			const unlocked = this.unlockedSession();
+			const saved = await this.persistence.save(
+				unlocked.saved,
+				unlocked.key,
+				decode(encodeDevice(next.identity)),
+				signal,
+			);
+			signal.throwIfAborted();
+			this.saved = saved;
+			this.library = next;
 			this.publishSession({
-				notice:
-					"Epoch rotated. Every other device must re-pair. Replacement credentials are saved locally.",
+				pendingRotation: false,
+				notice: "Epoch rotated. Authorized devices retain access.",
 			});
 		});
 	}
@@ -942,7 +955,7 @@ class SessionStoreImpl {
 	private restoreLibrary(file: Blob, password: string) {
 		return this.sessionAction("restore", async (signal) => {
 			this.unlockedSession();
-			if (this.library && this.library.identity.phase !== "resetting") {
+			if (this.library && this.library.identity.phase !== "recovering") {
 				throw new Error("Forget the current library before recovery.");
 			}
 			if (file.size > 1024 * 1024) {
@@ -966,7 +979,7 @@ class SessionStoreImpl {
 				await this.applyIdentity(candidate, signal);
 				this.publishSession({
 					notice:
-						"History verified. The recovery-approved reset is saved locally and ready to submit.",
+						"History verified. Recovery enrollment is saved locally and ready to submit.",
 				});
 			} finally {
 				recovery.identity.signingKey.seed.fill(0);
@@ -976,7 +989,7 @@ class SessionStoreImpl {
 	}
 	private recoveryCandidate() {
 		const current = this.loadedDevice();
-		if (current.identity.phase !== "resetting" || !current.identity.rotation) {
+		if (current.identity.phase !== "recovering" || !current.identity.recovery) {
 			throw new Error("No pending library recovery.");
 		}
 		return current;
@@ -984,11 +997,11 @@ class SessionStoreImpl {
 	private submitLibraryRecovery() {
 		return this.sessionAction("submitRecovery", async (signal) => {
 			const current = this.recoveryCandidate();
-			const pending = current.identity.rotation;
+			const pending = current.identity.recovery;
 			if (!pending) {
-				throw new Error("No pending recovery reset.");
+				throw new Error("No pending recovery enrollment.");
 			}
-			const replacement = await rotationReplacement(current);
+			const replacement = await recoveryEnrollmentResult(current);
 			const api = createChainApi(
 				current.identity.serverUrl,
 				current.key,
@@ -1001,12 +1014,12 @@ class SessionStoreImpl {
 				}
 				let failure: unknown;
 				try {
-					const receipt = await api.append(pending.record, signal);
+					const receipt = await api.append(pending, signal);
 					if (
 						receipt.accepted.hash !== replacement.identity.head.hash ||
 						receipt.accepted.sequence !== replacement.identity.head.sequence
 					) {
-						throw new Error("Server acknowledged a different reset.");
+						throw new Error("Server acknowledged a different enrollment.");
 					}
 				} catch (error) {
 					signal.throwIfAborted();
@@ -1014,7 +1027,7 @@ class SessionStoreImpl {
 				}
 				if (!(await api.registered(signal))) {
 					throw new Error(
-						`${failure ? errorMessage(failure) : "Reset acceptance is not verified."} The local pending plan is preserved. Retry the exact reset, or restore the recovery file again if the parent changed.`,
+						`${failure ? errorMessage(failure) : "Enrollment acceptance is not verified."} The local pending plan is preserved. Retry the exact enrollment, or restore the recovery file again if the parent changed.`,
 					);
 				}
 				await this.activateRecoveredDevice(replacement, signal);
@@ -1026,11 +1039,11 @@ class SessionStoreImpl {
 	private reconcileLibraryRecovery() {
 		return this.sessionAction("reconcileRecovery", async (signal) => {
 			const current = this.recoveryCandidate();
-			const pending = current.identity.rotation;
+			const pending = current.identity.recovery;
 			if (!pending) {
-				throw new Error("No pending recovery reset.");
+				throw new Error("No pending recovery enrollment.");
 			}
-			const replacement = await rotationReplacement(current);
+			const replacement = await recoveryEnrollmentResult(current);
 			const api = createChainApi(
 				current.identity.serverUrl,
 				current.key,
@@ -1039,7 +1052,7 @@ class SessionStoreImpl {
 			try {
 				if (!(await api.registered(signal))) {
 					throw new Error(
-						"The saved candidate is not authorized. Retry the exact reset or restore the recovery file to prepare against the current head.",
+						"The saved candidate is not authorized. Retry the exact enrollment or restore the recovery file to prepare against the current head.",
 					);
 				}
 				await this.activateRecoveredDevice(replacement, signal);
@@ -1065,7 +1078,8 @@ class SessionStoreImpl {
 			signal,
 		);
 		this.publishSession({
-			notice: "Recovery complete. Every other device must re-pair.",
+			notice:
+				"Recovery complete. This device is authorized; other devices retain access.",
 		});
 	}
 

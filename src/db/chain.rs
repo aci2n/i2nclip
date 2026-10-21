@@ -68,8 +68,8 @@ impl Database {
         let recovery_signed = record.body.signer.as_slice() == library.recovery_public_key;
         if recovery_signed {
             let candidate = match (&record.body.kind, &record.body.effects) {
-                (Kind::Enroll, Effects::Device((key,))) => Some(key.as_ref()),
-                (Kind::Rotate, Effects::Rotation((_, key, _))) => Some(key.as_ref()),
+                (Kind::Enroll, Effects::Enrollment((key, _))) => Some(key.as_ref()),
+                (Kind::Rotate, _) => None,
                 (Kind::Revoke, _) => None,
                 _ => return Err(Error::Unauthorized),
             };
@@ -205,8 +205,8 @@ async fn apply_effects(
                 storage_effect(tx, record, effect).await?;
             }
         }
-        (Kind::Enroll, Effects::Device((key,))) => {
-            enroll(tx, library, key, sequence).await?;
+        (Kind::Enroll, Effects::Enrollment((key, encryption))) => {
+            enroll(tx, library, key, encryption, sequence).await?;
         }
         (Kind::Revoke, Effects::Device((key,))) => {
             let count: i64 = sqlx::query_scalar(
@@ -224,13 +224,20 @@ async fn apply_effects(
                 return Err(Error::Conflict);
             }
         }
-        (Kind::Rotate, Effects::Rotation((next, key, _))) => {
+        (Kind::Rotate, Effects::Rotation((next, _, envelopes))) => {
             if *next != record.body.epoch + 1 {
                 return Err(Error::Conflict);
             }
-            sqlx::query("UPDATE library_keys SET revoked_at_sequence=$2 WHERE library_id=$1 AND kind='device' AND revoked_at_sequence IS NULL")
-                .bind(library.as_slice()).bind(sequence).execute(&mut **tx).await?;
-            enroll(tx, library, key, sequence).await?;
+            let members: Vec<Vec<u8>> = sqlx::query_scalar("SELECT public_key FROM library_keys WHERE library_id=$1 AND kind='device' AND revoked_at_sequence IS NULL ORDER BY public_key")
+                .bind(library.as_slice()).fetch_all(&mut **tx).await?;
+            if members.len() != envelopes.len()
+                || members
+                    .iter()
+                    .zip(envelopes)
+                    .any(|(member, (recipient, _, _))| member.as_slice() != recipient.as_ref())
+            {
+                return Err(Error::Conflict);
+            }
         }
         _ => return Err(Error::BadRequest("invalid public effects".into())),
     }
@@ -241,6 +248,7 @@ async fn enroll(
     tx: &mut Transaction<'_, Postgres>,
     library: &Hash,
     key: &[u8],
+    encryption: &[u8],
     sequence: i64,
 ) -> Result<(), Error> {
     let active: i64 = sqlx::query_scalar("SELECT count(*) FROM library_keys WHERE library_id=$1 AND kind='device' AND revoked_at_sequence IS NULL")
@@ -248,8 +256,8 @@ async fn enroll(
     if active >= chain::MAX_AUTHORIZED_DEVICES {
         return Err(Error::Conflict);
     }
-    let inserted=sqlx::query("INSERT INTO library_keys(public_key,library_id,authorized_at_sequence) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
-        .bind(key).bind(library.as_slice()).bind(sequence).execute(&mut **tx).await?;
+    let inserted=sqlx::query("INSERT INTO library_keys(public_key,library_id,encryption_public_key,authorized_at_sequence) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING")
+        .bind(key).bind(library.as_slice()).bind(encryption).bind(sequence).execute(&mut **tx).await?;
     if inserted.rows_affected() != 1 {
         return Err(Error::Conflict);
     }

@@ -1,4 +1,5 @@
 import { concat, utf8 } from "./bytes.ts";
+import type { EpochEnvelope } from "./epoch-envelope.ts";
 import { decode, encode } from "./msgpack.ts";
 
 export type Bytes = Uint8Array<ArrayBuffer>;
@@ -20,7 +21,8 @@ export type StorageEffect =
 export type Effects =
 	| readonly StorageEffect[]
 	| readonly [Bytes]
-	| readonly [number, Bytes, Bytes];
+	| readonly [Bytes, Bytes]
+	| readonly [number, Bytes, readonly EpochEnvelope[]];
 export type BlockKind = "data" | "enroll" | "revoke" | "rotate";
 export interface BlockHeader {
 	readonly library: Bytes;
@@ -124,13 +126,38 @@ function parseBody(input: unknown): BlockBody {
 		if (!Array.isArray(input[7])) {
 			invalid();
 		}
-		if ((kind === "enroll" || kind === "revoke") && input[7].length === 1) {
+		if (kind === "revoke" && input[7].length === 1) {
 			effects = [fixedBytes(input[7][0])];
-		} else if (kind === "rotate" && input[7].length === 3) {
+		} else if (kind === "enroll" && input[7].length === 2) {
+			effects = [fixedBytes(input[7][0]), fixedBytes(input[7][1])];
+		} else if (
+			kind === "rotate" &&
+			input[7].length === 3 &&
+			Array.isArray(input[7][2]) &&
+			input[7][2].length <= MAX_AUTHORIZED_DEVICES
+		) {
+			const envelopes = input[7][2].map((entry: unknown) => {
+				if (!Array.isArray(entry) || entry.length !== 3) {
+					return invalid();
+				}
+				return [
+					fixedBytes(entry[0]),
+					fixedBytes(entry[1]),
+					fixedBytes(entry[2], 48),
+				] as const;
+			});
+			if (
+				envelopes.some(
+					(entry, index) =>
+						index > 0 && compareBytes(envelopes[index - 1][0], entry[0]) >= 0,
+				)
+			) {
+				return invalid();
+			}
 			effects = [
 				safeInteger(input[7][0], 2),
 				fixedBytes(input[7][1]),
-				fixedBytes(input[7][2]),
+				envelopes,
 			];
 		} else {
 			return invalid();
@@ -217,6 +244,26 @@ export async function verifyRecord(input: Bytes): Promise<VerifiedBlock> {
 	) {
 		throw new Error("Invalid chain signature.");
 	}
+	if (body.kind === "enroll") {
+		const encryption = await crypto.subtle.importKey(
+			"raw",
+			body.effects[1] as Bytes,
+			"X25519",
+			false,
+			[],
+		);
+		const probe = await crypto.subtle.generateKey("X25519", false, [
+			"deriveBits",
+		]);
+		new Uint8Array(
+			await crypto.subtle.deriveBits(
+				{ name: "X25519", public: encryption },
+				probe.privateKey,
+				256,
+			),
+		).fill(0);
+	}
+
 	return {
 		bytes: input.slice(),
 		body,

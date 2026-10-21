@@ -24,7 +24,7 @@ import {
 	createLibraryDevice,
 	encodeDevice,
 } from "../src/lib/protocol/device.ts";
-import { generatePrivateKey } from "../src/lib/protocol/identity.ts";
+import { sealEpochKeys } from "../src/lib/protocol/epoch-envelope.ts";
 import { encode } from "../src/lib/protocol/msgpack.ts";
 import { epochKey } from "../src/lib/protocol/recovery-key.ts";
 import { createSession } from "../src/lib/stores/identity.ts";
@@ -60,7 +60,7 @@ class Server {
 			if (
 				!active &&
 				!root &&
-				bytesToHex(record.body.effects[1] as Bytes) !== bytesToHex(pub)
+				bytesToHex(record.body.effects[0] as Bytes) !== bytesToHex(pub)
 			) {
 				return new Response(null, { status: 401 });
 			}
@@ -156,8 +156,25 @@ async function fixture(t: test.TestContext) {
 	);
 	server.state = reduceBlock(server.state, add, plaintext);
 	server.records.push(add);
-	const { privateKey } = await generatePrivateKey();
-	const reset = await createRecord(
+	const secret = await epochKey(
+		created.recovery.identity.epochDerivationSecret,
+		server.state.library,
+		2,
+		filled(12),
+	);
+	const envelopes = await sealEpochKeys(
+		{
+			library: server.state.library,
+			sequence: server.state.sequence + 1,
+			previous: server.state.head,
+			epoch: 1,
+			nextEpoch: 2,
+			salt: filled(12),
+		},
+		[...server.state.devices.values()],
+		secret,
+	);
+	const rotation = await createRecord(
 		{
 			library: server.state.library,
 			sequence: server.state.sequence + 1,
@@ -165,21 +182,14 @@ async function fixture(t: test.TestContext) {
 			epoch: 1,
 			signer: created.recovery.key.publicKey,
 			kind: "rotate",
-			effects: [2, privateKey.public_key, filled(12)],
+			effects: [2, filled(12), envelopes],
 		},
 		created.recovery.key.privateCryptoKey,
 	);
-	server.state = reduceBlock(server.state, reset);
-	server.records.push(reset);
-	const secret = await epochKey(
-		created.recovery.identity.epochDerivationSecret,
-		server.state.library,
-		2,
-		filled(12),
-	);
+	server.state = reduceBlock(server.state, rotation);
+	server.records.push(rotation);
 	server.keys.set(2, secret);
-	const { loadSigningKey } = await import("../src/lib/protocol/crypto.ts");
-	const device = await loadSigningKey(privateKey);
+	const device = created.device.key;
 	const deletion = await createRecord(
 		{
 			library: server.state.library,
@@ -209,27 +219,19 @@ test("offline recovery decrypts every epoch and persists only a fresh local cand
 		f.recovery,
 		new AbortController().signal,
 	);
-	assert.equal(pending.identity.phase, "resetting");
+	assert.equal(pending.identity.phase, "recovering");
 	assert.equal(pending.identity.epochs.length, 2);
 	assert.deepEqual(pending.identity.epochs[1][1], f.server.keys.get(2));
-	assert.deepEqual(
-		pending.identity.privateKey,
-		pending.identity.rotation?.replacement,
-	);
-	const rotation = pending.identity.rotation;
-	assert.ok(rotation);
-	const reset = await verifyRecord(rotation.record);
-	assert.deepEqual(reset.body.signer, f.recovery.key.publicKey);
-	assert.equal(reset.body.epoch, 2);
-	assert.deepEqual(
-		rotation.secret,
-		await epochKey(
-			f.recovery.identity.epochDerivationSecret,
-			f.server.state.library,
-			3,
-			reset.body.effects[2] as Bytes,
-		),
-	);
+	assert(pending.identity.recovery);
+	const enrollment = await verifyRecord(pending.identity.recovery);
+	assert.equal(enrollment.body.kind, "enroll");
+	assert.deepEqual(enrollment.body.signer, f.recovery.key.publicKey);
+	assert.deepEqual(enrollment.body.effects, [
+		pending.key.publicKey,
+		pending.identity.encryption.publicKey,
+	]);
+	assert.equal(enrollment.body.epoch, 2);
+	assert.equal(pending.identity.rotation, null);
 	const local = Buffer.from(encodeDevice(pending.identity));
 	assert.equal(
 		local.includes(Buffer.from(f.recovery.identity.signingKey.seed)),
@@ -275,13 +277,13 @@ test("no-device recovery survives restart, lost responses, and loss of an accept
 		throw new Error("Disk full");
 	});
 	assert.equal(await resumed.submitRecovery(), false);
-	assert.equal(resumed.device().identity.phase, "resetting");
-	assert.equal(f.server.state.epoch, 3);
+	assert.equal(resumed.device().identity.phase, "recovering");
+	assert.equal(f.server.state.epoch, 2);
 	failure.mock.restore();
 	assert.equal(await resumed.reconcileRecovery(), true);
 	assert.equal(f.server.posts, 1);
 	assert.equal(resumed.identity().publicKey, firstCandidate);
-	assert.equal(f.server.state.epoch, 3);
+	assert.equal(f.server.state.epoch, 2);
 	assert.equal(get(resumed).context?.identity.phase, "active");
 	assert.equal(f.server.state.files.get(bytesToHex(f.id))?.deleted, true);
 	assert.equal(await resumed.forget(), true);
@@ -292,9 +294,9 @@ test("no-device recovery survives restart, lost responses, and loss of an accept
 	);
 	assert.notEqual(resumed.device().key.registrationKey, firstCandidate);
 	assert.equal(await resumed.submitRecovery(), true);
-	assert.equal(f.server.state.epoch, 4);
+	assert.equal(f.server.state.epoch, 2);
 	assert.equal(f.server.state.sequence, 6);
-	assert.equal(resumed.identity().device.epochs.length, 4);
+	assert.equal(resumed.identity().device.epochs.length, 2);
 });
 
 test("invalid encrypted history is rejected before accepting its head", async (t) => {
@@ -308,8 +310,8 @@ test("invalid encrypted history is rejected before accepting its head", async (t
 	const record = await createRecord(
 		{
 			...last.body,
-			sequence: 1,
-			previous: f.device.identity.library,
+			sequence: 2,
+			previous: f.server.records[0].hash,
 			epoch: 1,
 			signer: initial.publicKey,
 			effects: [],
@@ -320,8 +322,8 @@ test("invalid encrypted history is rejected before accepting its head", async (t
 			plaintext: encode(["UnknownOperation"]),
 		},
 	);
-	f.server.records.splice(0, f.server.records.length, record);
-	f.server.state = { ...f.server.state, sequence: 1, head: record.hash };
+	f.server.records.splice(1, f.server.records.length - 1, record);
+	f.server.state = { ...f.server.state, sequence: 2, head: record.hash };
 	await assert.rejects(
 		prepareRecoveryDevice(f.recovery, new AbortController().signal),
 		/Invalid chain operation/,
@@ -331,5 +333,5 @@ test("invalid encrypted history is rejected before accepting its head", async (t
 		bytesToHex(f.server.state.library),
 	);
 	t.after(cache.dispose);
-	assert.equal((await cache.head(new AbortController().signal))?.sequence, 0);
+	assert.equal((await cache.head(new AbortController().signal))?.sequence, 1);
 });

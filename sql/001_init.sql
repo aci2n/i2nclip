@@ -16,6 +16,9 @@ CREATE TABLE library_keys (
     public_key BYTEA PRIMARY KEY CHECK (octet_length(public_key) = 32),
     library_id BYTEA NOT NULL REFERENCES libraries(id),
     kind TEXT NOT NULL DEFAULT 'device' CHECK (kind IN ('device', 'recovery')),
+    encryption_public_key BYTEA CHECK (octet_length(encryption_public_key) = 32),
+    CHECK ((kind = 'device') = (encryption_public_key IS NOT NULL)),
+    UNIQUE (library_id, encryption_public_key),
     CHECK (kind <> 'recovery' OR (authorized_at_sequence = 0 AND revoked_at_sequence IS NULL)),
     authorized_at_sequence BIGINT NOT NULL CHECK (authorized_at_sequence BETWEEN 0 AND 9007199254740991),
     revoked_at_sequence BIGINT CHECK (revoked_at_sequence BETWEEN authorized_at_sequence AND 9007199254740991)
@@ -90,8 +93,8 @@ BEGIN
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'device history is permanent' USING ERRCODE = '23514';
     END IF;
-    IF (NEW.public_key, NEW.library_id, NEW.kind, NEW.authorized_at_sequence)
-       IS DISTINCT FROM (OLD.public_key, OLD.library_id, OLD.kind, OLD.authorized_at_sequence)
+    IF (NEW.public_key, NEW.library_id, NEW.kind, NEW.encryption_public_key, NEW.authorized_at_sequence)
+       IS DISTINCT FROM (OLD.public_key, OLD.library_id, OLD.kind, OLD.encryption_public_key, OLD.authorized_at_sequence)
        OR (OLD.revoked_at_sequence IS NOT NULL AND NEW.revoked_at_sequence IS DISTINCT FROM OLD.revoked_at_sequence) THEN
         RAISE EXCEPTION 'device identity and revocation are immutable' USING ERRCODE = '23514';
     END IF;

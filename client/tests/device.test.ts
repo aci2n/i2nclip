@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bytesToHex, hexToBytes } from "../src/lib/protocol/bytes.ts";
+import { bytesToHex } from "../src/lib/protocol/bytes.ts";
 import { createRecord } from "../src/lib/protocol/chain.ts";
 import {
 	decodeDevice,
 	encodeDevice,
 	MAX_CREDENTIAL_BYTES,
 } from "../src/lib/protocol/device.ts";
+import { sealEpochKeys } from "../src/lib/protocol/epoch-envelope.ts";
 import { decode, encode } from "../src/lib/protocol/msgpack.ts";
 import { passwordOpen, passwordSeal } from "../src/lib/protocol/password.ts";
-import { createDevice } from "./library-fixture.ts";
+import { createDevice, initialDeviceState } from "./library-fixture.ts";
 
 const random = () => crypto.getRandomValues(new Uint8Array(32));
 
@@ -50,6 +51,7 @@ test("local credentials preserve historical keys and trusted head within bounds"
 	const identity = {
 		...device.identity,
 		phase: "active" as const,
+		registration: null,
 		epochs: [...device.identity.epochs, [2, random()] as const],
 		head: { sequence: 4, hash: bytesToHex(random()) },
 	};
@@ -95,42 +97,63 @@ test("credential parsing rejects mismatched genesis, duplicate epochs, key subst
 	);
 });
 
-test("local pending rotation credentials bind both devices and the exact old-signed transition", async () => {
+test("pending rotation binds the retained device, parent, and decryptable epoch secret", async () => {
 	const old = await createDevice("https://example.test");
-	const next = await createDevice("https://example.test");
+	const state = await initialDeviceState(old.identity);
+	const salt = random();
+	const secret = random();
+	const envelopes = await sealEpochKeys(
+		{
+			library: state.library,
+			sequence: state.sequence + 1,
+			previous: state.head,
+			epoch: 1,
+			nextEpoch: 2,
+			salt,
+		},
+		[...state.devices.values()],
+		secret,
+	);
 	const record = await createRecord(
 		{
-			library: old.identity.library,
-			sequence: old.identity.head.sequence + 1,
-			previous: hexToBytes(old.identity.head.hash),
+			library: state.library,
+			sequence: state.sequence + 1,
+			previous: state.head,
 			epoch: 1,
 			signer: old.recovery.key.publicKey,
 			kind: "rotate",
-			effects: [2, next.key.publicKey, new Uint8Array(32).fill(12)],
+			effects: [2, salt, envelopes],
 		},
 		old.recovery.key.privateCryptoKey,
 	);
 	const pending = {
 		...old.identity,
 		phase: "active" as const,
-		rotation: {
-			replacement: next.identity.privateKey,
-			secret: random(),
-			record: record.bytes,
-		},
+		registration: null,
+		rotation: { secret, record: record.bytes },
 	};
-	const restored = await decodeDevice(encodeDevice(pending));
-	assert.deepEqual(restored.identity.rotation, pending.rotation);
-	const moved = {
-		...pending,
-		head: { sequence: 1, hash: bytesToHex(random()) },
-	};
-	await assert.rejects(decodeDevice(encodeDevice(moved)), /Pending rotation/);
-	const swapped = {
-		...pending,
-		rotation: { ...pending.rotation, replacement: old.identity.privateKey },
-	};
-	await assert.rejects(decodeDevice(encodeDevice(swapped)), /Pending rotation/);
+	assert.deepEqual(
+		(await decodeDevice(encodeDevice(pending))).identity.rotation,
+		pending.rotation,
+	);
+	await assert.rejects(
+		decodeDevice(
+			encodeDevice({
+				...pending,
+				head: { sequence: state.sequence, hash: bytesToHex(random()) },
+			}),
+		),
+		/Pending rotation/,
+	);
+	await assert.rejects(
+		decodeDevice(
+			encodeDevice({
+				...pending,
+				rotation: { ...pending.rotation, secret: random() },
+			}),
+		),
+		/secret/,
+	);
 });
 
 test("password envelopes use compact frames and bind their purpose", async () => {

@@ -110,6 +110,7 @@ async function fixture(t: TestContext, minimum?: Checkpoint) {
 	const recovery = await createLibraryRecovery(
 		"https://example.test",
 		key.publicKey,
+		key.publicKey,
 	);
 	const genesis = await initialChainState(recovery.recovery.genesis.bytes);
 	const initial = reduceBlock(genesis, recovery.enrollment);
@@ -360,7 +361,7 @@ test("a valid signature from an unenrolled device is rejected during synchroniza
 				epoch: 1,
 				signer: outsider.publicKey,
 				kind: "enroll",
-				effects: [target.publicKey],
+				effects: [target.publicKey, target.publicKey],
 			},
 			outsider.privateCryptoKey,
 		),
@@ -374,13 +375,16 @@ test("a valid signature from an unenrolled device is rejected during synchroniza
 
 test("ordinary device stores reject attempts to publish epoch resets", async (t) => {
 	const f = await fixture(t);
-	const replacement = await device();
 	const initial = await f.store.sync();
 	await assert.rejects(
 		f.store.append({
 			expected: stateCheckpoint(initial),
 			kind: "rotate",
-			effects: [2, replacement.publicKey, bytes(12)],
+			effects: [
+				2,
+				bytes(12),
+				[[f.key.publicKey, bytes(9), new Uint8Array(48)]],
+			],
 		}),
 		/unauthorized/,
 	);

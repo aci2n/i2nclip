@@ -555,9 +555,6 @@ class PairingStoreImpl {
 		const state = await chain.sync();
 		this.checkTask(current);
 		const identity = this.session.identity();
-		if (identity.device.epochs.length !== state.epoch) {
-			throw new Error("Re-pair this device before sharing the library.");
-		}
 		const proposed = await createRecord(
 			{
 				library: state.library,
@@ -566,19 +563,29 @@ class PairingStoreImpl {
 				epoch: state.epoch,
 				signer: identity.key.publicKey,
 				kind: "enroll",
-				effects: [receiverKeys[0]],
+				effects: [receiverKeys[0], receiverKeys[1]],
 			},
 			identity.key.privateCryptoKey,
 		);
-		const packet = await this.usePairingCrypto(current, (crypto) =>
-			crypto.transfer({
-				value: pairingBundle(
-					identity.device,
-					stateCheckpoint(state),
-					proposed.bytes,
-				),
-			}),
-		);
+		const epochs = chain.keyring();
+		let packet: Bytes;
+		try {
+			packet = await this.usePairingCrypto(current, (crypto) =>
+				crypto.transfer({
+					value: pairingBundle(
+						identity.device,
+						stateCheckpoint(state),
+						proposed.bytes,
+						epochs,
+					),
+				}),
+			);
+		} finally {
+			for (const [, secret] of epochs) {
+				secret.fill(0);
+			}
+		}
+
 		await this.submitStep(current, room, 4, packet);
 		this.updatePairing({
 			status: "Waiting for the new device to preserve its local credentials…",

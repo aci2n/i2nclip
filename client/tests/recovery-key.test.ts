@@ -112,10 +112,12 @@ test("creation independently generates recoverable signing and epoch secrets", a
 	const first = await createLibraryRecovery(
 		"https://example.test",
 		bytes("initial_device_public_key"),
+		bytes("initial_encryption_public_key"),
 	);
 	const second = await createLibraryRecovery(
 		"https://example.test",
 		bytes("initial_device_public_key"),
+		bytes("initial_encryption_public_key"),
 	);
 	assert.notDeepEqual(
 		first.recovery.identity.signingKey.seed,

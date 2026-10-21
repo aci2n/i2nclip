@@ -35,6 +35,9 @@ async function fixture(t: test.TestContext, uninitialized = false) {
 		storageError: "",
 	});
 	const chain: ChainStore = {
+		keyring() {
+			throw new Error("Key delivery is not used by this fixture.");
+		},
 		subscribe: state.subscribe,
 		at: async () => initial,
 		sync: async () => {

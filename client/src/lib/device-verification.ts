@@ -23,6 +23,10 @@ export async function verifyDevice(
 			publicKey: key.publicKey,
 			signingKey: key.privateCryptoKey,
 			secrets: new Map(identity.epochs),
+			encryption: {
+				publicKey: identity.encryption.publicKey,
+				keyPair: device.encryptionKey,
+			},
 			minimum,
 		},
 		storage,
@@ -37,10 +41,9 @@ export async function verifyDevice(
 				"This device is not authorized in the verified chain. Re-pair it with an active device.",
 			);
 		}
-		if (state.epoch !== identity.epochs.length) {
-			throw new Error(
-				"This device does not have the current epoch secret. Re-pair it with an active device.",
-			);
+		const keyring = chain.keyring();
+		for (const [, secret] of keyring) {
+			secret.fill(0);
 		}
 		return state;
 	} finally {

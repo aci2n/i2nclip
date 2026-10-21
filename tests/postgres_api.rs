@@ -38,7 +38,10 @@ fn signed_membership_record(
         epoch: 1,
         signer: identity.public,
         kind: Kind::Enroll,
-        effects: Effects::Device((ByteBuf::from(target.public.to_vec()),)),
+        effects: Effects::Enrollment((
+            ByteBuf::from(target.public.to_vec()),
+            ByteBuf::from(target.public.to_vec()),
+        )),
         salt: None,
         nonce: None,
         encrypted: None,
@@ -172,39 +175,44 @@ async fn chain_http_registration_paging_append_and_membership_admission() {
 }
 
 #[tokio::test]
-async fn chain_http_recovery_authority_and_device_free_reset() {
+async fn chain_http_recovery_enrollment_revocation_and_device_preserving_rotation() {
     use i2nclip::chain::{Body as BlockBody, Effects, Kind};
     use serde_bytes::ByteBuf;
     let initial = new_identity();
-    let replacement = new_identity();
-    let recovery = recovery_identity();
+    let restored = new_identity();
+    let root = recovery_identity();
     let outsider = new_identity();
     let (db, app) = app(&[]).await;
     let code = i2nclip::issue_registration_otc(&db.0, 3600, i2nclip::StorageLimits::default())
         .await
         .unwrap();
-    let registration = registration_with_root(&code, &initial, &recovery);
     assert_eq!(
-        call(&app, &initial, "POST", "/api/register-key", registration)
-            .await
-            .0,
+        call(
+            &app,
+            &initial,
+            "POST",
+            "/api/register-key",
+            registration_with_root(&code, &initial, &root)
+        )
+        .await
+        .0,
         StatusCode::NO_CONTENT
     );
-    let library = i2nclip::chain::genesis(&recovery.public, &[11; 32]).unwrap();
+    let library = i2nclip::chain::genesis(&root.public, &[11; 32]).unwrap();
     let path = format!(
         "/api/blocks?after={}",
         library
             .iter()
-            .map(|byte| format!("{byte:02x}"))
+            .map(|b| format!("{b:02x}"))
             .collect::<String>()
     );
     assert_eq!(
-        call(&app, &recovery, "GET", &path, vec![]).await.0,
+        call(&app, &root, "GET", &path, vec![]).await.0,
         StatusCode::OK
     );
-    for path in ["/api/ping", "/api/quota"] {
+    for endpoint in ["/api/ping", "/api/quota"] {
         assert_eq!(
-            call(&app, &recovery, "GET", path, vec![]).await.0,
+            call(&app, &root, "GET", endpoint, vec![]).await.0,
             StatusCode::UNAUTHORIZED
         );
     }
@@ -212,69 +220,96 @@ async fn chain_http_recovery_authority_and_device_free_reset() {
         version: 1,
         library,
         sequence: 2,
-        previous: bootstrap_head(&initial, &recovery_identity()),
+        previous: bootstrap_head(&initial, &root),
         epoch: 1,
-        signer: initial.public,
-        kind: Kind::Rotate,
-        effects: Effects::Rotation((
-            2,
-            ByteBuf::from(replacement.public.to_vec()),
-            ByteBuf::from(vec![12; 32]),
-        )),
+        signer: root.public,
+        kind: Kind::Revoke,
+        effects: Effects::Device((ByteBuf::from(initial.public.to_vec()),)),
         salt: None,
         nonce: None,
         encrypted: None,
     };
+    let revoke = sign_public_record(&root, &body);
+    assert_eq!(
+        call(&app, &outsider, "POST", "/api/blocks", revoke.clone())
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&app, &root, "POST", "/api/blocks", revoke.clone())
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let enrollment = signed_membership_record(
+        &root,
+        library,
+        i2nclip::chain::verify_record(&revoke).unwrap().hash,
+        3,
+        &restored,
+    );
+    assert_eq!(
+        call(&app, &outsider, "POST", "/api/blocks", enrollment.clone())
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        call(&app, &restored, "POST", "/api/blocks", enrollment.clone())
+            .await
+            .0,
+        StatusCode::OK
+    );
+    body.sequence = 4;
+    body.previous = i2nclip::chain::verify_record(&enrollment).unwrap().hash;
+    body.kind = Kind::Rotate;
+    body.effects = Effects::Rotation((
+        2,
+        ByteBuf::from(vec![12; 32]),
+        vec![(
+            ByteBuf::from(restored.public.to_vec()),
+            ByteBuf::from(vec![5; 32]),
+            ByteBuf::from(vec![6; 48]),
+        )],
+    ));
+    body.signer = restored.public;
     assert_eq!(
         call(
             &app,
-            &initial,
+            &restored,
             "POST",
             "/api/blocks",
-            sign_public_record(&initial, &body)
+            sign_public_record(&restored, &body)
         )
         .await
         .0,
         StatusCode::UNAUTHORIZED
     );
-    body.signer = recovery.public;
-    let reset = sign_public_record(&recovery, &body);
+    body.signer = root.public;
+    let rotation = sign_public_record(&root, &body);
     assert_eq!(
-        call(&app, &outsider, "POST", "/api/blocks", reset.clone())
+        call(&app, &outsider, "POST", "/api/blocks", rotation.clone())
             .await
             .0,
         StatusCode::UNAUTHORIZED
     );
-    // The fresh candidate submits a pre-signed reset with only its own key.
+    for signer in [&root, &restored] {
+        assert_eq!(
+            call(&app, signer, "POST", "/api/blocks", rotation.clone())
+                .await
+                .0,
+            StatusCode::OK
+        );
+    }
     assert_eq!(
-        call(&app, &replacement, "POST", "/api/blocks", reset.clone())
-            .await
-            .0,
-        StatusCode::OK
-    );
-    assert_eq!(
-        call(&app, &replacement, "POST", "/api/blocks", reset.clone())
-            .await
-            .0,
-        StatusCode::OK
-    );
-    assert_eq!(
-        call(&app, &recovery, "POST", "/api/blocks", reset).await.0,
-        StatusCode::OK
+        call(&app, &restored, "GET", "/api/ping", vec![]).await.0,
+        StatusCode::NO_CONTENT
     );
     assert_eq!(
         call(&app, &initial, "GET", &path, vec![]).await.0,
         StatusCode::UNAUTHORIZED
     );
-    assert_eq!(
-        call(&app, &replacement, "GET", &path, vec![]).await.0,
-        StatusCode::OK
-    );
-    assert_eq!(
-        call(&app, &recovery, "GET", &path, vec![]).await.0,
-        StatusCode::OK
-    );
-    let _ = db;
 }
 
 #[tokio::test]

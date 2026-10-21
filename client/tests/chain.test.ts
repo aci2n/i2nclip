@@ -23,23 +23,23 @@ const recoveryVectors = JSON.parse(
 	readFileSync(new URL("./recovery-vectors.json", import.meta.url), "utf8"),
 );
 const bytes = (name: string) => hexToBytes(vectors[name]);
-async function signingKey() {
+async function signingKey(seed = bytes("seed")) {
 	return crypto.subtle.importKey(
 		"pkcs8",
-		concat([hexToBytes("302e020100300506032b657004220420"), bytes("seed")]),
+		concat([hexToBytes("302e020100300506032b657004220420"), seed]),
 		"Ed25519",
 		false,
 		["sign"],
 	);
 }
-async function resign(body: unknown) {
+async function resign(body: unknown, seed = bytes("seed")) {
 	const signed = encode(body);
 	return encode([
 		signed,
 		new Uint8Array(
 			await crypto.subtle.sign(
 				"Ed25519",
-				await signingKey(),
+				await signingKey(seed),
 				concat([SIGN_DOMAIN, signed]),
 			),
 		),
@@ -135,7 +135,11 @@ test("signed malformed public effects and incompatible kinds are rejected", asyn
 		(decode(hexToBytes(recoveryVectors.reset)) as Uint8Array[])[0],
 	) as unknown[];
 	rotation[10] = new Uint8Array(16);
-	await assert.rejects(verifyRecord(await resign(rotation)));
+	await assert.rejects(
+		verifyRecord(
+			await resign(rotation, hexToBytes(recoveryVectors.signing_seed)),
+		),
+	);
 });
 
 test("epoch secrets and authenticated headers bind operation encryption", async () => {
@@ -209,4 +213,22 @@ test("object ciphertext hash and library/file/purpose bindings are authenticated
 	);
 	assert.deepEqual(encrypted.bytes, args[5]);
 	assert.deepEqual(encrypted.key, args[4]);
+});
+
+test("valid enrollment signatures cannot authorize low-order encryption inputs or missing key bindings", async () => {
+	const body = decode(
+		(decode(bytes("enrollment")) as Uint8Array[])[0],
+	) as unknown[];
+	const signing = (body[7] as Uint8Array[])[0];
+	const one = new Uint8Array(32);
+	one[0] = 1;
+	for (const encryption of [new Uint8Array(32), one, new Uint8Array(31)]) {
+		const invalid = [...body];
+		invalid[7] = [signing, encryption];
+		await assert.rejects(verifyRecord(await resign(invalid)));
+	}
+	const missing = [...body];
+	missing[7] = [signing];
+	await assert.rejects(verifyRecord(await resign(missing)));
+	assert.equal((await verifyRecord(bytes("enrollment"))).body.kind, "enroll");
 });

@@ -140,6 +140,7 @@ export async function loadRecovery(
 export async function createLibraryRecovery(
 	server: string,
 	initialDevicePublicKey: Bytes,
+	initialEncryptionPublicKey: Bytes,
 ) {
 	checkServer(server);
 	const { privateKey: signingKey } = await generatePrivateKey();
@@ -168,7 +169,10 @@ export async function createLibraryRecovery(
 				epoch: 1,
 				signer: signing.publicKey,
 				kind: "enroll",
-				effects: [fixedBytes(initialDevicePublicKey)],
+				effects: [
+					fixedBytes(initialDevicePublicKey),
+					fixedBytes(initialEncryptionPublicKey),
+				],
 			},
 			signing.privateCryptoKey,
 		);

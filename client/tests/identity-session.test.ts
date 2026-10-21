@@ -10,6 +10,7 @@ import {
 	initialChainState,
 	reduceBlock,
 } from "../src/lib/protocol/chain-state.ts";
+import { sealEpochKeys } from "../src/lib/protocol/epoch-envelope.ts";
 import { openRecoveryFile } from "../src/lib/protocol/recovery-key.ts";
 import { stateCheckpoint } from "../src/lib/stores/chain.ts";
 import { createSession, type IdentityApi } from "../src/lib/stores/identity.ts";
@@ -222,6 +223,7 @@ test("pairing credentials are durable before readiness and activation requires t
 						bytesToHex(device.key.publicKey),
 						{
 							publicKey: device.key.publicKey,
+							encryptionPublicKey: device.identity.encryption.publicKey,
 							authorizedAt: 1,
 							revokedAt: null,
 						},
@@ -252,19 +254,32 @@ test("pairing credentials are durable before readiness and activation requires t
 	assert.deepEqual(restarted.identity().device.head, enrollment);
 });
 
-test("pending rotation saves both outcomes without replacing the live context and survives activation write failure", async (t) => {
+test("pending rotation preserves identity and context without replacing the live context and survives activation write failure", async (t) => {
 	const f = await fixture(t, {
 		registered: async () => false,
 		register: async () => {},
 	});
 	await registerSession(f.session, { serverUrl, otc: "invite" });
-	const _original = f.session.device();
+	const original = f.session.device();
 	const context = get(f.session).context;
 	assert.ok(context);
-	const replacement = await createDevice(serverUrl);
 	const initial = await initialSessionState(f.session);
 	const backup = f.recoveryFile();
 	const recovery = await openRecoveryFile(backup.bytes, backup.password);
+	const salt = new Uint8Array(32).fill(12);
+	const secret = crypto.getRandomValues(new Uint8Array(32));
+	const envelopes = await sealEpochKeys(
+		{
+			library: initial.library,
+			sequence: initial.sequence + 1,
+			previous: initial.head,
+			epoch: 1,
+			nextEpoch: 2,
+			salt,
+		},
+		[...initial.devices.values()],
+		secret,
+	);
 	const record = await createRecord(
 		{
 			library: initial.library,
@@ -273,13 +288,12 @@ test("pending rotation saves both outcomes without replacing the live context an
 			epoch: 1,
 			signer: recovery.key.publicKey,
 			kind: "rotate",
-			effects: [2, replacement.key.publicKey, new Uint8Array(32).fill(12)],
+			effects: [2, salt, envelopes],
 		},
 		recovery.key.privateCryptoKey,
 	);
 	const rotation = {
-		replacement: replacement.identity.privateKey,
-		secret: crypto.getRandomValues(new Uint8Array(32)),
+		secret,
 		record: record.bytes,
 	};
 	assert.equal(
@@ -294,7 +308,13 @@ test("pending rotation saves both outcomes without replacing the live context an
 	const failure = t.mock.method(f.persistence, "save", async () => {
 		throw new Error("Disk full");
 	});
-	assert.equal(await f.session.finishRotation(verified), false);
+	assert.equal(
+		await f.session.finishRotation(verified, [
+			...original.identity.epochs,
+			[2, secret] as const,
+		]),
+		false,
+	);
 	assert.equal(get(f.session).context, context);
 	assert.deepEqual(f.session.device().identity.rotation, rotation);
 	failure.mock.restore();
@@ -303,8 +323,14 @@ test("pending rotation saves both outcomes without replacing the live context an
 	await restarted.load();
 	await restarted.unlock(password);
 	assert.deepEqual(restarted.device().identity.rotation, rotation);
-	assert.equal(await restarted.finishRotation(verified), true);
-	assert.equal(restarted.identity().publicKey, replacement.key.registrationKey);
+	assert.equal(
+		await restarted.finishRotation(verified, [
+			...original.identity.epochs,
+			[2, secret] as const,
+		]),
+		true,
+	);
+	assert.equal(restarted.identity().publicKey, original.key.registrationKey);
 	assert.equal(restarted.identity().device.epochs.length, 2);
 	assert.deepEqual(restarted.identity().device.epochs[1]?.[1], rotation.secret);
 	assert.equal(restarted.identity().device.rotation, null);

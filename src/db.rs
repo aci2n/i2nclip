@@ -161,7 +161,7 @@ impl Database {
             || first.body.epoch != 1
             || first.body.signer != recovery
             || public == &recovery
-            || !matches!(&first.body.effects, Effects::Device((key,)) if key.as_ref() == public)
+            || !matches!(&first.body.effects, Effects::Enrollment((key, _)) if key.as_ref() == public)
         {
             return Err(Error::RegistrationFailed);
         }
@@ -189,12 +189,15 @@ impl Database {
         if created.rows_affected() != 1 {
             return Err(Error::Conflict);
         }
-        for (key, kind, sequence) in [
-            (recovery.as_slice(), "recovery", 0i64),
-            (public.as_slice(), "device", 1i64),
+        let Effects::Enrollment((_, encryption)) = &first.body.effects else {
+            return Err(Error::RegistrationFailed);
+        };
+        for (key, kind, sequence, encryption) in [
+            (recovery.as_slice(), "recovery", 0i64, None),
+            (public.as_slice(), "device", 1i64, Some(encryption.as_ref())),
         ] {
-            let inserted = sqlx::query("INSERT INTO library_keys(public_key,library_id,kind,authorized_at_sequence) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING")
-                .bind(key).bind(library.as_slice()).bind(kind).bind(sequence).execute(&mut *tx).await?;
+            let inserted = sqlx::query("INSERT INTO library_keys(public_key,library_id,kind,authorized_at_sequence,encryption_public_key) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING")
+                .bind(key).bind(library.as_slice()).bind(kind).bind(sequence).bind(encryption).execute(&mut *tx).await?;
             if inserted.rows_affected() != 1 {
                 return Err(Error::Conflict);
             }
@@ -239,7 +242,7 @@ impl Database {
 #[cfg(all(test, feature = "postgres-tests"))]
 mod tests {
     use super::*;
-    use crate::codec;
+    use crate::{chain::EpochEnvelope, codec};
 
     // Own the temporary database even if a test assertion or initialization panics.
     struct FixtureDatabase {
@@ -361,7 +364,7 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO library_keys(public_key,library_id,authorized_at_sequence) VALUES($1,$2,0)",
+            "INSERT INTO library_keys(public_key,library_id,encryption_public_key,authorized_at_sequence) VALUES($1,$2,$1,0)",
         )
         .bind(initial.public.as_slice())
         .bind(library.as_slice())
@@ -456,7 +459,10 @@ mod tests {
             epoch: 1,
             signer: root.public,
             kind: Kind::Enroll,
-            effects: Effects::Device((serde_bytes::ByteBuf::from(device.to_vec()),)),
+            effects: Effects::Enrollment((
+                serde_bytes::ByteBuf::from(device.to_vec()),
+                serde_bytes::ByteBuf::from(device.to_vec()),
+            )),
             salt: None,
             nonce: None,
             encrypted: None,
@@ -699,7 +705,10 @@ mod tests {
                 1,
                 library,
                 Kind::Enroll,
-                Effects::Device((ByteBuf::from(second.public.to_vec()),)),
+                Effects::Enrollment((
+                    ByteBuf::from(second.public.to_vec()),
+                    ByteBuf::from(second.public.to_vec()),
+                )),
             ),
             &identity,
         );
@@ -710,7 +719,10 @@ mod tests {
                 1,
                 library,
                 Kind::Enroll,
-                Effects::Device((ByteBuf::from(third.public.to_vec()),)),
+                Effects::Enrollment((
+                    ByteBuf::from(third.public.to_vec()),
+                    ByteBuf::from(third.public.to_vec()),
+                )),
             ),
             &identity,
         );
@@ -787,7 +799,10 @@ mod tests {
                 2,
                 parent,
                 Kind::Enroll,
-                Effects::Device((ByteBuf::from(next.public.to_vec()),)),
+                Effects::Enrollment((
+                    ByteBuf::from(next.public.to_vec()),
+                    ByteBuf::from(next.public.to_vec()),
+                )),
             ),
             &root,
         );
@@ -826,7 +841,7 @@ mod tests {
         // Populate the projection directly to exercise the boundary without 127 appends.
         for index in 0u8..127 {
             let device = crate::reference_crypto::from_seed([index.wrapping_add(100); 32]);
-            sqlx::query("INSERT INTO library_keys(public_key,library_id,authorized_at_sequence) VALUES($1,$2,0)")
+            sqlx::query("INSERT INTO library_keys(public_key,library_id,encryption_public_key,authorized_at_sequence) VALUES($1,$2,$1,0)")
                 .bind(device.public.as_slice()).bind(library.as_slice()).execute(&db.pool).await.unwrap();
         }
         let next = crate::reference_crypto::from_seed([90; 32]);
@@ -837,7 +852,10 @@ mod tests {
                 1,
                 library,
                 Kind::Enroll,
-                Effects::Device((ByteBuf::from(next.public.to_vec()),)),
+                Effects::Enrollment((
+                    ByteBuf::from(next.public.to_vec()),
+                    ByteBuf::from(next.public.to_vec()),
+                )),
             ),
             &first,
         );
@@ -865,7 +883,10 @@ mod tests {
                 2,
                 verify_record(&revoke).unwrap().hash,
                 Kind::Enroll,
-                Effects::Device((ByteBuf::from(next.public.to_vec()),)),
+                Effects::Enrollment((
+                    ByteBuf::from(next.public.to_vec()),
+                    ByteBuf::from(next.public.to_vec()),
+                )),
             ),
             &root,
         );
@@ -880,14 +901,26 @@ mod tests {
         dispose(db, admin, guard).await;
     }
 
-    #[tokio::test]
-    async fn chain_append_rechecks_membership_and_rotates_atomically() {
-        use serde_bytes::ByteBuf;
+    fn epoch_envelopes(keys: &[[u8; 32]]) -> Vec<EpochEnvelope> {
+        let mut keys = keys.to_vec();
+        keys.sort();
+        keys.into_iter()
+            .map(|key| {
+                (
+                    serde_bytes::ByteBuf::from(key.to_vec()),
+                    serde_bytes::ByteBuf::from(vec![9; 32]),
+                    serde_bytes::ByteBuf::from(vec![10; 48]),
+                )
+            })
+            .collect()
+    }
 
-        use crate::chain::{Effects, Kind};
+    #[tokio::test]
+    async fn rotation_preserves_membership_and_requires_exact_parent_recipients() {
+        use serde_bytes::ByteBuf;
         let (db, admin, guard, first, library) = chain_fixture().await;
         let second = crate::reference_crypto::from_seed([8; 32]);
-        let replacement = crate::reference_crypto::from_seed([9; 32]);
+        let root = recovery();
         let enroll = signed_chain(
             &membership_body(
                 library,
@@ -895,173 +928,121 @@ mod tests {
                 1,
                 library,
                 Kind::Enroll,
-                Effects::Device((ByteBuf::from(second.public.to_vec()),)),
+                Effects::Enrollment((
+                    ByteBuf::from(second.public.to_vec()),
+                    ByteBuf::from(second.public.to_vec()),
+                )),
             ),
             &first,
         );
         db.append_record(first.public, &enroll).await.unwrap();
-        let head = verify_record(&enroll).unwrap().hash;
-        let revoke = signed_chain(
-            &membership_body(
-                library,
-                &second,
-                2,
-                head,
-                Kind::Revoke,
-                Effects::Device((ByteBuf::from(first.public.to_vec()),)),
-            ),
-            &second,
-        );
-        db.append_record(second.public, &revoke).await.unwrap();
-        assert!(!db.allowed(&first.public).await.unwrap());
-        assert!(matches!(
-            db.append_record(first.public, &enroll).await,
-            Err(Error::Unauthorized)
-        ));
-        let head = verify_record(&revoke).unwrap().hash;
-        let last = signed_chain(
-            &membership_body(
-                library,
-                &second,
-                3,
-                head,
-                Kind::Revoke,
-                Effects::Device((ByteBuf::from(second.public.to_vec()),)),
-            ),
-            &second,
-        );
-        assert!(matches!(
-            db.append_record(second.public, &last).await,
-            Err(Error::Conflict)
-        ));
-        let device_reset = signed_chain(
-            &membership_body(
-                library,
-                &second,
-                3,
-                head,
-                Kind::Rotate,
-                Effects::Rotation((
-                    2,
-                    ByteBuf::from(replacement.public.to_vec()),
-                    ByteBuf::from(vec![12; 32]),
-                )),
-            ),
-            &second,
-        );
-        assert!(matches!(
-            db.append_record(second.public, &device_reset).await,
-            Err(Error::Unauthorized)
-        ));
+        let parent = verify_record(&enroll).unwrap().hash;
         let invalid = signed_chain(
             &membership_body(
                 library,
-                &recovery(),
-                3,
-                head,
+                &root,
+                2,
+                parent,
                 Kind::Rotate,
                 Effects::Rotation((
                     2,
-                    ByteBuf::from(first.public.to_vec()),
                     ByteBuf::from(vec![12; 32]),
+                    epoch_envelopes(&[first.public]),
                 )),
             ),
-            &recovery(),
+            &root,
         );
         assert!(matches!(
-            db.append_record(recovery().public, &invalid).await,
+            db.append_record(root.public, &invalid).await,
             Err(Error::Conflict)
         ));
-        assert!(db.allowed(&second.public).await.unwrap());
+        let device = signed_chain(
+            &membership_body(
+                library,
+                &first,
+                2,
+                parent,
+                Kind::Rotate,
+                Effects::Rotation((
+                    2,
+                    ByteBuf::from(vec![12; 32]),
+                    epoch_envelopes(&[first.public, second.public]),
+                )),
+            ),
+            &first,
+        );
+        assert!(matches!(
+            db.append_record(first.public, &device).await,
+            Err(Error::Unauthorized)
+        ));
         let rotation = signed_chain(
             &membership_body(
                 library,
-                &recovery(),
-                3,
-                head,
+                &root,
+                2,
+                parent,
                 Kind::Rotate,
                 Effects::Rotation((
                     2,
-                    ByteBuf::from(replacement.public.to_vec()),
                     ByteBuf::from(vec![12; 32]),
+                    epoch_envelopes(&[first.public, second.public]),
                 )),
             ),
-            &recovery(),
+            &root,
         );
-        let stranger = crate::reference_crypto::from_seed([99; 32]);
+        db.append_record(first.public, &rotation).await.unwrap();
+        db.append_record(second.public, &rotation).await.unwrap();
+        db.append_record(root.public, &rotation).await.unwrap();
+        assert!(db.allowed(&first.public).await.unwrap());
+        assert!(db.allowed(&second.public).await.unwrap());
+        assert!(!db.allowed(&root.public).await.unwrap());
+        let epoch: i64 = sqlx::query_scalar("SELECT epoch FROM libraries")
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(epoch, 2);
+        let authorization:Vec<i64>=sqlx::query_scalar("SELECT authorized_at_sequence FROM library_keys WHERE kind='device' ORDER BY authorized_at_sequence").fetch_all(&db.pool).await.unwrap();
+        assert_eq!(authorization, vec![1, 2]);
+        let mut revoke = membership_body(
+            library,
+            &root,
+            3,
+            verify_record(&rotation).unwrap().hash,
+            Kind::Revoke,
+            Effects::Device((ByteBuf::from(first.public.to_vec()),)),
+        );
+        revoke.epoch = 2;
+        let revoke = signed_chain(&revoke, &root);
+        db.append_record(root.public, &revoke).await.unwrap();
+        let parent = verify_record(&revoke).unwrap().hash;
+        let mut next = membership_body(
+            library,
+            &root,
+            4,
+            parent,
+            Kind::Rotate,
+            Effects::Rotation((
+                3,
+                ByteBuf::from(vec![13; 32]),
+                epoch_envelopes(&[first.public, second.public]),
+            )),
+        );
+        next.epoch = 2;
         assert!(matches!(
-            db.append_record(stranger.public, &rotation).await,
-            Err(Error::Unauthorized)
-        ));
-        assert!(!db.allowed(&recovery().public).await.unwrap());
-        assert!(db
-            .block_page(recovery().public, library, None)
-            .await
-            .is_ok());
-        // Exact fresh replacement can publish without old device credentials.
-        db.append_record(replacement.public, &rotation)
-            .await
-            .unwrap();
-        db.append_record(replacement.public, &rotation)
-            .await
-            .unwrap();
-        db.append_record(recovery().public, &rotation)
-            .await
-            .unwrap();
-        assert!(!db.allowed(&second.public).await.unwrap());
-        assert!(db.allowed(&replacement.public).await.unwrap());
-        assert_eq!(
-            sqlx::query_scalar::<_, i64>("SELECT epoch FROM libraries")
-                .fetch_one(&db.pool)
-                .await
-                .unwrap(),
-            2
-        );
-        assert_eq!(
-            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM blocks")
-                .fetch_one(&db.pool)
-                .await
-                .unwrap(),
-            4
-        );
-        assert!(db
-            .block_page(replacement.public, library, None)
-            .await
-            .is_ok());
-        db.register_test_device("unused", &first.public, &recovery().public, &[11; 32])
-            .await
-            .unwrap();
-        assert!(!db.allowed(&first.public).await.unwrap());
-        assert!(matches!(
-            db.quota(recovery().public).await,
-            Err(Error::Unauthorized)
-        ));
-        assert!(
-            sqlx::query("UPDATE library_keys SET revoked_at_sequence=4 WHERE kind='recovery'")
-                .execute(&db.pool)
-                .await
-                .is_err()
-        );
-        let recovery_enroll = signed_chain(
-            &membership_body(
-                library,
-                &replacement,
-                4,
-                verify_record(&rotation).unwrap().hash,
-                Kind::Enroll,
-                Effects::Device((ByteBuf::from(recovery().public.to_vec()),)),
-            ),
-            &replacement,
-        );
-        // Use the actual post-reset epoch; the public key namespace still forbids
-        // turning the offline authority into an ordinary device.
-        let mut body = verify_record(&recovery_enroll).unwrap().body;
-        body.epoch = 2;
-        assert!(matches!(
-            db.append_record(replacement.public, &signed_chain(&body, &replacement))
+            db.append_record(root.public, &signed_chain(&next, &root))
                 .await,
             Err(Error::Conflict)
         ));
+        next.effects = Effects::Rotation((
+            3,
+            ByteBuf::from(vec![13; 32]),
+            epoch_envelopes(&[second.public]),
+        ));
+        let next = signed_chain(&next, &root);
+        db.append_record(second.public, &next).await.unwrap();
+        assert!(!db.allowed(&first.public).await.unwrap());
+        assert!(db.allowed(&second.public).await.unwrap());
+        assert!(db.block_page(root.public, library, None).await.is_ok());
         dispose(db, admin, guard).await;
     }
 

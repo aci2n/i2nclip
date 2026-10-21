@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use curve25519_dalek::montgomery::MontgomeryPoint;
 use serde::{
     de::{self, SeqAccess, Visitor},
     ser::SerializeTuple,
@@ -50,6 +51,16 @@ pub fn parse_hash(text: &str) -> Result<Hash, Error> {
 }
 
 /// Genesis pins immutable recovery authority and the initial public epoch salt.
+/// X25519 accepts noncanonical field encodings, but low-order inputs yield an all-zero secret.
+/// This public fixed scalar is only a validation probe, never key material.
+pub fn validate_encryption_key(bytes: &[u8]) -> Result<Hash, Error> {
+    let key: Hash = bytes.try_into().map_err(|_| invalid())?;
+    if MontgomeryPoint(key).mul_clamped([0x42; 32]).to_bytes() == [0; 32] {
+        return Err(invalid());
+    }
+    Ok(key)
+}
+
 pub fn genesis(recovery: &Hash, epoch_salt: &Hash) -> Result<Hash, Error> {
     let bytes = genesis_bytes(recovery, epoch_salt)?;
     Ok(digest(&[GENESIS_DOMAIN, &bytes].concat()))
@@ -208,12 +219,15 @@ fn next_hashes<'de, A: SeqAccess<'de>>(
     Ok(hashes)
 }
 
+pub type EpochEnvelope = (ByteBuf, ByteBuf, ByteBuf);
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Effects {
     Storage(Vec<StorageEffect>),
     Device((ByteBuf,)),
-    Rotation((u64, ByteBuf, ByteBuf)),
+    Enrollment((ByteBuf, ByteBuf)),
+    Rotation((u64, ByteBuf, Vec<EpochEnvelope>)),
 }
 
 /// Struct fields serialize to a fixed-position array with `rmp_serde::to_vec`.
@@ -273,13 +287,30 @@ impl Body {
                     return Err(invalid());
                 }
             }
-            (Kind::Enroll | Kind::Revoke, Effects::Device((key,))) => {
+            (Kind::Revoke, Effects::Device((key,))) => {
                 validate_public_key(key)?;
             }
-            (Kind::Rotate, Effects::Rotation((epoch, key, salt)))
-                if *epoch >= 2 && *epoch <= MAX_SAFE_INTEGER as u64 && salt.len() == 32 =>
+            (Kind::Enroll, Effects::Enrollment((signing, encryption))) => {
+                validate_public_key(signing)?;
+                validate_encryption_key(encryption)?;
+            }
+            (Kind::Rotate, Effects::Rotation((epoch, salt, envelopes)))
+                if *epoch >= 2
+                    && *epoch <= MAX_SAFE_INTEGER as u64
+                    && salt.len() == 32
+                    && envelopes.len() <= MAX_AUTHORIZED_DEVICES as usize =>
             {
-                validate_public_key(key)?;
+                let mut previous: Option<&[u8]> = None;
+                for (recipient, encapsulated, ciphertext) in envelopes {
+                    validate_public_key(recipient)?;
+                    if encapsulated.len() != 32
+                        || ciphertext.len() != 48
+                        || previous.is_some_and(|key| key >= recipient.as_ref())
+                    {
+                        return Err(invalid());
+                    }
+                    previous = Some(recipient.as_ref());
+                }
             }
             _ => return Err(invalid()),
         }
@@ -388,6 +419,18 @@ mod tests {
             .unwrap()
         )
         .is_err());
+    }
+
+    #[test]
+    fn encryption_public_keys_reject_low_order_inputs() {
+        assert!(validate_encryption_key(&[0; 32]).is_err());
+        let mut one = [0; 32];
+        one[0] = 1;
+        assert!(validate_encryption_key(&one).is_err());
+        let mut base = [0; 32];
+        base[0] = 9;
+        assert_eq!(validate_encryption_key(&base).unwrap(), base);
+        assert!(validate_encryption_key(&base[..31]).is_err());
     }
 
     fn vectors() -> Value {

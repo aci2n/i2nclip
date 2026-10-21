@@ -342,7 +342,7 @@ test("head changes after proposal require a new pairing attempt without silent r
 					epoch: 1,
 					signer: original.key.publicKey,
 					kind: "enroll",
-					effects: [target],
+					effects: [target, target],
 				},
 				original.key.privateCryptoKey,
 			);

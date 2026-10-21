@@ -8,7 +8,7 @@ import { generatePrivateKey } from "./protocol/identity.ts";
 import { epochKey, type LoadedRecovery } from "./protocol/recovery-key.ts";
 import { createChain, stateCheckpoint } from "./stores/chain.ts";
 
-/** Session-owned operation: verify/decrypt complete history before preparing a reset. */
+/** Session-owned operation: verify/decrypt complete history before preparing recovery enrollment. */
 export function prepareRecoveryDevice(
 	recovery: LoadedRecovery,
 	signal: AbortSignal,
@@ -72,16 +72,8 @@ class RecoveryReplay {
 			signal.throwIfAborted();
 			const { privateKey } = await generatePrivateKey();
 			const encryption = await generateDeviceEncryptionKey();
-			const salt = crypto.getRandomValues(new Uint8Array(32));
-			let secret: Bytes | undefined;
 			let encoded: Bytes | undefined;
 			try {
-				secret = await epochKey(
-					identity.epochDerivationSecret,
-					state.library,
-					state.epoch + 1,
-					salt,
-				);
 				const record = await createRecord(
 					{
 						library: state.library,
@@ -89,8 +81,8 @@ class RecoveryReplay {
 						previous: state.head,
 						epoch: state.epoch,
 						signer: key.publicKey,
-						kind: "rotate",
-						effects: [state.epoch + 1, privateKey.public_key, salt],
+						kind: "enroll",
+						effects: [privateKey.public_key, encryption.publicKey],
 					},
 					key.privateCryptoKey,
 				);
@@ -103,13 +95,13 @@ class RecoveryReplay {
 					encryption,
 					epochs: [...this.secrets.entries()],
 					head: stateCheckpoint(state),
-					phase: "resetting",
+					phase: "recovering",
+					rotation: null,
 					registration: null,
-					rotation: { replacement: privateKey, secret, record: record.bytes },
+					recovery: record.bytes,
 				});
 				return await decodeDevice(encoded);
 			} finally {
-				secret?.fill(0);
 				privateKey.seed.fill(0);
 				encryption.secret.fill(0);
 				encoded?.fill(0);

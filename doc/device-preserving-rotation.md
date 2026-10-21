@@ -69,6 +69,11 @@ tree-shakeable. Validate its browser availability through the creation/import ke
 and final browser suite. `client/tests/hpke-vector.json` preserves the relevant
 official RFC base-mode fixture, and focused tests cover context separation,
 tampering, invalid inputs, and non-extractable runtime private keys.
+The Rust server uses `curve25519-dalek` (already present through Ed25519)
+as a direct dependency to reject low-order X25519 public inputs with a public
+validation probe; no new curve implementation or package is introduced. The
+client performs the corresponding native WebCrypto key-agreement probe before
+accepting enrollment.
 See [RFC 9180](https://www.rfc-editor.org/rfc/rfc9180.html).
 
 ### Pairing encryption-key possession
@@ -198,12 +203,31 @@ are added to components.
 
 Before exposing a transition, independently verify signature, chain continuity,
 authority, exact recipient coverage, bounds, and membership. An authorized device
-opens its own entry using its local encryption private key, validates a 32-byte
-result, and durably saves the numbered epoch key before advancing its durable
-trusted head or exposing subsequent decrypted state. Stage replay changes until
-both key persistence and verified cache advancement can be safely completed;
-restart must be able to replay the same rotation without skipping its envelope.
-Never persist a head whose required secret has been discarded.
+opens its own entry using its local encryption private key and validates a 32-byte
+result. The local private key is already durable, and the signed rotation record
+contains the encrypted key. Atomically persist that record with the verified
+cache/head before exposing subsequent state. These two durable objects suffice
+to recover the epoch secret after restart; do not add an automatic protected
+credential rewrite on every remotely observed rotation.
+
+The chain store owns newly derived epoch keys in memory, wipes its owned buffers
+on disposal, and rederives them from envelopes during replay. Protected credentials
+retain the complete historical keyring received at creation/pairing/recovery;
+those keys cover epochs before this device had a recipient entry. Pairing must
+obtain the complete verified keyring from the chain store, including later derived
+keys, rather than transferring only the original credential keyring. Explicit
+rotation finalization may save that complete keyring with its accepted head while
+preserving the active device/context. Clearing cached records requires refetching
+them under the retained trusted head, as with all chain replay; withholding remains
+an availability failure, never permission to accept a shorter chain. No new
+cross-tab synchronization or background session writer is introduced.
+
+If a known epoch key and a locally decryptable envelope disagree, reject the
+transition. If an epoch was before this device's enrollment, use the trusted
+historical keyring supplied during pairing/recovery; public recipient coverage
+must still be independently verified. Missing historical keys require re-pairing
+or recovery, never guessing a key. Root recovery derives keys from authenticated
+salts using its offline secret, independently of device envelopes.
 
 A revoked device is not a recipient. It may verify public history available from
 an untrusted server but cannot derive the new key from old epoch keys. Do not
@@ -287,7 +311,7 @@ After the current implementation is finished, make separate cohesive commits:
    save, and exact receipt verification with focused client tests.
 5. Implement envelope replay and ordinary device-preserving rotation workflows.
    Test two retained devices, one revoked device, offline multi-rotation catch-up,
-   key-save failure/restart, stale parent, lost response, and cancellation.
+   cache-save failure/restart, stale parent, lost response, and cancellation.
 6. Update root-only restore and pending recovery enrollment. Test zero usable
    devices, preservation of existing membership, candidate-only retry, recovery-signed revocation at capacity,
    and recovery-file derivation of all epoch keys without envelopes.

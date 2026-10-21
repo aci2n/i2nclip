@@ -10,6 +10,7 @@ import {
 	sameBytes,
 	type VerifiedBlock,
 } from "./chain.ts";
+import { validateEpochEnvelopes } from "./epoch-envelope.ts";
 import { decode, encode } from "./msgpack.ts";
 import { parseRecoveryGenesis } from "./recovery-key.ts";
 
@@ -41,6 +42,7 @@ export interface MaterializedFile {
 }
 export interface DeviceMembership {
 	readonly publicKey: Bytes;
+	readonly encryptionPublicKey: Bytes;
 	readonly authorizedAt: number;
 	readonly revokedAt: number | null;
 }
@@ -289,26 +291,17 @@ export function reduceBlock(
 				invalid("revocation requires an active target and surviving device");
 			}
 			next.set(bytesToHex(key), { ...target, revokedAt: body.sequence });
-		} else {
-			const key = body.effects[body.kind === "rotate" ? 1 : 0] as Bytes;
+		} else if (body.kind === "enroll") {
+			const key = fixedBytes(body.effects[0]);
+			const encryptionPublicKey = fixedBytes(body.effects[1]);
 			if (
 				sameBytes(key, state.recoveryPublicKey) ||
-				next.has(bytesToHex(key))
+				next.has(bytesToHex(key)) ||
+				[...next.values()].some((device) =>
+					sameBytes(device.encryptionPublicKey, encryptionPublicKey),
+				)
 			) {
 				invalid("device key already used");
-			}
-			if (body.kind === "rotate") {
-				const nextEpoch = body.effects[0] as number;
-				if (nextEpoch !== epoch + 1 || !Number.isSafeInteger(nextEpoch)) {
-					invalid("epoch must advance by one");
-				}
-				epoch = nextEpoch;
-				epochSalt = fixedBytes(body.effects[2]);
-				for (const [id, device] of next) {
-					if (device.revokedAt === null) {
-						next.set(id, { ...device, revokedAt: body.sequence });
-					}
-				}
 			}
 			if (
 				[...next.values()].filter((device) => device.revokedAt === null)
@@ -318,9 +311,22 @@ export function reduceBlock(
 			}
 			next.set(bytesToHex(key), {
 				publicKey: key,
+				encryptionPublicKey,
 				authorizedAt: body.sequence,
 				revokedAt: null,
 			});
+		} else {
+			const [nextEpoch, salt, envelopes] = body.effects as readonly [
+				number,
+				Bytes,
+				unknown,
+			];
+			if (nextEpoch !== epoch + 1 || !Number.isSafeInteger(nextEpoch)) {
+				invalid("epoch must advance by one");
+			}
+			validateEpochEnvelopes(envelopes, [...devices.values()]);
+			epoch = nextEpoch;
+			epochSalt = fixedBytes(salt);
 		}
 		devices = next;
 	}

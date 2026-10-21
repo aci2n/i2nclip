@@ -37,6 +37,9 @@ async function fixture(t: test.TestContext) {
 	>();
 	let failCommit = false;
 	const chain: ChainStore = {
+		keyring() {
+			throw new Error("Key delivery is not used by this fixture.");
+		},
 		subscribe: view.subscribe,
 		async at() {
 			throw new Error("Historical replay is not used by this fixture.");

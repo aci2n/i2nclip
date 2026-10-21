@@ -54,6 +54,10 @@ class ChainWorkspaceImpl {
 				publicKey: context.key.publicKey,
 				signingKey: context.key.privateCryptoKey,
 				secrets: new Map(context.identity.epochs),
+				encryption: {
+					publicKey: context.identity.encryption.publicKey,
+					keyPair: context.encryptionKey,
+				},
 				minimum: context.identity.head,
 			},
 			this.cache,

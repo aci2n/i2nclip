@@ -20,8 +20,9 @@ Fixed structures use positional MessagePack arrays. Only extensible encrypted
 metadata uses a map. Signatures cover exact bytes, origin, method, path/query,
 timestamp, nonce, and body hash. Request proofs are checked before reading bodies;
 nonces reject replay and early data is forbidden. Block signatures are separate
-from HTTP proofs. A recovery-signed reset can be submitted without an authorized
-device and atomically chooses a fresh initial device.
+from HTTP proofs. A recovery-signed enrollment can be submitted by its fresh candidate without an
+authorized device. Recovery alone authorizes rotation, which preserves membership
+and carries an encrypted epoch key for every authorized device.
 
 The server never materializes private file operations. It checks public chain
 position, device/root authority, opaque storage effects, inventories, quotas,

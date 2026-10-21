@@ -56,7 +56,7 @@
 ## Verification
 
 - Run the smallest relevant verification after each cohesive change. Backend-only changes do not run frontend tests or checks; frontend-only changes do not run backend suites. Shared protocol changes run the affected tests in both languages. Documentation-only changes need a diff/consistency review, not application builds or tests.
-- Do not run E2E tests after each change. Group browser tests and required screenshot inspection into final integration verification, unless a specific browser-only failure requires a focused test. Run the full portable suite once after integration; repeat or broaden checks only for new changes, failures, or unresolved concerns.
+- Do not run E2E tests after each change. Group browser tests and required screenshot inspection into final integration verification, For the currently approved chain follow-ups, defer E2E even for known browser failures until all implementation and cleanup are complete. Run the full portable suite once after integration; repeat or broaden checks only for new changes, failures, or unresolved concerns.
 - Scope formatting, static analysis, and warning-free builds to the affected subsystem. Pre-commit tooling must follow this policy rather than invoking unrelated checks. Keep verification sequential when jobs share build outputs, especially `client/dist/`.
 - Use Node from `client/.nvmrc` on PATH. Client Makefile targets prepare locked dependencies automatically; `npm ci --prefix client` is also available for direct npm commands.
 - The root Makefile groups all test/verification targets by required access. `make test-build` builds the web and unpacked extension and checks their contents without a browser or database.

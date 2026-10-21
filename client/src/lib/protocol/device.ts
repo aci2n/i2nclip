@@ -13,6 +13,7 @@ import {
 	generateDeviceEncryptionKey,
 	loadDeviceEncryptionKey,
 } from "./device-encryption.ts";
+import { type EpochEnvelope, openEpochKey } from "./epoch-envelope.ts";
 import { generatePrivateKey, type PrivateKeyDocument } from "./identity.ts";
 import { decode, encode } from "./msgpack.ts";
 import { createLibraryRecovery, parseRecoveryGenesis } from "./recovery-key.ts";
@@ -20,9 +21,8 @@ import { checkServer } from "./server.ts";
 
 // Leave room for the authenticated pairing packet around local credential fields.
 export const MAX_CREDENTIAL_BYTES = 1024 * 1024 - 1024;
-export type DevicePhase = "registering" | "pairing" | "active" | "resetting";
+export type DevicePhase = "registering" | "pairing" | "active" | "recovering";
 export interface PendingRotation {
-	readonly replacement: PrivateKeyDocument;
 	readonly secret: Bytes;
 	readonly record: Bytes;
 }
@@ -37,6 +37,7 @@ export interface DeviceIdentity {
 	readonly phase: DevicePhase;
 	readonly rotation: PendingRotation | null;
 	readonly registration: Bytes | null;
+	readonly recovery: Bytes | null;
 }
 export interface LoadedDevice {
 	readonly identity: DeviceIdentity;
@@ -75,10 +76,9 @@ export function encodeDevice(identity: DeviceIdentity): Bytes {
 		identity.epochs,
 		[identity.head.sequence, fixedBytesHex(identity.head.hash)],
 		identity.phase,
-		pending
-			? [keyValues(pending.replacement), pending.secret, pending.record]
-			: null,
+		pending ? [pending.secret, pending.record] : null,
 		identity.registration,
+		identity.recovery,
 	]);
 	if (bytes.length > MAX_CREDENTIAL_BYTES) {
 		throw new Error("Device credentials exceed the supported size.");
@@ -97,7 +97,7 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 	if (input.length > MAX_CREDENTIAL_BYTES) {
 		throw new Error("Device credentials exceed the supported size.");
 	}
-	const values = frame(decode(input), 10);
+	const values = frame(decode(input), 11);
 	if (values[0] !== 1 || typeof values[1] !== "string") {
 		throw new Error("Invalid device credentials.");
 	}
@@ -150,13 +150,16 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 		phase !== "registering" &&
 		phase !== "pairing" &&
 		phase !== "active" &&
-		phase !== "resetting"
+		phase !== "recovering"
 	) {
 		throw new Error("Invalid device preparation phase.");
 	}
 	const registration =
 		values[9] === null ? null : fixedBytesVariable(values[9]);
 	if (registration) {
+		if (phase !== "registering") {
+			throw new Error("Unexpected pending registration.");
+		}
 		const record = await verifyRecord(registration);
 		const body = record.body;
 		if (
@@ -167,10 +170,11 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 			!sameBytes(body.previous, library) ||
 			!sameBytes(body.signer, initial.recoveryPublicKey) ||
 			!sameBytes(body.effects[0] as Bytes, key.publicKey) ||
+			!sameBytes(body.effects[1] as Bytes, encryption.publicKey) ||
 			(phase === "registering" &&
 				(head.sequence !== 1 ||
 					head.hash !== bytesToHex(record.hash) ||
-					epochs.length !== 1))
+					epochs.length < 1))
 		) {
 			throw new Error("Invalid pending registration.");
 		}
@@ -179,38 +183,78 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 	}
 	let rotation: PendingRotation | null = null;
 	if (values[8] !== null) {
-		if (phase !== "active" && phase !== "resetting") {
+		if (phase !== "active") {
 			throw new Error("Invalid pending rotation phase.");
 		}
-		const pending = frame(values[8], 3);
-		const replacement = keyDocument(pending[0]);
-		await loadSigningKey(replacement);
-		const secret = fixedBytes(pending[1]);
-		const record = fixedBytesVariable(pending[2]);
+		const pending = frame(values[8], 2);
+		const secret = fixedBytes(pending[0]);
+		const record = fixedBytesVariable(pending[1]);
 		const verified = await verifyRecord(record);
 		const body = verified.body;
 		if (
 			body.kind !== "rotate" ||
-			body.epoch !== epochs.length ||
+			body.epoch < epochs.length ||
 			body.sequence !== head.sequence + 1 ||
 			bytesToHex(body.previous) !== head.hash ||
 			!sameBytes(body.library, library) ||
 			!sameBytes(body.signer, initial.recoveryPublicKey) ||
-			body.effects[0] !== epochs.length + 1 ||
-			!(body.effects[1] instanceof Uint8Array) ||
-			!sameBytes(body.effects[1], replacement.public_key) ||
-			(phase === "resetting"
-				? !sameBytes(key.publicKey, replacement.public_key)
-				: sameBytes(key.publicKey, replacement.public_key))
+			body.effects[0] !== body.epoch + 1
 		) {
 			throw new Error(
 				"Pending rotation does not match the device credentials.",
 			);
 		}
-		rotation = { replacement, secret, record };
+		const envelope = (body.effects[2] as readonly EpochEnvelope[]).find(
+			(entry) => sameBytes(entry[0], key.publicKey),
+		);
+		if (!envelope) {
+			throw new Error("Pending rotation omits this device.");
+		}
+		const opened = await openEpochKey(
+			{
+				library,
+				sequence: body.sequence,
+				previous: body.previous,
+				epoch: body.epoch,
+				nextEpoch: body.epoch + 1,
+				salt: body.effects[1] as Bytes,
+				recipient: key.publicKey,
+				encryptionPublicKey: encryption.publicKey,
+			},
+			encryptionKey,
+			envelope,
+		);
+		try {
+			if (!sameBytes(opened, secret)) {
+				throw new Error("Pending rotation secret does not match its envelope.");
+			}
+		} finally {
+			opened.fill(0);
+		}
+		rotation = { secret, record };
 	}
-	if (phase === "resetting" && !rotation) {
-		throw new Error("Recovery candidate requires its signed reset.");
+	const recovery = values[10] === null ? null : fixedBytesVariable(values[10]);
+	if (phase === "recovering") {
+		if (!recovery || registration || rotation) {
+			throw new Error("Recovery candidate requires its signed enrollment.");
+		}
+		const body = (await verifyRecord(recovery)).body;
+		if (
+			body.kind !== "enroll" ||
+			body.epoch > epochs.length ||
+			body.sequence !== head.sequence + 1 ||
+			bytesToHex(body.previous) !== head.hash ||
+			!sameBytes(body.library, library) ||
+			!sameBytes(body.signer, initial.recoveryPublicKey) ||
+			!sameBytes(body.effects[0] as Bytes, key.publicKey) ||
+			!sameBytes(body.effects[1] as Bytes, encryption.publicKey)
+		) {
+			throw new Error(
+				"Recovery enrollment does not match the local candidate.",
+			);
+		}
+	} else if (recovery) {
+		throw new Error("Unexpected pending recovery enrollment.");
 	}
 	const identity: DeviceIdentity = {
 		serverUrl,
@@ -223,6 +267,7 @@ export async function decodeDevice(input: Bytes): Promise<LoadedDevice> {
 		phase,
 		rotation,
 		registration,
+		recovery,
 	};
 	if (!sameBytes(input, encodeDevice(identity))) {
 		throw new Error("Noncanonical device credentials.");
@@ -239,7 +284,11 @@ export async function createLibraryDevice(server: string) {
 	checkServer(server);
 	const { privateKey } = await generatePrivateKey();
 	const encryption = await generateDeviceEncryptionKey();
-	const created = await createLibraryRecovery(server, privateKey.public_key);
+	const created = await createLibraryRecovery(
+		server,
+		privateKey.public_key,
+		encryption.publicKey,
+	);
 	const initial = created.recovery.genesis;
 	const encoded = encodeDevice({
 		serverUrl: new URL(server).origin,
@@ -252,6 +301,7 @@ export async function createLibraryDevice(server: string) {
 		phase: "registering",
 		rotation: null,
 		registration: created.enrollment.bytes,
+		recovery: null,
 	});
 	try {
 		return { device: await decodeDevice(encoded), recovery: created.recovery };
@@ -267,26 +317,21 @@ export async function createLibraryDevice(server: string) {
 	}
 }
 
-/** Construct the exact replacement credential without changing the pending identity. */
-export async function rotationReplacement(
+/** Preserve the candidate identity while pinning its exact recovery enrollment. */
+export async function recoveryEnrollmentResult(
 	current: LoadedDevice,
 ): Promise<LoadedDevice> {
-	const pending = current.identity.rotation;
+	const pending = current.identity.recovery;
 	if (!pending) {
-		throw new Error("No pending reset.");
+		throw new Error("No pending recovery enrollment.");
 	}
-	const record = await verifyRecord(pending.record);
+	const record = await verifyRecord(pending);
 	return decodeDevice(
 		encodeDevice({
 			...current.identity,
-			privateKey: pending.replacement,
-			epochs: [
-				...current.identity.epochs,
-				[current.identity.epochs.length + 1, pending.secret],
-			],
 			head: { sequence: record.body.sequence, hash: bytesToHex(record.hash) },
 			phase: "active",
-			rotation: null,
+			recovery: null,
 		}),
 	);
 }
