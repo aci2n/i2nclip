@@ -166,8 +166,9 @@ impl Database {
         }
         let limits = sqlx::query("DELETE FROM registration_codes WHERE code_hash=$1 AND expires_at>$2 RETURNING max_content_bytes,max_files")
             .bind(hash.as_slice()).bind(crypto::now_secs() as i64).fetch_optional(&mut *tx).await?.ok_or(Error::RegistrationFailed)?;
-        let created = sqlx::query("INSERT INTO libraries(id,genesis_device_key,recovery_public_key,epoch_1_salt,head_hash,max_blob_bytes,max_files) VALUES($1,$2,$3,$4,$1,$5,$6) ON CONFLICT DO NOTHING")
-            .bind(library.as_slice()).bind(public.as_slice()).bind(recovery.as_slice()).bind(salt.as_slice())
+        let genesis = crate::chain::genesis_bytes(recovery, public, salt)?;
+        let created = sqlx::query("INSERT INTO libraries(id,genesis,head_hash,max_blob_bytes,max_files) VALUES($1,$2,$1,$3,$4) ON CONFLICT DO NOTHING")
+            .bind(library.as_slice()).bind(genesis)
             .bind(limits.try_get::<i64,_>("max_content_bytes")?).bind(limits.try_get::<i64,_>("max_files")?).execute(&mut *tx).await?;
         if created.rows_affected() != 1 {
             return Err(Error::Conflict);
@@ -307,11 +308,12 @@ mod tests {
         let initial = crate::reference_crypto::from_seed([7; 32]);
         let library =
             crate::chain::genesis(&recovery().public, &initial.public, &[11; 32]).unwrap();
-        sqlx::query("INSERT INTO libraries(id,genesis_device_key,recovery_public_key,epoch_1_salt,head_hash) VALUES($1,$2,$3,$4,$1)")
+        sqlx::query("INSERT INTO libraries(id,genesis,head_hash) VALUES($1,$2,$1)")
             .bind(library.as_slice())
-            .bind(initial.public.as_slice())
-            .bind(recovery().public.as_slice())
-            .bind([11u8;32].as_slice())
+            .bind(
+                crate::chain::genesis_bytes(&recovery().public, &initial.public, &[11; 32])
+                    .unwrap(),
+            )
             .execute(&db.pool)
             .await
             .unwrap();
@@ -337,11 +339,12 @@ mod tests {
         let initial = crate::reference_crypto::from_seed([7; 32]);
         let library =
             crate::chain::genesis(&recovery().public, &initial.public, &[11; 32]).unwrap();
-        sqlx::query("INSERT INTO libraries(id,genesis_device_key,recovery_public_key,epoch_1_salt,head_hash) VALUES($1,$2,$3,$4,$1)")
+        sqlx::query("INSERT INTO libraries(id,genesis,head_hash) VALUES($1,$2,$1)")
             .bind(library.as_slice())
-            .bind(initial.public.as_slice())
-            .bind(recovery().public.as_slice())
-            .bind([11u8;32].as_slice())
+            .bind(
+                crate::chain::genesis_bytes(&recovery().public, &initial.public, &[11; 32])
+                    .unwrap(),
+            )
             .execute(&db.pool)
             .await
             .unwrap();
@@ -362,6 +365,7 @@ mod tests {
         sqlx::query("INSERT INTO blobs(library_id,file_id,hash,ciphertext,staging_expires_at) VALUES($1,$2,$3,$4,100)")
             .bind(library.as_slice()).bind([4u8;32].as_slice()).bind(hash.as_slice()).bind(ciphertext.as_slice()).execute(&db.pool).await.unwrap();
         for query in [
+            "UPDATE libraries SET genesis = decode('00','hex')",
             "UPDATE blocks SET signed_body = decode('00','hex')",
             "DELETE FROM blocks",
             "UPDATE blobs SET ciphertext = decode(repeat('07',16),'hex')",
@@ -448,6 +452,38 @@ mod tests {
         let library =
             crate::chain::genesis(&recovery().public, &identity.public, &[11; 32]).unwrap();
         (db, admin, guard, identity, library)
+    }
+
+    #[tokio::test]
+    async fn canonical_genesis_and_recovery_projection_are_immutable_and_unique() {
+        let (db, admin, guard, identity, library) = chain_fixture().await;
+        let bytes: Vec<u8> = sqlx::query_scalar("SELECT genesis FROM libraries WHERE id=$1")
+            .bind(library.as_slice())
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            bytes,
+            crate::chain::genesis_bytes(&recovery().public, &identity.public, &[11; 32]).unwrap()
+        );
+        for query in [
+            "UPDATE libraries SET genesis = decode('00','hex')",
+            "UPDATE libraries SET id = decode(repeat('01',32),'hex')",
+            "UPDATE library_keys SET kind='device' WHERE kind='recovery'",
+            "DELETE FROM library_keys WHERE kind='recovery'",
+        ] {
+            assert!(
+                sqlx::query(query).execute(&db.pool).await.is_err(),
+                "{query}"
+            );
+        }
+        let second_root = crate::reference_crypto::from_seed([43; 32]);
+        assert!(sqlx::query("INSERT INTO library_keys(public_key,library_id,kind,authorized_at_sequence) VALUES($1,$2,'recovery',0)")
+            .bind(second_root.public.as_slice()).bind(library.as_slice()).execute(&db.pool).await.is_err());
+        db.block_page(recovery().public, library, None)
+            .await
+            .unwrap();
+        dispose(db, admin, guard).await;
     }
 
     fn membership_body(

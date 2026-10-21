@@ -1,8 +1,6 @@
 CREATE TABLE libraries (
     id BYTEA PRIMARY KEY CHECK (octet_length(id) = 32),
-    recovery_public_key BYTEA NOT NULL UNIQUE CHECK (octet_length(recovery_public_key) = 32),
-    epoch_1_salt BYTEA NOT NULL CHECK (octet_length(epoch_1_salt) = 32),
-    genesis_device_key BYTEA NOT NULL UNIQUE CHECK (octet_length(genesis_device_key) = 32),
+    genesis BYTEA NOT NULL CHECK (octet_length(genesis) BETWEEN 1 AND 128),
     head_hash BYTEA NOT NULL CHECK (octet_length(head_hash) = 32),
     head_sequence BIGINT NOT NULL DEFAULT 0 CHECK (head_sequence BETWEEN 0 AND 9007199254740991),
     epoch BIGINT NOT NULL DEFAULT 1 CHECK (epoch BETWEEN 1 AND 9007199254740991),
@@ -10,6 +8,7 @@ CREATE TABLE libraries (
     used_blob_bytes BIGINT NOT NULL DEFAULT 0 CHECK (used_blob_bytes BETWEEN 0 AND max_blob_bytes),
     max_files BIGINT NOT NULL DEFAULT 10000 CHECK (max_files BETWEEN 0 AND 9007199254740991),
     retained_files BIGINT NOT NULL DEFAULT 0 CHECK (retained_files BETWEEN 0 AND max_files),
+    CHECK (id = sha256(convert_to(E'i2nclip/chain/genesis/1\n', 'UTF8') || genesis)),
     CHECK (head_sequence <> 0 OR (head_hash = id AND epoch = 1))
 );
 
@@ -21,6 +20,7 @@ CREATE TABLE library_keys (
     authorized_at_sequence BIGINT NOT NULL CHECK (authorized_at_sequence BETWEEN 0 AND 9007199254740991),
     revoked_at_sequence BIGINT CHECK (revoked_at_sequence BETWEEN authorized_at_sequence AND 9007199254740991)
 );
+CREATE UNIQUE INDEX library_recovery_principal ON library_keys(library_id) WHERE kind = 'recovery';
 CREATE INDEX devices_active_library ON library_keys(library_id) WHERE kind = 'device' AND revoked_at_sequence IS NULL;
 
 CREATE TABLE blocks (
@@ -142,3 +142,14 @@ END;
 $$;
 CREATE TRIGGER blobs_immutable BEFORE UPDATE OR DELETE ON blobs
     FOR EACH ROW EXECUTE FUNCTION preserve_blob();
+
+CREATE FUNCTION preserve_library_genesis() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF (NEW.id, NEW.genesis) IS DISTINCT FROM (OLD.id, OLD.genesis) THEN
+        RAISE EXCEPTION 'library genesis is immutable' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER libraries_immutable_genesis BEFORE UPDATE ON libraries
+    FOR EACH ROW EXECUTE FUNCTION preserve_library_genesis();

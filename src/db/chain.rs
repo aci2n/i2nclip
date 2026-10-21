@@ -17,6 +17,16 @@ pub(super) struct Library {
     pub(super) head_sequence: i64,
     pub(super) epoch: i64,
     pub(super) recovery_public_key: Vec<u8>,
+    genesis: Vec<u8>,
+}
+
+impl Library {
+    fn validate_authority(&self) -> Result<(), Error> {
+        if chain::genesis_recovery(&self.genesis)?.as_slice() != self.recovery_public_key {
+            return Err(Error::Crypto);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize)]
@@ -28,8 +38,9 @@ pub(super) async fn lock_member(
     tx: &mut Transaction<'_, Postgres>,
     signer: &Hash,
 ) -> Result<Library, Error> {
-    let library = sqlx::query_as::<_,Library>("SELECT l.id,l.head_hash,l.head_sequence,l.epoch,l.recovery_public_key FROM libraries l JOIN library_keys d ON d.library_id=l.id WHERE d.public_key=$1 FOR UPDATE OF l")
+    let library = sqlx::query_as::<_,Library>("SELECT l.id,l.head_hash,l.head_sequence,l.epoch,l.genesis,r.public_key AS recovery_public_key FROM libraries l JOIN library_keys r ON r.library_id=l.id AND r.kind='recovery' JOIN library_keys d ON d.library_id=l.id WHERE d.public_key=$1 FOR UPDATE OF l")
         .bind(signer.as_slice()).fetch_optional(&mut **tx).await?.ok_or(Error::Unauthorized)?;
+    library.validate_authority()?;
     // A joining device row can be a pre-lock snapshot. Recheck after owning the lock.
     let active: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM library_keys WHERE public_key=$1 AND library_id=$2 AND kind='device' AND revoked_at_sequence IS NULL)")
         .bind(signer.as_slice()).bind(&library.id).fetch_one(&mut **tx).await?;
@@ -49,8 +60,9 @@ impl Database {
         let mut tx = self.pool.begin().await?;
         // Resolve by the signed library, not the HTTP signer: a prepared replacement
         // can submit its exact recovery-approved reset without an old device.
-        let library = sqlx::query_as::<_,Library>("SELECT id,head_hash,head_sequence,epoch,recovery_public_key FROM libraries WHERE id=$1 FOR UPDATE")
+        let library = sqlx::query_as::<_,Library>("SELECT l.id,l.head_hash,l.head_sequence,l.epoch,l.genesis,r.public_key AS recovery_public_key FROM libraries l JOIN library_keys r ON r.library_id=l.id AND r.kind='recovery' WHERE l.id=$1 FOR UPDATE OF l")
             .bind(record.body.library.as_slice()).fetch_optional(&mut *tx).await?.ok_or(Error::Unauthorized)?;
+        library.validate_authority()?;
         let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM library_keys WHERE public_key=$1 AND library_id=$2 AND kind='device' AND revoked_at_sequence IS NULL)")
             .bind(signer.as_slice()).bind(&library.id).fetch_one(&mut *tx).await?;
         if let (Kind::Rotate, Effects::Rotation((_, initial, _))) =
@@ -117,8 +129,9 @@ impl Database {
         after: Hash,
         until: Option<Hash>,
     ) -> Result<BlockPage, Error> {
-        let library=sqlx::query_as::<_,Library>("SELECT l.id,l.head_hash,l.head_sequence,l.epoch,l.recovery_public_key FROM libraries l JOIN library_keys d ON d.library_id=l.id WHERE d.public_key=$1 AND (d.kind='recovery' OR (d.kind='device' AND d.revoked_at_sequence IS NULL))")
+        let library=sqlx::query_as::<_,Library>("SELECT l.id,l.head_hash,l.head_sequence,l.epoch,l.genesis,r.public_key AS recovery_public_key FROM libraries l JOIN library_keys r ON r.library_id=l.id AND r.kind='recovery' JOIN library_keys d ON d.library_id=l.id WHERE d.public_key=$1 AND (d.kind='recovery' OR (d.kind='device' AND d.revoked_at_sequence IS NULL))")
             .bind(signer.as_slice()).fetch_optional(&self.pool).await?.ok_or(Error::Unauthorized)?;
+        library.validate_authority()?;
         let target = until.map_or_else(|| library.head_hash.clone(), |hash| hash.to_vec());
         let after_seq = self.anchor_sequence(&library, &after).await?;
         let target_seq = self.anchor_sequence(&library, &target).await?;

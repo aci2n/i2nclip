@@ -50,6 +50,11 @@ pub fn parse_hash(text: &str) -> Result<Hash, Error> {
 
 /// Genesis pins independent recovery authority, initial device and public epoch salt.
 pub fn genesis(recovery: &Hash, initial: &Hash, epoch_salt: &Hash) -> Result<Hash, Error> {
+    let bytes = genesis_bytes(recovery, initial, epoch_salt)?;
+    Ok(digest(&[GENESIS_DOMAIN, &bytes].concat()))
+}
+
+pub fn genesis_bytes(recovery: &Hash, initial: &Hash, epoch_salt: &Hash) -> Result<Vec<u8>, Error> {
     validate_public_key(recovery)?;
     validate_public_key(initial)?;
     if recovery == initial {
@@ -63,7 +68,23 @@ pub fn genesis(recovery: &Hash, initial: &Hash, epoch_salt: &Hash) -> Result<Has
         1u8,
     ))
     .map_err(|_| invalid())?;
-    Ok(digest(&[GENESIS_DOMAIN, &bytes].concat()))
+    Ok(bytes)
+}
+
+/// Canonical public authority, verified independently of the membership projection.
+pub fn genesis_recovery(bytes: &[u8]) -> Result<Hash, Error> {
+    if bytes.len() > 128 {
+        return Err(invalid());
+    }
+    let (version, recovery, initial, salt, epoch): (u8, ByteBuf, ByteBuf, ByteBuf, u8) =
+        rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
+    let recovery: Hash = recovery.as_ref().try_into().map_err(|_| invalid())?;
+    let initial: Hash = initial.as_ref().try_into().map_err(|_| invalid())?;
+    let salt: Hash = salt.as_ref().try_into().map_err(|_| invalid())?;
+    if version != 1 || epoch != 1 || genesis_bytes(&recovery, &initial, &salt)? != bytes {
+        return Err(invalid());
+    }
+    Ok(recovery)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -348,6 +369,29 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+
+    #[test]
+    fn genesis_authority_requires_canonical_valid_public_payload() {
+        let recovery = SigningKey::from_bytes(&[42; 32]).verifying_key().to_bytes();
+        let initial = SigningKey::from_bytes(&[7; 32]).verifying_key().to_bytes();
+        let bytes = genesis_bytes(&recovery, &initial, &[11; 32]).unwrap();
+        assert_eq!(genesis_recovery(&bytes).unwrap(), recovery);
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(genesis_recovery(&trailing).is_err());
+        assert!(genesis_recovery(&[0; 129]).is_err());
+        assert!(genesis_recovery(
+            &rmp_serde::to_vec(&(
+                1,
+                ByteBuf::from(recovery),
+                ByteBuf::from(recovery),
+                ByteBuf::from([11; 32]),
+                1
+            ))
+            .unwrap()
+        )
+        .is_err());
+    }
 
     fn vectors() -> Value {
         serde_json::from_str(include_str!("../client/tests/chain-vectors.json")).unwrap()
