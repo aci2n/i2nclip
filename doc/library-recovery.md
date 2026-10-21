@@ -3,7 +3,7 @@
 This supersedes device-authorized rotation in `blockchain-storage.md`. There are
 no live databases or compatible formats to preserve. Use these names everywhere:
 **recovery key**, **recovery file**, **recovery signing keypair**, **epoch key**,
-and **device backup**. Do not use owner key, master seed, or recovery key as aliases
+and **local device credentials**. Do not use owner key, master seed, or recovery key as aliases
 for ordinary device credentials.
 
 ## Goal and scope
@@ -69,10 +69,10 @@ Recovery plaintext is `[1, server_origin, genesis_bytes, library_id,
 The portable envelope is `["i2nclip-library-recovery", 1, password_envelope]`, with
 AAD `i2nclip/library-recovery/1`, the existing password KDF bounds, and a 1 MiB
 encoded-file bound. Validate the signing public key against genesis, recompute
-library ID, and validate the normalized server origin before use. Device backup
-and recovery-file discriminators/AAD are deliberately distinct.
+library ID, and validate the normalized server origin before use. The recovery file is the sole portable credential. Device signing keys and epoch
+keyrings have no export/import format and remain in protected local storage.
 
-Every portable export generates a fresh password from 32 random bytes, encoded as
+Every recovery-file export generates a fresh password from 32 random bytes, encoded as
 base64url. The user does not choose that password. Display it with the encrypted
 file's download action and a copy action, explaining that both are required for
 restoration and the password must be stored securely and separately. Never put
@@ -85,7 +85,7 @@ No application claim can prove the user retained either downloaded material.
 The recovery file grants reset authority and historical decryption. Its loss
 prevents future resets, but active devices retain ordinary access. Its disclosure
 compromises all epochs, including future epochs under this fixed recovery key.
-An old device backup does not substitute for it.
+Local device credentials do not substitute for it.
 
 ## Server interfaces and persistence
 
@@ -115,7 +115,7 @@ API paths remain the same; signer identity selects the one library:
   HTTP/block signers and current device membership. For `rotate`, verify the
   immutable recovery signer; the HTTP signer may be that recovery key, an active
   library device, or the exact replacement key named by the signed record.
-  This lets a pending device backup submit the already authorized reset without
+  This lets a locally preserved pending device submit the already authorized reset without
   containing the recovery key or requiring an old active device.
 
 Recheck all relevant membership after acquiring the library lock. Preserve exact
@@ -144,8 +144,8 @@ prove the user retained a file; say this beside the action.
 An active device prepares an expected head and replacement device. Unlock the
 recovery file only for an explicitly requested reset, check its genesis/library
 against the active library, derive the next epoch key with a fresh salt, and sign
-the exact transition. Save the protected pending plan and download a pending
-**device backup** with a separately generated export password before submission. Do not include the recovery key in that plan.
+the exact transition. Save the protected pending plan durably before submission. Do not include the
+recovery key in that plan. There is no device backup or download gate.
 Preserve the existing active context while preparing; block unrelated UI writes
 until the pending reset is resolved. Dispose the old context on final acceptance.
 
@@ -165,8 +165,8 @@ replacement device as its current credential, and carries the exact reset plus
 all historical epoch keys and the next epoch key. Its pending-plan replacement
 key may equal its current key in this phase; ordinary active-device preparations
 still keep old and replacement keys distinct. It has no ready library context
-until acceptance is verified. Download its pending device backup, then submit
-using replacement-device HTTP signatures. Wipe the recovery key after preparing
+until acceptance is verified. Persist this candidate locally, then submit using
+replacement-device HTTP signatures. Wipe the recovery key after preparing
 the durable signed plan; it is not needed to submit that exact plan.
 
 ## Failures and cancellation
@@ -176,11 +176,12 @@ verify the exact signed reset through its hash and finalize the device identity.
 Otherwise an active old device may verify its parent and retry. A `resetting`
 identity with no old device may submit its exact recovery-signed record directly;
 a moved-parent conflict requires unlocking the recovery file, reconstructing
-against current verified history, and downloading a new pending device backup.
+against current verified history, and durably replacing the local pending plan.
 Do not silently rebase a signed reset or regenerate one during outcome checks.
 
 Storage failure leaves the old durable credentials and pending plan intact.
-Failed downloads never enable submission. Cancellation aborts owned requests and
+Failed recovery-file downloads never enable initial registration. Failed local
+pending-plan writes never enable reset submission. Cancellation aborts owned requests and
 suppresses stale UI updates. Once the server has accepted a reset, cancellation
 cannot undo it; keep sufficient pending credentials to reconcile. Neither a
 401 alone nor a generic conflict establishes acceptance or permanent loss.
@@ -204,8 +205,8 @@ Implement as separate cohesive commits; use only focused checks per commit:
    reuse, recovery-only chain reads, and unauthorized replacement rejection.
 5. Session creation, temporary recovery replay, and pending reset/reconciliation:
    focused restart, cancellation, download, storage-failure, stale-parent, and
-   no-authorized-device tests. Device backup alone must submit/reconcile an exact
-   already signed reset without ever gaining recovery authority.
+   no-authorized-device tests. A local pending candidate alone must submit/reconcile
+   an exact already signed reset without ever gaining recovery authority.
 6. Continue pairing, materialized UI, deletion/history, and the remaining main
    implementation plan. Complete the final legacy cleanup and full integration
    verification after the chain features work; do not run E2E for each change.
@@ -220,3 +221,20 @@ Cancellation and workflow disposal wipe both owned secret buffers. No old
 single-secret recovery format is supported. Dependency manifests and lockfiles
 must contain no added Ed25519 package. No server interface or genesis change is
 introduced by splitting these private secrets.
+
+### Local-only devices and loss handling
+
+Device signing keys are generated per device and never exported, cloned during
+pairing, or included in the recovery file. Remove device backup APIs, formats,
+buttons, import paths, and their tests; do not retain compatibility readers.
+Epoch keys and trusted heads remain in the protected local device identity.
+The session owns these credentials and its pending reset candidate; navigation
+must not dispose them. Normal cancellation preserves a durably saved pending
+plan for reconciliation, while explicit local forgetting discards it.
+
+If local credentials are lost, pair a fresh device with an authorized peer. If
+no peer remains, the approved flow is recovery-file restore followed by a fresh
+epoch reset. If a reset was accepted just before its initial device's local keys
+were lost, restore the same recovery file, verify the current chain, and authorize
+another reset. No device export or reset-download gate is required. Verify these
+loss cases with focused session/reset tests; no E2E run is needed per change.

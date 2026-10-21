@@ -95,8 +95,8 @@ does not lose its credentials.
 | --- | --- |
 | Recovery key | Credential containing independent signing and epoch derivation secrets in the separate recovery file; never transferred to devices |
 | Recovery signing keypair | Independently generated reset authority and recovery chain-read signatures; public key fixed in genesis, private runtime handle temporary |
-| Device signing seed | HTTP and ordinary block signatures; password-protected local identity and device backup |
-| Epoch keys | Per-block encryption key derivation; protected identity, authenticated pairing, and backups |
+| Device signing seed | HTTP and ordinary block signatures; password-protected local identity only |
+| Epoch keys | Per-block encryption key derivation; protected identity, authenticated pairing, and local identities |
 | Manifest key | Fresh random AES key per immutable manifest; inside encrypted `AddFile` |
 | Content key | Fresh random AES key per file; inside its encrypted manifest |
 | Metadata key | Fresh random AES key per metadata version; inside its encrypted operation |
@@ -129,7 +129,7 @@ recovery-read admission, pending reset identities, and lifecycle/failure rules.
 
 All new fixed protocol structures use compact, fixed-position MessagePack arrays,
 including API request/response frames, cryptographic structures, manifests,
-credentials, backup documents, and pairing control packets. Do not encode their
+credentials, recovery documents, and pairing control packets. Do not encode their
 fixed fields as key-value maps. Use minimal integer
 encodings, binary values for keys/hashes/ciphertext, and no extension types or
 floating-point fields. Integers are nonnegative JavaScript-safe integers. Decode
@@ -151,13 +151,13 @@ Bounds are checked before allocation, encryption, and database transactions:
 | Generic stored blob | 4 MiB + 64 bytes |
 | Manifest plaintext | 4 MiB, subject to the encoded blob limit |
 | Metadata plaintext | Existing 65,472-byte budget, without embedded thumbnail bytes |
-| Encoded device backup | 1 MiB |
+| Encoded recovery file | 1 MiB |
 | Credential plaintext | 1 MiB minus 1 KiB for envelope overhead |
 | Files in one purge operation | 256, also subject to the block limit |
 
 Reject a file before reading/uploading content if its required manifest cannot
 fit. Calculate the encoded manifest size using fixed-width placeholder hashes;
-do not discover this only after uploading its chunks. Backups and pairing must
+do not discover this only after uploading its chunks. Recovery files and pairing must
 fit their limits; rotation checks the expanded credential bundle before changing
 server state. These bounds are deliberate limits, not reasons to add manifest
 trees or unlimited transfer formats.
@@ -569,7 +569,7 @@ older head. Reconcile an unknown outcome by finding the exact signed record/hash
 before preparing another operation.
 
 Revocation/epoch changes invalidate an affected session's pending writes. A
-revoked device cannot use its old backup to bypass membership. Ordinary bounded
+revoked device cannot use its old local credentials to bypass membership. Ordinary bounded
 reads already admitted or HTTP-cached ciphertext may survive revocation; no
 claim of remote memory/cache erasure is made.
 
@@ -612,7 +612,7 @@ exposing plaintext. Preserve bounded preview ranges, session-owned downloads,
 native playback, and object-URL disposal. Stale work must not publish URLs or
 open a save dialog after its owner ends.
 
-## Pairing and device backups
+## Pairing and local device credentials
 
 ### Pairing
 
@@ -651,7 +651,7 @@ packet; other messages retain the 8 KiB limit. Each complete HTTP frame is cappe
 at 1 MiB plus 128 bytes, and room messages share the 16 MiB aggregate budget.
 
 Keep tight existing bounds for
-OPAQUE messages. Permit the encrypted credential packet up to the backup-sized
+OPAQUE messages. Permit the encrypted credential packet up to the credential-sized
 bound plus framing, with an aggregate 16 MiB stored-message budget across rooms;
 reject admission without retaining oversized state. Do not raise every PAKE
 message limit or retain every old transfer packet. Preserve existing room/rate
@@ -667,17 +667,14 @@ through that exact hash, rejecting shorter or conflicting history. This closes
 the unanchored-fresh-client gap for pairing without claiming either device knows
 about all newer server history.
 
-### Device backup
+### Local device credentials
 
-Use a new password-encrypted MessagePack device-backup document, protected by the
-existing PBKDF2-HMAC-SHA256/AES-GCM envelope and iteration/size bounds with a new
-backup-specific AAD context. No cryptographic KDF redesign is included here.
-Each recovery-file or device-backup export generates a fresh random 256-bit
-password and displays it for storage separately from the file. The user needs
-both to restore. Do not embed that password in the file or persist it in
-IndexedDB. The ordinary local unlock password remains user-selected and separate.
-Keep a file/password pair stable across download retries; generate a new pair
-only for a new export.
+Device signing keys and numbered epoch keys are stored only in the protected
+local identity. There is no device export, portable device-backup format, or
+import flow. A lost device must be paired again with a fresh signing key. If all
+devices are lost, unlock the offline recovery file to verify history and authorize
+an epoch reset naming a fresh initial device. The recovery file is the sole
+portable credential; its generated password must be stored separately.
 
 The credential plaintext includes version, normalized server origin, genesis,
 library ID, device signing seed/public key, epoch-number/key pairs, and trusted
@@ -695,22 +692,15 @@ exact_signed_transition_bytes]`. Validate that the transition extends the saved
 head and names the genesis recovery signer, next epoch, and replacement key.
 Registration candidates must describe their own genesis and epoch 1.
 
-The portable backup frame is `["i2nclip-device-backup", 1,
-[1, password_salt, iterations, nonce, ciphertext]]`. The password salt is 16 bytes,
-the nonce is 12 bytes, and the KDF bounds remain 600,000–2,000,000 iterations.
-Local AES envelopes use `[1, nonce, ciphertext]`. These are fresh formats with
-no map-format fallback.
-
-A backup restores that logical device. It is not a permanent recovery authority
-and does not contain file blobs. A revoked backup cannot restore server authority;
-an old backup cannot decrypt a later epoch without re-pairing. A still-active
-backup must verify through its pinned head before readiness. Never enroll a
-fresh key automatically merely because an old backup was imported.
+Local password envelopes remain `[1, password_salt, iterations, nonce,
+ciphertext]`; local AES envelopes use `[1, nonce, ciphertext]`. Password salts
+are 16 bytes, nonces are 12 bytes, and KDF bounds are 600,000–2,000,000 iterations.
+There is no map-format or device-backup fallback.
 
 ### Rotation and interrupted outcomes
 
 Epoch reset is a session-owned operation requiring a recovery signature. The
-recovery key is never included in the pending device backup or pairing transfer.
+recovery key is never included in the local pending device plan or pairing transfer.
 Its durable pending plan contains the exact recovery-signed transition:
 
 1. Synchronize and capture the expected head. Generate a fresh device signing keypair and public epoch salt. Derive the next
@@ -718,25 +708,24 @@ Its durable pending plan contains the exact recovery-signed transition:
 2. Obtain the recovery signature over the exact transition and persist a protected
    pending record containing old credentials, replacement credentials, all epoch
    secrets, expected parent, and transition bytes/hash.
-3. Download a password-encrypted pending device backup. Include the same pending
-   material so a new client can reconcile either outcome. Enable submission only
-   after the download action succeeds; browsers cannot prove the user retained
-   the file, so explain that limitation beside the action.
+3. Enable submission once the protected pending plan is durably saved locally.
+   There is no device backup download or download gate.
 4. Submit the exact transition. On verified acceptance, persist the resulting
-   trusted head, install the replacement context, and dispose old work. Offer a
-   finalized backup containing the accepted head.
+   trusted head, install the replacement context, and dispose old work.
 
 After a restart or unknown result, probe replacement credentials first. If
 authorized, fetch and verify the exact transition. Otherwise use the protected
 old credentials to inspect and retry the original record if its parent is still
-current. A moved parent requires explicit reconstruction and a newly downloaded
-backup. Neither authorization failure alone nor a generic conflict proves what
+current. A moved parent requires unlocking the recovery file, explicit reconstruction,
+and durable replacement of the local pending plan. Neither authorization failure alone nor a generic conflict proves what
 happened. If another transition revoked both candidates, report lost authority
 instead of claiming recovery succeeded.
 
-Keep pending credentials until the outcome is durably reconciled. The previously
-downloaded pending backup remains usable after acceptance. Its old signing key
-is revoked, but its replacement key can inspect the committed transition.
+Keep pending credentials locally until the outcome is durably reconciled. If
+local storage is lost, the pending candidate cannot be recovered from an export.
+Pair with another active device, or use the recovery file to verify the current
+head and authorize another reset. This also handles a reset accepted just before
+its candidate credentials were lost. Repeated recovery never rewinds the chain.
 
 ## Deletion and read-only time travel
 
@@ -781,11 +770,11 @@ make an intermediate branch independently deployable.
 | 6 | Implement registration, signer-to-library resolution, append, pinned pagination, and quota responses | Focused Rust authentication/API/append-race tests |
 | 7 | Implement hash-addressed blob staging, inventory publication, expiration, and transactional purge | Focused blob, accounting, maintenance, and race tests |
 | 8 | Implement IndexedDB records/head transactions and the session-owned synchronizer | Focused storage, cancellation, rollback, and concurrent-tab tests |
-| 9 | Implement device identities, durable initialization candidates, and normal device-backup import/export | Session, identity, initialization retry, and backup tests |
+| 9 | Implement device identities, durable initialization candidates, and local device credentials | Session, identity, initialization retry, and backup tests |
 | 10 | Implement encrypted manifests, separate metadata/thumbnails, sequential staged upload, and hash-based reads | Content, metadata, download, and upload-store tests |
 | 11 | Cut library/tag/media/deeplink workflows over to the selected materialized-view rendering contract; remove obsolete server media/tag routes and indexes | Relevant store/API tests, selection isolation tests, backend static checks, frontend checker/build |
 | 12 | Implement fresh-device pairing, durable receiver preparation, trusted-head handoff, and relay phase/size changes | Real OPAQUE unit tests, pairing-store tests, focused Rust relay tests |
-| 13 | Add device listing/revocation and crash-safe recovery-authorized epoch reset with pending device backups | Membership, rotation, outcome reconciliation, and session lifecycle tests |
+| 13 | Add device listing/revocation and crash-safe recovery-authorized epoch reset with durable local pending credentials | Membership, rotation, outcome reconciliation, and session lifecycle tests |
 | 14 | Add deleted-file browsing, explicit restore, purge UI, and quota/history explanations | Lifecycle, stream invalidation, and relevant store tests; frontend checker/build |
 | 15 | Add read-only time-travel selection through the existing materialized-view/UI path | Historical replay, selection changes, lazy old metadata, purge availability, and stale-parent rejection tests; frontend checker/build |
 | 16 | After the chain features are complete, perform the dedicated legacy cleanup described below | Reference/import audit and smallest affected tests/checks; keep builds warning-free |
