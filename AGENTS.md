@@ -8,6 +8,7 @@
 - Stores own asynchronous workflows, cancellation, and resources. Keep protocol functions independent of rendering. Preserve root-owned work across navigation and dispose it when the owning session ends.
 - Prefer private TypeScript implementation classes for stateful stores and resource-owning services, with structural factory contracts, bound public commands, and ordinary private workflow methods as documented in `doc/store-classes.md`. Keep stateless protocol/crypto transformations as functions; do not put instance state in factory closures.
 - Treat data formats and schema as greenfield. Implement the current specification directly; do not invent legacy fallback behavior. Database changes use the SQLx migration workflow below.
+- Do not add `Co-Authored-By` or other AI attribution trailers to commit messages.
 - Make small frequent commits after cohesive changes build without warnings. Focus on refactoring before running the final test suites. Tests must cover meaningful behavior and invariants rather than mirror implementation details. Test quality is mandatory.
 - Every test must isolate its mutable state and resources. Bind test listeners atomically to loopback port 0, use isolated databases and browser contexts, and clean up owned resources on success and failure. Verification commands must work from a fresh clone with documented toolchain/system prerequisites; never rely on developer-specific paths or existing build artifacts.
 
