@@ -74,8 +74,9 @@ export async function createLibrary(
 	await master(page, remember);
 	await page.getByRole("button", { name: "Create", exact: true }).click();
 	await page
-		.getByRole("button", { name: "Prepare library", exact: true })
-		.click();
+		.getByLabel("Invitation code", { exact: true })
+		.fill(await issueOtc(app.data, "debug", maxBytes));
+	await page.getByRole("button", { name: "Continue", exact: true }).click();
 	const password = await page
 		.getByLabel("Backup password", { exact: true })
 		.inputValue();
@@ -92,9 +93,12 @@ export async function createLibrary(
 	const bytes = Buffer.from(await readFile(await download.path()));
 	backupArtifacts.set(page, { bytes, password });
 	backupPasswords.set(bytes, password);
+	await expect(
+		page.getByRole("button", { name: "Create library", exact: true }),
+	).toBeDisabled();
 	await page
-		.getByLabel("Invitation code", { exact: true })
-		.fill(await issueOtc(app.data, "debug", maxBytes));
+		.getByLabel("I stored the backup file and its password", { exact: true })
+		.check();
 	await page
 		.getByRole("button", { name: "Create library", exact: true })
 		.click();

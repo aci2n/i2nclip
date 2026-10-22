@@ -195,7 +195,7 @@ test("encrypted singleton savedBackup, password change, reload, and forget", asy
 			.getByRole("button", { name: "Forget browser", exact: true })
 			.click();
 		await expect(
-			other.getByRole("button", { name: "Prepare library", exact: true }),
+			other.getByRole("button", { name: "Continue", exact: true }),
 		).toBeVisible();
 	} finally {
 		await context.close();

@@ -15,6 +15,7 @@ let server = $state(untrack(() => $session.serverUrl));
 let otc = $state("");
 let file = $state<File | null>(null);
 let password = $state("");
+let stored = $state(false);
 const busy = $derived($session.busy || $pairing.active);
 </script>
 <section class="panel stack setup">
@@ -43,7 +44,14 @@ const busy = $derived($session.busy || $pairing.active);
 			<label class="field"
 				>Invitation code<input required bind:value={otc} disabled={busy}></label
 			>
-			<button type="submit" disabled={busy || !$session.backupDownloaded}>
+			<label class="confirm">
+				<input type="checkbox" bind:checked={stored} disabled={busy}>
+				I stored the backup file and its password
+			</label>
+			<button
+				type="submit"
+				disabled={busy || !$session.backupDownloaded || !stored}
+			>
 				Create library
 			</button>
 		</form>
@@ -103,13 +111,23 @@ const busy = $derived($session.busy || $pairing.active);
 			</details>
 		{/if}
 		{#if mode === "create"}
-			<button
-				type="button"
-				disabled={busy}
-				onclick={() => session.prepareCreation(server.trim())}
+			<form
+				class="stack"
+				onsubmit={(event) => {
+					event.preventDefault();
+					stored = false;
+					void session.prepareCreation(server.trim());
+				}}
 			>
-				Prepare library
-			</button>
+				<label class="field"
+					>Invitation code<input
+						required
+						bind:value={otc}
+						disabled={busy}
+					></label
+				>
+				<button type="submit" disabled={busy || !otc.trim()}>Continue</button>
+			</form>
 		{:else if mode === "restore"}
 			<form
 				class="stack"
@@ -202,5 +220,10 @@ fieldset {
 }
 .content {
 	margin-top: 1rem;
+}
+.confirm {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
 }
 </style>
