@@ -21,3 +21,31 @@ No multi-library support, termination, device permissions, rotation, data backup
 Affected non-browser test union, clean builds and final diff/dependency/authority-boundary audit.
 
 Implement as one cohesive commit after affected checks pass and builds are warning-free.
+
+## Results — 2026-10-22, at `d768968`
+
+Node 22.23.3 (`client/.nvmrc`), Cargo 1.99.0. Run sequentially.
+
+| Check | Result |
+| --- | --- |
+| `make -C client test` (unit tests, Biome, TypeScript, svelte-check) | 183/183 pass; 0 errors, 0 warnings |
+| `make client` | Builds without warnings |
+| `make test-build` (web and unpacked extension contents) | 3/3 pass |
+| `cargo test` | All pass (one `#[ignore]` subprocess fixture, exercised by its parent test) |
+| `make format-check`, `cargo clippy --all-targets --all-features -D warnings` | Clean |
+| `make test-db` (isolated PostgreSQL, fresh `001_init.sql` baseline) | 53 + 15 + 5 + 3 pass |
+
+The database suite covers fresh initialization and re-initialization of a
+registered library, changed-migration rejection, atomic and idempotent
+registration that preserves invitations, isolated registration admission with no
+nonce writes, unknown keys that never read bodies or spend nonces, fixed-authority
+paging, concurrent appends, quotas and purge. Shared-seed vectors are checked in
+both languages.
+
+Audit: no `hpke`, epoch, enrollment, recovery-principal or rotation code or
+dependency remains. Only `stores/session.ts` and `services/pairing-crypto.ts`
+import `services/library-identity.ts`.
+
+**Pending explicit approval:** Firefox/Chromium E2E (`client/e2e/`, including
+the updated fixtures and the new `backup.spec.ts`), screenshot review, and
+resource profiling. These have not been run.
