@@ -148,8 +148,10 @@ PAKE attempt with the same code.
 
 ## File operations
 
-An object reference is `[ciphertext_hash, raw_object_key]`. Operations are
-positional arrays:
+A block's encrypted plaintext is `[unix_ms, operation]`: the signing client's
+clock in non-negative Unix milliseconds, for display only (devices may disagree,
+so no ordering is enforced), and the operation. An object reference is
+`[ciphertext_hash, raw_object_key]`. Operations are positional arrays:
 
 ```text
 ["AddFile", file_id, manifest_reference, metadata_reference]

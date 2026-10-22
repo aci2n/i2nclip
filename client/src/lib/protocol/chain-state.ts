@@ -5,6 +5,7 @@ import {
 	MAX_BLOCK_BYTES,
 	parseGenesis,
 	type StorageEffect,
+	safeInteger,
 	sameBytes,
 	type VerifiedBlock,
 } from "./chain.ts";
@@ -30,6 +31,15 @@ export type FileOperation =
 			readonly kind: "DeleteFile" | "RestoreFile" | "PurgeFile";
 			readonly id: Bytes;
 	  };
+export interface BlockPayload {
+	readonly time: number;
+	readonly operation: FileOperation;
+}
+/** One verified block; `previous` is the metadata a ReplaceMetadata superseded. */
+export interface HistoryEntry extends BlockPayload {
+	readonly sequence: number;
+	readonly previous: ObjectReference | null;
+}
 export interface MaterializedFile {
 	readonly id: Bytes;
 	readonly createdSequence: number;
@@ -57,63 +67,76 @@ function objectReference(input: unknown): ObjectReference {
 function referenceValues(reference: ObjectReference) {
 	return [reference.hash, reference.key];
 }
-export function encodeOperation(operation: FileOperation): Bytes {
+function operationValues(operation: FileOperation): unknown[] {
 	switch (operation.kind) {
 		case "AddFile":
-			return encode([
+			return [
 				operation.kind,
 				operation.id,
 				referenceValues(operation.manifest),
 				referenceValues(operation.metadata),
-			]);
+			];
 		case "ReplaceMetadata":
-			return encode([
+			return [
 				operation.kind,
 				operation.id,
 				referenceValues(operation.metadata),
-			]);
+			];
 		case "DeleteFile":
 		case "RestoreFile":
 		case "PurgeFile":
-			return encode([operation.kind, operation.id]);
+			return [operation.kind, operation.id];
 	}
 }
-export function decodeOperation(plaintext: Bytes): FileOperation {
-	if (plaintext.length > MAX_BLOCK_BYTES) {
-		invalid("operation too large");
-	}
-	const value = decode(plaintext);
+function parseOperation(value: unknown): FileOperation {
 	if (!Array.isArray(value)) {
 		invalid("operation array required");
 	}
-	let operation: FileOperation;
 	if (value[0] === "AddFile" && value.length === 4) {
-		operation = {
+		return {
 			kind: value[0],
 			id: fixedBytes(value[1]),
 			manifest: objectReference(value[2]),
 			metadata: objectReference(value[3]),
 		};
-	} else if (value[0] === "ReplaceMetadata" && value.length === 3) {
-		operation = {
+	}
+	if (value[0] === "ReplaceMetadata" && value.length === 3) {
+		return {
 			kind: value[0],
 			id: fixedBytes(value[1]),
 			metadata: objectReference(value[2]),
 		};
-	} else if (
+	}
+	if (
 		(value[0] === "DeleteFile" ||
 			value[0] === "RestoreFile" ||
 			value[0] === "PurgeFile") &&
 		value.length === 2
 	) {
-		operation = { kind: value[0], id: fixedBytes(value[1]) };
-	} else {
-		return invalid("unknown operation or invalid fields");
+		return { kind: value[0], id: fixedBytes(value[1]) };
 	}
-	if (!sameBytes(encodeOperation(operation), plaintext)) {
+	return invalid("unknown operation or invalid fields");
+}
+/** Block plaintext: the signing client's clock in Unix milliseconds and the operation. */
+export function encodeBlockPayload(payload: BlockPayload): Bytes {
+	return encode([payload.time, operationValues(payload.operation)]);
+}
+export function decodeBlockPayload(plaintext: Bytes): BlockPayload {
+	if (plaintext.length > MAX_BLOCK_BYTES) {
+		invalid("operation too large");
+	}
+	const value = decode(plaintext);
+	if (!Array.isArray(value) || value.length !== 2) {
+		invalid("payload array required");
+	}
+	const payload = {
+		time: safeInteger(value[0]),
+		operation: parseOperation(value[1]),
+	};
+	if (!sameBytes(encodeBlockPayload(payload), plaintext)) {
 		invalid("noncanonical operation");
 	}
-	return operation;
+	return payload;
 }
 export async function initialChainState(bytes: Bytes): Promise<ChainState> {
 	const root = await parseGenesis(bytes);
@@ -130,6 +153,41 @@ export function fileInState(state: ChainState, id: Bytes, deleted: boolean) {
 	const file = state.files.get(bytesToHex(id));
 	return file && !file.purged && file.deleted === deleted ? file : null;
 }
+/**
+ * The operation reversing this block in the current state, or null when it no
+ * longer applies. A metadata inverse names the superseded document to restore.
+ */
+export function inverseOperation(
+	entry: HistoryEntry,
+	state: ChainState,
+): FileOperation | null {
+	const { operation } = entry;
+	switch (operation.kind) {
+		case "AddFile":
+		case "RestoreFile":
+			return fileInState(state, operation.id, false)
+				? { kind: "DeleteFile", id: operation.id }
+				: null;
+		case "DeleteFile":
+			return fileInState(state, operation.id, true)
+				? { kind: "RestoreFile", id: operation.id }
+				: null;
+		case "ReplaceMetadata": {
+			const file = fileInState(state, operation.id, false);
+			return file &&
+				entry.previous &&
+				sameBytes(file.metadata.hash, operation.metadata.hash)
+				? {
+						kind: "ReplaceMetadata",
+						id: operation.id,
+						metadata: entry.previous,
+					}
+				: null;
+		}
+		case "PurgeFile":
+			return null;
+	}
+}
 function fileById(state: ChainState, id: Bytes, deleted: boolean) {
 	return (
 		fileInState(state, id, deleted) ?? invalid("file lifecycle transition")
@@ -140,7 +198,7 @@ function applyFiles(
 	record: VerifiedBlock,
 	plaintext: Bytes,
 ) {
-	const operation = decodeOperation(plaintext);
+	const { operation } = decodeBlockPayload(plaintext);
 	const effects = record.body.effects as readonly StorageEffect[];
 	const effect = effects[0];
 	const files = new Map(state.files);

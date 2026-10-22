@@ -7,7 +7,7 @@ import {
 	verifyRecord,
 } from "../src/lib/protocol/chain.ts";
 import {
-	encodeOperation,
+	encodeBlockPayload,
 	initialChainState,
 	reduceBlock,
 } from "../src/lib/protocol/chain-state.ts";
@@ -76,7 +76,7 @@ test("sequence zero accepts ordinary encrypted publication and pure file lifecyc
 		},
 		identity.signing,
 		identity.encryption,
-		encodeOperation(operation),
+		encodeBlockPayload({ time: 1, operation }),
 	);
 	state = reduceBlock(
 		state,
@@ -89,7 +89,7 @@ test("sequence zero accepts ordinary encrypted publication and pure file lifecyc
 		{ library: state.library, sequence: 2, previous: state.head, effects: [] },
 		identity.signing,
 		identity.encryption,
-		encodeOperation({ kind: "DeleteFile", id }),
+		encodeBlockPayload({ time: 1, operation: { kind: "DeleteFile", id } }),
 	);
 	const next = reduceBlock(
 		state,
@@ -99,17 +99,17 @@ test("sequence zero accepts ordinary encrypted publication and pure file lifecyc
 	assert(next.files.values().next().value?.deleted);
 	assert.equal(state.files.values().next().value?.deleted, false);
 	assert.throws(
-		() => reduceBlock(next, record, encodeOperation(operation)),
+		() => reduceBlock(next, record, encodeBlockPayload({ time: 1, operation })),
 		/parent/,
 	);
 	const malformed = await createRecord(
 		{ library: next.library, sequence: 3, previous: next.head, effects: [] },
 		identity.signing,
 		identity.encryption,
-		encode(["InvalidOperation"]),
+		encode([1, ["InvalidOperation"]]),
 	);
 	assert.throws(
-		() => reduceBlock(next, malformed, encode(["InvalidOperation"])),
+		() => reduceBlock(next, malformed, encode([1, ["InvalidOperation"]])),
 		/unknown operation/,
 	);
 	assert.equal(next.sequence, 2);

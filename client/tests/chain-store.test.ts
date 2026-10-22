@@ -10,7 +10,7 @@ import {
 	verifyRecord,
 } from "../src/lib/protocol/chain.ts";
 import {
-	encodeOperation,
+	encodeBlockPayload,
 	initialChainState,
 	reduceBlock,
 } from "../src/lib/protocol/chain-state.ts";
@@ -128,11 +128,14 @@ async function fixture(t: TestContext, minimum?: Checkpoint) {
 	let state = initial;
 	async function addFile(n: number) {
 		const id = bytes(n);
-		const plaintext = encodeOperation({
-			kind: "AddFile",
-			id,
-			manifest: { hash: bytes(2), key: bytes(3) },
-			metadata: { hash: bytes(4), key: bytes(5) },
+		const plaintext = encodeBlockPayload({
+			time: 1,
+			operation: {
+				kind: "AddFile",
+				id,
+				manifest: { hash: bytes(2), key: bytes(3) },
+				metadata: { hash: bytes(4), key: bytes(5) },
+			},
 		});
 		const record = await createRecord(
 			{
@@ -274,12 +277,12 @@ test("a persistence failure prevents accepted state from reaching the UI", async
 function addOperation(id: Bytes) {
 	return {
 		effects: [["publish", id, bytes(6)]] as const,
-		plaintext: encodeOperation({
-			kind: "AddFile",
+		operation: {
+			kind: "AddFile" as const,
 			id,
 			manifest: { hash: bytes(2), key: bytes(3) },
 			metadata: { hash: bytes(4), key: bytes(5) },
-		}),
+		},
 	};
 }
 
@@ -320,7 +323,7 @@ test("mutation preconditions run against the current state and lost responses re
 				throw new Error("This file changed.");
 			},
 			effects: [],
-			plaintext: encodeOperation({ kind: "DeleteFile", id: bytes(10) }),
+			operation: { kind: "DeleteFile", id: bytes(10) },
 		}),
 		/file changed/,
 	);
@@ -328,7 +331,7 @@ test("mutation preconditions run against the current state and lost responses re
 	f.transport.loseResponse = true;
 	const result = await f.store.append({
 		effects: [],
-		plaintext: encodeOperation({ kind: "DeleteFile", id: bytes(10) }),
+		operation: { kind: "DeleteFile", id: bytes(10) },
 	});
 	assert.equal(result.files.get(bytesToHex(bytes(10)))?.deleted, true);
 	assert.equal(f.transport.writes, 1);
@@ -343,7 +346,7 @@ test("concurrent mutations queue in order and a refresh waits for them", async (
 	const first = f.store.append(addOperation(bytes(10)));
 	const second = f.store.append({
 		effects: [],
-		plaintext: encodeOperation({ kind: "DeleteFile", id: bytes(10) }),
+		operation: { kind: "DeleteFile", id: bytes(10) },
 	});
 	const refreshed = f.store.sync();
 	assert.equal((await first).sequence, 1);

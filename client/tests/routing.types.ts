@@ -30,6 +30,9 @@ export function checkRouteTypes(
 		const media: { id: string; workspace: false } = route;
 		return media;
 	}
-	const browsing: { page: "library" | "settings"; workspace: true } = route;
+	const browsing: {
+		page: "library" | "history" | "settings";
+		workspace: true;
+	} = route;
 	return browsing;
 }
