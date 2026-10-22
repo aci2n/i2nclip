@@ -1,42 +1,53 @@
 # Documentation
 
-Current wire and credential contract: [protocol](protocol.md) and the
-[shared-seed contract](shared-seed/README.md). One shared library seed grants
-full authority; there are no device keys, epochs, recovery principals or
-rotation. Read these before changing persistence, keys, pairing, or API behavior.
-[Blockchain storage](blockchain-storage.md) remains the reference for encrypted
-objects, file operations, storage effects and purge where it does not conflict.
+Current wire, storage and credential contract: [protocol](protocol.md), with the
+[shared-seed contract](shared-seed/README.md) it implements. One shared library
+seed grants full authority; there are no device keys, epochs, recovery principals
+or rotation. Read these before changing persistence, keys, pairing, or API behavior.
 
-Other design notes record earlier changes. Where they conflict with the current
-contract, the current contract takes precedence.
+Documents describe current behavior. Superseded designs are removed rather than
+kept beside the current contract; Git history retains them. The Rust server is in
+`src/`; the web app and extension are in `client/`.
 
-- [Protocol](protocol.md): identity, blocks, HTTP API, credentials, backups, and pairing transfer.
-- [Shared-seed cutover](shared-seed/README.md): approved contract and per-commit specifications.
-- [Blockchain storage specification](blockchain-storage.md): encrypted objects, file operations, storage effects, quotas and purge; partly historical.
+## Reference
+
+- [Protocol](protocol.md): identity, blocks, HTTP API, credentials, pairing and
+  relay, file operations, storage effects, encrypted objects, quotas, threat model.
+- [Shared-seed contract](shared-seed/README.md): approved contract and its
+  per-commit specifications.
+- [Content security policy](content-security-policy.md): entry-page headers.
 - [Firefox extension](extension-bridge.md): setup, capture, File handoff, and lifecycle.
-- [Database migrations](database-migrations.md): startup, migration history, and adding schema changes.
+- [Store classes](store-classes.md): client store and service structure.
+- [Shared styles](shared-styles.md): theme tokens and shared primitives.
+- [Database migrations](database-migrations.md): startup, migration history, and schema changes.
 - [Test pipeline](test-pipeline.md): commands, toolchains, and fixture isolation.
 - [Resource profiling](postgresql-profile.md): optional measurements and reproduction.
-- [Improvement priorities](priorities.md): open topics requiring separate specifications.
-- [Chunk uploads specification](chunk-uploads.md): independently encrypted chunks and browser streaming; implemented.
-- [Large-file test size](large-file-test-size.md): bounded browser transfer fixture and its coverage rationale.
-- [Transfer and shutdown deadlines](transfer-shutdown-proposal.md): implemented resource and shutdown limits.
-- Historical: [cryptography](crypto.md), [client ownership](session.md),
-  [IndexedDB sessions](indexeddb-session.md), [device pairing](pairing.md)
-  (its relay API section remains current), [library recovery](library-recovery.md),
-  [device-preserving rotation](device-preserving-rotation.md),
-  [genesis and enrollment](genesis-and-recovery-enrollment.md), and
-  [chain verification](chain-verification.md).
+- [Transfer and shutdown deadlines](transfer-shutdown-proposal.md): resource and shutdown limits.
+- [Large-file test size](large-file-test-size.md): bounded browser transfer fixture.
 
-Current behavior is documented separately from proposed work. The Rust server is
-in `src/`; the web app and extension are in `client/`. Historical change specifications remain in this directory and Git history;
-use the documents linked above for current behavior.
+## Change specifications
+
+Implemented specifications whose behavior is still current:
+[rebased mutations](rebased-mutations.md), [HTTPS servers](https-servers.md),
+[plain-language UI](plain-language-ui.md), [setup order](setup-order.md),
+[password guidance](password-guidance.md),
+[metadata index concurrency](metadata-index-concurrency.md),
+[storage query cleanup](storage-query-cleanup.md),
+[hash routing](hash-routing.md), [typed routes](typed-route-table.md),
+[file drop](file-drop.md), [upload simplification](upload-simplification.md),
+[upload polish](upload-polish.md), [large video thumbnails](large-video-thumbnails.md),
+[native download dispatch](native-download-dispatch.md),
+[inline source maps](inline-source-maps.md), [client logging](client-logging.md),
+[container context](container-context.md), [tag controls](tag-controls.md),
+[reliability fixes](reliability-fixes.md),
+[streaming review fixes](streaming-review-fixes.md),
+[readability cleanup](readability-cleanup.md), [review cleanup](review-cleanup.md),
+[code and UI review](code-ui-review.md),
+[TypeScript migration](typescript-migration.md) and
+[TypeScript review](typescript-review.md).
 
 ## Review notes
 
-- [Branch review — 2026-10-21](branch-review-2026-10-21.md): findings against
-  `a70fceb` covering storage redundancy, ownership, crypto design, and security;
-  observations for later review, not an implementation specification.
 - [Project audit — 2026-10-22](audit-2026-10-22.md): findings against `36e26a9`
-  covering crypto risks, reliability, usability, simplification, and a proposed
-  order for follow-up change specifications.
+  covering crypto risks, reliability, usability and simplification, with their
+  follow-up order and deferred topics.

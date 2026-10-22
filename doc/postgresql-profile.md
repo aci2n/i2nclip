@@ -20,8 +20,8 @@ Output includes process counters and timings, without database credentials. Owne
 
 Measurements depend on the current implementation and host. Run the profile for
 current results; earlier local measurements predate quota and permit changes.
-Buffer attribution and response-lifetime limits remain follow-up topics in
-[priorities.md](priorities.md). The Rust frame-decoding test separately checks
+Buffer attribution and response-lifetime limits remain follow-up topics in the
+[audit's deferred list](audit-2026-10-22.md#deferred-topics). The Rust frame-decoding test separately checks
 allocation behavior without claiming an end-to-end RSS bound.
 
 ## Chunk-storage cutover measurement

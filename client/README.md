@@ -27,41 +27,40 @@ listener and window.postMessage, with no base64 conversion.
 The extension owns capture, persistent app tab creation, focus only when unlocking
 is needed, completion notifications, and its saved app URL.
 
-`lib/chain-api.ts` signs bounded transport requests. `stores/chain.ts` verifies
-canonical signatures, hash links, authority transitions, encrypted operations,
-and local trusted-head pins before accepting state. `stores/materialized-view.ts`
-selects live or historical state and owns lazy metadata indexing. The UI always
-projects that selection; history uses the same rendering and search path, with
-file writes disabled. Current quota, authentication, and purge availability do
-not rewind.
+`services/library-api.ts` signs bounded transport requests through the library
+identity service (`services/library-identity.ts`), which alone holds the seed
+and exposes non-extractable keys. `stores/chain.ts` verifies canonical
+signatures, hash links, encrypted operations, and local trusted-head pins before
+accepting state, and serializes appends so unrelated writes rebase onto the
+current head. `stores/materialized-view.ts` selects live or historical state and
+owns metadata indexing. The UI always projects that selection; history uses the
+same rendering and search path, with file writes disabled. Current quota,
+authentication, and purge availability do not rewind.
 
-`lib/database.ts` and `lib/persistence.ts` own the password-protected local device
-credential and optional remembered unlock key. `lib/chain-storage.ts` separately
+`storage/database.ts` and `storage/session.ts` own the password-sealed library
+credential and optional remembered unlock key. `storage/chain.ts` separately
 stores encrypted records and a monotonic trusted head. Decrypted metadata,
 indexes, previews, uploads, and content keys stay in memory. Password changes
-replace local protection atomically. Forget removes the device and its cached
-history; Reset removes local credentials and all current-format history caches.
-Other live tabs keep their independent in-memory session and trusted head.
+replace local protection atomically. Forget removes the credential and its cached
+history; Reset removes local credentials and all history caches. Other live tabs
+keep their independent in-memory session and trusted head.
 
-The root workspace owns chain synchronization, sequential uploads, quota,
-devices, and file resources across navigation. Each file resource owns its
-preview requests and URLs. Downloads belong to the root lifetime and survive
-view navigation; lock, session replacement, and current purge cancel them.
-Metadata editors bind drafts to the source head and require explicit review and
-retry after a conflict. Failed upload batches retain messages only.
+The root workspace owns chain synchronization, sequential uploads, quota, and
+file resources across navigation. Each file resource owns its preview requests
+and URLs. Downloads belong to the root lifetime and survive view navigation;
+lock, session replacement, and current purge cancel them. Metadata editors bind
+drafts to the file's metadata revision and require explicit review and retry
+after a conflicting edit. Failed upload batches retain messages only.
 
-Pairing uses OPAQUE, explicit human verification, seven compact relay phases,
-and a fresh locally generated receiver signing key. The receiver durably saves
-credentials before enrollment and independently verifies the full chain through
-the sender's exact trusted checkpoint before activation. No device keys can be
-exported or backed up.
+Pairing uses OPAQUE, explicit human verification, and five relay messages. The
+sender transfers the shared seed and its trusted checkpoint; the receiver saves
+the credential and verifies the full chain through that checkpoint before
+acknowledging. Pairing performs no chain writes.
 
-Creation generates a separate offline recovery signing key and epoch derivation
-secret, protected in one downloaded recovery file by an automatically generated
-password. Neither recovery secret stays in the browser credential. The fixed
-genesis recovery public key alone authorizes epoch resets; recovery can restore
-control without any surviving device. See [the chain specification](../doc/blockchain-storage.md)
-and [recovery specification](../doc/library-recovery.md).
+Creation generates the library seed and a library backup sealed under an
+automatically generated password; registration happens only after the backup
+download starts. Restore verifies history from the backup's checkpoint. See the
+[protocol](../doc/protocol.md).
 
 ## Logging
 

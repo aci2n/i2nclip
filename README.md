@@ -6,30 +6,27 @@ tags, thumbnails, manifests, and file contents are encrypted by the browser.
 
 ## Set up a library
 
-Create a local master password, then choose **Prepare library** in Settings.
-Download the generated recovery file and store its generated password securely
-and separately. Both are required for recovery. Registration stays disabled
-until the download starts; enter an administrator invitation to create the library.
-The server defaults to the app's origin, with configuration in a disclosure.
+Create a local master password, then enter an administrator invitation and choose
+**Continue**. Download the generated library backup and store its password
+securely and separately; both are required to restore. **Create library** stays
+disabled until the download starts and you confirm the backup is stored. The
+server defaults to the app's origin, with configuration in a disclosure.
 
-Each device has its own local signing and encryption keys and full library authority. Connect a
-new device through pairing, compare both verification codes, and approve the
-transfer. Pairing enrolls a fresh receiver key and transfers epoch secrets plus a
-trusted chain checkpoint. Device keys cannot be exported. A lost device must
-re-pair; if all devices are lost, **Restore** uses the offline recovery file to
-verify history and enroll a fresh device. The fixed recovery authority alone can
-rotate epoch keys. Rotation preserves authorized devices and delivers the new
-key through a separate encrypted envelope for each device. Revoke a device before
-rotation to exclude it from future keys. Previously shared data must be assumed
-already copied by revoked devices.
+One shared library seed grants full authority. Every connected browser holds it,
+sealed under that browser's master password. Connect another browser with
+**Settings → Connect another browser**: compare both verification codes and
+approve; the transfer carries the seed and a trusted history checkpoint. If no
+connected browser remains, **Restore** uses the backup file and password. There
+is no revocation or rotation: a lost browser that holds the seed keeps full
+authority, so protect each browser with a strong master password.
 
-Each browser tab loads its protected device credential once from IndexedDB.
-Remembered access is optional; Lock ends that tab's resources and clears its
-remembered unlock key. Other open tabs retain their loaded access. There are no
-cross-tab notifications, polling, or locks. **Forget device** removes local device
-credentials and its history cache; **Reset client** removes local credentials and
-all current-format history caches. These actions remove local rollback protection
-but leave server data intact. There are no legacy format readers or migrations.
+Each browser tab loads its sealed credential once from IndexedDB. **Remember this
+device** is optional; Lock ends that tab's resources and clears its remembered
+unlock key. Other open tabs retain their loaded access. There are no cross-tab
+notifications, polling, or locks. **Forget this browser** removes the local
+credential and its history cache; **Reset this client** removes local credentials
+and all history caches. These actions remove local rollback protection but leave
+server data intact. There are no legacy format readers or migrations.
 
 ## Browse, edit, and recover history
 
@@ -37,13 +34,14 @@ The client verifies signatures, authority transitions, encryption, and hash link
 before applying operations. It stores encrypted records and its latest trusted
 head in IndexedDB, while materialized state and search indexes stay in memory.
 An incomplete metadata index is reported explicitly rather than as no matches.
-Search files locally by filename or tag; edits use the selected source head and
-conflicts require explicit review and retry.
+Search files locally by filename or tag. Uploads and lifecycle changes apply to
+the current head even when other blocks landed meanwhile; a metadata edit made
+from an outdated revision of the same file requires explicit review and retry.
 
-Choose a block to browse read-only history. The UI is a projection of that
-selected materialized state. **Live view** returns to current state. Upload,
-metadata edits, deletion, and other file writes are disabled in historical views.
-Current quota and device authority remain operational state and do not rewind.
+Open **Earlier versions** to browse read-only history. The UI is a projection of
+that selected materialized state. **Back to current** returns to the live state.
+Upload, metadata edits, deletion, and other file writes are disabled in
+historical views. Current quota remains operational state and does not rewind.
 
 Delete moves a file to **Deleted files**, where it can be restored. **Permanently
 delete** appends an explicit purge and removes all retained content, metadata,
@@ -67,7 +65,7 @@ failed saves retain their draft. Preview text is escaped and bounded to 256 KiB.
 
 The root workspace owns uploads, downloads, quota, and verification across
 Library/Settings navigation. Private `#/media/<id>` links contain no keys and
-require a connected device. The default deployment serves the client and API on
+require a connected browser. The default deployment serves the client and API on
 the same domain.
 
 ## Firefox extension
@@ -108,22 +106,21 @@ i2nclip key set-limits PUBLIC_KEY --max-bytes 536870912 --max-files 10000
 ```
 
 Libraries default to 512 MiB of encrypted blob storage and 10,000 retained files.
-Limits and counters belong to the library, shared by its devices. Quota includes
+Limits and counters belong to the library, shared by its browsers. Quota includes
 staging and retained deleted files; purge or expired staging releases capacity.
 Block-history bytes are reported separately. Lowering limits below current usage
 is rejected. Leave disk headroom for block history, indexes, WAL, and dead tuples.
 
-The server bounds transfers to one upload and two downloads per device, with
+The server bounds transfers to one upload and two downloads per library key, with
 global limits of four uploads and sixteen downloads. Downloads release database
 connections before sending owned ciphertext. Staged uploads expire after 24 idle
 hours; committed files are never automatically collected. Startup runs embedded
 SQLx migrations from `sql/001_init.sql`. This is a fresh-database baseline; drop
 pre-redesign databases. Keep applied migrations unchanged for future schema work.
 
-The authoritative design is in [chain storage](doc/blockchain-storage.md) and
-[offline recovery](doc/library-recovery.md). The server is untrusted for content
-and freshness: local pins detect rollback, and pairing supplies a trusted head to
-new devices. A server can still deny service or withhold data. Same-origin client
+The authoritative design is in the [protocol](doc/protocol.md), including its
+threat model. The server is untrusted for content and freshness: local pins
+detect rollback, and pairing supplies a trusted head to new browsers. A server can still deny service or withhold data. Same-origin client
 code delivery remains part of the trust boundary.
 
 ## Build and run
@@ -157,7 +154,7 @@ npm run dev --prefix client
 
 `DEV_PORT`, `DEV_DB_PORT`, and `DEV_ORIGIN` override development addresses; `DEV_DB_URL` overrides the database URL. For a separate Vite server, set `DEV_ORIGIN=http://localhost:5173`. Vite proxies `/api/` to port 8080, configurable through `I2N_API_TARGET`.
 
-PostgreSQL holds encrypted blocks, hash-addressed ciphertext blobs, public principals, invitations, and nonces. Chain append, authority transitions, storage effects, and counters commit atomically. Downloads release database connections before sending owned bytes. The eight-connection SQLx pool has a five-second acquisition timeout. Startup applies the embedded schema transactionally once; maintenance removes expired invitations and nonces on startup and hourly. See [protocol and backend documentation](doc/README.md).
+PostgreSQL holds encrypted blocks, hash-addressed ciphertext blobs, library public keys and quotas, invitations, and nonces. Chain append, storage effects, and counters commit atomically. Downloads release database connections before sending owned bytes. The eight-connection SQLx pool has a five-second acquisition timeout. Startup applies the embedded schema transactionally once; maintenance removes expired invitations and nonces on startup and hourly. See [protocol and backend documentation](doc/README.md).
 
 ## Verification
 

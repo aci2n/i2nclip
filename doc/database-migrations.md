@@ -2,16 +2,15 @@
 
 Startup owns schema initialization through `Database::initialize`, before HTTP
 requests are accepted. The baseline schema is defined in `sql/001_init.sql`.
-The explicitly authorized blockchain cutover replaces this baseline directly:
-libraries, device membership, immutable signed blocks, file storage lifecycle,
-and hash-addressed ciphertext blobs replace the old metadata/chunk/tag tables.
+The explicitly authorized blockchain cutover replaced this baseline directly:
+libraries, immutable signed blocks, file storage lifecycle, and hash-addressed
+ciphertext blobs replace the old metadata/chunk/tag tables.
 There is no follow-up conversion migration or compatibility reader. Existing
 databases must be recreated; editing their migration ledger cannot rebuild data.
 Blob ciphertext is bounded to 16 through 4,194,368 bytes. Hashes match stored
-ciphertext, published file IDs and device history are permanent, and committed
+ciphertext, published file IDs and block history are permanent, and committed
 blobs can only be deleted after explicit file purge. See the
-[storage specification](blockchain-storage.md) for the coordinated API/client
-cutover and transaction rules.
+[protocol](protocol.md) for storage effects and quota rules.
 
 SQLx acquires a PostgreSQL advisory lock, validates recorded checksums, and runs
 pending migrations in version order. Each migration commits its SQL and history
