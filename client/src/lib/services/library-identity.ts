@@ -13,11 +13,12 @@ import type { SigningKey } from "../protocol/auth.ts";
 import {
 	b64urlToBytes,
 	bytesToB64url,
+	bytesToHex,
 	concat,
 	hexToBytes,
 	utf8,
 } from "../protocol/bytes.ts";
-import type { Bytes } from "../protocol/chain.ts";
+import { type Bytes, sameBytes } from "../protocol/chain.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
 import {
 	openBytes,
@@ -66,7 +67,7 @@ function checkpoint(value: unknown): TrustedCheckpoint {
 	const hash = binary(value[1], 32);
 	return {
 		sequence: value[0],
-		hash: Array.from(hash, (b) => b.toString(16).padStart(2, "0")).join(""),
+		hash: bytesToHex(hash),
 	};
 }
 async function digest(value: Bytes) {
@@ -115,7 +116,7 @@ export async function openLibraryBackup(
 		frame.length !== 3 ||
 		frame[0] !== "i2nclip-library-backup" ||
 		frame[1] !== 1 ||
-		!equal(encode(frame), bytes)
+		!sameBytes(encode(frame), bytes)
 	) {
 		invalid();
 	}
@@ -136,7 +137,7 @@ export async function openPairingIdentity(
 		invalid();
 	}
 	const envelope = decode(packet);
-	if (!equal(encode(envelope), packet)) {
+	if (!sameBytes(encode(envelope), packet)) {
 		invalid();
 	}
 	const plaintext = await openBytes(key, envelope, `${context} transfer 4`);
@@ -146,7 +147,7 @@ export async function openPairingIdentity(
 			!Array.isArray(frame) ||
 			frame.length !== 3 ||
 			frame[0] !== 1 ||
-			!equal(encode(frame), plaintext)
+			!sameBytes(encode(frame), plaintext)
 		) {
 			invalid();
 		}
@@ -242,7 +243,7 @@ class LibraryIdentityImpl {
 				!Array.isArray(frame) ||
 				frame.length !== 2 ||
 				frame[0] !== 1 ||
-				!equal(encode(frame), genesis)
+				!sameBytes(encode(frame), genesis)
 			) {
 				invalid();
 			}
@@ -327,7 +328,10 @@ class LibraryIdentityImpl {
 				encryption,
 			);
 			identities.set(identity, identity);
-			return { identity, checkpoint: { sequence: 0, hash: hex(library) } };
+			return {
+				identity,
+				checkpoint: { sequence: 0, hash: bytesToHex(library) },
+			};
 		} catch (error) {
 			seed.fill(0);
 			throw error;
@@ -363,7 +367,7 @@ class LibraryIdentityImpl {
 				typeof frame[1] !== "string" ||
 				!(frame[2] instanceof Uint8Array) ||
 				frame[2].length > 128 ||
-				!equal(encode(frame), plaintext)
+				!sameBytes(encode(frame), plaintext)
 			) {
 				invalid();
 			}
@@ -374,7 +378,10 @@ class LibraryIdentityImpl {
 				new Uint8Array(frame[2]),
 				signal,
 			);
-			if (head.sequence === 0 && head.hash !== hex(opened.identity.library)) {
+			if (
+				head.sequence === 0 &&
+				head.hash !== bytesToHex(opened.identity.library)
+			) {
 				opened.identity.dispose();
 				invalid();
 			}
@@ -396,7 +403,7 @@ class LibraryIdentityImpl {
 			!/^[0-9a-f]{64}$/.test(head.hash) ||
 			!Number.isSafeInteger(head.sequence) ||
 			head.sequence < 0 ||
-			(head.sequence === 0 && head.hash !== hex(this.library))
+			(head.sequence === 0 && head.hash !== bytesToHex(this.library))
 		) {
 			invalid();
 		}
@@ -466,10 +473,4 @@ class LibraryIdentityImpl {
 		this.#seed.fill(0);
 		identities.delete(this);
 	}
-}
-function hex(value: Bytes) {
-	return Array.from(value, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-function equal(left: Bytes, right: Bytes) {
-	return left.length === right.length && left.every((b, i) => b === right[i]);
 }
