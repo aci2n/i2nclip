@@ -103,19 +103,13 @@ function app(
 	};
 	const uploads: File[][] = [];
 	const extra: (Metadata | undefined)[] = [];
-	const batches = Object.assign(
-		writable<{ uploading: boolean }>({
-			uploading: false,
-		}),
-		{
-			upload: (files: File[], context?: Metadata) => {
-				uploads.push(files);
-				extra.push(context);
-				batches.set({ uploading: true });
-				return result;
-			},
+	const batches = {
+		upload: (files: File[], context?: Metadata) => {
+			uploads.push(files);
+			extra.push(context);
+			return result;
 		},
-	);
+	};
 	const listeners = new Map<string, (event: CaptureEvent) => void>();
 	const replies: {
 		type: string;
@@ -186,7 +180,7 @@ const file = {
 		type: "image/png",
 	}),
 };
-test("bridge uploads through the root upload store and rejects overlapping work", async (t) => {
+test("bridge uploads through the root upload store, including during another upload", async (t) => {
 	const fixture = app(t);
 	assert.deepEqual(fixture.receive({ type: "probe" }), {
 		ok: true,
@@ -205,11 +199,8 @@ test("bridge uploads through the root upload store and rejects overlapping work"
 		new Uint8Array(await uploaded.arrayBuffer()),
 		new Uint8Array([0, 1, 2, 3, 255]),
 	);
-	assert.match(
-		assertPresent(assertPresent(fixture.receive(file)).error),
-		/busy/,
-	);
-	assert.equal(fixture.uploads.length, 1);
+	assert.deepEqual(fixture.receive(file), { ok: true, needsUnlock: false });
+	assert.equal(fixture.uploads.length, 2);
 });
 test("locked receipt uploads exactly once when unlock finishes its busy transition", (t) => {
 	const logs = captureLogs(t);
@@ -238,7 +229,6 @@ test("locked receipt uploads exactly once when unlock finishes its busy transiti
 		source_url: file.extra.sourceUrl,
 		source_title: file.extra.sourceTitle,
 	});
-	fixture.batches.set({ uploading: false });
 	fixture.sessionState.update((value) => ({ ...value }));
 	assert.equal(fixture.uploads.length, 1);
 	const pending = logs.find(

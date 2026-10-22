@@ -35,7 +35,7 @@ export interface CaptureSessionState {
 
 export interface CaptureSession extends Readable<CaptureSessionState> {}
 
-export interface CaptureUploads extends Readable<{ uploading: boolean }> {
+export interface CaptureUploads {
 	upload(files: File[], extra?: Metadata): Promise<boolean>;
 }
 
@@ -105,7 +105,7 @@ class ExtensionReceiverStoreImpl {
 		if (value.unlocked && !uploads) {
 			return "Uploads are unavailable. Open the live library.";
 		}
-		if (value.busy || (uploads ? get(uploads).uploading : false)) {
+		if (value.busy) {
 			return "i2nclip is busy. Wait for the current operation, then retry.";
 		}
 		return "";

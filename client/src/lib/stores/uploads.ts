@@ -14,9 +14,18 @@ import type { Session } from "./session.ts";
 interface ActiveUpload {
 	name: string;
 	index: number;
-	total: number;
 	signal: AbortSignal;
 	finished: boolean;
+}
+/** One `upload` call; it resolves when the batch it joined ends. */
+interface UploadRequest {
+	failed: boolean;
+	readonly resolve: (ok: boolean) => void;
+}
+interface QueuedFile {
+	readonly file: File;
+	readonly extra: Metadata;
+	readonly request: UploadRequest;
 }
 interface Services {
 	readonly prepare?: typeof prepareFile;
@@ -54,7 +63,9 @@ class UploadsImpl {
 	private readonly controller = new AbortController();
 	private readonly signal: AbortSignal;
 	private batch: AbortController | null = null;
-	private queue: File[] = [];
+	private queue: QueuedFile[] = [];
+	private requests: UploadRequest[] = [];
+	private total = 0;
 	private readonly subscriptions: Array<() => void> = [];
 	readonly subscribe = this.state.subscribe;
 	readonly upload = this.uploadFiles.bind(this);
@@ -107,24 +118,41 @@ class UploadsImpl {
 			status: state.failures.length || state.uploading ? state.status : "",
 		}));
 	}
-	private async uploadFiles(files: File[], extra: Metadata = {}) {
+	/** Files selected during a batch join its queue; each call reports its own files. */
+	private uploadFiles(files: File[], extra: Metadata = {}) {
 		if (
 			!files.length ||
-			get(this.state).uploading ||
 			this.signal.aborted ||
 			!get(this.session).context ||
 			get(this.view).historical ||
 			(get(this.view).selected && !this.allowed())
 		) {
-			return false;
+			return Promise.resolve(false);
 		}
+		const result = new Promise<boolean>((resolve) => {
+			const request = { failed: false, resolve };
+			this.requests.push(request);
+			this.queue.push(...files.map((file) => ({ file, extra, request })));
+		});
+		this.total += files.length;
+		if (get(this.state).uploading) {
+			this.state.update((state) =>
+				state.progress
+					? { ...state, progress: { ...state.progress, total: this.total } }
+					: state,
+			);
+		} else {
+			void this.runBatch();
+		}
+		return result;
+	}
+	private async runBatch() {
 		this.batch = new AbortController();
 		const signal = AbortSignal.any([this.signal, this.batch.signal]);
-		this.queue = [...files];
-		const total = this.queue.length;
 		const compressImages = get(this.preferences).compressImages;
 		this.state.set({ ...empty(), uploading: true });
 		let index = 0;
+		let completed = false;
 		try {
 			if (!get(this.view).selected) {
 				await this.view.refresh();
@@ -135,15 +163,15 @@ class UploadsImpl {
 			}
 			while (this.queue.length) {
 				signal.throwIfAborted();
-				const file = this.queue.shift();
-				if (!file) {
+				const item = this.queue.shift();
+				if (!item) {
 					break;
 				}
+				const { file, extra, request } = item;
 				index++;
 				const current: ActiveUpload = {
 					name: file.name,
 					index,
-					total,
 					signal,
 					finished: false,
 				};
@@ -195,6 +223,7 @@ class UploadsImpl {
 						completed: [...state.completed, { id, name: current.name }],
 					}));
 				} catch (error) {
+					request.failed = true;
 					if (!signal.aborted) {
 						this.state.update((state) => ({
 							...state,
@@ -217,7 +246,7 @@ class UploadsImpl {
 					? `${failed} file(s) failed. Select them again through Upload.`
 					: "Upload complete.",
 			}));
-			return !failed;
+			completed = true;
 		} catch (error) {
 			if (!this.signal.aborted) {
 				this.state.update((state) => ({
@@ -225,9 +254,11 @@ class UploadsImpl {
 					status: errorMessage(error),
 				}));
 			}
-			return false;
 		} finally {
+			// Detach this batch's callers before awaiting so a new call starts a new batch.
+			const requests = this.requests.splice(0);
 			this.queue.length = 0;
+			this.total = 0;
 			this.batch = null;
 			if (!this.signal.aborted) {
 				this.state.update((state) => ({
@@ -236,6 +267,9 @@ class UploadsImpl {
 					progress: null,
 				}));
 				await this.settled();
+			}
+			for (const request of requests) {
+				request.resolve(completed && !request.failed);
 			}
 		}
 	}
@@ -256,7 +290,7 @@ class UploadsImpl {
 			progress: {
 				name: current.name,
 				index: current.index,
-				total: current.total,
+				total: this.total,
 				percent: Math.max(0, Math.min(100, Math.round(percent))),
 				phase,
 			},
@@ -275,6 +309,9 @@ class UploadsImpl {
 		this.controller.abort();
 		this.batch?.abort();
 		this.queue.length = 0;
+		for (const request of this.requests.splice(0)) {
+			request.resolve(false);
+		}
 		for (const unsubscribe of this.subscriptions) {
 			unsubscribe();
 		}

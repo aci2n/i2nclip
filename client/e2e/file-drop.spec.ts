@@ -96,7 +96,7 @@ test("file drops are suppressed before setup and while locked; text drags are un
 	).toEqual([false, false]);
 });
 
-test("a second drop cannot overlap an upload batch", async ({ page, app }) => {
+test("a second drop joins the running upload batch", async ({ page, app }) => {
 	await createLibrary(page, app);
 	const held = deferred();
 	const started = deferred();
@@ -110,15 +110,14 @@ test("a second drop cannot overlap an upload batch", async ({ page, app }) => {
 	try {
 		await drop(page, "html", ["accepted.txt"]);
 		await started.promise;
-		await drop(page, "html", ["busy.txt"]);
-		await expect(
-			page.getByRole("button", { name: "Start upload", exact: true }),
-		).toHaveCount(0);
+		await drop(page, "html", ["joined.txt"]);
 		held.resolve();
-		await expect(
-			page.getByRole("button", { name: "Open accepted.txt", exact: true }),
-		).toBeVisible();
-		await expect(page.getByRole("article")).toHaveCount(1);
+		for (const name of ["accepted.txt", "joined.txt"]) {
+			await expect(
+				page.getByRole("button", { name: `Open ${name}`, exact: true }),
+			).toBeVisible();
+		}
+		await expect(page.getByRole("article")).toHaveCount(2);
 	} finally {
 		held.resolve();
 		await page.unrouteAll({ behavior: "wait" });

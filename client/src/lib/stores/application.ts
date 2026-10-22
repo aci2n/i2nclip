@@ -116,9 +116,7 @@ class ApplicationImpl {
 		if (this.disposed || !this.session.ready || !workspace) {
 			return false;
 		}
-		return (
-			!get(workspace.library).readonly && !get(workspace.uploads).uploading
-		);
+		return !get(workspace.library).readonly;
 	}
 
 	private captureUploads() {

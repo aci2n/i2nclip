@@ -59,7 +59,7 @@ function movePreview(step: number) {
 			Refresh
 		</button><button
 			type="button"
-			disabled={$library.readonly || $uploads.uploading}
+			disabled={$library.readonly}
 			onclick={() => pickFiles(filesInput)}
 		>
 			Upload
@@ -71,7 +71,7 @@ function movePreview(step: number) {
 		aria-label="Upload"
 		hidden
 		multiple
-		disabled={$library.readonly || $uploads.uploading}
+		disabled={$library.readonly}
 		onchange={(event) => selectFiles(event, uploads.upload)}
 	>
 </div>
@@ -118,7 +118,7 @@ function movePreview(step: number) {
 			<p>Upload a photo, video, audio file, or document to get started.</p>
 			<button
 				type="button"
-				disabled={$library.readonly || $uploads.uploading}
+				disabled={$library.readonly}
 				onclick={() => pickFiles(filesInput)}
 			>
 				Upload files

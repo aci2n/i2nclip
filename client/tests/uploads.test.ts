@@ -279,3 +279,61 @@ test("a capture received on unlock waits for initial verified materialization", 
 	assert.equal(uploads, 1);
 	assert.ok(get(f.view).selected);
 });
+
+test("files selected during a batch join its queue and each call reports its own files", async (t) => {
+	const f = await fixture(t);
+	const held = deferred();
+	const names: string[] = [];
+	const totals: number[] = [];
+	const uploads = createUploads(
+		f.session,
+		f.view,
+		{
+			upload: async (options) => {
+				const name = String(options.attributes.name);
+				names.push(name);
+				options.onProgress?.(50);
+				if (name === "first.txt") {
+					await held.promise;
+				}
+				if (name === "bad.txt") {
+					throw new Error("Upload rejected");
+				}
+				return { id: "ab".repeat(32) };
+			},
+			checkQuota: quota(),
+		},
+		f.preferences,
+		f.context.signal,
+		{ prepare: async ({ file }) => file, thumbnail: async () => null },
+	);
+	t.after(uploads.dispose);
+	const unsubscribe = uploads.subscribe((state) => {
+		if (state.progress) {
+			totals.push(state.progress.total);
+		}
+	});
+	t.after(unsubscribe);
+	const first = uploads.upload([new File(["1"], "first.txt")]);
+	while (!names.length) {
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	}
+	const second = uploads.upload([new File(["2"], "second.txt")], {
+		source_url: "https://example.com/",
+	});
+	const third = uploads.upload([new File(["3"], "bad.txt")]);
+	assert.equal(get(uploads).progress?.total, 3);
+	held.resolve();
+	assert.deepEqual(await Promise.all([first, second, third]), [
+		true,
+		true,
+		false,
+	]);
+	assert.deepEqual(names, ["first.txt", "second.txt", "bad.txt"]);
+	assert.equal(get(uploads).completed.length, 2);
+	assert.equal(get(uploads).failures.length, 1);
+	assert.equal(get(uploads).uploading, false);
+	assert.equal(totals.at(-1), 3);
+	assert.equal(await uploads.upload([new File(["4"], "next.txt")]), true);
+	assert.equal(get(uploads).completed.length, 1);
+});
