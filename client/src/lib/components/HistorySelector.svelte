@@ -13,46 +13,47 @@ $effect(() => {
 	draft = sequence;
 });
 </script>
-<section class="history panel stack" aria-label="Library history">
-	<form
-		onsubmit={(event) => {
-			event.preventDefault();
-			onselect(Number(draft));
-		}}
-	>
-		<label class="field"
-			>Block<input
-				type="number"
-				min="0"
-				max={live}
-				step="1"
-				required
-				bind:value={draft}
-				disabled={busy}
-			></label
-		>
-		<button type="submit" class="secondary" disabled={busy}>
-			Browse block
-		</button>
-		<button type="button" class="secondary" onclick={() => onselect(null)}>
-			Live view
-		</button>
-	</form>
-	<p>
+<details class="history panel" open={historical}>
+	<summary>
 		{historical
-			? `Read-only history at block ${sequence}.`
-			: `Live view · block ${sequence}.`}
-	</p>
-	{#if historical}
+			? `Viewing version ${sequence} (read-only)`
+			: "Earlier versions"}
+	</summary>
+	<div class="stack content">
+		<form
+			onsubmit={(event) => {
+				event.preventDefault();
+				onselect(Number(draft));
+			}}
+		>
+			<label class="field"
+				>Version<input
+					type="number"
+					min="0"
+					max={live}
+					step="1"
+					required
+					bind:value={draft}
+					disabled={busy}
+				></label
+			>
+			<button type="submit" class="secondary" disabled={busy}>
+				Show version
+			</button>
+			<button type="button" class="secondary" onclick={() => onselect(null)}>
+				Back to current
+			</button>
+		</form>
 		<p>
-			Uploads and file changes are disabled. Purged data stays unavailable in
-			history.
+			{historical
+				? `Viewing version ${sequence}. Uploads and changes are disabled; permanently deleted files stay unavailable.`
+				: `Current version ${sequence}.`}
 		</p>
-	{/if}
-	{#if error}
-		<p class="error" role="alert">{error}</p>
-	{/if}
-</section>
+		{#if error}
+			<p class="error" role="alert">{error}</p>
+		{/if}
+	</div>
+</details>
 <style>
 form {
 	display: flex;
@@ -65,5 +66,8 @@ label {
 }
 .history {
 	margin-bottom: 1rem;
+}
+.content {
+	margin-top: 1rem;
 }
 </style>

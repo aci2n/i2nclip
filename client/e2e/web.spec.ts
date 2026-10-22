@@ -397,7 +397,7 @@ test("mixed media and feedback render in both themes at desktop and narrow width
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(
 		page.getByRole("region", { name: "Library usage", exact: true }),
-	).toContainText("Retained files: 6");
+	).toContainText("Files: 6");
 	await page.getByText("Change master password", { exact: true }).click();
 	await page
 		.getByLabel("Current master password", { exact: true })

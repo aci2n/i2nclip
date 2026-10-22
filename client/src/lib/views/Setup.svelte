@@ -164,17 +164,15 @@ const busy = $derived($session.busy || $pairing.active);
 		<summary>Reset this browser</summary>
 		<div class="stack content">
 			<p>
-				Remove local credentials, cached history, and local rollback protection.
-				Server data remains.
+				Remove the saved library access and cached data from this browser. Files
+				on the server are not affected.
 			</p>
 			<button
 				type="button"
 				class="secondary danger"
 				disabled={busy}
 				onclick={() => {
-					if (
-						confirm("Remove this browser's credentials and cached history?")
-					) {
+					if (confirm("Remove saved library access from this browser?")) {
 						void session.reset();
 					}
 				}}

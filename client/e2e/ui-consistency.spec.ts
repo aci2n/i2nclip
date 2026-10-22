@@ -68,7 +68,7 @@ test("setup and settings controls fit narrow screens", async ({
 	await createLibrary(page, app);
 	await expect(
 		page.getByRole("region", { name: "Library usage", exact: true }),
-	).toContainText("Retained files: 0");
+	).toContainText("Files: 0");
 	for (const width of [1100, 320, 360]) {
 		await page.setViewportSize({ width, height: 800 });
 		await consistentControls(page, width < 500);

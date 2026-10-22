@@ -20,7 +20,7 @@ test("verified history projects edits, deletion, restoration and permanent purge
 	});
 	const card = page.getByRole("article");
 	await expect(card).toHaveCount(1);
-	await expect(page.getByLabel("Block", { exact: true })).toHaveValue("1");
+	await expect(page.getByLabel("Version", { exact: true })).toHaveValue("1");
 	await card
 		.getByRole("button", { name: "Edit filename original.txt", exact: true })
 		.click();
@@ -30,11 +30,12 @@ test("verified history projects edits, deletion, restoration and permanent purge
 	await card
 		.getByRole("textbox", { name: "Filename for original.txt", exact: true })
 		.press("Enter");
-	await expect(page.getByLabel("Block", { exact: true })).toHaveValue("2");
-	await page.getByLabel("Block", { exact: true }).fill("1");
-	await page.getByRole("button", { name: "Browse block", exact: true }).click();
+	await expect(page.getByLabel("Version", { exact: true })).toHaveValue("2");
+	await page.getByText("Earlier versions", { exact: true }).click();
+	await page.getByLabel("Version", { exact: true }).fill("1");
+	await page.getByRole("button", { name: "Show version", exact: true }).click();
 	await expect(
-		page.getByText("Read-only history at block 1.", { exact: true }),
+		page.getByText("Viewing version 1 (read-only)", { exact: true }),
 	).toBeVisible();
 	await expect(
 		card.getByRole("button", { name: "Open original.txt", exact: true }),
@@ -50,7 +51,9 @@ test("verified history projects edits, deletion, restoration and permanent purge
 	expect((await readFile(await download.path())).toString()).toBe(
 		"private content",
 	);
-	await page.getByRole("button", { name: "Live view", exact: true }).click();
+	await page
+		.getByRole("button", { name: "Back to current", exact: true })
+		.click();
 	await expect(
 		card.getByRole("button", { name: "Open renamed.txt", exact: true }),
 	).toBeVisible();
@@ -75,8 +78,9 @@ test("verified history projects edits, deletion, restoration and permanent purge
 		.getByRole("button", { name: "Permanently delete", exact: true })
 		.click();
 	await expect(card).toHaveCount(0);
-	await page.getByLabel("Block", { exact: true }).fill("1");
-	await page.getByRole("button", { name: "Browse block", exact: true }).click();
+	await page.getByText("Earlier versions", { exact: true }).click();
+	await page.getByLabel("Version", { exact: true }).fill("1");
+	await page.getByRole("button", { name: "Show version", exact: true }).click();
 	await page.getByRole("button", { name: "Files", exact: true }).click();
 	await expect(
 		card.getByText("Permanently purged", { exact: true }),

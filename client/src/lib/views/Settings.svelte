@@ -31,11 +31,11 @@ const busy = $derived($session.busy || $pairing.active);
 			<h2>Your library</h2>
 			<p class="address">{$session.serverUrl}</p>
 			<p>
-				Every connected browser has full access. Keep a library backup and its
-				password in case local credentials are lost.
+				Every connected browser has full access, and access cannot be revoked
+				later. Keep your library backup and its password somewhere safe.
 			</p>
 			<section class="stack" aria-label="Library usage">
-				<h3>Current server usage</h3>
+				<h3>Storage</h3>
 				{#if $quota?.loading}
 					<p role="status">Loading usage…</p>
 				{/if}
@@ -48,15 +48,12 @@ const busy = $derived($session.busy || $pairing.active);
 						{fileSize($quota.value.maximumBytes)}
 					</p>
 					<p>
-						Retained files: {$quota.value.retainedFiles} of
+						Files: {$quota.value.retainedFiles} of
 						{$quota.value.maximumFiles}
 					</p>
-					<p>Encrypted history: {fileSize($quota.value.logBytes)}</p>
+					<p>Change history: {fileSize($quota.value.logBytes)}</p>
 				{/if}
-				<p>
-					Usage includes staged uploads and retained deleted files. It describes
-					current server storage and does not rewind with history.
-				</p>
+				<p>Includes deleted files until you delete them permanently.</p>
 				<button
 					type="button"
 					class="secondary"
@@ -91,25 +88,25 @@ const busy = $derived($session.busy || $pairing.active);
 				) && $session.error}
 					<p class="error" role="alert">{$session.error}</p>
 				{/if}
+				{#if $session.lastAction === "copyBackupPassword" && $session.notice}
+					<p role="status">{$session.notice}</p>
+				{/if}
 			</div>
 		</details>
-		{#if $session.notice}
-			<p role="status">{$session.notice}</p>
-		{/if}
 		<details class="panel">
 			<summary>Forget this browser</summary>
 			<div class="stack content">
 				<p>
-					This removes this browser’s credentials and cached history, including
-					its trusted head. Server data and other devices remain. Reconnect by
-					pairing or a library backup.
+					This removes the library and its saved data from this browser. Your
+					files stay on the server and on your other browsers. To reconnect, use
+					your library backup or connect from another browser.
 				</p>
 				<button
 					type="button"
 					class="secondary danger"
 					disabled={busy || $uploads?.uploading}
 					onclick={() => {
-						if (confirm("Forget this browser and remove its cached history?")) {
+						if (confirm("Remove the library from this browser?")) {
 							void session.forget();
 						}
 					}}

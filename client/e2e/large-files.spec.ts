@@ -150,7 +150,7 @@ test("encrypted multi-chunk upload and native download survive view navigation",
 			contentType: "application/json",
 		});
 		await expect(page.getByLabel("Library usage")).toContainText(
-			"Retained files: 1 of 10000",
+			"Files: 1 of 10000",
 		);
 	} finally {
 		monitoring.abort();

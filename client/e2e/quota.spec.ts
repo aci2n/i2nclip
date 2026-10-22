@@ -19,9 +19,9 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 	await createLibrary(page, app, 10 * 1024 ** 3);
 	const usage = page.getByLabel("Library usage");
 	await expect(usage).toContainText("Storage: 0 B of 10.0 GB");
-	await expect(usage).toContainText("Retained files: 0 of 10000");
+	await expect(usage).toContainText("Files: 0 of 10000");
 	await expect(usage).toContainText(
-		"Usage includes staged uploads and retained deleted files.",
+		"Includes deleted files until you delete them permanently.",
 	);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page.getByLabel("Upload", { exact: true }).setInputFiles({
@@ -32,7 +32,7 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 	await expect(page.getByRole("article")).toHaveCount(1);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(usage).toContainText("Storage: 1.0 MB of 10.0 GB");
-	await expect(usage).toContainText("Retained files: 1 of 10000");
+	await expect(usage).toContainText("Files: 1 of 10000");
 	await shot(page, "quota-desktop");
 	for (const width of [320, 360]) {
 		await page.setViewportSize({ width, height: 800 });
@@ -55,7 +55,7 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 	await usage
 		.getByRole("button", { name: "Refresh usage", exact: true })
 		.click();
-	await expect(usage).toContainText("Retained files: 1 of 10000");
+	await expect(usage).toContainText("Files: 1 of 10000");
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page
 		.getByRole("article")
@@ -63,7 +63,7 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 		.click();
 	await expect(page.getByRole("article")).toHaveCount(0);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
-	await expect(usage).toContainText("Retained files: 1 of 10000");
+	await expect(usage).toContainText("Files: 1 of 10000");
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page
 		.getByRole("button", { name: "Deleted files", exact: true })
@@ -76,7 +76,7 @@ test("Your library shows usage, refreshes after media changes, and retries offli
 	await expect(page.getByRole("article")).toHaveCount(0);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(usage).toContainText("Storage: 0 B of 10.0 GB");
-	await expect(usage).toContainText("Retained files: 0 of 10000");
+	await expect(usage).toContainText("Files: 0 of 10000");
 
 	expect(await page.locator("[id]").count()).toBe(0);
 });
@@ -120,7 +120,7 @@ test("files above 32 MiB stream through library and deeplink downloads after quo
 	await setKeyLimits(app.data, key, { maxBytes: frame[2], maxFiles: 10000 });
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(page.getByLabel("Library usage")).toContainText(
-		"Retained files: 1 of 10000",
+		"Files: 1 of 10000",
 	);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const downloading = page.waitForEvent("download");

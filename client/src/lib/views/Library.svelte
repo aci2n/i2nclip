@@ -130,6 +130,13 @@ function movePreview(step: number) {
 			</p>
 		{:else}
 			<h2>No files match your search</h2>
+			<button
+				type="button"
+				class="secondary"
+				onclick={() => library.search("")}
+			>
+				Clear search
+			</button>
 		{/if}
 	</section>
 {/if}
