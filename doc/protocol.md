@@ -84,9 +84,13 @@ Credential plaintext is `[1, server_origin, genesis, seed, [trusted_sequence, tr
   wrapping key (PBKDF2-SHA256, 600,000 iterations) with AAD
   `i2nclip/local-library/1`. The IndexedDB session record also keeps a
   registration-pending flag for a prepared library not yet registered.
-- **Backup**: `["i2nclip-library-backup", 1, [1, salt, iterations, iv, ciphertext]]`
-  under a generated 256-bit base64url password with AAD
-  `i2nclip/library-backup/1`; files are capped at 1 MiB. A backup contains
+- **Backup**: `["i2nclip-library-backup", 2, [1, iv, ciphertext]]`, AES-256-GCM
+  with AAD `i2nclip/library-backup/2`; files are capped at 1 MiB. The generated
+  password is 32 characters from `23456789ABCDEFGHJKLMNPQRSTUVWXYZ` (160 bits),
+  shown in groups of four joined by `-`. Input is uppercased and stripped of
+  whitespace and `-`; the key is HKDF-SHA-256 of the normalized UTF-8 password
+  with an empty salt and info `i2nclip/library-backup/2`. A random password needs
+  no slow KDF; see [backup and purge format](backup-and-purge-format.md). A backup contains
   credentials only, not library data. Creation registers only after the backup is
   downloaded. Restoring a backup verifies history from its checkpoint before
   activation; a genesis-checkpoint backup answered by `401` becomes a prepared
@@ -152,12 +156,12 @@ positional arrays:
 ["ReplaceMetadata", file_id, metadata_reference]
 ["DeleteFile", file_id]
 ["RestoreFile", file_id]
-["PurgeFiles", sorted_unique_file_ids]
+["PurgeFile", file_id]
 ```
 
 `AddFile` requires a never-used file ID. `ReplaceMetadata` and `DeleteFile`
-require a live file; `RestoreFile` and `PurgeFiles` require deleted, unpurged
-files. Purge is irreversible. Operations carry complete metadata documents, not
+require a live file; `RestoreFile` and `PurgeFile` require a deleted, unpurged
+file. Purge is irreversible. Operations carry complete metadata documents, not
 patches. Materialized state keeps each file's creation sequence, manifest
 reference, latest metadata reference, and deleted/purged flags; default order is
 creation sequence descending. Replay never downloads objects, and a purged
@@ -173,12 +177,12 @@ lost parent race is retried; see [rebased mutations](rebased-mutations.md).
 ```text
 ["publish", file_id, inventory_digest]
 ["commit", file_id, sorted_unique_new_blob_hashes]   (at most two)
-["purge", sorted_unique_file_ids]
+["purge", file_id]
 ```
 
 `AddFile` pairs with `publish`, `ReplaceMetadata` with `commit` naming its new
-metadata and optional thumbnail blob, and `PurgeFiles` with `purge` for the same
-IDs. Delete and restore carry no effect. Clients reject any mismatch.
+metadata and optional thumbnail blob, and `PurgeFile` with `purge` for the same
+ID. Delete and restore carry no effect. Clients reject any mismatch.
 
 The inventory digest is SHA-256 of MessagePack
 `["i2nclip/inventory/1", library_id, file_id, entries]`, where `entries` is every

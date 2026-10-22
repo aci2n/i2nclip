@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
-import { createPrivateKey, createPublicKey, hkdfSync } from "node:crypto";
+import {
+	createCipheriv,
+	createPrivateKey,
+	createPublicKey,
+	hkdfSync,
+} from "node:crypto";
 import test from "node:test";
 import { concat, hexToBytes, utf8 } from "../src/lib/protocol/bytes.ts";
 import { decode, encode } from "../src/lib/protocol/msgpack.ts";
-import { passwordSeal } from "../src/lib/protocol/password.ts";
 import {
 	createLibraryIdentity,
 	openLibraryBackup,
@@ -50,15 +54,25 @@ test("one seed restores independent native signing and HKDF encryption vectors",
 		seed,
 		[0, library],
 	]);
-	const backup = encode([
-		"i2nclip-library-backup",
-		1,
-		await passwordSeal(plaintext, "test password", "i2nclip/library-backup/1"),
+	const password = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+	const purpose = "i2nclip/library-backup/2";
+	const iv = new Uint8Array(12).fill(5);
+	const cipher = createCipheriv(
+		"aes-256-gcm",
+		Buffer.from(hkdfSync("sha256", password, new Uint8Array(), purpose, 32)),
+		iv,
+	);
+	cipher.setAAD(utf8(purpose));
+	const ciphertext = concat([
+		cipher.update(plaintext),
+		cipher.final(),
+		cipher.getAuthTag(),
 	]);
+	const backup = encode(["i2nclip-library-backup", 2, [1, iv, ciphertext]]);
 	plaintext.fill(0);
 	const { identity, checkpoint } = await openLibraryBackup(
 		backup,
-		"test password",
+		" 2345-6789-abcd-efgh-jklm-npqr-stuv-wxyz ",
 		signal(),
 	);
 	t.after(identity.dispose);
@@ -125,7 +139,7 @@ test("local, backup and pairing exports preserve one identity and checkpoint", a
 	assert(local);
 	t.after(local.identity.dispose);
 	const backup = await sealLibraryBackup(local.identity, head, signal());
-	assert.equal(backup.password.length, 43);
+	assert.match(backup.password, /^([2-9A-HJ-NP-Z]{4}-){7}[2-9A-HJ-NP-Z]{4}$/);
 	const restored = await openLibraryBackup(
 		backup.bytes,
 		backup.password,
@@ -149,16 +163,37 @@ test("local, backup and pairing exports preserve one identity and checkpoint", a
 	await assert.rejects(
 		openPairingIdentity(packet, key, "other context", signal()),
 	);
+	const ungrouped = await openLibraryBackup(
+		backup.bytes,
+		backup.password.replaceAll("-", "").toLowerCase(),
+		signal(),
+	);
+	ungrouped.identity.dispose();
+	const wrong = backup.password.startsWith("2")
+		? `3${backup.password.slice(1)}`
+		: `2${backup.password.slice(1)}`;
+	await assert.rejects(
+		openLibraryBackup(backup.bytes, wrong, signal()),
+		/Wrong password/,
+	);
 	await assert.rejects(
 		openLibraryBackup(backup.bytes, "wrong password", signal()),
+		/32-character backup password/,
+	);
+	const version1 = structuredClone(decode(backup.bytes));
+	assert(Array.isArray(version1));
+	version1[1] = 1;
+	await assert.rejects(
+		openLibraryBackup(encode(version1), backup.password, signal()),
+		/Invalid/,
 	);
 	const damaged = structuredClone(decode(backup.bytes));
 	assert(
 		Array.isArray(damaged) &&
 			Array.isArray(damaged[2]) &&
-			damaged[2][4] instanceof Uint8Array,
+			damaged[2][2] instanceof Uint8Array,
 	);
-	damaged[2][4][0] ^= 1;
+	damaged[2][2][0] ^= 1;
 	await assert.rejects(
 		openLibraryBackup(encode(damaged), backup.password, signal()),
 	);

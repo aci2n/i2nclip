@@ -21,9 +21,9 @@ import {
 import { type Bytes, sameBytes } from "../protocol/chain.ts";
 import { decode, encode } from "../protocol/msgpack.ts";
 import {
+	backupKey,
+	backupPassword,
 	openBytes,
-	passwordOpen,
-	passwordSeal,
 	sealBytes,
 } from "../protocol/password.ts";
 import { checkServer } from "../protocol/server.ts";
@@ -43,7 +43,7 @@ export interface OpenedIdentity {
 }
 const MAX_CREDENTIAL_BYTES = 1024 * 1024;
 const LOCAL_PURPOSE = "i2nclip/local-library/1";
-const BACKUP_PURPOSE = "i2nclip/library-backup/1";
+const BACKUP_PURPOSE = "i2nclip/library-backup/2";
 const PKCS8 = hexToBytes("302e020100300506032b657004220420");
 const identities = new WeakMap<LibraryIdentity, LibraryIdentityImpl>();
 function invalid(): never {
@@ -115,12 +115,18 @@ export async function openLibraryBackup(
 		!Array.isArray(frame) ||
 		frame.length !== 3 ||
 		frame[0] !== "i2nclip-library-backup" ||
-		frame[1] !== 1 ||
+		frame[1] !== 2 ||
 		!sameBytes(encode(frame), bytes)
 	) {
 		invalid();
 	}
-	const plaintext = await passwordOpen(frame[2], password, BACKUP_PURPOSE);
+	const key = await backupKey(password, BACKUP_PURPOSE);
+	let plaintext: Bytes;
+	try {
+		plaintext = await openBytes(key, frame[2], BACKUP_PURPOSE);
+	} catch {
+		throw new Error("Wrong password or damaged encrypted data.");
+	}
 	try {
 		return await LibraryIdentityImpl.open(plaintext, signal);
 	} finally {
@@ -433,13 +439,12 @@ class LibraryIdentityImpl {
 	async sealBackup(head: TrustedCheckpoint, signal: AbortSignal) {
 		this.check(signal);
 		const plaintext = encode(this.credentials(head));
-		const random = crypto.getRandomValues(new Uint8Array(32));
-		const password = bytesToB64url(random);
-		random.fill(0);
+		const password = backupPassword();
 		try {
-			const sealed = await passwordSeal(plaintext, password, BACKUP_PURPOSE);
+			const key = await backupKey(password, BACKUP_PURPOSE);
+			const sealed = await sealBytes(key, plaintext, BACKUP_PURPOSE);
 			this.check(signal);
-			return { bytes: encode(["i2nclip-library-backup", 1, sealed]), password };
+			return { bytes: encode(["i2nclip-library-backup", 2, sealed]), password };
 		} finally {
 			plaintext.fill(0);
 		}

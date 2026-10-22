@@ -64,11 +64,9 @@ test("file operations deterministically replay without fetching objects or mutat
 	const deleted = await f.data(updated.state, { kind: "DeleteFile", id });
 	const restored = await f.data(deleted.state, { kind: "RestoreFile", id });
 	const deletedAgain = await f.data(restored.state, { kind: "DeleteFile", id });
-	const purged = await f.data(
-		deletedAgain.state,
-		{ kind: "PurgeFiles", ids: [id] },
-		[["purge", [id]]],
-	);
+	const purged = await f.data(deletedAgain.state, { kind: "PurgeFile", id }, [
+		["purge", id],
+	]);
 	const key = bytesToHex(id);
 	assert.equal(f.initial.files.size, 0);
 	assert.deepEqual(added.state.files.get(key)?.metadata.hash, filled(4));
@@ -114,7 +112,7 @@ test("invalid storage effects and lifecycle transitions leave the accepted state
 		[["publish", id, filled(6)]],
 	);
 	await assert.rejects(
-		f.data(added.state, { kind: "PurgeFiles", ids: [id] }, [["purge", [id]]]),
+		f.data(added.state, { kind: "PurgeFile", id }, [["purge", id]]),
 		/lifecycle/,
 	);
 	await assert.rejects(
@@ -126,7 +124,7 @@ test("invalid storage effects and lifecycle transitions leave the accepted state
 		/commitment/,
 	);
 	await assert.rejects(
-		f.data(added.state, { kind: "DeleteFile", id }, [["purge", [id]]]),
+		f.data(added.state, { kind: "DeleteFile", id }, [["purge", id]]),
 		/storage effect/,
 	);
 	const deleted = await f.data(added.state, { kind: "DeleteFile", id });
@@ -139,8 +137,12 @@ test("invalid storage effects and lifecycle transitions leave the accepted state
 		/lifecycle/,
 	);
 	await assert.rejects(
-		f.data(deleted.state, { kind: "PurgeFiles", ids: [id, filled(2)] }, [
-			["purge", [id, filled(2)]],
+		f.data(deleted.state, { kind: "PurgeFile", id }, [["purge", filled(2)]]),
+		/purge effect mismatch/,
+	);
+	await assert.rejects(
+		f.data(deleted.state, { kind: "PurgeFile", id: filled(2) }, [
+			["purge", filled(2)],
 		]),
 		/lifecycle/,
 	);
@@ -148,13 +150,13 @@ test("invalid storage effects and lifecycle transitions leave the accepted state
 	assert.equal(deleted.state.sequence, f.initial.sequence + 2);
 });
 
-test("private operations require compact canonical arrays and sorted unique purge IDs", () => {
+test("private operations require compact canonical arrays with one purged file", () => {
 	for (const operation of [
 		{ kind: "DeleteFile", id: filled(1) },
 		["DeleteFile", filled(1), "extra"],
-		["PurgeFiles", []],
-		["PurgeFiles", [filled(2), filled(1)]],
-		["PurgeFiles", [filled(1), filled(1)]],
+		["PurgeFiles", [filled(1)]],
+		["PurgeFile", [filled(1)]],
+		["PurgeFile", filled(1), filled(2)],
 		["unknown", filled(1)],
 	]) {
 		assert.throws(() => decodeOperation(encode(operation)));

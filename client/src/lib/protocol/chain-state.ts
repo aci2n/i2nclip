@@ -1,10 +1,8 @@
 import { bytesToHex } from "./bytes.ts";
 import {
 	type Bytes,
-	compareBytes,
 	fixedBytes,
 	MAX_BLOCK_BYTES,
-	MAX_PURGE_FILES,
 	parseGenesis,
 	type StorageEffect,
 	sameBytes,
@@ -28,8 +26,10 @@ export type FileOperation =
 			readonly id: Bytes;
 			readonly metadata: ObjectReference;
 	  }
-	| { readonly kind: "DeleteFile" | "RestoreFile"; readonly id: Bytes }
-	| { readonly kind: "PurgeFiles"; readonly ids: readonly Bytes[] };
+	| {
+			readonly kind: "DeleteFile" | "RestoreFile" | "PurgeFile";
+			readonly id: Bytes;
+	  };
 export interface MaterializedFile {
 	readonly id: Bytes;
 	readonly createdSequence: number;
@@ -74,9 +74,8 @@ export function encodeOperation(operation: FileOperation): Bytes {
 			]);
 		case "DeleteFile":
 		case "RestoreFile":
+		case "PurgeFile":
 			return encode([operation.kind, operation.id]);
-		case "PurgeFiles":
-			return encode([operation.kind, operation.ids]);
 	}
 }
 export function decodeOperation(plaintext: Bytes): FileOperation {
@@ -102,26 +101,12 @@ export function decodeOperation(plaintext: Bytes): FileOperation {
 			metadata: objectReference(value[2]),
 		};
 	} else if (
-		(value[0] === "DeleteFile" || value[0] === "RestoreFile") &&
+		(value[0] === "DeleteFile" ||
+			value[0] === "RestoreFile" ||
+			value[0] === "PurgeFile") &&
 		value.length === 2
 	) {
 		operation = { kind: value[0], id: fixedBytes(value[1]) };
-	} else if (
-		value[0] === "PurgeFiles" &&
-		value.length === 2 &&
-		Array.isArray(value[1])
-	) {
-		const ids = value[1].map((id: unknown) => fixedBytes(id));
-		if (
-			!ids.length ||
-			ids.length > MAX_PURGE_FILES ||
-			ids.some(
-				(id, index) => index > 0 && compareBytes(ids[index - 1], id) >= 0,
-			)
-		) {
-			invalid("purge IDs must be bounded, sorted, and unique");
-		}
-		operation = { kind: value[0], ids };
 	} else {
 		return invalid("unknown operation or invalid fields");
 	}
@@ -148,12 +133,6 @@ export function fileInState(state: ChainState, id: Bytes, deleted: boolean) {
 function fileById(state: ChainState, id: Bytes, deleted: boolean) {
 	return (
 		fileInState(state, id, deleted) ?? invalid("file lifecycle transition")
-	);
-}
-function sameIDs(left: readonly Bytes[], right: readonly Bytes[]) {
-	return (
-		left.length === right.length &&
-		left.every((id, index) => sameBytes(id, right[index]))
 	);
 }
 function applyFiles(
@@ -194,14 +173,12 @@ function applyFiles(
 			...file,
 			metadata: operation.metadata,
 		});
-	} else if (operation.kind === "PurgeFiles") {
-		if (effect?.[0] !== "purge" || !sameIDs(effect[1], operation.ids)) {
+	} else if (operation.kind === "PurgeFile") {
+		if (effect?.[0] !== "purge" || !sameBytes(effect[1], operation.id)) {
 			invalid("purge effect mismatch");
 		}
-		for (const id of operation.ids) {
-			const file = fileById(state, id, true);
-			files.set(bytesToHex(id), { ...file, purged: true });
-		}
+		const file = fileById(state, operation.id, true);
+		files.set(bytesToHex(operation.id), { ...file, purged: true });
 	} else {
 		if (effects.length) {
 			invalid("unexpected storage effect");

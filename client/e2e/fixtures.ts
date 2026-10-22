@@ -80,7 +80,7 @@ export async function createLibrary(
 	const password = await page
 		.getByLabel("Backup password", { exact: true })
 		.inputValue();
-	expect(password).toHaveLength(43);
+	expect(password).toMatch(/^([2-9A-HJ-NP-Z]{4}-){7}[2-9A-HJ-NP-Z]{4}$/);
 	await expect(
 		page.getByRole("button", { name: "Create library", exact: true }),
 	).toBeDisabled();

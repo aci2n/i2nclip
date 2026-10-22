@@ -1,4 +1,5 @@
 import { utf8 } from "./bytes.ts";
+import { PAIRING_ALPHABET } from "./pairing.ts";
 import { bytes } from "./value.ts";
 export const PBKDF2_ITERATIONS = 600_000;
 type EncryptedBytes = readonly [
@@ -65,46 +66,42 @@ export async function openBytes(
 		),
 	);
 }
-export async function passwordSeal(
-	plaintext: Uint8Array<ArrayBuffer>,
-	password: string,
-	purpose: string,
-) {
-	const salt = crypto.getRandomValues(new Uint8Array(16));
-	const key = await wrappingKey(password, salt, PBKDF2_ITERATIONS);
-	const [, iv, ct] = await sealBytes(key, plaintext, purpose);
-	return [1, salt, PBKDF2_ITERATIONS, iv, ct] as const;
+const BACKUP_GROUPS = 8;
+
+/** A random backup password: 32 pairing-alphabet characters (160 bits) in groups of four. */
+export function backupPassword() {
+	const random = crypto.getRandomValues(new Uint8Array(BACKUP_GROUPS * 4));
+	const text = [...random].map((byte) => PAIRING_ALPHABET[byte & 31]).join("");
+	random.fill(0);
+	return text.match(/.{4}/g)?.join("-") ?? "";
 }
-export async function passwordOpen(
-	input: unknown,
-	password: string,
-	purpose: string,
-) {
+
+/** HKDF suffices because the password is already a uniformly random secret. */
+export async function backupKey(password: string, purpose: string) {
+	const normalized = password.toUpperCase().replace(/[\s-]/g, "");
 	if (
-		!Array.isArray(input) ||
-		input.length !== 5 ||
-		input[0] !== 1 ||
-		!(input[1] instanceof Uint8Array) ||
-		input[1].length !== 16 ||
-		!Number.isInteger(input[2]) ||
-		input[2] < PBKDF2_ITERATIONS ||
-		input[2] > 2_000_000
+		normalized.length !== BACKUP_GROUPS * 4 ||
+		[...normalized].some((char) => !PAIRING_ALPHABET.includes(char))
 	) {
-		throw new Error("Invalid encrypted data.");
+		throw new Error("Enter the 32-character backup password.");
 	}
-	// Validate all cheap framing before the deliberately expensive password KDF.
-	if (
-		!(input[3] instanceof Uint8Array) ||
-		input[3].length !== 12 ||
-		!(input[4] instanceof Uint8Array) ||
-		input[4].length < 16
-	) {
-		throw new Error("Invalid encrypted data.");
-	}
-	const key = await wrappingKey(password, bytes(input[1]), input[2]);
-	try {
-		return await openBytes(key, [1, input[3], input[4]], purpose);
-	} catch {
-		throw new Error("Wrong password or damaged encrypted data.");
-	}
+	const base = await crypto.subtle.importKey(
+		"raw",
+		utf8(normalized),
+		"HKDF",
+		false,
+		["deriveKey"],
+	);
+	return crypto.subtle.deriveKey(
+		{
+			name: "HKDF",
+			hash: "SHA-256",
+			salt: new Uint8Array(),
+			info: utf8(purpose),
+		},
+		base,
+		{ name: "AES-GCM", length: 256 },
+		false,
+		["encrypt", "decrypt"],
+	);
 }

@@ -306,7 +306,7 @@ async fn chain_blobs_publish_versions_and_purge_all_bytes_atomically() {
         library,
         3,
         verify_record(&commit, &identity.public).unwrap().hash,
-        StorageEffect::Purge { files: vec![file] },
+        StorageEffect::Purge { file },
     );
     db.append_record(identity.public, &purge).await.unwrap();
     db.append_record(identity.public, &purge).await.unwrap();

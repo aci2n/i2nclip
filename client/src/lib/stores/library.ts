@@ -575,7 +575,7 @@ class LibraryImpl {
 						? { kind: "DeleteFile" as const, id: file.id }
 						: kind === "restore"
 							? { kind: "RestoreFile" as const, id: file.id }
-							: { kind: "PurgeFiles" as const, ids: [file.id] };
+							: { kind: "PurgeFile" as const, id: file.id };
 				// Delete needs a live file; restore and purge need a deleted one.
 				const deleted = kind !== "delete";
 				await this.chain.append({
@@ -584,7 +584,7 @@ class LibraryImpl {
 							throw new Error("This file changed. Refresh and try again.");
 						}
 					},
-					effects: kind === "purge" ? [["purge", [file.id]]] : [],
+					effects: kind === "purge" ? [["purge", file.id]] : [],
 					plaintext: encodeOperation(operation),
 					signal,
 				});

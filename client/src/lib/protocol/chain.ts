@@ -6,7 +6,6 @@ export const MAX_BLOCK_BYTES = 64 * 1024;
 export const MAX_BLOB_BYTES = 4 * 1024 * 1024 + 64;
 export const MAX_PAGE_BYTES = 1024 * 1024;
 export const MAX_PAGE_BLOCKS = 128;
-export const MAX_PURGE_FILES = 256;
 export const SIGN_DOMAIN = utf8("i2nclip/chain/sign/1\n");
 const BLOCK_DOMAIN = utf8("i2nclip/chain/block/1\n");
 const GENESIS_DOMAIN = utf8("i2nclip/chain/genesis/1\n");
@@ -14,7 +13,7 @@ const AAD_DOMAIN = utf8("i2nclip/chain/aad/1\n");
 export type StorageEffect =
 	| readonly ["publish", Bytes, Bytes]
 	| readonly ["commit", Bytes, readonly Bytes[]]
-	| readonly ["purge", readonly Bytes[]];
+	| readonly ["purge", Bytes];
 export type Effects = readonly StorageEffect[];
 export interface BlockHeader {
 	readonly library: Bytes;
@@ -87,7 +86,7 @@ function storageEffect(input: unknown): StorageEffect {
 		return ["commit", fixedBytes(input[1]), hashList(input[2], 2)];
 	}
 	if (input[0] === "purge" && input.length === 2) {
-		return ["purge", hashList(input[1], MAX_PURGE_FILES)];
+		return ["purge", fixedBytes(input[1])];
 	}
 	return invalid();
 }

@@ -17,7 +17,6 @@ pub const MAX_BLOCK_BYTES: usize = 64 * 1024;
 pub const MAX_BLOB_BYTES: usize = 4 * 1024 * 1024 + 64;
 pub const MAX_PAGE_BYTES: usize = 1024 * 1024;
 pub const MAX_PAGE_BLOCKS: usize = 128;
-pub const MAX_PURGE_FILES: usize = 256;
 pub const SIGN_DOMAIN: &[u8] = b"i2nclip/chain/sign/1\n";
 const BLOCK_DOMAIN: &[u8] = b"i2nclip/chain/block/1\n";
 const GENESIS_DOMAIN: &[u8] = b"i2nclip/chain/genesis/1\n";
@@ -72,7 +71,7 @@ pub fn parse_genesis(bytes: &[u8]) -> Result<Hash, Error> {
 pub enum StorageEffect {
     Publish { file: Hash, inventory: Hash },
     Commit { file: Hash, hashes: Vec<Hash> },
-    Purge { files: Vec<Hash> },
+    Purge { file: Hash },
 }
 
 impl Serialize for StorageEffect {
@@ -98,14 +97,9 @@ impl Serialize for StorageEffect {
                         .collect::<Vec<_>>(),
                 )?;
             }
-            Self::Purge { files } => {
+            Self::Purge { file } => {
                 tuple.serialize_element("purge")?;
-                tuple.serialize_element(
-                    &files
-                        .iter()
-                        .map(|h| serde_bytes::Bytes::new(h))
-                        .collect::<Vec<_>>(),
-                )?;
+                tuple.serialize_element(serde_bytes::Bytes::new(file))?;
             }
         }
         tuple.end()
@@ -137,7 +131,7 @@ impl<'de> Deserialize<'de> for StorageEffect {
                         hashes: next_hashes(&mut sequence, 2)?,
                     },
                     "purge" => StorageEffect::Purge {
-                        files: next_hashes(&mut sequence, MAX_PURGE_FILES)?,
+                        file: next_hash(&mut sequence)?,
                     },
                     _ => return Err(de::Error::custom("unknown storage effect")),
                 };
@@ -370,6 +364,19 @@ mod tests {
         let mut extra = genesis;
         extra.push(0);
         assert!(parse_genesis(&extra).is_err());
+    }
+    #[test]
+    fn purge_effect_names_exactly_one_file() {
+        let file = [7; 32];
+        let bytes = codec::encode(&StorageEffect::Purge { file }).unwrap();
+        let expected = codec::encode(&("purge", serde_bytes::Bytes::new(&file))).unwrap();
+        assert_eq!(bytes, expected);
+        assert_eq!(
+            codec::decode::<StorageEffect>(&bytes).unwrap(),
+            StorageEffect::Purge { file }
+        );
+        let list = codec::encode(&("purge", vec![serde_bytes::Bytes::new(&file)])).unwrap();
+        assert!(codec::decode::<StorageEffect>(&list).is_err());
     }
     fn genesis_hash_for_test(bytes: &[u8]) -> Hash {
         digest(&[GENESIS_DOMAIN, bytes].concat())

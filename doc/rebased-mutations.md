@@ -30,7 +30,7 @@ appends first. A refresh during a mutation also fails.
 - Per-operation preconditions:
   - `AddFile`: none beyond protocol validation (fresh random ID).
   - `DeleteFile`: the file exists, is not purged and is not deleted.
-  - `RestoreFile` and `PurgeFiles`: the file exists, is not purged and is deleted.
+  - `RestoreFile` and `PurgeFile`: the file exists, is not purged and is deleted.
   - `ReplaceMetadata`: the file exists, is neither deleted nor purged, and its
     current metadata reference hash equals the one the draft was based on.
 - A library card's `revision` is the hex hash of its current metadata reference,

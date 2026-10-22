@@ -32,6 +32,7 @@ Implemented specifications whose behavior is still current:
 [plain-language UI](plain-language-ui.md), [setup order](setup-order.md),
 [password guidance](password-guidance.md),
 [metadata index concurrency](metadata-index-concurrency.md),
+[backup and purge format](backup-and-purge-format.md),
 [storage query cleanup](storage-query-cleanup.md),
 [hash routing](hash-routing.md), [typed routes](typed-route-table.md),
 [file drop](file-drop.md), [upload simplification](upload-simplification.md),

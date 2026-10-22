@@ -314,53 +314,51 @@ async fn storage_effect(
                 }
             }
         }
-        StorageEffect::Purge { files } => {
-            for file in files {
-                let updated = sqlx::query(
-                    r#"
-                    UPDATE files
-                    SET status = 'purged'
-                    WHERE library_id = $1
-                    AND file_id = $2
-                    AND status = 'retained'
-                    "#,
-                )
-                .bind(library.as_slice())
-                .bind(file.as_slice())
-                .execute(&mut **tx)
-                .await?;
-                if updated.rows_affected() != 1 {
-                    return Err(Error::Conflict);
-                }
-                let bytes: i64 = sqlx::query_scalar(
-                    r#"
-                    SELECT COALESCE(sum(octet_length(ciphertext)), 0)::bigint
-                    FROM blobs
-                    WHERE library_id = $1
-                    AND file_id = $2
-                    "#,
-                )
-                .bind(library.as_slice())
-                .bind(file.as_slice())
-                .fetch_one(&mut **tx)
-                .await?;
-                sqlx::query("DELETE FROM blobs WHERE library_id = $1 AND file_id = $2")
-                    .bind(library.as_slice())
-                    .bind(file.as_slice())
-                    .execute(&mut **tx)
-                    .await?;
-                sqlx::query(
-                    r#"
-                    UPDATE libraries
-                    SET used_blob_bytes = used_blob_bytes-$2, retained_files = retained_files-1
-                    WHERE id = $1
-                    "#,
-                )
-                .bind(library.as_slice())
-                .bind(bytes)
-                .execute(&mut **tx)
-                .await?;
+        StorageEffect::Purge { file } => {
+            let updated = sqlx::query(
+                r#"
+                UPDATE files
+                SET status = 'purged'
+                WHERE library_id = $1
+                AND file_id = $2
+                AND status = 'retained'
+                "#,
+            )
+            .bind(library.as_slice())
+            .bind(file.as_slice())
+            .execute(&mut **tx)
+            .await?;
+            if updated.rows_affected() != 1 {
+                return Err(Error::Conflict);
             }
+            let bytes: i64 = sqlx::query_scalar(
+                r#"
+                SELECT COALESCE(sum(octet_length(ciphertext)), 0)::bigint
+                FROM blobs
+                WHERE library_id = $1
+                AND file_id = $2
+                "#,
+            )
+            .bind(library.as_slice())
+            .bind(file.as_slice())
+            .fetch_one(&mut **tx)
+            .await?;
+            sqlx::query("DELETE FROM blobs WHERE library_id = $1 AND file_id = $2")
+                .bind(library.as_slice())
+                .bind(file.as_slice())
+                .execute(&mut **tx)
+                .await?;
+            sqlx::query(
+                r#"
+                UPDATE libraries
+                SET used_blob_bytes = used_blob_bytes-$2, retained_files = retained_files-1
+                WHERE id = $1
+                "#,
+            )
+            .bind(library.as_slice())
+            .bind(bytes)
+            .execute(&mut **tx)
+            .await?;
         }
     }
     Ok(())
