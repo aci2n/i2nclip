@@ -63,14 +63,7 @@ export function formatVerificationCode(bytes: unknown) {
 
 export function pairingOrigin(serverUrl: string) {
 	checkServer(serverUrl);
-	const url = new URL(serverUrl);
-	if (
-		url.protocol !== "https:" &&
-		!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
-	) {
-		throw new Error("Pairing requires an HTTPS server.");
-	}
-	return url.origin;
+	return new URL(serverUrl).origin;
 }
 
 export function pairingContext(origin: string, input: unknown) {
