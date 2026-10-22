@@ -27,13 +27,25 @@ enum OtcCommand {
     /// Issue a single-use invitation with storage limits.
     Issue {
         /// Invitation lifetime in seconds.
-        #[arg(long, default_value_t = DEFAULT_REGISTRATION_TTL_SECS, value_parser = clap::value_parser!(u64).range(1..))]
+        #[arg(
+            long,
+            default_value_t = DEFAULT_REGISTRATION_TTL_SECS,
+            value_parser = clap::value_parser!(u64).range(1..)
+        )]
         ttl_secs: u64,
         /// Maximum encrypted content bytes (512 MiB by default).
-        #[arg(long, default_value_t = StorageLimits::default().max_content_bytes, value_parser = clap::value_parser!(i64).range(0..))]
+        #[arg(
+            long,
+            default_value_t = StorageLimits::default().max_content_bytes,
+            value_parser = clap::value_parser!(i64).range(0..)
+        )]
         max_bytes: i64,
         /// Maximum number of files.
-        #[arg(long, default_value_t = StorageLimits::default().max_files, value_parser = clap::value_parser!(i64).range(0..))]
+        #[arg(
+            long,
+            default_value_t = StorageLimits::default().max_files,
+            value_parser = clap::value_parser!(i64).range(0..)
+        )]
         max_files: i64,
     },
 }
@@ -144,9 +156,10 @@ mod tests {
         tokio::time::advance(Duration::from_secs(29)).await;
         assert!(!task.is_finished());
         tokio::time::advance(Duration::from_secs(1)).await;
-        assert!(
-            matches!(task.await.unwrap(), Err(Error::Io(error)) if error.kind() == io::ErrorKind::TimedOut)
-        );
+        let Err(Error::Io(error)) = task.await.unwrap() else {
+            panic!("shutdown must time out");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
     }
 
     #[tokio::test(start_paused = true)]

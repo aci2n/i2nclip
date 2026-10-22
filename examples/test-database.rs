@@ -43,8 +43,16 @@ async fn main() {
             let target =
                 url::Url::parse(&std::env::var("I2N_DATABASE_URL").expect("fixture URL")).unwrap();
             let count: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND state = 'idle in transaction'"
-            ).bind(target.path().trim_start_matches('/')).fetch_one(&pool).await.unwrap();
+                r#"
+                SELECT count(*)
+                FROM pg_stat_activity
+                WHERE datname = $1 AND state = 'idle in transaction'
+                "#,
+            )
+            .bind(target.path().trim_start_matches('/'))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
             println!("{count}");
         }
         "expire" => {

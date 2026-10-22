@@ -49,8 +49,8 @@ pub fn request_message(
 /// Strictly check an Ed25519 signature, including rejecting weak keys and
 /// low-order signature points. Any failure is [`Error::Unauthorized`], so the
 /// HTTP layer does not reveal whether the key was unknown or the signature was
-/// merely wrong. Callers still check the allow-list themselves before this,
-/// and map a missing key to the same error.
+/// merely wrong. Callers check library registration themselves before this,
+/// and map an unregistered key to the same error.
 pub fn verify(public: &[u8; 32], message: &[u8], signature: &[u8]) -> Result<(), Error> {
     let key = VerifyingKey::from_bytes(public).map_err(|_| Error::Unauthorized)?;
     let signature = Signature::from_slice(signature).map_err(|_| Error::Unauthorized)?;

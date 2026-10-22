@@ -1,4 +1,4 @@
-//! PostgreSQL library registration, public principals, replay protection, and quota.
+//! PostgreSQL library registration, replay protection, and quota.
 
 use std::time::Duration;
 
@@ -158,23 +158,24 @@ impl Database {
         }
         let library = genesis_hash(public)?;
         let mut tx = self.pool.begin().await?;
-        let inserted =
-            sqlx::query("INSERT INTO nonces(nonce,expires) VALUES($1,$2) ON CONFLICT DO NOTHING")
-                .bind(nonce)
-                .bind(i64::try_from(ts.saturating_add(SKEW_SECS)).unwrap_or(i64::MAX))
-                .execute(&mut *tx)
-                .await?;
+        let inserted = sqlx::query(
+            "INSERT INTO nonces (nonce, expires) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(nonce)
+        .bind(i64::try_from(ts.saturating_add(SKEW_SECS)).unwrap_or(i64::MAX))
+        .execute(&mut *tx)
+        .await?;
         if inserted.rows_affected() != 1 {
             return Err(Error::Unauthorized);
         }
         crate::auth::check_timestamp(ts, crypto::now_secs())?;
         // Concurrent retries of one authority must not spend another invitation.
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),0))")
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea, 'hex'), 0))")
             .bind(public.as_slice())
             .execute(&mut *tx)
             .await?;
         let existing: Option<Vec<u8>> =
-            sqlx::query_scalar("SELECT genesis FROM libraries WHERE signing_public_key=$1")
+            sqlx::query_scalar("SELECT genesis FROM libraries WHERE signing_public_key = $1")
                 .bind(public.as_slice())
                 .fetch_optional(&mut *tx)
                 .await?;
@@ -184,17 +185,39 @@ impl Database {
             }
         } else {
             let hash = crypto::body_hash_bytes(code.trim().as_bytes());
-            let limits = sqlx::query("DELETE FROM registration_codes WHERE code_hash=$1 AND expires_at>$2 RETURNING max_content_bytes,max_files")
-                .bind(hash.as_slice()).bind(crypto::now_secs() as i64).fetch_optional(&mut *tx).await?.ok_or(Error::RegistrationFailed)?;
-            sqlx::query("INSERT INTO libraries(id,genesis,signing_public_key,head_hash,max_blob_bytes,max_files) VALUES($1,$2,$3,$1,$4,$5)")
-                .bind(library.as_slice()).bind(genesis).bind(public.as_slice()).bind(limits.try_get::<i64,_>("max_content_bytes")?).bind(limits.try_get::<i64,_>("max_files")?).execute(&mut *tx).await?;
+            let limits = sqlx::query(
+                r#"
+                DELETE FROM registration_codes
+                WHERE code_hash = $1 AND expires_at > $2
+                RETURNING max_content_bytes, max_files
+                "#,
+            )
+            .bind(hash.as_slice())
+            .bind(crypto::now_secs() as i64)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(Error::RegistrationFailed)?;
+            sqlx::query(
+                r#"
+                INSERT INTO libraries
+                    (id, genesis, signing_public_key, head_hash, max_blob_bytes, max_files)
+                VALUES ($1, $2, $3, $1, $4, $5)
+                "#,
+            )
+            .bind(library.as_slice())
+            .bind(genesis)
+            .bind(public.as_slice())
+            .bind(limits.try_get::<i64, _>("max_content_bytes")?)
+            .bind(limits.try_get::<i64, _>("max_files")?)
+            .execute(&mut *tx)
+            .await?;
         }
         crate::auth::check_timestamp(ts, crypto::now_secs())?;
         tx.commit().await?;
         Ok(())
     }
 
-    /// Operator quota changes resolve even historical keys without granting API access.
+    /// Operator quota changes for a registered library; they grant no API access.
     pub(crate) async fn set_limits(
         &self,
         public: &[u8; 32],
@@ -202,7 +225,11 @@ impl Database {
     ) -> Result<(), Error> {
         limits.validate()?;
         let result = sqlx::query(
-            "UPDATE libraries SET max_blob_bytes=$2,max_files=$3 WHERE signing_public_key=$1",
+            r#"
+            UPDATE libraries
+            SET max_blob_bytes = $2, max_files = $3
+            WHERE signing_public_key = $1
+            "#,
         )
         .bind(public.as_slice())
         .bind(limits.max_content_bytes)
@@ -222,8 +249,17 @@ impl Database {
     }
 
     pub(crate) async fn quota(&self, signer: [u8; 32]) -> Result<Quota, Error> {
-        let row=sqlx::query("SELECT l.max_blob_bytes,l.max_files,l.used_blob_bytes,l.retained_files FROM libraries l WHERE l.signing_public_key=$1")
-            .bind(signer.as_slice()).fetch_optional(&self.pool).await?.ok_or(Error::Unauthorized)?;
+        let row = sqlx::query(
+            r#"
+            SELECT max_blob_bytes, max_files, used_blob_bytes, retained_files
+            FROM libraries
+            WHERE signing_public_key = $1
+            "#,
+        )
+        .bind(signer.as_slice())
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(Error::Unauthorized)?;
         Ok(Quota {
             max_content_bytes: row.try_get("max_blob_bytes")?,
             max_files: row.try_get("max_files")?,

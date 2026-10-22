@@ -7,8 +7,9 @@
 //! ```
 //!
 //! The signature covers the origin, time, nonce, method, path, and that body
-//! hash. [`verify_request`] checks the clock and signature, plus the allow-list
-//! for ordinary requests, then remembers the nonce. Only registration defers admission until invitation validation; ordinary
+//! hash. [`verify_request`] checks the clock and signature, plus library
+//! registration for ordinary requests, then remembers the nonce. Only
+//! registration defers admission until invitation validation; ordinary
 //! requests require a registered library signing key. No body byte is read until that
 //! succeeds, so knowing a public key is not enough to make the server read a
 //! payload. [`verify_body`] then hashes the bytes and compares them to the
@@ -35,8 +36,9 @@ use crate::{
 };
 
 /// Header-authenticated request. Direct extraction also requires a registered key.
-/// RegistrationRequest wraps this value without the library lookup, retaining a separate registration admission guard.
-/// Endpoint handlers own body/query policy; the body hash is checked on reading.
+/// RegistrationRequest wraps this value without the library lookup, retaining a
+/// separate registration admission guard. Endpoint handlers own body/query
+/// policy; the body hash is checked on reading.
 pub(crate) struct SignedRequest {
     verified: VerifiedRequest,
     parts: Parts,
@@ -53,7 +55,7 @@ impl FromRequest<AppState> for SignedRequest {
     }
 }
 
-/// A verified key holder; endpoint-specific authority is checked after reading the body.
+/// A verified key holder whose invitation and genesis are checked after reading the body.
 pub(crate) struct RegistrationRequest(pub(crate) SignedRequest, pub(crate) OwnedSemaphorePermit);
 
 impl FromRequest<AppState> for RegistrationRequest {
@@ -195,7 +197,7 @@ pub(crate) fn check_timestamp(ts: u64, now: u64) -> Result<(), Error> {
     Ok(())
 }
 
-/// Possession-only requests defer membership/record authority to their endpoint.
+/// Registration defers the library lookup and nonce until its body is validated.
 enum KeyPolicy {
     Registered,
     Registration,

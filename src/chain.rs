@@ -236,7 +236,7 @@ pub struct Record {
     pub signature: Vec<u8>,
 }
 
-/// Canonical framing, public shape and strict Ed25519 validation; no membership lookup.
+/// Canonical framing, public shape and strict Ed25519 validation against the library key.
 pub fn verify_record(bytes: &[u8], public: &Hash) -> Result<Record, Error> {
     if bytes.len() > MAX_BLOCK_BYTES {
         return Err(invalid());

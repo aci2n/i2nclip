@@ -722,7 +722,7 @@ async fn weak_key_forgery_is_rejected_before_body_and_nonce() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let conn = &dir.1;
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM nonces WHERE nonce=$1")
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM nonces WHERE nonce = $1")
             .bind(&nonce)
             .fetch_one(conn)
             .await
@@ -730,11 +730,13 @@ async fn weak_key_forgery_is_rejected_before_body_and_nonce() {
         0
     );
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM libraries WHERE signing_public_key=$1")
-            .bind(public.as_slice())
-            .fetch_one(conn)
-            .await
-            .unwrap(),
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM libraries WHERE signing_public_key = $1"
+        )
+        .bind(public.as_slice())
+        .fetch_one(conn)
+        .await
+        .unwrap(),
         0
     );
 }
@@ -805,7 +807,7 @@ async fn authentication_rechecks_timestamp_after_nonce_insert_wait() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     drop(sender);
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM nonces WHERE nonce=$1")
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM nonces WHERE nonce = $1")
             .bind(nonce)
             .fetch_one(&dir.1)
             .await
@@ -895,8 +897,17 @@ async fn registration_requires_possession_and_preserves_invitations_on_verificat
             _ => StatusCode::UNAUTHORIZED,
         };
         assert_eq!(response.status(), expected, "{case}");
-        let counts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM registration_codes), (SELECT count(*) FROM nonces), (SELECT count(*) FROM libraries)")
-            .fetch_one(&dir.1).await.unwrap();
+        let counts: (i64, i64, i64) = sqlx::query_as(
+            r#"
+            SELECT
+                (SELECT count(*) FROM registration_codes),
+                (SELECT count(*) FROM nonces),
+                (SELECT count(*) FROM libraries)
+            "#,
+        )
+        .fetch_one(&dir.1)
+        .await
+        .unwrap();
         assert_eq!(counts, (1, 0, 0), "{case}");
     }
     let signature = client_crypto::authorization(

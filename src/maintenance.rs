@@ -21,7 +21,13 @@ pub(crate) async fn run(db: Database, mut stop: watch::Receiver<bool>) {
             _ = interval.tick() => {
                 match db.maintain(crypto::now_secs() as i64).await {
                     Ok((nonces, codes, partials, reclaimed_bytes)) => {
-                        tracing::info!(nonces, codes, partials, reclaimed_bytes, "maintenance complete");
+                        tracing::info!(
+                            nonces,
+                            codes,
+                            partials,
+                            reclaimed_bytes,
+                            "maintenance complete"
+                        );
                     }
                     Err(err) => {
                         tracing::error!(%err, "maintenance failed; retrying next interval");

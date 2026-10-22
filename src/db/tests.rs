@@ -181,7 +181,7 @@ async fn registration_is_atomic_idempotent_and_authority_is_immutable() {
     register(&db, &key, "already consumed").await.unwrap();
     db.initialize().await.unwrap();
     assert!(db.allowed(&key.public).await.unwrap());
-    let row: (Vec<u8>, i64) = sqlx::query_as("SELECT head_hash,head_sequence FROM libraries")
+    let row: (Vec<u8>, i64) = sqlx::query_as("SELECT head_hash, head_sequence FROM libraries")
         .fetch_one(&db.pool)
         .await
         .unwrap();
@@ -189,7 +189,7 @@ async fn registration_is_atomic_idempotent_and_authority_is_immutable() {
         row,
         (crate::chain::genesis(&key.public).unwrap().to_vec(), 0)
     );
-    assert!(sqlx::query("UPDATE libraries SET signing_public_key=$1")
+    assert!(sqlx::query("UPDATE libraries SET signing_public_key = $1")
         .bind([2u8; 32].as_slice())
         .execute(&db.pool)
         .await
@@ -344,7 +344,7 @@ async fn chain_blobs_expiry_preserves_active_uploads_and_committed_history() {
         .stage_blob(identity.public, file, &[1; 16])
         .await
         .unwrap();
-    sqlx::query("UPDATE blobs SET staging_expires_at=0")
+    sqlx::query("UPDATE blobs SET staging_expires_at = 0")
         .execute(&db.pool)
         .await
         .unwrap();
@@ -381,11 +381,11 @@ async fn chain_blobs_expiry_preserves_active_uploads_and_committed_history() {
     db.stage_blob(identity.public, [6; 32], &[3; 18])
         .await
         .unwrap();
-    sqlx::query("UPDATE blobs SET staging_expires_at=0 WHERE committed_at_sequence IS NULL")
+    sqlx::query("UPDATE blobs SET staging_expires_at = 0 WHERE committed_at_sequence IS NULL")
         .execute(&db.pool)
         .await
         .unwrap();
-    sqlx::query("UPDATE files SET staging_expires_at=0 WHERE status='staging'")
+    sqlx::query("UPDATE files SET staging_expires_at = 0 WHERE status = 'staging'")
         .execute(&db.pool)
         .await
         .unwrap();
@@ -433,12 +433,12 @@ async fn chain_blobs_quota_races_and_busy_cleanup_are_bounded() {
             .unwrap(),
         1
     );
-    sqlx::query("UPDATE files SET staging_expires_at=0")
+    sqlx::query("UPDATE files SET staging_expires_at = 0")
         .execute(&db.pool)
         .await
         .unwrap();
     let mut lock = db.pool.begin().await.unwrap();
-    sqlx::query("SELECT id FROM libraries WHERE id=$1 FOR UPDATE")
+    sqlx::query("SELECT id FROM libraries WHERE id = $1 FOR UPDATE")
         .bind(library.as_slice())
         .fetch_one(&mut *lock)
         .await
@@ -500,25 +500,25 @@ async fn maintenance_boundaries_rollback_and_recovery() {
     let (db, admin, name) = fixture().await;
     sqlx::raw_sql(
         r#"
-            INSERT INTO nonces (nonce, expires)
-            VALUES ('past', 99), ('boundary', 100), ('future', 101);
+        INSERT INTO nonces (nonce, expires)
+        VALUES ('past', 99), ('boundary', 100), ('future', 101);
 
-            INSERT INTO registration_codes (code_hash, expires_at)
-            VALUES
-                (decode(repeat('01', 32), 'hex'), 99),
-                (decode(repeat('02', 32), 'hex'), 100),
-                (decode(repeat('03', 32), 'hex'), 101);
+        INSERT INTO registration_codes (code_hash, expires_at)
+        VALUES
+            (decode(repeat('01', 32), 'hex'), 99),
+            (decode(repeat('02', 32), 'hex'), 100),
+            (decode(repeat('03', 32), 'hex'), 101);
 
-            CREATE FUNCTION fail_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$
-            BEGIN
-                RAISE EXCEPTION 'test failure';
-            END;
-            $$;
+        CREATE FUNCTION fail_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            RAISE EXCEPTION 'test failure';
+        END;
+        $$;
 
-            CREATE TRIGGER fail_cleanup
-                BEFORE DELETE ON registration_codes
-                FOR EACH ROW EXECUTE FUNCTION fail_cleanup();
-            "#,
+        CREATE TRIGGER fail_cleanup
+            BEFORE DELETE ON registration_codes
+            FOR EACH ROW EXECUTE FUNCTION fail_cleanup();
+        "#,
     )
     .execute(&db.pool)
     .await
@@ -546,10 +546,10 @@ async fn pool_reconnects_after_backend_termination() {
     let (db, admin, name) = fixture().await;
     sqlx::query(
         r#"
-            SELECT pg_terminate_backend(pid)
-            FROM pg_stat_activity
-            WHERE datname = $1 AND pid <> pg_backend_pid()
-            "#,
+        SELECT pg_terminate_backend(pid)
+        FROM pg_stat_activity
+        WHERE datname = $1 AND pid <> pg_backend_pid()
+        "#,
     )
     .bind(&name.name)
     .execute(&admin)
@@ -619,13 +619,13 @@ async fn maintenance_shutdown_waits_for_active_sweep_without_upload_permits() {
         loop {
             let waiting: bool = sqlx::query_scalar(
                 r#"
-                    SELECT EXISTS(
-                        SELECT 1 FROM pg_stat_activity
-                        WHERE datname = current_database()
-                          AND wait_event_type = 'Lock'
-                          AND query LIKE '%DELETE FROM nonces%'
-                    )
-                    "#,
+                SELECT EXISTS(
+                    SELECT 1 FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND wait_event_type = 'Lock'
+                      AND query LIKE '%DELETE FROM nonces%'
+                )
+                "#,
             )
             .fetch_one(&db.pool)
             .await
