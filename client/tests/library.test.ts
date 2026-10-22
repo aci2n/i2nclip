@@ -5,7 +5,7 @@ import { bytesToHex, hexToBytes } from "../src/lib/protocol/bytes.ts";
 import { createRecord } from "../src/lib/protocol/chain.ts";
 import {
 	type ChainState,
-	encodeOperation,
+	encodeBlockPayload,
 	reduceBlock,
 } from "../src/lib/protocol/chain-state.ts";
 import {
@@ -55,6 +55,7 @@ async function fixture(t: test.TestContext) {
 	const chain: ChainStore = {
 		subscribe: source.subscribe,
 		sync: async () => state,
+		history: async () => [],
 		at: async (sequence) => {
 			const selected = history.get(sequence);
 			assert.ok(selected);
@@ -63,6 +64,10 @@ async function fixture(t: test.TestContext) {
 		append: async (change) => {
 			change.signal?.throwIfAborted();
 			change.check?.(state);
+			const plaintext = encodeBlockPayload({
+				time: 1,
+				operation: change.operation,
+			});
 			const record = await createRecord(
 				{
 					library: state.library,
@@ -72,9 +77,9 @@ async function fixture(t: test.TestContext) {
 				},
 				context.key,
 				context.encryption,
-				change.plaintext,
+				plaintext,
 			);
-			state = reduceBlock(state, record, change.plaintext);
+			state = reduceBlock(state, record, plaintext);
 			history.set(state.sequence, state);
 			source.update((value) => ({ ...value, live: state }));
 			return state;
@@ -83,12 +88,12 @@ async function fixture(t: test.TestContext) {
 	};
 	await chain.append({
 		effects: [["publish", id, filled(9)]],
-		plaintext: encodeOperation({
+		operation: {
 			kind: "AddFile",
 			id,
 			manifest: { hash: filled(2), key: filled(3) },
 			metadata: { hash: filled(4), key: filled(5) },
-		}),
+		},
 	});
 	const metadata = new Map<number, FileMetadata>([
 		[
@@ -139,6 +144,9 @@ async function fixture(t: test.TestContext) {
 				effects: [["commit", file.id, [hash]]],
 			};
 		},
+		revertMetadata: async () => {
+			throw new Error("Unused");
+		},
 		commit: async (change, signal) => {
 			signal.throwIfAborted();
 			commits++;
@@ -147,7 +155,7 @@ async function fixture(t: test.TestContext) {
 			return chain.append({
 				check: change.check,
 				effects: change.effects,
-				plaintext: encodeOperation(change.operation),
+				operation: change.operation,
 				signal,
 			});
 		},
@@ -321,7 +329,7 @@ test("lifecycle changes reject when another writer already applied them", async 
 	const f = await fixture(t);
 	await f.chain.append({
 		effects: [],
-		plaintext: encodeOperation({ kind: "DeleteFile", id: hexToBytes(f.id) }),
+		operation: { kind: "DeleteFile", id: hexToBytes(f.id) },
 	});
 	assert.equal(await f.library.remove(f.id), false);
 	f.library.showDeleted(true);

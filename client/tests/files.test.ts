@@ -8,7 +8,10 @@ import {
 	inventoryDigest,
 	sha256,
 } from "../src/lib/protocol/chain.ts";
-import { reduceBlock } from "../src/lib/protocol/chain-state.ts";
+import {
+	encodeBlockPayload,
+	reduceBlock,
+} from "../src/lib/protocol/chain-state.ts";
 import { CHUNK_BYTES } from "../src/lib/protocol/content.ts";
 import { createFiles, type FileApi } from "../src/lib/services/files.ts";
 import type {
@@ -40,6 +43,9 @@ async function fixture(t: test.TestContext) {
 		async at() {
 			throw new Error("Historical replay is not used by this fixture.");
 		},
+		async history() {
+			throw new Error("History replay is not used by this fixture.");
+		},
 		async sync() {
 			return state;
 		},
@@ -66,6 +72,10 @@ async function fixture(t: test.TestContext) {
 					assert.deepEqual([...effect[2]].sort(compareBytes), effect[2]);
 				}
 			}
+			const plaintext = encodeBlockPayload({
+				time: 1,
+				operation: mutation.operation,
+			});
 			const record = await createRecord(
 				{
 					library: state.library,
@@ -75,9 +85,9 @@ async function fixture(t: test.TestContext) {
 				},
 				identity.signing,
 				identity.encryption,
-				mutation.plaintext,
+				plaintext,
 			);
-			state = reduceBlock(state, record, mutation.plaintext);
+			state = reduceBlock(state, record, plaintext);
 			mutations.push(mutation);
 			view.set({
 				live: state,
@@ -304,6 +314,44 @@ test("metadata drafts survive unrelated blocks but not a change to the same file
 	assert.ok(current);
 	const metadata = await f.files.metadata(current, f.controller.signal);
 	assert.equal(metadata.attributes.name, "first");
+});
+
+test("reverting metadata reseals the superseded document and keeps its thumbnail", async (t) => {
+	const f = await fixture(t);
+	const uploaded = await f.files.upload({
+		file: new Blob(["text"]),
+		attributes: { name: "original", tags: ["kept"] },
+		thumbnail: new Uint8Array([1]),
+		signal: f.controller.signal,
+	});
+	const original = f.current().files.get(uploaded.id);
+	assert.ok(original);
+	const before = await f.files.metadata(original, f.controller.signal);
+	await f.files.commit(
+		await f.files.prepareEdit(
+			original,
+			{ name: "renamed", tags: [] },
+			undefined,
+			f.controller.signal,
+		),
+		f.controller.signal,
+	);
+	const edited = f.current().files.get(uploaded.id);
+	assert.ok(edited);
+	await f.files.revertMetadata(edited, original.metadata, f.controller.signal);
+	const reverted = f.current().files.get(uploaded.id);
+	assert.ok(reverted);
+	assert.notDeepEqual(reverted.metadata.hash, original.metadata.hash);
+	assert.deepEqual(
+		await f.files.metadata(reverted, f.controller.signal),
+		before,
+	);
+	const count = f.mutations.length;
+	await assert.rejects(
+		f.files.revertMetadata(edited, original.metadata, f.controller.signal),
+		/changed/,
+	);
+	assert.equal(f.mutations.length, count);
 });
 
 test("an upload commits after another block lands while its chunks are staged", async (t) => {

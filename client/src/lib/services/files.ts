@@ -11,7 +11,6 @@ import {
 } from "../protocol/chain.ts";
 import {
 	type ChainState,
-	encodeOperation,
 	type FileOperation,
 	fileInState,
 	type MaterializedFile,
@@ -96,6 +95,7 @@ class FilesImpl {
 	readonly readRange = this.readContentRange.bind(this);
 	readonly prepareEdit = this.prepareMetadata.bind(this);
 	readonly commit = this.commitChange.bind(this);
+	readonly revertMetadata = this.revertFileMetadata.bind(this);
 	readonly dispose = this.disposeFiles.bind(this);
 	constructor(
 		library: Bytes,
@@ -404,19 +404,40 @@ class FilesImpl {
 			effects: [["commit", file.id, hashes]],
 		};
 	}
-	private async commitChange(change: PreparedFileChange, own: AbortSignal) {
+	// The server commits only newly staged blobs, so seal the earlier document again.
+	private async revertFileMetadata(
+		file: MaterializedFile,
+		previous: ObjectReference,
+		own: AbortSignal,
+	) {
+		this.available(file);
 		const signal = this.combined(own);
-		const plaintext = encodeOperation(change.operation);
-		try {
-			return await this.chain.append({
-				check: change.check,
-				effects: change.effects,
-				plaintext,
-				signal,
-			});
-		} finally {
-			plaintext.fill(0);
-		}
+		const restored = await this.readMetadata(
+			{ ...file, metadata: previous },
+			signal,
+		);
+		const sealed = await sealFileMetadata(this.library, file.id, restored);
+		const hash = await this.api.putBlob(file.id, sealed.bytes, signal);
+		return this.commitChange(
+			{
+				check: metadataCheck(file),
+				operation: {
+					kind: "ReplaceMetadata",
+					id: file.id,
+					metadata: reference(sealed),
+				},
+				effects: [["commit", file.id, [hash]]],
+			},
+			signal,
+		);
+	}
+	private commitChange(change: PreparedFileChange, own: AbortSignal) {
+		return this.chain.append({
+			check: change.check,
+			effects: change.effects,
+			operation: change.operation,
+			signal: this.combined(own),
+		});
 	}
 	private disposeFiles() {
 		this.controller.abort();

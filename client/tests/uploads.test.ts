@@ -37,6 +37,7 @@ async function fixture(t: test.TestContext, uninitialized = false) {
 	const chain: ChainStore = {
 		subscribe: state.subscribe,
 		at: async () => initial,
+		history: async () => [],
 		sync: async () => {
 			state.update((value) => ({ ...value, live: initial }));
 			return initial;

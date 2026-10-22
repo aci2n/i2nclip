@@ -1,126 +1,37 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
-import {
-	type Bytes,
-	createRecord,
-	type VerifiedBlock,
-	verifyRecord,
-} from "../src/lib/protocol/chain.ts";
-import { encodeOperation } from "../src/lib/protocol/chain-state.ts";
-import {
-	createLibraryIdentity,
-	type LibraryIdentity,
-} from "../src/lib/services/library-identity.ts";
-import { createChainStorage } from "../src/lib/storage/chain.ts";
-import {
-	type ChainTransport,
-	createChain,
-	stateCheckpoint,
-} from "../src/lib/stores/chain.ts";
-
-Object.defineProperty(globalThis, "IDBKeyRange", { value: IDBKeyRange });
-class History implements ChainTransport {
-	readonly records: VerifiedBlock[] = [];
-	private readonly identity: LibraryIdentity;
-	constructor(identity: LibraryIdentity) {
-		this.identity = identity;
-	}
-	private head() {
-		const last = this.records.at(-1);
-		return last
-			? { sequence: last.body.sequence, hash: bytesToHex(last.hash) }
-			: { sequence: 0, hash: bytesToHex(this.identity.library) };
-	}
-	async read(after: string) {
-		const index =
-			after === bytesToHex(this.identity.library)
-				? -1
-				: this.records.findIndex((r) => bytesToHex(r.hash) === after);
-		return {
-			target: this.head(),
-			records: this.records.slice(index + 1).map((r) => r.bytes),
-			next: null,
-		};
-	}
-	async append(bytes: Bytes) {
-		const record = await verifyRecord(bytes, this.identity.signing.publicKey);
-		const parent = this.head();
-		if (
-			bytesToHex(record.body.previous) !== parent.hash ||
-			record.body.sequence !== parent.sequence + 1
-		) {
-			throw new Error("Conflict");
-		}
-		this.records.push(record);
-		return { accepted: this.head(), head: this.head() };
-	}
-}
-const signal = () => new AbortController().signal;
-const filled = (n: number) => new Uint8Array(32).fill(n);
-async function fixture(t: test.TestContext) {
-	const created = await createLibraryIdentity("https://example.test", signal());
-	t.after(created.identity.dispose);
-	const storage = createChainStorage(
-		created.identity.origin,
-		bytesToHex(created.identity.library),
-		new IDBFactory(),
-	);
-	const history = new History(created.identity);
-	const chain = createChain(
-		{
-			genesis: created.identity.genesis,
-			signing: created.identity.signing,
-			encryption: created.identity.encryption,
-			minimum: created.checkpoint,
-		},
-		storage,
-		history,
-		signal(),
-	);
-	t.after(chain.dispose);
-	return { created, storage, history, chain };
-}
-function publication(id: Bytes) {
-	return {
-		effects: [["publish", id, filled(7)]] as const,
-		plaintext: encodeOperation({
-			kind: "AddFile",
-			id,
-			manifest: { hash: filled(3), key: filled(4) },
-			metadata: { hash: filled(5), key: filled(6) },
-		}),
-	};
-}
+import { createRecord } from "../src/lib/protocol/chain.ts";
+import { stateCheckpoint } from "../src/lib/stores/chain.ts";
+import { filled, memoryChain, publication, signal } from "./memory-chain.ts";
 
 test("fixed-authority replay verifies cache publication and historical views", async (t) => {
-	const f = await fixture(t);
+	const f = await memoryChain(t);
 	const initial = await f.chain.sync();
 	assert.equal(initial.sequence, 0);
 	const id = filled(9);
 	await f.chain.append(publication(id));
 	const second = await f.chain.append({
 		effects: [],
-		plaintext: encodeOperation({ kind: "DeleteFile", id }),
+		operation: { kind: "DeleteFile", id },
 	});
 	assert(second.files.get(bytesToHex(id))?.deleted);
 	const historical = await f.chain.at(1, signal());
 	assert.equal(historical.files.get(bytesToHex(id))?.deleted, false);
 	assert.deepEqual(await f.storage.head(signal()), stateCheckpoint(second));
-	assert.equal(f.history.records.length, 2);
+	assert.equal(f.transport.records.length, 2);
 	await assert.rejects(
 		f.chain.append({
 			effects: [],
-			plaintext: encodeOperation({ kind: "DeleteFile", id }),
+			operation: { kind: "DeleteFile", id },
 		}),
 		/file lifecycle transition/,
 	);
-	assert.equal(f.history.records.length, 2);
+	assert.equal(f.transport.records.length, 2);
 });
 
 test("a signed malformed operation never advances the trusted cached head", async (t) => {
-	const f = await fixture(t);
+	const f = await memoryChain(t);
 	await f.chain.sync();
 	const first = await f.chain.append(publication(filled(9)));
 	const malformed = await createRecord(
@@ -129,16 +40,50 @@ test("a signed malformed operation never advances the trusted cached head", asyn
 		f.created.identity.encryption,
 		new Uint8Array([0x91, 0x01]),
 	);
-	f.history.records.push(malformed);
+	f.transport.records.push(malformed);
 	await assert.rejects(f.chain.sync(), /Invalid chain operation/);
 	assert.deepEqual(await f.storage.head(signal()), stateCheckpoint(first));
 });
 
 test("a server withholding a previously observed suffix is rejected", async (t) => {
-	const f = await fixture(t);
+	const f = await memoryChain(t);
 	await f.chain.sync();
 	await f.chain.append(publication(filled(9)));
-	f.history.records.length = 0;
+	f.transport.records.length = 0;
 	await assert.rejects(f.chain.sync());
 	assert.equal((await f.storage.head(signal()))?.sequence, 1);
+});
+
+test("history lists each verified block with its time and superseded metadata", async (t) => {
+	const f = await memoryChain(t);
+	await f.chain.sync();
+	const id = filled(9);
+	const before = Date.now();
+	await f.chain.append(publication(id));
+	await f.chain.append({
+		effects: [["commit", id, [filled(8)]]],
+		operation: {
+			kind: "ReplaceMetadata",
+			id,
+			metadata: { hash: filled(8), key: filled(6) },
+		},
+	});
+	await f.chain.append({ effects: [], operation: { kind: "DeleteFile", id } });
+	const entries = await f.chain.history(signal());
+	assert.deepEqual(
+		entries.map((entry) => [entry.sequence, entry.operation.kind]),
+		[
+			[1, "AddFile"],
+			[2, "ReplaceMetadata"],
+			[3, "DeleteFile"],
+		],
+	);
+	for (const entry of entries) {
+		assert.ok(entry.time >= before && entry.time <= Date.now());
+	}
+	assert.equal(entries[0].previous, null);
+	assert.deepEqual(entries[1].previous?.hash, filled(5));
+	f.transport.records.length = 0;
+	await f.storage.discardRecords(signal());
+	await assert.rejects(f.chain.history(signal()), /incomplete/);
 });

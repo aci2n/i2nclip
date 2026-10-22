@@ -3,11 +3,7 @@ import { errorMessage } from "../error.ts";
 import type { MediaDisplay } from "../media/display.ts";
 import { bytesToHex } from "../protocol/bytes.ts";
 import { type Bytes, sameBytes } from "../protocol/chain.ts";
-import {
-	encodeOperation,
-	fileInState,
-	type MaterializedFile,
-} from "../protocol/chain-state.ts";
+import { fileInState, type MaterializedFile } from "../protocol/chain-state.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { encode } from "../protocol/msgpack.ts";
 import { normalizeTag } from "../protocol/tags.ts";
@@ -585,7 +581,7 @@ class LibraryImpl {
 						}
 					},
 					effects: kind === "purge" ? [["purge", file.id]] : [],
-					plaintext: encodeOperation(operation),
+					operation,
 					signal,
 				});
 			}

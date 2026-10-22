@@ -14,7 +14,12 @@ import {
 	verifyRecord,
 } from "../protocol/chain.ts";
 import {
+	type BlockPayload,
 	type ChainState,
+	decodeBlockPayload,
+	encodeBlockPayload,
+	type FileOperation,
+	type HistoryEntry,
 	initialChainState,
 	reduceBlock,
 } from "../protocol/chain-state.ts";
@@ -58,7 +63,7 @@ export interface ChainMutation {
 	/** Throws when the draft no longer applies to the current verified state. */
 	readonly check?: (state: ChainState) => void;
 	readonly effects: Effects;
-	readonly plaintext: Bytes;
+	readonly operation: FileOperation;
 	readonly signal?: AbortSignal;
 }
 export function stateCheckpoint(state: ChainState): Checkpoint {
@@ -112,6 +117,7 @@ class ChainStoreImpl {
 	readonly subscribe = this.state.subscribe;
 	readonly sync = this.refresh.bind(this);
 	readonly at = this.replayAt.bind(this);
+	readonly history = this.replayHistory.bind(this);
 	readonly append = this.appendMutation.bind(this);
 	readonly dispose = this.disposeChain.bind(this);
 
@@ -156,7 +162,11 @@ class ChainStoreImpl {
 		);
 		try {
 			this.check();
-			return { next: reduceBlock(state, record, plaintext), record };
+			return {
+				next: reduceBlock(state, record, plaintext),
+				record,
+				payload: decodeBlockPayload(plaintext),
+			};
 		} finally {
 			plaintext.fill(0);
 		}
@@ -202,14 +212,52 @@ class ChainStoreImpl {
 		) {
 			throw new Error("Choose a sequence within the verified chain.");
 		}
+		let selected: ChainState | null = null;
+		await this.replay(live, caller, (before, after) => {
+			if (before.sequence === sequence) {
+				selected = before;
+			} else if (after.sequence === sequence) {
+				selected = after;
+			}
+		});
+		// An empty chain has no blocks to visit; replay verified genesis is live.
+		return selected ?? live;
+	}
+	private async replayHistory(caller: AbortSignal): Promise<HistoryEntry[]> {
+		const live = get(this.state).live;
+		if (!live) {
+			throw new Error("The library is not loaded yet.");
+		}
+		const entries: HistoryEntry[] = [];
+		await this.replay(live, caller, (before, after, payload) => {
+			const { operation } = payload;
+			entries.push({
+				...payload,
+				sequence: after.sequence,
+				previous:
+					operation.kind === "ReplaceMetadata"
+						? (before.files.get(bytesToHex(operation.id))?.metadata ?? null)
+						: null,
+			});
+		});
+		return entries;
+	}
+	/** Verifies every cached block from genesis up to the trusted live head. */
+	private async replay(
+		live: ChainState,
+		caller: AbortSignal,
+		visit: (
+			before: ChainState,
+			after: ChainState,
+			payload: BlockPayload,
+		) => void,
+	) {
 		const signal = AbortSignal.any([this.signal, caller]);
 		signal.throwIfAborted();
 		let state = await initialChainState(this.credentials.genesis);
 		if (!sameBytes(state.publicKey, this.credentials.signing.publicKey)) {
 			throw new Error("Library signing key does not match genesis.");
 		}
-		let selected: ChainState | null = sequence === 0 ? state : null;
-		// Verify the suffix too: the selected prefix must reach the trusted live head.
 		while (state.sequence < live.sequence) {
 			const batch = await this.storage.read(state.sequence, signal);
 			if (!batch.length) {
@@ -226,20 +274,17 @@ class ChainStoreImpl {
 				) {
 					throw new Error("Invalid cached historical record.");
 				}
+				visit(state, applied.next, applied.payload);
 				state = applied.next;
-				if (state.sequence === sequence) {
-					selected = state;
-				}
 				if (state.sequence === live.sequence) {
 					break;
 				}
 			}
 		}
 		signal.throwIfAborted();
-		if (!selected || bytesToHex(state.head) !== bytesToHex(live.head)) {
+		if (bytesToHex(state.head) !== bytesToHex(live.head)) {
 			throw new Error("Cached history conflicts with the verified live head.");
 		}
-		return selected;
 	}
 	private runSync() {
 		this.check();
@@ -417,17 +462,26 @@ class ChainStoreImpl {
 		signal.throwIfAborted();
 		mutation.check?.(state);
 		const parent = stateCheckpoint(state);
-		const record = await createRecord(
-			{
-				library: state.library,
-				sequence: state.sequence + 1,
-				previous: state.head,
-				effects: mutation.effects,
-			},
-			this.credentials.signing,
-			this.credentials.encryption,
-			mutation.plaintext,
-		);
+		const plaintext = encodeBlockPayload({
+			time: Date.now(),
+			operation: mutation.operation,
+		});
+		let record: VerifiedBlock;
+		try {
+			record = await createRecord(
+				{
+					library: state.library,
+					sequence: state.sequence + 1,
+					previous: state.head,
+					effects: mutation.effects,
+				},
+				this.credentials.signing,
+				this.credentials.encryption,
+				plaintext,
+			);
+		} finally {
+			plaintext.fill(0);
+		}
 		const candidate = (await this.apply(state, record.bytes)).next;
 		signal.throwIfAborted();
 		try {

@@ -4,6 +4,7 @@ import { createChainApi } from "../services/library-api.ts";
 import { createChainStorage } from "../storage/chain.ts";
 import { createChain } from "./chain.ts";
 import type { ContentStreams } from "./content-streams.ts";
+import { createHistory } from "./history.ts";
 import { createLibrary } from "./library.ts";
 import { createMaterializedView } from "./materialized-view.ts";
 import type { Preferences } from "./preferences.ts";
@@ -30,6 +31,7 @@ class WorkspaceImpl {
 	readonly quota: ReturnType<typeof createQuota>;
 	readonly library: ReturnType<typeof createLibrary>;
 	readonly uploads: ReturnType<typeof createUploads>;
+	readonly history: ReturnType<typeof createHistory>;
 	private started = false;
 	private disposed = false;
 	readonly start = this.startWorkspace.bind(this);
@@ -82,6 +84,9 @@ class WorkspaceImpl {
 			context.signal,
 			{ settled: this.quota.refresh },
 		);
+		this.history = createHistory(this.chain, this.files, context.signal, {
+			changed: this.quota.refresh,
+		});
 		if (context.signal.aborted) {
 			this.dispose();
 		} else {
@@ -102,6 +107,7 @@ class WorkspaceImpl {
 		}
 		this.disposed = true;
 		this.context.signal.removeEventListener("abort", this.dispose);
+		this.history.dispose();
 		this.uploads.dispose();
 		this.library.dispose();
 		this.view.dispose();

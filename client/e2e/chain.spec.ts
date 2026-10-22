@@ -20,7 +20,6 @@ test("verified history projects edits, deletion, restoration and permanent purge
 	});
 	const card = page.getByRole("article");
 	await expect(card).toHaveCount(1);
-	await expect(page.getByLabel("Version", { exact: true })).toHaveValue("1");
 	await card
 		.getByRole("button", { name: "Edit filename original.txt", exact: true })
 		.click();
@@ -30,13 +29,18 @@ test("verified history projects edits, deletion, restoration and permanent purge
 	await card
 		.getByRole("textbox", { name: "Filename for original.txt", exact: true })
 		.press("Enter");
-	await expect(page.getByLabel("Version", { exact: true })).toHaveValue("2");
-	await page.getByText("Earlier versions", { exact: true }).click();
-	await page.getByLabel("Version", { exact: true }).fill("1");
-	await page.getByRole("button", { name: "Show version", exact: true }).click();
 	await expect(
-		page.getByText("Viewing version 1 (read-only)", { exact: true }),
+		card.getByRole("button", { name: "Open renamed.txt", exact: true }),
 	).toBeVisible();
+	await page.getByRole("link", { name: "History", exact: true }).click();
+	const entries = page.getByRole("listitem");
+	const edited = entries.filter({ hasText: "Edited details of renamed.txt" });
+	await expect(edited).toContainText("Version 2");
+	await entries
+		.filter({ hasText: "Added renamed.txt" })
+		.getByRole("button", { name: "View", exact: true })
+		.click();
+	await expect(page.getByText(/^Viewing version 1, read-only\./)).toBeVisible();
 	await expect(
 		card.getByRole("button", { name: "Open original.txt", exact: true }),
 	).toBeVisible();
@@ -57,6 +61,15 @@ test("verified history projects edits, deletion, restoration and permanent purge
 	await expect(
 		card.getByRole("button", { name: "Open renamed.txt", exact: true }),
 	).toBeVisible();
+	await page.getByRole("link", { name: "History", exact: true }).click();
+	await edited.getByRole("button", { name: "Undo", exact: true }).click();
+	await expect(
+		entries.filter({ hasText: "Edited details of original.txt" }),
+	).toHaveCount(2);
+	await page.getByRole("link", { name: "Library", exact: true }).click();
+	await expect(
+		card.getByRole("button", { name: "Open original.txt", exact: true }),
+	).toBeVisible();
 	await card.getByRole("button", { name: "Delete", exact: true }).click();
 	await expect(card).toHaveCount(0);
 	await page
@@ -76,9 +89,15 @@ test("verified history projects edits, deletion, restoration and permanent purge
 		.getByRole("button", { name: "Permanently delete", exact: true })
 		.click();
 	await expect(card).toHaveCount(0);
-	await page.getByText("Earlier versions", { exact: true }).click();
-	await page.getByLabel("Version", { exact: true }).fill("1");
-	await page.getByRole("button", { name: "Show version", exact: true }).click();
+	await page.getByRole("link", { name: "History", exact: true }).click();
+	await expect(
+		entries.filter({ hasText: "Permanently deleted Purged file" }),
+	).toBeVisible();
+	await expect(entries.getByRole("button", { name: "Undo" })).toHaveCount(0);
+	await entries
+		.filter({ hasText: "Version 1 ·" })
+		.getByRole("button", { name: "View", exact: true })
+		.click();
 	await page.getByRole("button", { name: "Files", exact: true }).click();
 	await expect(
 		card.getByText("Permanently purged", { exact: true }),

@@ -2,6 +2,7 @@
 import { onDestroy } from "svelte";
 import { routeHref } from "../routes.ts";
 import { createApplication } from "../stores/application.ts";
+import History from "./History.svelte";
 import Library from "./Library.svelte";
 import Media from "./Media.svelte";
 import Settings from "./Settings.svelte";
@@ -88,6 +89,11 @@ function pasteFiles(event: ClipboardEvent) {
 							>Library</a
 						>
 						<a
+							href={routeHref({ page: "history" })}
+							aria-current={$routing.page === "history" ? "page" : undefined}
+							>History</a
+						>
+						<a
 							href={routeHref({ page: "settings" })}
 							aria-current={$routing.page === "settings" ? "page" : undefined}
 							>Settings</a
@@ -128,6 +134,16 @@ function pasteFiles(event: ClipboardEvent) {
 				uploads={workspace?.uploads ?? null}
 				{preferences}
 			/>
+		{:else if $routing.page === "history" && workspace}
+			<History
+				history={workspace.history}
+				view={workspace.view}
+				onview={async (sequence) => {
+					if (await workspace.view.select(sequence)) {
+						routing.navigate({ page: "library" });
+					}
+				}}
+			/>
 		{:else if $session.configured && $preferences.loading}
 			<p role="status">Loading library…</p>
 		{:else if workspace}
@@ -135,7 +151,6 @@ function pasteFiles(event: ClipboardEvent) {
 				library={workspace.library}
 				uploads={workspace.uploads}
 				view={workspace.view}
-				chain={workspace.chain}
 			/>
 		{:else}
 			<Setup {session} {pairing} />
