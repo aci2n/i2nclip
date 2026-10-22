@@ -37,6 +37,13 @@ const routes = [
 		href: () => "#/settings",
 	}),
 	defineRoute({
+		match: /^#\/history$/,
+		page: "history",
+		workspace: true,
+		params: () => ({}),
+		href: () => "#/history",
+	}),
+	defineRoute({
 		match: /.*/,
 		page: "library",
 		workspace: true,

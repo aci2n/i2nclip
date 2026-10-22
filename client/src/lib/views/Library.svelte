@@ -1,12 +1,11 @@
 <script lang="ts">
 import { onDestroy, onMount } from "svelte";
-import HistorySelector from "../components/HistorySelector.svelte";
+import HistoricalBanner from "../components/HistoricalBanner.svelte";
 import LibrarySearch from "../components/LibrarySearch.svelte";
 import MediaCard from "../components/MediaCard.svelte";
 import MediaDialog from "../components/MediaDialog.svelte";
 import TagSuggestions from "../components/TagSuggestions.svelte";
 import UploadStatus from "../components/Uploads.svelte";
-import type { ChainStore } from "../stores/chain.ts";
 import type { Library } from "../stores/library.ts";
 import type { MaterializedView } from "../stores/materialized-view.ts";
 import type { Uploads } from "../stores/uploads.ts";
@@ -16,9 +15,8 @@ interface Props {
 	library: Library;
 	uploads: Uploads;
 	view: MaterializedView;
-	chain: ChainStore;
 }
-let { library, uploads, view, chain }: Props = $props();
+let { library, uploads, view }: Props = $props();
 let filesInput = $state<HTMLInputElement>();
 onMount(() => {
 	void library.browse();
@@ -34,14 +32,14 @@ function movePreview(step: number) {
 	}
 }
 </script>
-<HistorySelector
-	sequence={$view.selected?.sequence ?? 0}
-	live={$chain.live?.sequence ?? 0}
-	historical={$view.historical}
-	busy={$view.selecting}
-	error={$view.selectionError}
-	onselect={view.select}
-/>
+{#if $view.historical}
+	<HistoricalBanner
+		sequence={$view.selected?.sequence ?? 0}
+		busy={$view.selecting}
+		error={$view.selectionError}
+		oncurrent={() => view.select(null)}
+	/>
+{/if}
 <div class="toolbar">
 	<div class="search">
 		<LibrarySearch query={$library.query} onsearch={library.search} />
