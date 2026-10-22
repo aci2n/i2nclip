@@ -5,13 +5,13 @@ import { assertPresent } from "../tests/assert.ts";
 import { deferred } from "../tests/helpers.ts";
 import {
 	audioFixture,
+	backupPassword,
 	createLibrary,
 	expect,
 	imageFixture,
 	openUploadPreferences,
 	PASSWORD,
-	recovery,
-	recoveryPassword,
+	savedBackup,
 	shot,
 	test,
 } from "./fixtures.ts";
@@ -204,7 +204,7 @@ test("direct links preserve the target through password unlock, navigation, relo
 	await page
 		.getByRole("checkbox", { name: "Compress images to WebP" })
 		.uncheck();
-	const backup = await recovery(page);
+	const backup = await savedBackup(page);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	await page
 		.getByLabel("Upload", { exact: true })
@@ -253,20 +253,19 @@ test("direct links preserve the target through password unlock, navigation, relo
 		await expect(
 			fresh.getByRole("heading", { name: "Your encrypted library" }),
 		).toBeVisible();
-		await fresh.getByRole("button", { name: "Restore", exact: true }).click();
-		await fresh.getByLabel("Recovery file", { exact: true }).setInputFiles({
-			name: "recovery.msgpack",
+		await fresh
+			.getByRole("button", { name: "Restore backup", exact: true })
+			.click();
+		await fresh.getByLabel("Library backup", { exact: true }).setInputFiles({
+			name: "savedBackup.msgpack",
 			mimeType: "application/msgpack",
 			buffer: backup,
 		});
 		await fresh
-			.getByLabel("Recovery password", { exact: true })
-			.fill(recoveryPassword(backup));
+			.getByLabel("Backup password", { exact: true })
+			.fill(backupPassword(backup));
 		await fresh
 			.getByRole("button", { name: "Restore library", exact: true })
-			.click();
-		await fresh
-			.getByRole("button", { name: "Submit recovery enrollment", exact: true })
 			.click();
 		await expect(
 			fresh.getByRole("img", { name: "Target.png", exact: true }),

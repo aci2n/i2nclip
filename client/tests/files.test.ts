@@ -20,9 +20,9 @@ import {
 import { createIdentity, initialIdentityState } from "./library-fixture.ts";
 
 async function fixture(t: test.TestContext) {
-	const device = await createIdentity("https://example.test");
-	t.after(device.dispose);
-	let state = await initialIdentityState(device);
+	const identity = await createIdentity("https://example.test");
+	t.after(identity.dispose);
+	let state = await initialIdentityState(identity);
 	const view = writable<ChainView>({
 		live: state,
 		syncing: false,
@@ -75,8 +75,8 @@ async function fixture(t: test.TestContext) {
 					previous: state.head,
 					effects: mutation.effects,
 				},
-				device.signing,
-				device.encryption,
+				identity.signing,
+				identity.encryption,
 				mutation.plaintext,
 			);
 			state = reduceBlock(state, record, mutation.plaintext);

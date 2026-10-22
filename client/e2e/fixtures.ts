@@ -58,12 +58,12 @@ export async function master(page: Page, remember = false) {
 		page.getByRole("navigation", { name: "Main navigation" }),
 	).toBeVisible();
 }
-interface RecoveryArtifact {
+interface BackupArtifact {
 	bytes: Buffer<ArrayBuffer>;
 	password: string;
 }
-const recoveryArtifacts = new WeakMap<Page, RecoveryArtifact>();
-const recoveryPasswords = new WeakMap<Buffer, string>();
+const backupArtifacts = new WeakMap<Page, BackupArtifact>();
+const backupPasswords = new WeakMap<Buffer, string>();
 export async function createLibrary(
 	page: Page,
 	app: App,
@@ -77,7 +77,7 @@ export async function createLibrary(
 		.getByRole("button", { name: "Prepare library", exact: true })
 		.click();
 	const password = await page
-		.getByLabel("Recovery password", { exact: true })
+		.getByLabel("Backup password", { exact: true })
 		.inputValue();
 	expect(password).toHaveLength(43);
 	await expect(
@@ -85,13 +85,13 @@ export async function createLibrary(
 	).toBeDisabled();
 	const downloading = page.waitForEvent("download");
 	await page
-		.getByRole("button", { name: "Download recovery file", exact: true })
+		.getByRole("button", { name: "Download backup", exact: true })
 		.click();
 	const download = await downloading;
-	expect(download.suggestedFilename()).toBe("i2nclip-library-recovery.msgpack");
+	expect(download.suggestedFilename()).toBe("i2nclip-library-backup.msgpack");
 	const bytes = Buffer.from(await readFile(await download.path()));
-	recoveryArtifacts.set(page, { bytes, password });
-	recoveryPasswords.set(bytes, password);
+	backupArtifacts.set(page, { bytes, password });
+	backupPasswords.set(bytes, password);
 	await page
 		.getByLabel("Invitation code", { exact: true })
 		.fill(await issueOtc(app.data, "debug", maxBytes));
@@ -102,43 +102,36 @@ export async function createLibrary(
 		page.getByRole("heading", { name: "Your library", exact: true }),
 	).toBeVisible();
 }
-export async function recovery(page: Page) {
-	const artifact = recoveryArtifacts.get(page);
+export async function savedBackup(page: Page) {
+	const artifact = backupArtifacts.get(page);
 	if (!artifact) {
-		throw new Error("This test has no saved recovery file.");
+		throw new Error("This test has no saved library backup.");
 	}
 	return artifact.bytes;
 }
-export function recoveryPassword(bytes: Buffer) {
-	const password = recoveryPasswords.get(bytes);
+export function backupPassword(bytes: Buffer) {
+	const password = backupPasswords.get(bytes);
 	if (!password) {
-		throw new Error("Recovery password is not owned by this test.");
+		throw new Error("Backup password is not owned by this test.");
 	}
 	return password;
 }
 export async function restore(page: Page, app: App, bytes: Buffer) {
 	await page.goto(`${app.origin}/#/settings`);
 	await master(page);
-	await page.getByRole("button", { name: "Restore", exact: true }).click();
-	await page.getByLabel("Recovery file", { exact: true }).setInputFiles({
-		name: "recovery.msgpack",
+	await page
+		.getByRole("button", { name: "Restore backup", exact: true })
+		.click();
+	await page.getByLabel("Library backup", { exact: true }).setInputFiles({
+		name: "savedBackup.msgpack",
 		mimeType: "application/msgpack",
 		buffer: bytes,
 	});
 	await page
-		.getByLabel("Recovery password", { exact: true })
-		.fill(recoveryPassword(bytes));
+		.getByLabel("Backup password", { exact: true })
+		.fill(backupPassword(bytes));
 	await page
 		.getByRole("button", { name: "Restore library", exact: true })
-		.click();
-	await expect(
-		page.getByRole("button", {
-			name: "Submit recovery enrollment",
-			exact: true,
-		}),
-	).toBeVisible();
-	await page
-		.getByRole("button", { name: "Submit recovery enrollment", exact: true })
 		.click();
 	await expect(
 		page.getByRole("heading", { name: "Your library", exact: true }),
@@ -222,4 +215,19 @@ export async function openUploadPreferences(page: Page) {
 			exact: true,
 		}),
 	).toBeVisible();
+}
+
+/** Observe public request authority; credentials remain sealed in browser storage. */
+export async function libraryPublicKey(page: Page) {
+	const request = page.waitForRequest((request) =>
+		request.url().endsWith("/api/quota"),
+	);
+	await page
+		.getByRole("button", { name: "Refresh usage", exact: true })
+		.click();
+	const authorization = (await request).headers().authorization;
+	if (!authorization?.startsWith("Bearer ")) {
+		throw new Error("Missing signed quota request");
+	}
+	return authorization.slice(7).split(".")[0] ?? "";
 }

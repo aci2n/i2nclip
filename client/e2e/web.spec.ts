@@ -9,8 +9,8 @@ import {
 	master,
 	openUploadPreferences,
 	PASSWORD,
-	recovery,
 	restore,
+	savedBackup,
 	shot,
 	test,
 } from "./fixtures.ts";
@@ -135,13 +135,13 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	).toBeVisible();
 	expect(await page.locator("[id]").count()).toBe(0);
 });
-test("encrypted singleton recovery, password change, reload, and forget", async ({
+test("encrypted singleton savedBackup, password change, reload, and forget", async ({
 	page,
 	app,
 	browser,
 }) => {
 	await createLibrary(page, app);
-	const bytes = await recovery(page);
+	const bytes = await savedBackup(page);
 	const saved = await page.evaluate(
 		() =>
 			new Promise<string>((resolve, reject) => {
@@ -189,10 +189,10 @@ test("encrypted singleton recovery, password change, reload, and forget", async 
 		await expect(
 			other.getByRole("heading", { name: "Your library", exact: true }),
 		).toBeVisible();
-		await other.getByText("Forget this device", { exact: true }).click();
+		await other.getByText("Forget this browser", { exact: true }).click();
 		other.once("dialog", (dialog) => dialog.accept());
 		await other
-			.getByRole("button", { name: "Forget device", exact: true })
+			.getByRole("button", { name: "Forget browser", exact: true })
 			.click();
 		await expect(
 			other.getByRole("button", { name: "Prepare library", exact: true }),
@@ -237,10 +237,10 @@ test("tabs unlock independently and retain loaded access after another tab chang
 			}),
 		).toBeVisible();
 		await second.getByRole("link", { name: "Settings", exact: true }).click();
-		await second.getByText("Forget this device", { exact: true }).click();
+		await second.getByText("Forget this browser", { exact: true }).click();
 		second.once("dialog", (dialog) => dialog.accept());
 		await second
-			.getByRole("button", { name: "Forget device", exact: true })
+			.getByRole("button", { name: "Forget browser", exact: true })
 			.click();
 		await expect(second.getByRole("alert")).toContainText("Refresh");
 		await second.reload();
@@ -414,13 +414,13 @@ test("mixed media and feedback render in both themes at desktop and narrow width
 	await expect(page.getByRole("alert")).toContainText("Wrong password");
 	await shot(page, `${test.info().project.name}-settings-error-320`);
 });
-test("pairing enrolls a fresh device only after explicit verification", async ({
+test("pairing shares library credentials only after explicit verification", async ({
 	page,
 	app,
 	browser,
 }) => {
 	await createLibrary(page, app);
-	await page.getByText("Connect another device", { exact: true }).click();
+	await page.getByText("Connect another browser", { exact: true }).click();
 	await page
 		.getByRole("button", { name: "Create pairing code", exact: true })
 		.click();
@@ -432,7 +432,7 @@ test("pairing enrolls a fresh device only after explicit verification", async ({
 		await receiver.goto(`${app.origin}/#/settings`);
 		await master(receiver);
 		await receiver
-			.getByRole("button", { name: "Pair device", exact: true })
+			.getByRole("button", { name: "Connect", exact: true })
 			.click();
 		await receiver
 			.getByLabel("Pairing code", { exact: true })

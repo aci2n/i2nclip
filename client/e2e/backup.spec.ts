@@ -3,8 +3,8 @@ import {
 	createLibrary,
 	expect,
 	master,
-	recovery,
 	restore,
+	savedBackup,
 	test,
 } from "./fixtures.ts";
 
@@ -14,7 +14,7 @@ test("restored file and tag keys support edited metadata, search and content dow
 	browser,
 }) => {
 	await createLibrary(page, app);
-	const manifest = await recovery(page);
+	const manifest = await savedBackup(page);
 	await page.getByRole("link", { name: "Library", exact: true }).click();
 	const bytes = Buffer.from("Content protected by a wrapped per-upload key.\n");
 	await page.getByLabel("Upload", { exact: true }).setInputFiles({

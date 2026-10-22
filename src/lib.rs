@@ -66,7 +66,7 @@ impl AppState {
     }
 }
 
-/// Persistent limits shared by every device using a library key.
+/// Persistent limits shared by every browser using a library.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StorageLimits {
     pub max_content_bytes: i64,

@@ -14,11 +14,11 @@ interface Props {
 let { state, busy, onsend, onapprove, onreject, oncancel }: Props = $props();
 </script>
 <details class="panel">
-	<summary>Connect another device</summary>
+	<summary>Connect another browser</summary>
 	<div class="stack content">
 		{#if !state.active}
 			<p>
-				Give another device full access to this library using a temporary code.
+				Give another browser full access to this library using a temporary code.
 			</p>
 			<button type="button" disabled={busy} onclick={onsend}>
 				Create pairing code

@@ -5,6 +5,7 @@ import { type BrowserContext, chromium, firefox } from "@playwright/test";
 import {
 	createLibrary,
 	expect,
+	libraryPublicKey,
 	master,
 	openUploadPreferences,
 	PASSWORD,
@@ -32,11 +33,7 @@ test("remembered access survives all tabs closing, refresh and a real browser re
 		context = await launch();
 		const page = context.pages()[0] ?? (await context.newPage());
 		await createLibrary(page, app, undefined, true);
-		const publicKey = await page
-			.locator(".devices li")
-			.first()
-			.locator("details code")
-			.textContent();
+		const publicKey = await libraryPublicKey(page);
 		await openUploadPreferences(page);
 		await page
 			.getByRole("checkbox", { name: "Compress images to WebP" })
@@ -79,9 +76,7 @@ test("remembered access survives all tabs closing, refresh and a real browser re
 		await expect(
 			restored.getByRole("heading", { name: "Your library", exact: true }),
 		).toBeVisible();
-		await expect(
-			restored.locator(".devices li").first().locator("details code"),
-		).toHaveText(publicKey ?? "");
+		expect(await libraryPublicKey(restored)).toBe(publicKey);
 		await openUploadPreferences(restored);
 		await expect(
 			restored.getByRole("checkbox", { name: "Compress images to WebP" }),
@@ -184,7 +179,7 @@ test("old localStorage is ignored and unremembered access is confined to one tab
 	}
 });
 
-test("invalid remembered access permits password recovery and damaged storage offers Retry and Reset", async ({
+test("invalid remembered access permits password savedBackup and damaged storage offers Retry and Reset", async ({
 	page,
 	app,
 }) => {

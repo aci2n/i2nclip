@@ -1,44 +1,17 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { bytesToHex, concat, hexToBytes } from "../src/lib/protocol/bytes.ts";
+import { bytesToHex, hexToBytes } from "../src/lib/protocol/bytes.ts";
 import {
 	inventoryDigest,
 	openObject,
-	SIGN_DOMAIN,
 	sealObject,
 } from "../src/lib/protocol/chain.ts";
-import { encode } from "../src/lib/protocol/msgpack.ts";
 
 const vectors = JSON.parse(
 	readFileSync(new URL("./chain-vectors.json", import.meta.url), "utf8"),
 );
-const _recoveryVectors = JSON.parse(
-	readFileSync(new URL("./recovery-vectors.json", import.meta.url), "utf8"),
-);
 const bytes = (name: string) => hexToBytes(vectors[name]);
-async function signingKey(seed = bytes("seed")) {
-	return crypto.subtle.importKey(
-		"pkcs8",
-		concat([hexToBytes("302e020100300506032b657004220420"), seed]),
-		"Ed25519",
-		false,
-		["sign"],
-	);
-}
-async function _resign(body: unknown, seed = bytes("seed")) {
-	const signed = encode(body);
-	return encode([
-		signed,
-		new Uint8Array(
-			await crypto.subtle.sign(
-				"Ed25519",
-				await signingKey(seed),
-				concat([SIGN_DOMAIN, signed]),
-			),
-		),
-	]);
-}
 
 test("inventory digest canonicalizes order and rejects duplicate objects", async () => {
 	const entries = (vectors.inventory_entries as [string, number][]).map(

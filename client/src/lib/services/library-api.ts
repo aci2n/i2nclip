@@ -75,8 +75,8 @@ class ChainApiImpl implements ChainTransport {
 	private readonly signal: AbortSignal;
 	readonly read = this.readPage.bind(this);
 	readonly append = this.appendRecord.bind(this);
-	readonly register = this.registerDevice.bind(this);
-	readonly registered = this.deviceRegistered.bind(this);
+	readonly register = this.registerLibrary.bind(this);
+	readonly registered = this.libraryRegistered.bind(this);
 	readonly quota = this.readQuota.bind(this);
 	readonly putBlob = this.stageBlob.bind(this);
 	readonly blob = this.readBlob.bind(this);
@@ -233,7 +233,7 @@ class ChainApiImpl implements ChainTransport {
 			head: checkpoint(values[2], values[3]),
 		};
 	}
-	private async registerDevice(
+	private async registerLibrary(
 		code: string,
 		genesis: Bytes,
 		signal: AbortSignal,
@@ -249,7 +249,7 @@ class ChainApiImpl implements ChainTransport {
 			throw new HttpError(response.status);
 		}
 	}
-	private async deviceRegistered(signal: AbortSignal) {
+	private async libraryRegistered(signal: AbortSignal) {
 		const response = await this.request("GET", "/api/ping", null, signal);
 		await response.body?.cancel();
 		if (response.status !== 204 && response.status !== 401) {

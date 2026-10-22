@@ -1,3 +1,5 @@
+> Historical design note. Superseded by [the current protocol](protocol.md) and the [shared-seed contract](shared-seed/README.md), which replaced device membership, epochs, recovery and rotation with one shared library seed.
+
 # Chain implementation verification
 
 Completed 2026-10-21 on the greenfield chain branch. The application uses canonical

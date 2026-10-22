@@ -59,7 +59,7 @@ test("setup and settings controls fit narrow screens", async ({
 	await master(page);
 	for (const width of [1100, 320, 360]) {
 		await page.setViewportSize({ width, height: 800 });
-		for (const mode of ["Create", "Restore", "Pair device"]) {
+		for (const mode of ["Create", "Restore backup", "Connect"]) {
 			await page.getByRole("button", { name: mode, exact: true }).click();
 			await consistentControls(page, width < 500);
 			await shot(page, `setup-${mode}-${width}`);

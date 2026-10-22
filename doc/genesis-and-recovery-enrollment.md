@@ -1,3 +1,5 @@
+> Historical design note. Superseded by [the current protocol](protocol.md) and the [shared-seed contract](shared-seed/README.md), which replaced device membership, epochs, recovery and rotation with one shared library seed.
+
 # Canonical genesis and separate device enrollment
 
 Status: implemented and integration-verified. See [verification results](chain-verification.md). This greenfield

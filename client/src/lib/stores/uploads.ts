@@ -146,9 +146,7 @@ class UploadsImpl {
 			}
 			signal.throwIfAborted();
 			if (!this.allowed()) {
-				throw new Error(
-					"Uploads require an authorized device in the live view.",
-				);
+				throw new Error("Uploads require the live library view.");
 			}
 			while (this.queue.length) {
 				signal.throwIfAborted();

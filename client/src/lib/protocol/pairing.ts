@@ -68,7 +68,7 @@ export function pairingOrigin(serverUrl: string) {
 		url.protocol !== "https:" &&
 		!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
 	) {
-		throw new Error("Device pairing requires an HTTPS server.");
+		throw new Error("Pairing requires an HTTPS server.");
 	}
 	return url.origin;
 }

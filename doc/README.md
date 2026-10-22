@@ -1,29 +1,31 @@
 # Documentation
 
-Current architecture and wire contracts: [chain storage](blockchain-storage.md), [offline recovery](library-recovery.md), and [protocol](protocol.md). Read these before changing persistence, keys, pairing, or API behavior.
+Current wire and credential contract: [protocol](protocol.md) and the
+[shared-seed contract](shared-seed/README.md). One shared library seed grants
+full authority; there are no device keys, epochs, recovery principals or
+rotation. Read these before changing persistence, keys, pairing, or API behavior.
+[Blockchain storage](blockchain-storage.md) remains the reference for encrypted
+objects, file operations, storage effects and purge where it does not conflict.
 
-Other design notes record earlier changes. Where they conflict with these specifications, the current chain specifications take precedence.
+Other design notes record earlier changes. Where they conflict with the current
+contract, the current contract takes precedence.
 
-Implemented greenfield design refinements:
-[device-preserving epoch rotation](device-preserving-rotation.md) and
-[canonical genesis and separate enrollment](genesis-and-recovery-enrollment.md).
-The current wire and credential formats are consolidated in
-[library recovery](library-recovery.md).
-
-- [Protocol](protocol.md): HTTP API, signatures, frames, quotas, concurrency, and transfer limits.
-- [Cryptography](crypto.md): keys, encrypted formats, and security boundaries.
-- [Client ownership](session.md): stores, independent tab sessions, uploads, previews, and disposal.
-- [IndexedDB sessions](indexeddb-session.md): browser storage, remembered access, and local Lock.
+- [Protocol](protocol.md): identity, blocks, HTTP API, credentials, backups, and pairing transfer.
+- [Shared-seed cutover](shared-seed/README.md): approved contract and per-commit specifications.
+- [Blockchain storage specification](blockchain-storage.md): encrypted objects, file operations, storage effects, quotas and purge; partly historical.
 - [Firefox extension](extension-bridge.md): setup, capture, File handoff, and lifecycle.
-- [Device pairing](pairing.md): verification, identity transfer, and the relay API.
 - [Database migrations](database-migrations.md): startup, migration history, and adding schema changes.
 - [Test pipeline](test-pipeline.md): commands, toolchains, and fixture isolation.
 - [Resource profiling](postgresql-profile.md): optional measurements and reproduction.
 - [Improvement priorities](priorities.md): open topics requiring separate specifications.
 - [Chunk uploads specification](chunk-uploads.md): independently encrypted chunks and browser streaming; implemented.
 - [Transfer and shutdown deadlines](transfer-shutdown-proposal.md): implemented resource and shutdown limits.
-- [Blockchain storage specification](blockchain-storage.md): encrypted operation chain, device authority, deletable blobs, and implementation commits; implemented; see [verification results](chain-verification.md).
-- [Library recovery](library-recovery.md): fixed recovery authority, deterministic epoch keys, recovery without an authorized device, and generated backup passwords; authoritative amendment to the chain specification.
+- Historical: [cryptography](crypto.md), [client ownership](session.md),
+  [IndexedDB sessions](indexeddb-session.md), [device pairing](pairing.md)
+  (its relay API section remains current), [library recovery](library-recovery.md),
+  [device-preserving rotation](device-preserving-rotation.md),
+  [genesis and enrollment](genesis-and-recovery-enrollment.md), and
+  [chain verification](chain-verification.md).
 
 Current behavior is documented separately from proposed work. The Rust server is
 in `src/`; the web app and extension are in `client/`. Historical change specifications remain in this directory and Git history;

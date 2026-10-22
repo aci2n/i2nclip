@@ -27,5 +27,6 @@ A restarted upload creates a fresh random ID and content key. Identical chunk PU
 ## Client improvements to specify
 
 - Consider multiple simultaneous pairing sessions for the same registered identity and shared relay storage for multiple server instances.
+- File operations are inconsistently plural: only `PurgeFiles` takes a list, and the client always passes one ID. Make all operations singular unless a multi-select feature is specified, which would justify plural Delete/Restore/Purge. Either way this changes the encrypted operation format, the server purge effect, and the shared vectors.
 
 These are suggestions, not authorized implementation work. Current client ownership is documented in [session.md](session.md); test preparation and isolation are in [test-pipeline.md](test-pipeline.md).

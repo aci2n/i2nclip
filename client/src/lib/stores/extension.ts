@@ -103,7 +103,7 @@ class ExtensionReceiverStoreImpl {
 			return "Set up your uploads in i2nclip, then retry.";
 		}
 		if (value.unlocked && !uploads) {
-			return "Uploads are unavailable. Open the live library with an authorized device.";
+			return "Uploads are unavailable. Open the live library.";
 		}
 		if (value.busy || (uploads ? get(uploads).uploading : false)) {
 			return "i2nclip is busy. Wait for the current operation, then retry.";

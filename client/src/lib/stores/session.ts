@@ -2,7 +2,7 @@ import { get, writable } from "svelte/store";
 import { errorMessage } from "../error.ts";
 import type { SigningKey } from "../protocol/auth.ts";
 import { bytesToHex } from "../protocol/bytes.ts";
-import { createChainApi } from "../services/library-api.ts";
+import { createChainApi, HttpError } from "../services/library-api.ts";
 import {
 	createLibraryIdentity,
 	type LibraryIdentity,
@@ -588,7 +588,31 @@ class SessionStoreImpl {
 			} finally {
 				encrypted.fill(0);
 			}
-			await this.installReceived(opened, signal);
+			try {
+				await this.installReceived(opened, signal);
+			} catch (error) {
+				signal.throwIfAborted();
+				if (
+					!(error instanceof HttpError) ||
+					error.status !== 401 ||
+					opened.checkpoint.sequence !== 0 ||
+					this.identityOwner !== opened.identity
+				) {
+					throw error;
+				}
+				await this.saveIdentity(
+					opened.identity,
+					opened.checkpoint,
+					true,
+					signal,
+				);
+				this.publishIdentity(false);
+				await this.makeBackup(signal);
+				this.update({
+					notice:
+						"This library has not been registered. Save a backup, then enter an invitation code to finish creation.",
+				});
+			}
 		});
 	}
 	private connectIdentity(opened: OpenedIdentity, caller: AbortSignal) {
@@ -693,6 +717,14 @@ class SessionStoreImpl {
 			const current = this.unlocked();
 			const identity = this.identityOwner;
 			this.endIdentity();
+
+			const sealed = await sealEmptyLocalIdentity(current.key, signal);
+			this.saved = await this.persistence.save(
+				current.saved,
+				sealed,
+				false,
+				signal,
+			);
 			if (identity) {
 				const cache = createChainStorage(
 					identity.origin,
@@ -704,13 +736,6 @@ class SessionStoreImpl {
 					cache.dispose();
 				}
 			}
-			const sealed = await sealEmptyLocalIdentity(current.key, signal);
-			this.saved = await this.persistence.save(
-				current.saved,
-				sealed,
-				false,
-				signal,
-			);
 			this.publishIdentity(false);
 		});
 	}

@@ -1,3 +1,5 @@
+> Historical design note. Superseded by [the current protocol](protocol.md) and the [shared-seed contract](shared-seed/README.md), which replaced device membership, epochs, recovery and rotation with one shared library seed.
+
 # Library keys, recovery, and epoch rotation
 
 This is the current cryptographic and credential specification. It supersedes

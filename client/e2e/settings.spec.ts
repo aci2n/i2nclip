@@ -50,7 +50,7 @@ test("canceling pairing deletes its room once without a duplicate 404", async ({
 	app,
 }) => {
 	await createLibrary(page, app);
-	await page.getByText("Connect another device", { exact: true }).click();
+	await page.getByText("Connect another browser", { exact: true }).click();
 	await page
 		.getByRole("button", { name: "Create pairing code", exact: true })
 		.click();

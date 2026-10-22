@@ -22,7 +22,8 @@ let code = $state("");
 <div class="stack">
 	{#if !pairingState.active}
 		<p>
-			Use a code from an unlocked device. Both devices must use the same server.
+			Use a code from an unlocked browser. Both browsers must use the same
+			server.
 		</p>
 		<form
 			class="stack"

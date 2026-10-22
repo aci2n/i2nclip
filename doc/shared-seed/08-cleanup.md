@@ -21,3 +21,15 @@ No multi-library support, termination, device permissions, rotation, data backup
 Affected Rust/client tests, build-content checks and scoped static/formatting checks. Audit obsolete references and seed-boundary import callers.
 
 Implement as one cohesive commit after affected checks pass and builds are warning-free.
+
+## Final lifecycle audit
+
+Preserve the previously covered independent-tab, failed persistence, interrupted
+creation, download failure, and forgetting invariants using shared credentials.
+A backup made before registration may be restored: if its checkpoint is genesis
+and the server returns an explicit unknown-library 401, retain the restored seed
+as a prepared library and require a fresh backup download before registration.
+Never reinterpret network errors, invalid history, or non-genesis checkpoints as
+permission to create a new library. Received pairing credentials never take this
+creation path. Cancellation disposes identities not yet owned by a session; a
+failed local write must not start registration or clear cached rollback protection.

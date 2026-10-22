@@ -4,6 +4,7 @@ import { setKeyLimits } from "../tests/process.ts";
 import {
 	createLibrary,
 	expect,
+	libraryPublicKey,
 	master,
 	PASSWORD,
 	shot,
@@ -85,11 +86,7 @@ test("files above 32 MiB stream through library and deeplink downloads after quo
 	app,
 }) => {
 	await createLibrary(page, app, 128 * 1024 * 1024);
-	const full = page.locator(".devices li").first().locator("details code");
-	await expect(full).toHaveText(/^[a-f0-9]{64}$/);
-	const key = Buffer.from((await full.textContent()) ?? "", "hex").toString(
-		"base64url",
-	);
+	const key = await libraryPublicKey(page);
 	expect(key).toMatch(/^[A-Za-z0-9_-]{43}$/);
 	await expect(page.getByLabel("Library usage")).toContainText(
 		"Storage: 0 B of 128.0 MB",

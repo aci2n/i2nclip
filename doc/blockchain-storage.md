@@ -1,3 +1,5 @@
+> Partly historical. Encrypted file objects, private file operations, storage effects, inventories, quotas, purge and read-only time travel remain current reference. Device keys, membership, epochs, enrollment, recovery, rotation, the signed body layout and HPKE pairing are superseded by [the current protocol](protocol.md) and the [shared-seed contract](shared-seed/README.md).
+
 # Blockchain storage specification
 
 Status: implementation in progress. This is the specification for the greenfield
