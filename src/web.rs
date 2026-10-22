@@ -31,7 +31,7 @@ pub(crate) fn serve(api: Router, directory: PathBuf) -> Router {
             ServeFile::new(directory.join("streaming-worker.js")),
         )
         .layer(map_response(|response: Response| async {
-            cache(response, "no-cache")
+            nosniff(cache(response, "no-cache"))
         }));
     let assets = Router::new()
         .nest_service(
@@ -42,17 +42,37 @@ pub(crate) fn serve(api: Router, directory: PathBuf) -> Router {
     api.merge(html).merge(worker).merge(assets)
 }
 
+/// Any same-origin script holds full library authority; see doc/content-security-policy.md.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
+img-src 'self' blob:; media-src 'self' blob:; worker-src 'self'; \
+connect-src 'self' https: http://localhost:* http://127.0.0.1:* http://[::1]:*; \
+manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; \
+frame-ancestors 'none'";
+
 async fn html_response(response: Response) -> Response {
-    let mut response = cache(response, "no-cache");
-    response.headers_mut().insert(
+    let mut response = nosniff(cache(response, "no-cache"));
+    let headers = response.headers_mut();
+    headers.insert(
         header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static("frame-ancestors 'none'"),
+        HeaderValue::from_static(CONTENT_SECURITY_POLICY),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
     );
     response
 }
 
 async fn asset_cache(response: Response) -> Response {
-    cache(response, "public, max-age=31536000, immutable")
+    nosniff(cache(response, "public, max-age=31536000, immutable"))
+}
+
+fn nosniff(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    response
 }
 
 fn cache(mut response: Response, value: &'static str) -> Response {
@@ -141,10 +161,7 @@ mod tests {
             for method in [Method::GET, Method::HEAD] {
                 let response = request(app.clone(), method, path).await;
                 assert_eq!(response.status(), StatusCode::OK);
-                assert_eq!(
-                    response.headers()[header::CONTENT_SECURITY_POLICY],
-                    "frame-ancestors 'none'"
-                );
+                assert_entry_headers(&response);
             }
             let response = request(app.clone(), Method::GET, path).await;
             let modified = response.headers()[header::LAST_MODIFIED].clone();
@@ -160,26 +177,48 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
-            assert_eq!(
-                response.headers()[header::CONTENT_SECURITY_POLICY],
-                "frame-ancestors 'none'"
-            );
+            assert_entry_headers(&response);
             assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
         }
-        for path in ["/assets/app-ab123456.js", "/api/health"] {
+        for (path, nosniff) in [
+            ("/assets/app-ab123456.js", true),
+            ("/streaming-worker.js", true),
+            ("/api/health", false),
+        ] {
             let response = request(app.clone(), Method::GET, path).await;
             assert_eq!(response.status(), StatusCode::OK);
-            assert!(!response
-                .headers()
-                .contains_key(header::CONTENT_SECURITY_POLICY));
+            let headers = response.headers();
+            assert!(!headers.contains_key(header::CONTENT_SECURITY_POLICY));
+            assert!(!headers.contains_key(header::REFERRER_POLICY));
+            assert_eq!(
+                headers.contains_key(header::X_CONTENT_TYPE_OPTIONS),
+                nosniff,
+                "{path}"
+            );
         }
         std::fs::remove_file(files.0.join("index.html")).unwrap();
         let response = request(app, Method::GET, "/").await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        assert_eq!(
-            response.headers()[header::CONTENT_SECURITY_POLICY],
-            "frame-ancestors 'none'"
-        );
+        assert_entry_headers(&response);
+    }
+
+    fn assert_entry_headers(response: &Response) {
+        let headers = response.headers();
+        let policy = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+        let directives: Vec<&str> = policy.split("; ").collect();
+        for directive in [
+            "default-src 'none'",
+            "script-src 'self'",
+            "style-src 'self'",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "frame-ancestors 'none'",
+        ] {
+            assert!(directives.contains(&directive), "{directive} in {policy}");
+        }
+        assert!(!policy.contains("unsafe"));
+        assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
+        assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
     }
 
     #[tokio::test]
