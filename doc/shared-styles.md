@@ -118,6 +118,19 @@ layers. Repository findings:
 - `MediaContent`'s `.content` class is its root wrapper, not disclosure
   spacing, and stays.
 
+### Review follow-ups
+
+Firefox screenshots of the first implementation showed three remaining
+inconsistencies, fixed in the same shared layers:
+
+- `h3` had the browser default size, larger than the base `h2`; it gets 1rem.
+- File inputs kept the native gray picker button. `::file-selector-button`
+  shares the control font, border, radius and the secondary colors.
+- Search suggestions were `.secondary` buttons with their own compact sizing
+  and stayed at 0.875rem on touch, unlike tag chips. They use `.chip`, and
+  `.chip` gets `min-width: var(--target)` so one-letter chips meet the touch
+  target.
+
 ## Exclusions
 
 - No new components, stores, props or markup structure beyond class changes.
