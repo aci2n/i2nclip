@@ -55,14 +55,23 @@ test("setup and settings controls fit narrow screens", async ({
 	page,
 	app,
 }) => {
-	await page.goto(`${app.origin}/#/settings`);
+	await page.goto(`${app.origin}/#/`);
 	await master(page);
 	for (const width of [1100, 320, 360]) {
 		await page.setViewportSize({ width, height: 800 });
-		for (const mode of ["Create", "Restore backup", "Connect"]) {
-			await page.getByRole("button", { name: mode, exact: true }).click();
+		await consistentControls(page, width < 500);
+		await shot(page, `setup-choices-${width}`);
+		for (const choice of [
+			"Create a new library",
+			"Restore from a backup",
+			"Connect from another device",
+		]) {
+			await page
+				.getByRole("button", { name: new RegExp(`^${choice}`) })
+				.click();
 			await consistentControls(page, width < 500);
-			await shot(page, `setup-${mode}-${width}`);
+			await shot(page, `setup-${choice}-${width}`);
+			await page.getByRole("button", { name: "Back", exact: true }).click();
 		}
 	}
 	await createLibrary(page, app);

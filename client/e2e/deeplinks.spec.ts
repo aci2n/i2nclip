@@ -251,11 +251,9 @@ test("direct links preserve the target through password unlock, navigation, relo
 			.getByRole("button", { name: "Create master password", exact: true })
 			.click();
 		await expect(
-			fresh.getByRole("heading", { name: "Your encrypted library" }),
+			fresh.getByRole("heading", { name: "Set up your library" }),
 		).toBeVisible();
-		await fresh
-			.getByRole("button", { name: "Restore backup", exact: true })
-			.click();
+		await fresh.getByRole("button", { name: /^Restore from a backup/ }).click();
 		await fresh.getByLabel("Library backup", { exact: true }).setInputFiles({
 			name: "savedBackup.msgpack",
 			mimeType: "application/msgpack",

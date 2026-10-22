@@ -72,17 +72,19 @@ export async function createLibrary(
 ) {
 	await page.goto(`${app.origin}/#/settings`);
 	await master(page, remember);
-	await page.getByRole("button", { name: "Create", exact: true }).click();
 	await page
-		.getByLabel("Invitation code", { exact: true })
-		.fill(await issueOtc(app.data, "debug", maxBytes));
-	await page.getByRole("button", { name: "Continue", exact: true }).click();
+		.getByRole("link", { name: "Set up your library", exact: true })
+		.click();
+	await page.getByRole("button", { name: /^Create a new library/ }).click();
+	await page
+		.getByRole("button", { name: "Create library keys", exact: true })
+		.click();
 	const password = await page
 		.getByLabel("Backup password", { exact: true })
 		.inputValue();
 	expect(password).toMatch(/^([2-9A-HJ-NP-Z]{4}-){7}[2-9A-HJ-NP-Z]{4}$/);
 	await expect(
-		page.getByRole("button", { name: "Create library", exact: true }),
+		page.getByRole("button", { name: "Continue", exact: true }),
 	).toBeDisabled();
 	const downloading = page.waitForEvent("download");
 	await page
@@ -94,14 +96,19 @@ export async function createLibrary(
 	backupArtifacts.set(page, { bytes, password });
 	backupPasswords.set(bytes, password);
 	await expect(
-		page.getByRole("button", { name: "Create library", exact: true }),
+		page.getByRole("button", { name: "Continue", exact: true }),
 	).toBeDisabled();
 	await page
-		.getByLabel("I stored the backup file and its password", { exact: true })
+		.getByLabel("I saved the backup file and its password", { exact: true })
 		.check();
+	await page.getByRole("button", { name: "Continue", exact: true }).click();
+	await page
+		.getByLabel("Invitation code", { exact: true })
+		.fill(await issueOtc(app.data, "debug", maxBytes));
 	await page
 		.getByRole("button", { name: "Create library", exact: true })
 		.click();
+	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(
 		page.getByRole("heading", { name: "Your library", exact: true }),
 	).toBeVisible();
@@ -124,8 +131,9 @@ export async function restore(page: Page, app: App, bytes: Buffer) {
 	await page.goto(`${app.origin}/#/settings`);
 	await master(page);
 	await page
-		.getByRole("button", { name: "Restore backup", exact: true })
+		.getByRole("link", { name: "Set up your library", exact: true })
 		.click();
+	await page.getByRole("button", { name: /^Restore from a backup/ }).click();
 	await page.getByLabel("Library backup", { exact: true }).setInputFiles({
 		name: "savedBackup.msgpack",
 		mimeType: "application/msgpack",
@@ -137,6 +145,7 @@ export async function restore(page: Page, app: App, bytes: Buffer) {
 	await page
 		.getByRole("button", { name: "Restore library", exact: true })
 		.click();
+	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(
 		page.getByRole("heading", { name: "Your library", exact: true }),
 	).toBeVisible();

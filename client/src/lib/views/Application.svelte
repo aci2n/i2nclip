@@ -124,15 +124,7 @@ function pasteFiles(event: ClipboardEvent) {
 				chain={workspace.chain}
 			/>
 		{:else}
-			<section class="panel empty stack">
-				<h2>Your library starts here</h2>
-				<p>
-					<a href={routeHref({ page: "settings" })}
-						>Create or restore your library</a
-					>
-					to start saving encrypted media.
-				</p>
-			</section>
+			<Setup {session} {pairing} />
 		{/if}
 	{/if}
 </main>

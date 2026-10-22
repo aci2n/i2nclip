@@ -29,7 +29,7 @@ kept beside the current contract; Git history retains them. The Rust server is i
 
 Implemented specifications whose behavior is still current:
 [rebased mutations](rebased-mutations.md), [HTTPS servers](https-servers.md),
-[plain-language UI](plain-language-ui.md), [setup order](setup-order.md),
+[plain-language UI](plain-language-ui.md), [setup flows](setup-flows.md),
 [password guidance](password-guidance.md),
 [metadata index concurrency](metadata-index-concurrency.md),
 [backup and purge format](backup-and-purge-format.md),

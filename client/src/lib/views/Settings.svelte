@@ -5,12 +5,12 @@ import PairingSend from "../components/PairingSend.svelte";
 import PasswordSettings from "../components/PasswordSettings.svelte";
 import UploadPreferences from "../components/UploadPreferences.svelte";
 import { fileSize } from "../media/format.ts";
+import { routeHref } from "../routes.ts";
 import type { Pairing } from "../stores/pairing.ts";
 import type { Preferences } from "../stores/preferences.ts";
 import type { Quota } from "../stores/quota.ts";
 import type { Session } from "../stores/session.ts";
 import type { Uploads } from "../stores/uploads.ts";
-import Setup from "./Setup.svelte";
 
 interface Props {
 	session: Session;
@@ -25,7 +25,12 @@ const busy = $derived($session.busy || $pairing.active);
 </script>
 <div class="settings stack">
 	{#if !$session.configured}
-		<Setup {session} {pairing} />
+		<section class="panel">
+			<p>
+				<a href={routeHref({ page: "library" })}>Set up your library</a>
+				to start saving encrypted media.
+			</p>
+		</section>
 	{:else}
 		<section class="panel stack">
 			<h2>Your library</h2>

@@ -195,7 +195,7 @@ test("encrypted singleton savedBackup, password change, reload, and forget", asy
 			.getByRole("button", { name: "Forget browser", exact: true })
 			.click();
 		await expect(
-			other.getByRole("button", { name: "Continue", exact: true }),
+			other.getByRole("link", { name: "Set up your library", exact: true }),
 		).toBeVisible();
 	} finally {
 		await context.close();
@@ -432,7 +432,10 @@ test("pairing shares library credentials only after explicit verification", asyn
 		await receiver.goto(`${app.origin}/#/settings`);
 		await master(receiver);
 		await receiver
-			.getByRole("button", { name: "Connect", exact: true })
+			.getByRole("link", { name: "Set up your library", exact: true })
+			.click();
+		await receiver
+			.getByRole("button", { name: /^Connect from another device/ })
 			.click();
 		await receiver
 			.getByLabel("Pairing code", { exact: true })

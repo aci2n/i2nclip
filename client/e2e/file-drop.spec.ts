@@ -77,7 +77,7 @@ test("file drops are suppressed before setup and while locked; text drags are un
 		drop: true,
 	});
 	await expect(
-		page.getByRole("heading", { name: "Your library starts here" }),
+		page.getByRole("heading", { name: "Set up your library" }),
 	).toBeVisible();
 	expect(
 		await page.evaluate(() => {
