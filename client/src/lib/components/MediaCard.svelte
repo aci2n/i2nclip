@@ -157,7 +157,7 @@ const source = $derived.by(() => {
 .card {
 	display: flex;
 	flex-direction: column;
-	gap: 0.75rem;
+	gap: var(--space-3);
 	min-width: 0;
 }
 .preview {
@@ -179,22 +179,22 @@ const source = $derived.by(() => {
 	object-fit: contain;
 }
 .preview span {
-	padding: 1rem;
+	padding: var(--space-4);
 }
 .meta {
 	color: var(--muted);
-	font-size: 0.875rem;
+	font-size: var(--text-sm);
 }
 .actions {
 	margin-top: auto;
 }
 .details {
-	gap: 0.5rem;
+	gap: var(--space-2);
 	overflow-wrap: anywhere;
 }
 .identifier {
 	font-family: monospace;
-	font-size: 0.75rem;
+	font-size: var(--text-xs);
 }
 .deleted {
 	border-style: dashed;

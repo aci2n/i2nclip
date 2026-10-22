@@ -168,10 +168,10 @@ function focusSuggestion(index: number) {
 	min-width: 0;
 }
 input {
-	min-height: 3rem;
+	min-height: var(--touch);
 }
 input.borderless {
-	min-height: 2.5rem;
+	min-height: max(2.5rem, var(--target));
 	border: 0;
 	background: transparent;
 	box-shadow: none;
@@ -195,17 +195,17 @@ ul {
 	z-index: 5;
 	list-style: none;
 	margin: 0;
-	padding: 0.25rem;
+	padding: var(--space-1);
 	border: 1px solid var(--line);
-	border-radius: 0.25rem;
+	border-radius: var(--radius-sm);
 	background: var(--paper);
-	box-shadow: 0 0.25rem 0.75rem #0002;
+	box-shadow: var(--shadow);
 }
 li button {
 	display: block;
 	width: 100%;
-	min-height: 3rem;
-	padding: 0.5rem 0.75rem;
+	min-height: var(--touch);
+	padding: var(--space-2) var(--space-3);
 	text-align: left;
 	color: var(--accent);
 	background: transparent;
@@ -215,10 +215,5 @@ li button:hover,
 li button:focus-visible {
 	background: var(--soft);
 	color: var(--accent);
-}
-@media (max-width: 32rem), (pointer: coarse) {
-	input.borderless {
-		min-height: 3rem;
-	}
 }
 </style>

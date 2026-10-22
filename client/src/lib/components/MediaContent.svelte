@@ -123,29 +123,29 @@ img.pending {
 	transform: translate(-50%, -50%);
 	max-width: min(22rem, calc(100vw - 2rem));
 	overflow-wrap: anywhere;
-	padding: 1rem;
+	padding: var(--space-4);
 	background: var(--paper);
-	border-radius: 0.5rem;
+	border-radius: var(--radius);
 }
 
 .text-preview {
 	width: min(60rem, 95vw);
 	max-height: 95vh;
 	overflow: auto;
-	padding: 3rem;
+	padding: var(--space-12);
 	background: var(--paper);
-	border-radius: 0.5rem;
+	border-radius: var(--radius);
 }
 .text-name {
 	font-weight: 600;
 	overflow-wrap: anywhere;
-	margin-bottom: 1rem;
+	margin-bottom: var(--space-4);
 }
 pre {
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
-	font: 0.9rem / 1.5 monospace;
-	margin: 0 0 1rem;
+	font: var(--text-sm) / 1.5 monospace;
+	margin: 0 0 var(--space-4);
 }
 img,
 video {
@@ -159,12 +159,12 @@ video {
 }
 .audio p {
 	position: fixed;
-	top: 1rem;
-	left: 1rem;
+	top: var(--space-4);
+	left: var(--space-4);
 	max-width: calc(100vw - 6rem);
-	padding: 0.5rem 0.75rem;
+	padding: var(--space-2) var(--space-3);
 	background: var(--paper);
-	border-radius: 0.25rem;
+	border-radius: var(--radius-sm);
 	overflow-wrap: anywhere;
 }
 .audio img {
@@ -173,7 +173,7 @@ video {
 }
 audio {
 	position: fixed;
-	bottom: 1rem;
+	bottom: var(--space-4);
 	left: 50%;
 	transform: translateX(-50%);
 	width: min(28rem, calc(100vw - 2rem));
@@ -187,7 +187,7 @@ audio {
 	.text-preview {
 		width: calc(100vw - 2rem);
 		max-height: calc(100dvh - 9rem);
-		padding: 1.5rem 1rem;
+		padding: var(--space-6) var(--space-4);
 	}
 	audio {
 		bottom: 5rem;
@@ -215,7 +215,7 @@ audio {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 1.5rem;
+	gap: var(--space-6);
 	width: min(36rem, 100%);
 }
 .page .audio img {
@@ -236,10 +236,10 @@ audio {
 .page .text-preview {
 	width: min(64rem, 100%);
 	max-height: none;
-	padding: 1rem;
+	padding: var(--space-4);
 }
 .page .error {
-	padding: 1rem;
+	padding: var(--space-4);
 }
 @media (max-width: 32rem) {
 	.page > img,

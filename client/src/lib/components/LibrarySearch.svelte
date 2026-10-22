@@ -45,7 +45,7 @@ $effect(() => {
 form {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 0.75rem;
+	gap: var(--space-3);
 	align-items: end;
 }
 label {
@@ -57,12 +57,7 @@ label {
 	overflow-wrap: anywhere;
 	text-align: left;
 	padding: 0.125rem 0.375rem;
-	min-height: 2rem;
-	font-size: 0.875rem;
-}
-@media (max-width: 32rem), (pointer: coarse) {
-	.suggestions button {
-		min-height: 3rem;
-	}
+	min-height: var(--target);
+	font-size: var(--text-sm);
 }
 </style>

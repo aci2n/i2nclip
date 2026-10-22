@@ -180,28 +180,28 @@ function movePreview(step: number) {
 .toolbar {
 	display: flex;
 	align-items: end;
-	gap: 1rem;
+	gap: var(--space-4);
 	flex-wrap: wrap;
-	margin-bottom: 1rem;
+	margin-bottom: var(--space-4);
 }
 .search {
 	flex: 1 1 22rem;
 	min-width: 0;
 }
 .scope {
-	margin-bottom: 1rem;
+	margin-bottom: var(--space-4);
 }
 .results {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
-	gap: 1rem;
-	margin-top: 1rem;
+	gap: var(--space-4);
+	margin-top: var(--space-4);
 }
 .feedback {
-	margin: 0.75rem 0;
+	margin: var(--space-3) 0;
 }
 .more {
 	display: block;
-	margin: 1.5rem auto;
+	margin: var(--space-6) auto;
 }
 </style>

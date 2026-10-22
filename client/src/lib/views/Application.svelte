@@ -146,35 +146,41 @@ function pasteFiles(event: ClipboardEvent) {
 	height: 1.25rem;
 }
 .session-notice {
-	margin-bottom: 1rem;
+	margin-bottom: var(--space-4);
 }
 main {
 	max-width: 76rem;
-	padding: 1.5rem;
+	padding: var(--space-6);
 	margin: auto;
 }
 main.media {
 	max-width: none;
-	padding: 1rem;
+	padding: var(--space-4);
 }
 header {
 	display: grid;
-	grid-template-columns: minmax(3rem, 1fr) auto minmax(3rem, 1fr);
+	grid-template-columns: minmax(var(--touch), 1fr) auto minmax(
+			var(--touch),
+			1fr
+		);
 	align-items: center;
-	gap: 0.5rem;
-	margin-bottom: 2rem;
+	gap: var(--space-2);
+	margin-bottom: var(--space-8);
 }
 header.media-header {
-	margin-bottom: 1rem;
+	margin-bottom: var(--space-4);
 }
 nav {
 	grid-column: 2;
 	display: flex;
 	align-items: center;
 	flex-wrap: wrap;
-	gap: 1rem;
+	gap: var(--space-4);
 }
 nav a {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--target);
 	color: var(--muted);
 	text-decoration: none;
 }
@@ -184,19 +190,14 @@ nav a[aria-current] {
 }
 @media (max-width: 32rem) {
 	header {
-		margin-bottom: 1.5rem;
+		margin-bottom: var(--space-6);
 	}
 	nav {
 		justify-content: center;
-		gap: 1.5rem;
-	}
-	nav a {
-		display: inline-flex;
-		align-items: center;
-		min-height: 3rem;
+		gap: var(--space-6);
 	}
 	main {
-		padding: 1rem;
+		padding: var(--space-4);
 	}
 }
 </style>

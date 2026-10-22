@@ -99,8 +99,8 @@ async function submit(event: SubmitEvent) {
 <style>
 form,
 .filename {
-	margin-top: 0.25rem;
-	min-height: 2.8em;
+	margin-top: var(--space-1);
+	min-height: max(2.8em, var(--target));
 }
 .filename {
 	display: -webkit-box;
@@ -112,9 +112,9 @@ form,
 	line-height: 1.4;
 	font-weight: 700;
 	text-align: left;
-	padding: 0.25rem;
+	padding: var(--space-1);
 	border: 1px solid transparent;
-	border-radius: 0.25rem;
+	border-radius: var(--radius-sm);
 	background: transparent;
 	color: inherit;
 }
@@ -123,13 +123,7 @@ form,
 }
 input {
 	font-weight: 700;
-	padding: 0.25rem;
-	border-radius: 0.25rem;
-}
-@media (max-width: 32rem), (pointer: coarse) {
-	form,
-	.filename {
-		min-height: 3rem;
-	}
+	padding: var(--space-1);
+	border-radius: var(--radius-sm);
 }
 </style>

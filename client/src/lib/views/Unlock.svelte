@@ -139,18 +139,14 @@ async function submit(event: SubmitEvent) {
 <style>
 section {
 	max-width: 32rem;
-	margin: 3rem auto;
+	margin: var(--space-12) auto;
 }
 
 .remember {
 	display: flex;
 	align-items: center;
-	gap: 0.5rem;
-}
-@media (max-width: 32rem), (pointer: coarse) {
-	.remember {
-		min-height: 3rem;
-	}
+	min-height: var(--target);
+	gap: var(--space-2);
 }
 .remember input {
 	width: auto;

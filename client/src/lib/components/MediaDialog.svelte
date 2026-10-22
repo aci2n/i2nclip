@@ -176,8 +176,8 @@ dialog.text {
 	transform: translate(-50%, -50%);
 	max-width: min(22rem, calc(100vw - 2rem));
 	margin: 0;
-	padding: 0.75rem 1rem;
-	border-radius: 0.25rem;
+	padding: var(--space-3) var(--space-4);
+	border-radius: var(--radius-sm);
 	background: var(--paper);
 	color: inherit;
 }
@@ -203,19 +203,19 @@ dialog.text {
 	cursor: default;
 }
 .previous {
-	left: 1rem;
+	left: var(--space-4);
 }
 .next {
-	right: 1rem;
+	right: var(--space-4);
 }
 .close {
-	top: 1rem;
-	right: 1rem;
+	top: var(--space-4);
+	right: var(--space-4);
 }
 @media (max-width: 32rem) {
 	.arrow {
 		top: auto;
-		bottom: 1rem;
+		bottom: var(--space-4);
 		transform: none;
 	}
 }

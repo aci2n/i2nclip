@@ -64,6 +64,6 @@ let { state, onapprove, onreject, oncancel }: Props = $props();
 .actions {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 0.75rem;
+	gap: var(--space-3);
 }
 </style>

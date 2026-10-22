@@ -52,13 +52,13 @@ const ready = $derived(!value.loading && !error && Boolean(media?.ready));
 	min-height: calc(100dvh - 2rem);
 	display: flex;
 	flex-direction: column;
-	gap: 1rem;
+	gap: var(--space-4);
 }
 header {
 	display: flex;
 	align-items: center;
 	flex-wrap: wrap;
-	gap: 1rem;
+	gap: var(--space-4);
 }
 h1 {
 	flex: 1;
@@ -69,7 +69,7 @@ h1 {
 header a {
 	display: inline-flex;
 	align-items: center;
-	min-height: 3rem;
+	min-height: var(--target);
 }
 header button {
 	flex: none;
@@ -77,7 +77,7 @@ header button {
 .status {
 	margin: auto;
 	width: min(24rem, 100%);
-	padding-block: 3rem;
+	padding-block: var(--space-12);
 }
 progress {
 	width: 100%;
@@ -85,7 +85,7 @@ progress {
 }
 @media (max-width: 32rem) {
 	header {
-		gap: 0.5rem;
+		gap: var(--space-2);
 	}
 	h1 {
 		flex-basis: calc(100% - 5rem);

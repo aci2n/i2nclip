@@ -21,7 +21,7 @@ const strength = $derived(passwordStrength(password));
 <style>
 .strength {
 	margin: 0;
-	font-size: 0.85rem;
+	font-size: var(--text-sm);
 }
 .weak {
 	color: var(--error);

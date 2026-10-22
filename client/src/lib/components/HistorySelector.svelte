@@ -59,12 +59,12 @@ form {
 	display: flex;
 	align-items: end;
 	flex-wrap: wrap;
-	gap: 0.75rem;
+	gap: var(--space-3);
 }
 label {
 	max-width: 10rem;
 }
 .history {
-	margin-bottom: 1rem;
+	margin-bottom: var(--space-4);
 }
 </style>

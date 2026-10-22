@@ -107,19 +107,19 @@ let {
 section {
 	display: flex;
 	flex-direction: column;
-	gap: 0.5rem;
-	margin-bottom: 1rem;
-	padding: 0.5rem 0.75rem;
+	gap: var(--space-2);
+	margin-bottom: var(--space-4);
+	padding: var(--space-2) var(--space-3);
 	border: 1px solid var(--line);
-	border-radius: 0.4rem;
+	border-radius: var(--radius);
 	background: var(--paper);
-	font-size: 0.9rem;
+	font-size: var(--text-sm);
 }
 .summary {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 0.5rem;
+	gap: var(--space-2);
 	min-width: 0;
 }
 .summary > p,
@@ -128,11 +128,11 @@ details {
 	min-width: 0;
 }
 summary {
-	min-height: 3rem;
-	padding-block: 0.75rem;
+	min-height: var(--touch);
+	padding-block: var(--space-3);
 }
 .percent {
-	margin-left: 0.75rem;
+	margin-left: var(--space-3);
 	font-variant-numeric: tabular-nums;
 	color: var(--accent);
 }
@@ -142,7 +142,7 @@ summary {
 	white-space: nowrap;
 }
 ul {
-	padding-left: 1.5rem;
+	padding-left: var(--space-6);
 	overflow-wrap: anywhere;
 }
 button.icon {

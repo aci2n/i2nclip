@@ -208,6 +208,6 @@ const busy = $derived($session.busy || $pairing.active);
 .confirm {
 	display: flex;
 	align-items: center;
-	gap: 0.5rem;
+	gap: var(--space-2);
 }
 </style>

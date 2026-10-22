@@ -35,15 +35,11 @@ let { compressImages, error, busy, onchange }: Props = $props();
 label {
 	display: flex;
 	align-items: center;
-	gap: 0.5rem;
+	min-height: var(--target);
+	gap: var(--space-2);
 }
 input {
 	width: auto;
 	flex: none;
-}
-@media (max-width: 32rem), (pointer: coarse) {
-	label {
-		min-height: 3rem;
-	}
 }
 </style>
