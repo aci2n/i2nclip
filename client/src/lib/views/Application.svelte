@@ -11,6 +11,14 @@ import Unlock from "./Unlock.svelte";
 const application = createApplication();
 const { session, preferences, pairing, routing } = application;
 const workspace = $derived($application.workspace);
+// The file viewer places Lock in its own header row instead of a separate one.
+const viewing = $derived(
+	$routing.page === "media" &&
+		/^[0-9a-f]{64}$/.test($routing.id) &&
+		$session.status === "unlocked" &&
+		Boolean($session.context) &&
+		Boolean(workspace),
+);
 onDestroy(application.dispose);
 application.start();
 function dragFiles(event: DragEvent) {
@@ -45,44 +53,50 @@ function pasteFiles(event: ClipboardEvent) {
 
 <svelte:window ondragover={dragFiles} ondrop={dropFiles} onpaste={pasteFiles} />
 
+{#snippet lock()}
+	<button
+		type="button"
+		class="secondary icon lock-control"
+		aria-label="Lock"
+		title="Lock"
+		onclick={() => session.lock()}
+	>
+		<svg
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+			aria-hidden="true"
+		>
+			<rect x="5" y="10" width="14" height="11" rx="2" />
+			<path d="M8 10V7a4 4 0 0 1 8 0v3" />
+		</svg>
+	</button>
+{/snippet}
+
 <main class:media={$routing.page === "media" && Boolean($session.context)}>
 	{#if $session.unlocked}
-		<header class:media-header={$routing.page === "media"}>
-			{#if $routing.page !== "media"}
-				<nav aria-label="Main navigation">
-					<a
-						href={routeHref({ page: "library" })}
-						aria-current={$routing.page === "library" ? "page" : undefined}
-						>Library</a
-					>
-					<a
-						href={routeHref({ page: "settings" })}
-						aria-current={$routing.page === "settings" ? "page" : undefined}
-						>Settings</a
-					>
-				</nav>
-			{/if}
-			<button
-				type="button"
-				class="secondary icon lock-control"
-				aria-label="Lock"
-				title="Lock"
-				onclick={() => session.lock()}
-			>
-				<svg
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					aria-hidden="true"
-				>
-					<rect x="5" y="10" width="14" height="11" rx="2" />
-					<path d="M8 10V7a4 4 0 0 1 8 0v3" />
-				</svg>
-			</button>
-		</header>
+		{#if !viewing}
+			<header class:media-header={$routing.page === "media"}>
+				{#if $routing.page !== "media"}
+					<nav aria-label="Main navigation">
+						<a
+							href={routeHref({ page: "library" })}
+							aria-current={$routing.page === "library" ? "page" : undefined}
+							>Library</a
+						>
+						<a
+							href={routeHref({ page: "settings" })}
+							aria-current={$routing.page === "settings" ? "page" : undefined}
+							>Settings</a
+						>
+					</nav>
+				{/if}
+				{@render lock()}
+			</header>
+		{/if}
 		{#if $session.notice && $routing.page !== "settings"}
 			<p class="error session-notice" role="alert">{$session.notice}</p>
 		{/if}
@@ -97,7 +111,7 @@ function pasteFiles(event: ClipboardEvent) {
 	{:else if $routing.page === "media"}
 		{#if $session.context}
 			{#if workspace}
-				<Media id={$routing.id} library={workspace.library} />
+				<Media id={$routing.id} library={workspace.library} actions={lock} />
 			{:else}
 				<p role="status">Loading library…</p>
 			{/if}
