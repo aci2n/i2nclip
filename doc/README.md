@@ -37,3 +37,6 @@ use the documents linked above for current behavior.
 - [Branch review — 2026-10-21](branch-review-2026-10-21.md): findings against
   `a70fceb` covering storage redundancy, ownership, crypto design, and security;
   observations for later review, not an implementation specification.
+- [Project audit — 2026-10-22](audit-2026-10-22.md): findings against `36e26a9`
+  covering crypto risks, reliability, usability, simplification, and a proposed
+  order for follow-up change specifications.
