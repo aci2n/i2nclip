@@ -47,7 +47,7 @@ test("compact upload summary shows progress and keeps failures visible when succ
 		).toBeVisible();
 		await expect(
 			page.getByRole("button", { name: "Upload", exact: true }),
-		).toBeDisabled();
+		).toBeEnabled();
 		await shot(page, "toolbar-uploading-320");
 	} finally {
 		waiting.resolve();

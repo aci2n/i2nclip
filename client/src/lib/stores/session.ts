@@ -178,7 +178,7 @@ class SessionStoreImpl {
 		}
 		const own = new AbortController();
 		this.command = own;
-		this.update({ busy: true, error: "", lastAction: name });
+		this.update({ busy: true, error: "", notice: "", lastAction: name });
 		try {
 			await work(own.signal);
 			own.signal.throwIfAborted();
@@ -280,6 +280,20 @@ class SessionStoreImpl {
 			}
 		});
 	}
+	private async openIdentity(
+		saved: SavedSession,
+		key: CryptoKey,
+		signal: AbortSignal,
+	) {
+		try {
+			return await openLocalIdentity(saved.encrypted, key, signal);
+		} catch (error) {
+			signal.throwIfAborted();
+			throw new Error(
+				`Wrong password or damaged saved identity. ${errorMessage(error)}`,
+			);
+		}
+	}
 	private async openSaved(key: CryptoKey, signal: AbortSignal) {
 		if (!this.saved) {
 			throw new Error("No saved session.");
@@ -292,20 +306,15 @@ class SessionStoreImpl {
 		) {
 			throw new Error("Invalid unlock key.");
 		}
-		let opened: OpenedIdentity | null;
-		try {
-			opened = await openLocalIdentity(this.saved.encrypted, key, signal);
-		} catch (error) {
-			signal.throwIfAborted();
-			throw new Error(
-				`Wrong password or damaged saved identity. ${errorMessage(error)}`,
-			);
-		}
+		const opened = await this.openIdentity(this.saved, key, signal);
 		if (signal.aborted) {
 			opened?.identity.dispose();
 			signal.throwIfAborted();
 		}
-		this.endIdentity();
+		// Ending no identity would abort work waiting for this unlock, such as a capture.
+		if (this.identityOwner) {
+			this.endIdentity();
+		}
 		this.wrapping = key;
 		if (opened) {
 			this.identityOwner = opened.identity;
@@ -666,11 +675,7 @@ class SessionStoreImpl {
 				oldPassword,
 				signal,
 			);
-			const check = await openLocalIdentity(
-				current.saved.encrypted,
-				old,
-				signal,
-			);
+			const check = await this.openIdentity(current.saved, old, signal);
 			check?.identity.dispose();
 			const identity = this.identityOwner;
 			const head = this.head;

@@ -16,7 +16,8 @@ The Rust static web layer (`src/web.rs`) sets these headers on the entry HTML
 responses (`/`, `/index.html`, `/favicon.ico`, including `304` and `404`):
 
 ```text
-Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self';
+Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval';
+  style-src 'self';
   img-src 'self' blob:; media-src 'self' blob:; worker-src 'self';
   connect-src 'self' https: http://localhost:* http://127.0.0.1:* http://[::1]:*;
   manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none';
@@ -40,6 +41,9 @@ the browser; finding A2 aligns the client's server validation with the same rule
 - Media, thumbnails, and backup downloads use `blob:` URLs; streamed playback goes
   through the same-origin service worker (`/streaming-worker.js`).
 - Inline source maps are data embedded in JavaScript, not loaded resources.
+- Pairing uses `@serenity-kit/opaque`, which compiles WebAssembly at load.
+  `'wasm-unsafe-eval'` permits only WebAssembly compilation; JavaScript `eval`
+  and inline scripts stay blocked.
 
 ## Exclusions
 

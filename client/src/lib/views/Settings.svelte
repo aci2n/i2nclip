@@ -30,6 +30,9 @@ const busy = $derived($session.busy || $pairing.active);
 				<a href={routeHref({ page: "library" })}>Set up your library</a>
 				to start saving encrypted media.
 			</p>
+			{#if $session.lastAction === "forget" && $session.error}
+				<p class="error" role="alert">{$session.error}</p>
+			{/if}
 		</section>
 	{:else}
 		<section class="panel stack">

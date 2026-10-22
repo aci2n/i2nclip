@@ -203,7 +203,9 @@ test("invalid remembered access permits password savedBackup and damaged storage
 						const read = store.get("session");
 						read.onsuccess = () =>
 							store.put(
-								invalidKey ? { ...read.result, key: "invalid" } : null,
+								invalidKey
+									? { ...read.result, key: "invalid" }
+									: { ...read.result, salt: "invalid" },
 								"session",
 							);
 						tx.oncomplete = () => {
@@ -235,9 +237,9 @@ test("invalid remembered access permits password savedBackup and damaged storage
 	).toBeVisible();
 	await damageSession(false);
 	await page.reload();
-	await expect(page.getByRole("alert")).toContainText("Invalid saved identity");
+	await expect(page.getByRole("alert")).toContainText("Invalid saved session");
 	await page.getByRole("button", { name: "Retry", exact: true }).click();
-	await expect(page.getByRole("alert")).toContainText("Invalid saved identity");
+	await expect(page.getByRole("alert")).toContainText("Invalid saved session");
 	await shot(page, "storage-error-360");
 	await page.getByText("Reset this client", { exact: true }).click();
 	page.once("dialog", (dialog) => dialog.accept());

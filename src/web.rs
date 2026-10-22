@@ -43,7 +43,9 @@ pub(crate) fn serve(api: Router, directory: PathBuf) -> Router {
 }
 
 /// Any same-origin script holds full library authority; see doc/content-security-policy.md.
-const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
+/// `wasm-unsafe-eval` admits only WebAssembly compilation, which the pairing PAKE requires.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; \
+script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; \
 img-src 'self' blob:; media-src 'self' blob:; worker-src 'self'; \
 connect-src 'self' https: http://localhost:* http://127.0.0.1:* http://[::1]:*; \
 manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; \
@@ -208,7 +210,7 @@ mod tests {
         let directives: Vec<&str> = policy.split("; ").collect();
         for directive in [
             "default-src 'none'",
-            "script-src 'self'",
+            "script-src 'self' 'wasm-unsafe-eval'",
             "style-src 'self'",
             "object-src 'none'",
             "base-uri 'none'",
@@ -216,7 +218,7 @@ mod tests {
         ] {
             assert!(directives.contains(&directive), "{directive} in {policy}");
         }
-        assert!(!policy.contains("unsafe"));
+        assert!(!policy.contains("'unsafe-"));
         assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
         assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
     }

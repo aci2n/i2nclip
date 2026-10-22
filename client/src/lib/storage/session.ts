@@ -120,6 +120,10 @@ class SessionStorageImpl {
 		key: CryptoKey | null,
 		signal: AbortSignal,
 	) {
+		// Rewriting an unchanged session would invalidate other tabs' revisions.
+		if (!key && !saved.key) {
+			return saved;
+		}
 		const next: SavedSession = {
 			revision: crypto.randomUUID(),
 			salt: saved.salt,

@@ -73,8 +73,10 @@ test("an upload survives navigation through Settings", async ({
 		await page.getByRole("link", { name: "Settings", exact: true }).click();
 		await page.getByRole("link", { name: "Library", exact: true }).click();
 		await expect(
-			page.getByRole("button", { name: "Upload", exact: true }),
-		).toBeDisabled();
+			page
+				.getByRole("region", { name: "Uploads", exact: true })
+				.getByRole("status"),
+		).toContainText("Uploading");
 		pending.resolve();
 		await expect(
 			page

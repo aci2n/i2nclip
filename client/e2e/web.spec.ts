@@ -105,7 +105,8 @@ test("web library uploads, edits tags, searches, verifies downloads, and deletes
 	await expect(
 		page.getByRole("heading", { name: "No files match your search" }),
 	).toBeVisible();
-	await page.getByRole("button", { name: "Clear search" }).click();
+	// The empty state's action, beside the search bar's own Clear search.
+	await page.getByRole("button", { name: "Clear search" }).last().click();
 	await expect(card).toHaveCount(1);
 	const downloading = page.waitForEvent("download");
 	await card.getByRole("button", { name: "Download", exact: true }).click();
@@ -466,13 +467,19 @@ test("pairing shares library credentials only after explicit verification", asyn
 			.getByRole("button", { name: "Codes match — send library", exact: true })
 			.click();
 		await expect(
-			receiver.getByRole("heading", { name: "Your library", exact: true }),
+			receiver.getByRole("heading", {
+				name: "Your library is empty",
+				exact: true,
+			}),
 		).toBeVisible();
 		await expect(page.getByRole("status")).toHaveText("New device connected.");
 		await receiver.reload();
 		await master(receiver);
 		await expect(
-			receiver.getByRole("heading", { name: "Your library", exact: true }),
+			receiver.getByRole("heading", {
+				name: "Your library is empty",
+				exact: true,
+			}),
 		).toBeVisible();
 	} finally {
 		await context.close();

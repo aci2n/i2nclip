@@ -63,9 +63,7 @@ test("verified history projects edits, deletion, restoration and permanent purge
 		.getByRole("button", { name: "Deleted files", exact: true })
 		.click();
 	await expect(card).toHaveCount(1);
-	await card
-		.getByRole("button", { name: "Restore backup", exact: true })
-		.click();
+	await card.getByRole("button", { name: "Restore", exact: true }).click();
 	await expect(card).toHaveCount(0);
 	await page.getByRole("button", { name: "Files", exact: true }).click();
 	await expect(card).toHaveCount(1);

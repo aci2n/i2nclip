@@ -106,6 +106,21 @@ test("creation persists credentials before publication and gates on credential b
 	assert.equal(get(f.session).backup, null);
 });
 
+test("action notices end when the next action starts", async (t) => {
+	const f = fixture(t);
+	await initialize(f);
+	Object.defineProperty(navigator, "clipboard", {
+		value: { writeText: async () => {} },
+		configurable: true,
+	});
+	t.after(() => Reflect.deleteProperty(navigator, "clipboard"));
+	assert(await f.session.copyBackupPassword());
+	assert.match(get(f.session).notice, /Backup password copied/);
+	await register(f);
+	assert(get(f.session).configured);
+	assert.equal(get(f.session).notice, "");
+});
+
 test("backup restore recovers the existing identity without registration or chain mutation", async (t) => {
 	const f = fixture(t);
 	await initialize(f);
