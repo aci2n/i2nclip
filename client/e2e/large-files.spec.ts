@@ -56,19 +56,20 @@ async function resourceSample() {
 	return { browserKiB, serverKiB };
 }
 
-test("encrypted upload and native download above 1 GiB survive view navigation", async ({
+test("encrypted multi-chunk upload and native download survive view navigation", async ({
 	page,
 	app,
 }, info) => {
-	test.setTimeout(600_000);
 	await mkdir(path.join(root, "client/dist"), { recursive: true });
 	const directory = await mkdtemp(path.join(root, "client/dist/large-files-"));
 	let monitor: Promise<void> | undefined;
 	const monitoring = new AbortController();
 	try {
-		const filename = path.join(directory, "Gigabyte.bin");
+		const filename = path.join(directory, "Large.bin");
 		const file = await open(filename, "w");
-		const size = 1024 ** 3 + 123;
+		// Sixteen full 4 MiB chunks and a partial one, above the 32 MiB preprocessing
+		// cutoff. Larger offsets are covered by generated sources in streaming.spec.ts.
+		const size = 64 * 1024 ** 2 + 123;
 		try {
 			const block = Buffer.alloc(1024 * 1024);
 			for (let i = 0; i < block.length; i++) {
@@ -84,7 +85,7 @@ test("encrypted upload and native download above 1 GiB survive view navigation",
 			await file.close();
 		}
 		const expected = await digest(filename);
-		await createLibrary(page, app, 2 * 1024 ** 3);
+		await createLibrary(page, app, 128 * 1024 ** 2);
 		await page.getByRole("link", { name: "Library", exact: true }).click();
 		const baseline = await resourceSample();
 		const peak = { browserKiB: 0, serverKiB: 0 };
@@ -105,8 +106,21 @@ test("encrypted upload and native download above 1 GiB survive view navigation",
 		// can copy ciphertext into the test runner independently of app memory.
 		await page.getByLabel("Upload", { exact: true }).setInputFiles(filename);
 		const card = page.getByRole("article");
-		await expect(card).toHaveCount(1, { timeout: 300_000 });
+		await expect(card).toHaveCount(1, { timeout: 60_000 });
 		await expect(page.getByText(/Uploading original file/)).toBeVisible();
+		// Hold the second content chunk until navigation so the transfer is still
+		// in progress when the view changes. Routing continues without copying bodies.
+		const navigated = Promise.withResolvers<void>();
+		let chunkReads = 0;
+		await page.route(
+			/\/api\/blobs\/[0-9a-f]{64}\/[0-9a-f]{64}$/,
+			async (route) => {
+				if (route.request().method() === "GET" && ++chunkReads === 2) {
+					await navigated.promise;
+				}
+				await route.continue();
+			},
+		);
 		const saving = page.waitForEvent("download");
 		const reading = page.waitForRequest(
 			(request) =>
@@ -119,6 +133,7 @@ test("encrypted upload and native download above 1 GiB survive view navigation",
 		const download = await saving;
 		await reading;
 		await page.getByRole("link", { name: "Settings", exact: true }).click();
+		navigated.resolve();
 		expect(await download.failure()).toBeNull();
 		const saved = await download.path();
 		if (!saved) {

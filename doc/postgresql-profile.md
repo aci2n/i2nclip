@@ -33,9 +33,10 @@ RSS was 8,148 KiB; the sampled peak was 169,364 KiB and process high-water mark
 not memory or latency guarantees. PostgreSQL's summed peak RSS was 1,212,404 KiB
 (shared pages counted repeatedly); the Node load generator peaked at 433,408 KiB.
 
-`large-files.spec.ts` additionally verifies a real encrypted 1 GiB + 123-byte
+`large-files.spec.ts` additionally verifies a real encrypted 64 MiB + 123-byte
 upload and native download in each browser, checks the downloaded file's size
-and streamed SHA-256, and navigates during the download. On Linux it attaches
+and streamed SHA-256, and navigates while a content chunk is held. The size was
+reduced from 1 GiB; see [large-file test size](large-file-test-size.md). On Linux it attaches
 baseline and sampled peak browser process-tree/server RSS as `transfer-resources`.
 Browser RSS sums include shared pages repeatedly and automation/browser overhead;
 they do not isolate JavaScript buffers or the decoder. Source fixtures are written

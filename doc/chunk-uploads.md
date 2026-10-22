@@ -185,7 +185,8 @@ Then verify:
   deletion/maintenance races, expiry boundaries and reservation invariants.
 - Client: sequential slicing, bounded buffers, progress, preprocessing notices,
   batch continuation, cancellation and no stale URLs/save actions after disposal.
-- Browsers: gigabyte-scale upload/download with complete byte checks;
+- Browsers: gigabyte-scale upload/download with complete byte checks (the real
+  upload is now 64 MiB; see [large-file test size](large-file-test-size.md));
   audio/video start before complete download, forward/backward seeking including
   tail-indexed MP4, direct links and navigation during downloads.
 - Build/hosting: worker emitted and served with correct type/scope/cache policy;

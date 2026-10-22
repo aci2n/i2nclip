@@ -19,6 +19,7 @@ contract, the current contract takes precedence.
 - [Resource profiling](postgresql-profile.md): optional measurements and reproduction.
 - [Improvement priorities](priorities.md): open topics requiring separate specifications.
 - [Chunk uploads specification](chunk-uploads.md): independently encrypted chunks and browser streaming; implemented.
+- [Large-file test size](large-file-test-size.md): bounded browser transfer fixture and its coverage rationale.
 - [Transfer and shutdown deadlines](transfer-shutdown-proposal.md): implemented resource and shutdown limits.
 - Historical: [cryptography](crypto.md), [client ownership](session.md),
   [IndexedDB sessions](indexeddb-session.md), [device pairing](pairing.md)
