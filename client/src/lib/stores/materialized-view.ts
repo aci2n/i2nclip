@@ -27,6 +27,8 @@ export interface SelectedFile {
 	readonly metadata: FileMetadata;
 	readonly revision: number;
 }
+// The server admits two concurrent downloads per library key.
+const INDEX_CONCURRENCY = 2;
 function referenceKey(file: MaterializedFile) {
 	return `${bytesToHex(file.metadata.hash)}:${bytesToHex(file.metadata.key)}`;
 }
@@ -221,29 +223,44 @@ class MaterializedViewImpl {
 	private async runIndex(
 		files: readonly MaterializedFile[],
 		revision: number,
-		signal: AbortSignal,
+		outer: AbortSignal,
 	) {
+		// One stopped worker stops the other before it starts another read.
+		const controller = new AbortController();
+		const signal = AbortSignal.any([outer, controller.signal]);
+		let next = 0;
 		let indexed = 0;
 		const errors = new Map<string, string>();
-		for (const file of files) {
-			signal.throwIfAborted();
-			const id = bytesToHex(file.id);
-			try {
-				await this.readSelectedFile(id, signal);
-			} catch (error) {
+		const worker = async () => {
+			while (next < files.length) {
 				signal.throwIfAborted();
-				errors.set(id, errorMessage(error));
+				const id = bytesToHex(files[next++].id);
+				try {
+					await this.readSelectedFile(id, signal);
+				} catch (error) {
+					signal.throwIfAborted();
+					errors.set(id, errorMessage(error));
+				}
+				signal.throwIfAborted();
+				indexed++;
+				if (get(this.state).revision !== revision) {
+					throw new DOMException(
+						"Selected library state changed.",
+						"AbortError",
+					);
+				}
+				this.state.update((state) => ({
+					...state,
+					indexed,
+					errors: new Map(errors),
+				}));
 			}
-			signal.throwIfAborted();
-			indexed++;
-			if (get(this.state).revision !== revision) {
-				throw new DOMException("Selected library state changed.", "AbortError");
-			}
-			this.state.update((state) => ({
-				...state,
-				indexed,
-				errors: new Map(errors),
-			}));
+		};
+		try {
+			await Promise.all(Array.from({ length: INDEX_CONCURRENCY }, worker));
+		} catch (error) {
+			controller.abort();
+			throw error;
 		}
 		signal.throwIfAborted();
 		this.state.update((state) => ({

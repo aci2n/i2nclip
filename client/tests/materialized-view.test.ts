@@ -122,6 +122,37 @@ test("metadata indexing distinguishes unavailable data from an empty or complete
 	assert.equal(get(view).metadata.size, 0);
 });
 
+test("metadata indexing uses both download slots without exceeding them", async (t) => {
+	const files = [10, 20, 30, 40, 50].map(file);
+	const failing = bytesToHex(files[2].id);
+	let active = 0;
+	let peak = 0;
+	const view = createMaterializedView(
+		chain(source(files)).store,
+		{
+			metadata: async (file) => {
+				active++;
+				peak = Math.max(peak, active);
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				active--;
+				const id = bytesToHex(file.id);
+				if (id === failing) {
+					throw new Error("Missing ciphertext");
+				}
+				return { attributes: { name: id }, thumbnail: null };
+			},
+		},
+		new AbortController().signal,
+	);
+	t.after(view.dispose);
+	await view.index();
+	assert.equal(peak, 2);
+	assert.equal(get(view).indexed, 5);
+	assert.equal(get(view).metadata.size, 4);
+	assert.deepEqual([...get(view).errors.keys()], [failing]);
+	assert.equal(get(view).complete, false);
+});
+
 test("cache reuse requires both metadata hash and key and purge clears decrypted metadata", async (t) => {
 	const first = file(1);
 	const live = chain(source([first]));
