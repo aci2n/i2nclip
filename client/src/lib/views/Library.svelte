@@ -4,6 +4,7 @@ import HistorySelector from "../components/HistorySelector.svelte";
 import LibrarySearch from "../components/LibrarySearch.svelte";
 import MediaCard from "../components/MediaCard.svelte";
 import MediaDialog from "../components/MediaDialog.svelte";
+import TagSuggestions from "../components/TagSuggestions.svelte";
 import UploadStatus from "../components/Uploads.svelte";
 import type { ChainStore } from "../stores/chain.ts";
 import type { Library } from "../stores/library.ts";
@@ -43,11 +44,7 @@ function movePreview(step: number) {
 />
 <div class="toolbar">
 	<div class="search">
-		<LibrarySearch
-			query={$library.query}
-			suggestions={$library.suggestions}
-			onsearch={library.search}
-		/>
+		<LibrarySearch query={$library.query} onsearch={library.search} />
 	</div>
 	<div class="cluster">
 		<button
@@ -75,6 +72,14 @@ function movePreview(step: number) {
 		onchange={(event) => selectFiles(event, uploads.upload)}
 	>
 </div>
+{#if $library.suggestions.length}
+	<div class="suggestions">
+		<TagSuggestions
+			suggestions={$library.suggestions}
+			onsearch={library.search}
+		/>
+	</div>
+{/if}
 <fieldset class="cluster scope" aria-label="File collection">
 	<button
 		type="button"
@@ -188,6 +193,7 @@ function movePreview(step: number) {
 	flex: 1 1 22rem;
 	min-width: 0;
 }
+.suggestions,
 .scope {
 	margin-bottom: var(--space-4);
 }

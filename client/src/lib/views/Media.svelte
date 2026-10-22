@@ -1,4 +1,5 @@
 <script lang="ts">
+import type { Snippet } from "svelte";
 import { onDestroy } from "svelte";
 import MediaViewer from "../components/MediaViewer.svelte";
 import type { Library } from "../stores/library.ts";
@@ -6,8 +7,9 @@ import type { Library } from "../stores/library.ts";
 interface Props {
 	id: string;
 	library: Library;
+	actions?: Snippet;
 }
-let { id, library }: Props = $props();
+let { id, library, actions }: Props = $props();
 $effect(() => {
 	void library.reveal(id);
 });
@@ -23,4 +25,5 @@ onDestroy(() => library.closePreview());
 	}}
 	onretry={() => library.reveal(id)}
 	ondownload={() => library.download(id)}
+	{actions}
 />

@@ -1,4 +1,5 @@
 <script lang="ts">
+import type { Snippet } from "svelte";
 import type { MediaDisplay } from "../media/display.ts";
 import { routeHref } from "../routes.ts";
 import MediaContent from "./MediaContent.svelte";
@@ -7,8 +8,9 @@ interface Props {
 	value: { media: MediaDisplay | null; loading: boolean; error: string };
 	onretry: () => void;
 	ondownload: () => void;
+	actions?: Snippet;
 }
-let { value, onretry, ondownload }: Props = $props();
+let { value, onretry, ondownload, actions }: Props = $props();
 const media = $derived(value.media);
 const name = $derived(media?.metadata?.name || media?.id || "Open file");
 const error = $derived(value.error || (media?.error ? media.message : ""));
@@ -27,6 +29,7 @@ const ready = $derived(!value.loading && !error && Boolean(media?.ready));
 		>
 			Download
 		</button>
+		{@render actions?.()}
 	</header>
 	{#if value.loading}
 		<div class="status stack" role="status">
