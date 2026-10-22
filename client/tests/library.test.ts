@@ -109,6 +109,9 @@ async function fixture(t: test.TestContext) {
 		upload: async () => {
 			throw new Error("Unused");
 		},
+		checkQuota: async () => {
+			throw new Error("Unused");
+		},
 		metadata: async (file) => {
 			const value = metadata.get(file.metadata.hash[0]);
 			assert.ok(value);

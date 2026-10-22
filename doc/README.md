@@ -33,6 +33,7 @@ Implemented specifications whose behavior is still current:
 [password guidance](password-guidance.md),
 [metadata index concurrency](metadata-index-concurrency.md),
 [backup and purge format](backup-and-purge-format.md),
+[upload quota owner](upload-quota-owner.md),
 [storage query cleanup](storage-query-cleanup.md),
 [hash routing](hash-routing.md), [typed routes](typed-route-table.md),
 [file drop](file-drop.md), [upload simplification](upload-simplification.md),

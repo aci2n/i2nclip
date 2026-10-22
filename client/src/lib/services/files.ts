@@ -89,6 +89,7 @@ class FilesImpl {
 	private readonly controller = new AbortController();
 	private readonly signal: AbortSignal;
 	readonly upload = this.uploadFile.bind(this);
+	readonly checkQuota = this.checkFileQuota.bind(this);
 	readonly metadata = this.readMetadata.bind(this);
 	readonly manifest = this.readManifest.bind(this);
 	readonly thumbnail = this.readThumbnail.bind(this);
@@ -241,18 +242,27 @@ class FilesImpl {
 			throw error;
 		}
 	}
+	private async checkFileQuota(size: number, signal: AbortSignal) {
+		await this.quotaFor(size, this.combined(signal));
+	}
+	/** The current quota, after checking a file slot and room for the encrypted content. */
+	private async quotaFor(size: number, signal: AbortSignal) {
+		const quota = await this.api.quota(signal);
+		signal.throwIfAborted();
+		if (
+			quota.retainedFiles >= quota.maximumFiles ||
+			contentShape(size).encryptedBytes > quota.maximumBytes - quota.usedBytes
+		) {
+			throw new Error("This file exceeds the available storage quota.");
+		}
+		return quota;
+	}
 	private async uploadFile(options: FileUpload) {
 		const { file, onProgress } = options;
 		const signal = this.combined(options.signal);
 		const manifestBytes = manifestSize(file.size);
 		const shape = contentShape(file.size);
-		const quota = await this.api.quota(signal);
-		if (
-			quota.retainedFiles >= quota.maximumFiles ||
-			shape.encryptedBytes > quota.maximumBytes - quota.usedBytes
-		) {
-			throw new Error("This file exceeds the available storage quota.");
-		}
+		const quota = await this.quotaFor(file.size, signal);
 		const prefix = new Uint8Array(await file.slice(0, 512).arrayBuffer());
 		signal.throwIfAborted();
 		const attributes: Metadata = {

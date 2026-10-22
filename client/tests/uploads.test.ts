@@ -61,13 +61,15 @@ async function fixture(t: test.TestContext, uninitialized = false) {
 	await preferences.load();
 	return { session, view, preferences, context, state };
 }
-const quota = {
-	maximumBytes: 1024 * 1024,
-	maximumFiles: 100,
-	usedBytes: 0,
-	retainedFiles: 0,
-	logBytes: 0,
-};
+/** A quota check that admits files up to `limit` plaintext bytes. */
+function quota(limit = 1024 * 1024, onRead = () => {}) {
+	return async (size: number) => {
+		onRead();
+		if (size > limit) {
+			throw new Error("This file exceeds the available storage quota.");
+		}
+	};
+}
 
 test("uploads continue after individual failures and ignore late progress", async (t) => {
 	const f = await fixture(t);
@@ -89,12 +91,7 @@ test("uploads continue after individual failures and ignore late progress", asyn
 				}
 				return { id: "ab".repeat(32) };
 			},
-		},
-		{
-			quota: async () => {
-				reads++;
-				return quota;
-			},
+			checkQuota: quota(undefined, () => reads++),
 		},
 		f.preferences,
 		f.context.signal,
@@ -131,12 +128,9 @@ test("unsupported local sizes are rejected before preparation or quota reads", a
 	const uploads = createUploads(
 		f.session,
 		f.view,
-		{ upload: async () => ({ id: "unused" }) },
 		{
-			quota: async () => {
-				reads++;
-				return quota;
-			},
+			upload: async () => ({ id: "unused" }),
+			checkQuota: quota(undefined, () => reads++),
 		},
 		f.preferences,
 		f.context.signal,
@@ -170,8 +164,8 @@ test("selecting a historical view cancels preparation and prevents publishing", 
 				published++;
 				return { id: "unused" };
 			},
+			checkQuota: quota(),
 		},
-		{ quota: async () => quota },
 		f.preferences,
 		f.context.signal,
 		{
@@ -210,8 +204,8 @@ test("bounded eligible compression can bring an oversized image under quota befo
 				assert.equal(options.attributes.name, "small.webp");
 				return { id: "ab".repeat(32) };
 			},
+			checkQuota: quota(1000),
 		},
-		{ quota: async () => ({ ...quota, maximumBytes: 1000 }) },
 		f.preferences,
 		f.context.signal,
 		{
@@ -271,8 +265,8 @@ test("a capture received on unlock waits for initial verified materialization", 
 				uploads++;
 				return { id: "ab".repeat(32) };
 			},
+			checkQuota: quota(),
 		},
-		{ quota: async () => quota },
 		f.preferences,
 		f.context.signal,
 		{ prepare: async ({ file }) => file, thumbnail: async () => null },

@@ -211,6 +211,12 @@ test("quota and manifest preflight reject a source before its bytes are read", a
 	assert.equal(reads, 0);
 	assert.equal(f.blobs.size, 0);
 	assert.equal(f.mutations.length, 0);
+	await assert.rejects(f.files.checkQuota(16, f.controller.signal), /quota/);
+	f.quota.maximumBytes = 512 * 1024 * 1024;
+	await f.files.checkQuota(16, f.controller.signal);
+	f.quota.retainedFiles = f.quota.maximumFiles;
+	await assert.rejects(f.files.checkQuota(0, f.controller.signal), /quota/);
+	f.quota.retainedFiles = 0;
 	const enormous = new Blob();
 	Object.defineProperty(enormous, "size", { value: 10 ** 15 });
 	await assert.rejects(

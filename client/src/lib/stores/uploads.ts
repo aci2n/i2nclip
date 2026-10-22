@@ -4,11 +4,9 @@ import { canCompressImage } from "../media/image.ts";
 import { PREPARATION_BYTES, prepareFile } from "../media/prepare.ts";
 import { thumbnail } from "../media/thumbnail.ts";
 import type { UploadState } from "../media/upload-state.ts";
-import { contentShape } from "../protocol/content.ts";
 import { manifestSize } from "../protocol/file-objects.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import type { Files } from "../services/files.ts";
-import type { ChainApi } from "../services/library-api.ts";
 import type { MaterializedView } from "./materialized-view.ts";
 import type { Preferences } from "./preferences.ts";
 import type { Session } from "./session.ts";
@@ -37,27 +35,17 @@ export type Uploads = ReturnType<typeof createUploads>;
 export function createUploads(
 	session: Session,
 	view: MaterializedView,
-	files: Pick<Files, "upload">,
-	api: Pick<ChainApi, "quota">,
+	files: Pick<Files, "upload" | "checkQuota">,
 	preferences: Preferences,
 	signal: AbortSignal,
 	services: Services = {},
 ): Pick<UploadsImpl, keyof UploadsImpl> {
-	return new UploadsImpl(
-		session,
-		view,
-		files,
-		api,
-		preferences,
-		signal,
-		services,
-	);
+	return new UploadsImpl(session, view, files, preferences, signal, services);
 }
 class UploadsImpl {
 	private readonly session: Session;
 	private readonly view: MaterializedView;
-	private readonly files: Pick<Files, "upload">;
-	private readonly api: Pick<ChainApi, "quota">;
+	private readonly files: Pick<Files, "upload" | "checkQuota">;
 	private readonly preferences: Preferences;
 	private readonly prepare: typeof prepareFile;
 	private readonly thumbnail: typeof thumbnail;
@@ -75,8 +63,7 @@ class UploadsImpl {
 	constructor(
 		session: Session,
 		view: MaterializedView,
-		files: Pick<Files, "upload">,
-		api: Pick<ChainApi, "quota">,
+		files: Pick<Files, "upload" | "checkQuota">,
 		preferences: Preferences,
 		signal: AbortSignal,
 		services: Services,
@@ -84,7 +71,6 @@ class UploadsImpl {
 		this.session = session;
 		this.view = view;
 		this.files = files;
-		this.api = api;
 		this.preferences = preferences;
 		this.prepare = services.prepare ?? prepareFile;
 		this.thumbnail = services.thumbnail ?? thumbnail;
@@ -165,19 +151,13 @@ class UploadsImpl {
 				let thumb: Awaited<ReturnType<typeof thumbnail>> = null;
 				try {
 					manifestSize(file.size);
-					const shape = contentShape(file.size);
-					const quota = await this.api.quota(signal);
-					signal.throwIfAborted();
-					if (
-						quota.retainedFiles >= quota.maximumFiles ||
-						(shape.encryptedBytes > quota.maximumBytes - quota.usedBytes &&
-							!(
-								compressImages &&
-								file.size <= PREPARATION_BYTES &&
-								canCompressImage(file)
-							))
-					) {
-						throw new Error("This file exceeds the available storage quota.");
+					// An eligible image's compressed size decides whether it fits.
+					const compressible =
+						compressImages &&
+						file.size <= PREPARATION_BYTES &&
+						canCompressImage(file);
+					if (!compressible) {
+						await this.files.checkQuota(file.size, signal);
 					}
 					if (!get(this.view).selected || !this.allowed()) {
 						throw new Error("Upload requires the live view.");
@@ -189,11 +169,8 @@ class UploadsImpl {
 						onNotice: this.notice.bind(this, current),
 					});
 					signal.throwIfAborted();
-					if (
-						contentShape(prepared.size).encryptedBytes >
-						quota.maximumBytes - quota.usedBytes
-					) {
-						throw new Error("This file exceeds the available storage quota.");
+					if (compressible) {
+						await this.files.checkQuota(prepared.size, signal);
 					}
 					current.name = prepared.name;
 					this.progress(current, "preparing", 0);

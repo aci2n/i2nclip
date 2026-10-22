@@ -78,7 +78,6 @@ class WorkspaceImpl {
 			session,
 			this.view,
 			this.files,
-			this.api,
 			preferences,
 			context.signal,
 			{ settled: this.quota.refresh },
