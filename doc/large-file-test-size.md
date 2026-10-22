@@ -31,10 +31,12 @@ above the 32 MiB preprocessing cutoff.
 
 - Write the fixture in bounded blocks beneath ignored `client/dist/`, remove it
   in `finally`, and verify size and streamed SHA-256 of the native download.
-- Route content chunk GETs with `continue`; the second one waits until the
-  Settings navigation has been clicked, so navigation always precedes download
-  completion. The first passes so the browser can start the native download.
-  No response bodies are fulfilled or copied by the route.
+- Route blob GETs (the manifest, then each content chunk) with `continue`; the
+  final chunk waits until the Settings navigation has been clicked, so
+  navigation always precedes download completion. Earlier chunks pass because
+  Firefox reads ahead before it announces the native download. The test asserts
+  the exact read count so the hold cannot silently miss. No response bodies are
+  fulfilled or copied by the route.
 - Keep the 32 MiB preprocessing notice, quota count and resource attachment.
 - Use the default test timeout and a 60-second upload wait instead of the
   600- and 300-second limits sized for 1 GiB. Size the quota at 128 MiB.

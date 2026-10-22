@@ -108,14 +108,17 @@ test("encrypted multi-chunk upload and native download survive view navigation",
 		const card = page.getByRole("article");
 		await expect(card).toHaveCount(1, { timeout: 60_000 });
 		await expect(page.getByText(/Uploading original file/)).toBeVisible();
-		// Hold the second content chunk until navigation so the transfer is still
-		// in progress when the view changes. Routing continues without copying bodies.
+		// Hold the final content chunk until navigation so the transfer is still
+		// in progress when the view changes. Firefox reads ahead before announcing
+		// the download. Reads are the manifest, then each chunk; routing continues
+		// without copying bodies.
 		const navigated = Promise.withResolvers<void>();
+		const reads = 1 + Math.ceil(size / (4 * 1024 * 1024));
 		let chunkReads = 0;
 		await page.route(
 			/\/api\/blobs\/[0-9a-f]{64}\/[0-9a-f]{64}$/,
 			async (route) => {
-				if (route.request().method() === "GET" && ++chunkReads === 2) {
+				if (route.request().method() === "GET" && ++chunkReads === reads) {
 					await navigated.promise;
 				}
 				await route.continue();
@@ -139,6 +142,7 @@ test("encrypted multi-chunk upload and native download survive view navigation",
 		if (!saved) {
 			throw new Error("Missing native download.");
 		}
+		expect(chunkReads).toBe(reads);
 		expect((await stat(saved)).size).toBe(size);
 		expect(await digest(saved)).toBe(expected);
 		await info.attach("transfer-resources", {
