@@ -248,5 +248,8 @@ files per library; operators change them with `i2nclip key set-limits`.
   cannot protect against the serving origin itself.
 - **Local protection** is the master password (PBKDF2-SHA256, 600,000
   iterations); a copied browser profile allows offline guessing.
+- **Pairing availability** is best effort. A global join limit bounds
+  room-ID guessing, so a flood of joins can delay pairing, and the first joiner
+  occupies a room; OPAQUE and the verification codes still protect the transfer.
 - **Purge** removes stored objects but cannot prove erasure from backups,
   caches, or copies on other browsers.
