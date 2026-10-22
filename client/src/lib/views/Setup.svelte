@@ -80,7 +80,7 @@ const busy = $derived($session.busy || $pairing.active);
 			Forget this browser
 		</button>
 	{:else}
-		<fieldset class="choices" aria-label="Setup method">
+		<fieldset class="cluster" aria-label="Setup method">
 			{#each ["create", "restore", "pair"] as choice}
 				<button
 					type="button"
@@ -100,7 +100,7 @@ const busy = $derived($session.busy || $pairing.active);
 		{#if mode !== "restore"}
 			<details>
 				<summary>Server configuration</summary>
-				<label class="field content"
+				<label class="field"
 					>Server<input
 						type="url"
 						bind:value={server}
@@ -180,14 +180,14 @@ const busy = $derived($session.busy || $pairing.active);
 	{/if}
 	<details>
 		<summary>Reset this browser</summary>
-		<div class="stack content">
+		<div class="stack">
 			<p>
 				Remove the saved library access and cached data from this browser. Files
 				on the server are not affected.
 			</p>
 			<button
 				type="button"
-				class="secondary danger"
+				class="danger"
 				disabled={busy}
 				onclick={() => {
 					if (confirm("Remove saved library access from this browser?")) {
@@ -201,25 +201,9 @@ const busy = $derived($session.busy || $pairing.active);
 	</details>
 </section>
 <style>
-fieldset {
-	border: 0;
-	padding: 0;
-	min-width: 0;
-}
 .setup {
 	max-width: 42rem;
 	margin: auto;
-}
-.choices {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.5rem;
-}
-.choices button[aria-pressed="true"] {
-	outline: 2px solid var(--accent);
-}
-.content {
-	margin-top: 1rem;
 }
 .confirm {
 	display: flex;

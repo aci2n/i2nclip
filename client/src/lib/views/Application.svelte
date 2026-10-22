@@ -64,7 +64,7 @@ function pasteFiles(event: ClipboardEvent) {
 			{/if}
 			<button
 				type="button"
-				class="secondary lock-control"
+				class="secondary icon lock-control"
 				aria-label="Lock"
 				title="Lock"
 				onclick={() => session.lock()}
@@ -140,12 +140,6 @@ function pasteFiles(event: ClipboardEvent) {
 .lock-control {
 	grid-column: 3;
 	justify-self: end;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 3rem;
-	height: 3rem;
-	padding: 0.5rem;
 }
 .lock-control svg {
 	width: 1.25rem;

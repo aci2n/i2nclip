@@ -63,8 +63,3 @@ function submit(event: SubmitEvent) {
 		{/if}
 	</form>
 </details>
-<style>
-form {
-	margin-top: 1rem;
-}
-</style>

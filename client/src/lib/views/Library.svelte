@@ -49,7 +49,7 @@ function movePreview(step: number) {
 			onsearch={library.search}
 		/>
 	</div>
-	<div class="actions">
+	<div class="cluster">
 		<button
 			type="button"
 			class="secondary"
@@ -75,7 +75,7 @@ function movePreview(step: number) {
 		onchange={(event) => selectFiles(event, uploads.upload)}
 	>
 </div>
-<fieldset class="scope" aria-label="File collection">
+<fieldset class="cluster scope" aria-label="File collection">
 	<button
 		type="button"
 		class="secondary"
@@ -177,11 +177,6 @@ function movePreview(step: number) {
 	onclose={library.closePreview}
 />
 <style>
-fieldset {
-	border: 0;
-	padding: 0;
-	min-width: 0;
-}
 .toolbar {
 	display: flex;
 	align-items: end;
@@ -193,17 +188,8 @@ fieldset {
 	flex: 1 1 22rem;
 	min-width: 0;
 }
-.actions,
-.scope {
-	display: flex;
-	gap: 0.5rem;
-	flex-wrap: wrap;
-}
 .scope {
 	margin-bottom: 1rem;
-}
-.scope button[aria-pressed="true"] {
-	outline: 2px solid var(--accent);
 }
 .results {
 	display: grid;

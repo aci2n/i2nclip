@@ -50,16 +50,6 @@ let { open, onclose }: Props = $props();
 <style>
 dialog {
 	width: 32rem;
-	max-width: calc(100% - 2rem);
-	max-height: calc(100% - 2rem);
-	padding: 1.5rem;
-	border: 1px solid var(--line);
-	border-radius: 0.6rem;
-	background: var(--paper);
-	color: inherit;
-}
-dialog::backdrop {
-	background: #000b;
 }
 a {
 	overflow-wrap: anywhere;

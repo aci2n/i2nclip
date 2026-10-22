@@ -100,7 +100,7 @@ const source = $derived.by(() => {
 			<p class="identifier">{media.id}</p>
 		</div>
 	</details>
-	<div class="actions">
+	<div class="cluster actions">
 		<a
 			class="button secondary"
 			target="_blank"
@@ -127,7 +127,7 @@ const source = $derived.by(() => {
 				Restore
 			</button><button
 				type="button"
-				class="secondary danger"
+				class="danger"
 				onclick={onpurge}
 				disabled={readonly || media.busy || media.unavailable}
 			>
@@ -136,7 +136,7 @@ const source = $derived.by(() => {
 		{:else}
 			<button
 				type="button"
-				class="secondary danger"
+				class="danger"
 				onclick={onremove}
 				disabled={readonly || media.busy || media.unavailable}
 			>
@@ -186,13 +186,9 @@ const source = $derived.by(() => {
 	font-size: 0.875rem;
 }
 .actions {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.5rem;
 	margin-top: auto;
 }
 .details {
-	padding-top: 0.75rem;
 	gap: 0.5rem;
 	overflow-wrap: anywhere;
 }

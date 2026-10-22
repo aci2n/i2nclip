@@ -26,7 +26,7 @@ let { password, busy, downloaded, onprepare, ondownload, oncopy }: Props =
 				spellcheck="false"
 			></label
 		>
-		<div class="actions">
+		<div class="cluster">
 			<button type="button" class="secondary" disabled={busy} onclick={oncopy}>
 				Copy password
 			</button>
@@ -44,11 +44,6 @@ let { password, busy, downloaded, onprepare, ondownload, oncopy }: Props =
 	{/if}
 </div>
 <style>
-.actions {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.5rem;
-}
 input {
 	font-family: monospace;
 }

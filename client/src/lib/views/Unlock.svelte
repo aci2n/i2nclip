@@ -114,14 +114,14 @@ async function submit(event: SubmitEvent) {
 	{#if $session.status === "locked"}
 		<details>
 			<summary>Reset this client</summary>
-			<div class="stack reset">
+			<div class="stack">
 				<p>
 					This removes the saved identity from this device. Server files remain.
 					You will need a library backup or another connected browser to
 					reconnect.
 				</p>
 				<button
-					class="secondary danger"
+					class="danger"
 					type="button"
 					disabled={$session.busy}
 					onclick={() => {
@@ -140,9 +140,6 @@ async function submit(event: SubmitEvent) {
 section {
 	max-width: 32rem;
 	margin: 3rem auto;
-}
-.reset {
-	margin-top: 1rem;
 }
 
 .remember {

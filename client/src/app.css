@@ -21,6 +21,10 @@
 		margin: 0;
 		padding: 0;
 	}
+	fieldset {
+		border: 0;
+		min-width: 0;
+	}
 }
 
 @layer base {
@@ -121,19 +125,59 @@
 		color: var(--paper);
 		cursor: pointer;
 		border-color: transparent;
-		&.secondary {
+		&.secondary,
+		&.danger {
 			background: var(--soft);
 			color: var(--accent);
 		}
 		&.danger {
 			color: var(--error);
 		}
+		&[aria-pressed="true"] {
+			outline: 2px solid var(--accent);
+		}
 		&:disabled {
 			opacity: 0.5;
 			cursor: default;
 		}
 	}
+	/* Square icon-only button; .secondary may still supply a background. */
+	button.icon {
+		display: grid;
+		place-items: center;
+		flex: none;
+		width: var(--touch);
+		height: var(--touch);
+		padding: var(--space-2);
+		background: transparent;
+		color: inherit;
+		svg {
+			width: 1rem;
+			height: 1rem;
+		}
+		&.secondary {
+			background: var(--soft);
+			color: var(--accent);
+		}
+	}
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+		max-width: 100%;
+		min-height: var(--target);
+		padding: 0 0.375rem;
+		font-size: var(--text-sm);
+		line-height: 1.5;
+		border: 0;
+		border-radius: var(--radius-sm);
+		background: var(--soft);
+		color: var(--accent);
+	}
 	@media (max-width: 32rem), (pointer: coarse) {
+		.chip {
+			font-size: 1rem;
+		}
 		button,
 		a.button,
 		input:not([type="checkbox"]):not([type="hidden"]),
@@ -170,6 +214,26 @@
 			margin: 0;
 			font-size: var(--text-sm);
 		}
+	}
+	.cluster {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
+	}
+	details > summary + * {
+		margin-top: var(--space-4);
+	}
+	dialog {
+		max-width: calc(100% - 2rem);
+		max-height: calc(100% - 2rem);
+		padding: var(--space-6);
+		border: 1px solid var(--line);
+		border-radius: var(--radius);
+		background: var(--paper);
+		color: inherit;
+	}
+	dialog::backdrop {
+		background: var(--backdrop);
 	}
 	.bar {
 		display: flex;

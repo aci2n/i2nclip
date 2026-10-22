@@ -57,6 +57,7 @@ let {
 			{/if}
 			{#if (completed.length || notices.length) && !uploading}
 				<button
+					class="icon"
 					type="button"
 					aria-label="Dismiss completed uploads"
 					title="Dismiss completed uploads"
@@ -144,23 +145,12 @@ ul {
 	padding-left: 1.5rem;
 	overflow-wrap: anywhere;
 }
-button {
-	display: grid;
-	place-items: center;
+button.icon {
 	align-self: flex-start;
-	flex: none;
-	width: 3rem;
-	height: 3rem;
-	padding: 0.5rem;
-	background: transparent;
 	color: var(--muted);
 }
-button:hover {
+button.icon:hover {
 	color: var(--accent);
-}
-svg {
-	width: 1rem;
-	height: 1rem;
 }
 progress {
 	width: 100%;

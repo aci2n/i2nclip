@@ -19,7 +19,7 @@ $effect(() => {
 			? `Viewing version ${sequence} (read-only)`
 			: "Earlier versions"}
 	</summary>
-	<div class="stack content">
+	<div class="stack">
 		<form
 			onsubmit={(event) => {
 				event.preventDefault();
@@ -66,8 +66,5 @@ label {
 }
 .history {
 	margin-bottom: 1rem;
-}
-.content {
-	margin-top: 1rem;
 }
 </style>

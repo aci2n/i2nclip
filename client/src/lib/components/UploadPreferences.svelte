@@ -9,7 +9,7 @@ let { compressImages, error, busy, onchange }: Props = $props();
 </script>
 <details class="panel">
 	<summary>Uploads</summary>
-	<div class="stack content">
+	<div class="stack">
 		<label>
 			<input
 				type="checkbox"
@@ -32,9 +32,6 @@ let { compressImages, error, busy, onchange }: Props = $props();
 	</div>
 </details>
 <style>
-.content {
-	margin-top: 1rem;
-}
 label {
 	display: flex;
 	align-items: center;

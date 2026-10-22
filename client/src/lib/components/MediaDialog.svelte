@@ -90,7 +90,7 @@ const text = $derived(selected?.text);
 		{/if}
 		<button
 			type="button"
-			class="previous arrow"
+			class="icon previous arrow"
 			aria-label="Previous media"
 			aria-disabled={!hasPrevious}
 			onclick={() => {
@@ -113,7 +113,7 @@ const text = $derived(selected?.text);
 		</button>
 		<button
 			type="button"
-			class="next arrow"
+			class="icon next arrow"
 			aria-label="Next media"
 			aria-disabled={!hasNext}
 			onclick={() => {
@@ -136,7 +136,7 @@ const text = $derived(selected?.text);
 		</button>
 		<button
 			type="button"
-			class="close"
+			class="icon close"
 			aria-label="Close preview"
 			onclick={onclose}
 		>
@@ -156,7 +156,6 @@ const text = $derived(selected?.text);
 
 <style>
 dialog {
-	color: inherit;
 	touch-action: pinch-zoom;
 	overscroll-behavior: contain;
 	padding: 0;
@@ -169,9 +168,6 @@ dialog {
 }
 dialog.text {
 	touch-action: pan-y pinch-zoom;
-}
-dialog::backdrop {
-	background: #000b;
 }
 .status {
 	position: fixed;
@@ -192,15 +188,9 @@ dialog::backdrop {
 .arrow,
 .close {
 	position: fixed;
-	display: grid;
-	place-items: center;
-	width: 3rem;
-	height: 3rem;
-	padding: 0.5rem;
 	background: var(--paper);
-	color: inherit;
 }
-svg {
+.icon svg {
 	width: 1.25rem;
 	height: 1.25rem;
 }

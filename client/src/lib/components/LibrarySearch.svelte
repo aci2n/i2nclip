@@ -32,7 +32,7 @@ $effect(() => {
 		{/if}
 	</form>
 	{#if suggestions.length}
-		<fieldset class="suggestions" aria-label="Tag suggestions">
+		<fieldset class="cluster suggestions" aria-label="Tag suggestions">
 			{#each suggestions.slice(0, 12) as tag}
 				<button type="button" class="secondary" onclick={() => onsearch(tag)}>
 					{tag}
@@ -42,11 +42,6 @@ $effect(() => {
 	{/if}
 </div>
 <style>
-fieldset {
-	border: 0;
-	padding: 0;
-	min-width: 0;
-}
 form {
 	display: flex;
 	flex-wrap: wrap;
@@ -56,11 +51,6 @@ form {
 label {
 	flex: 1;
 	min-width: 10rem;
-}
-.suggestions {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.5rem;
 }
 .suggestions button {
 	max-width: 100%;

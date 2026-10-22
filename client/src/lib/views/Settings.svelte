@@ -74,7 +74,7 @@ const busy = $derived($session.busy || $pairing.active);
 		/>
 		<details class="panel">
 			<summary>Library backup</summary>
-			<div class="stack content">
+			<div class="stack">
 				<LibraryBackup
 					password={$session.backup?.password ?? ""}
 					{busy}
@@ -95,7 +95,7 @@ const busy = $derived($session.busy || $pairing.active);
 		</details>
 		<details class="panel">
 			<summary>Forget this browser</summary>
-			<div class="stack content">
+			<div class="stack">
 				<p>
 					This removes the library and its saved data from this browser. Your
 					files stay on the server and on your other browsers. To reconnect, use
@@ -103,7 +103,7 @@ const busy = $derived($session.busy || $pairing.active);
 				</p>
 				<button
 					type="button"
-					class="secondary danger"
+					class="danger"
 					disabled={busy || $uploads?.uploading}
 					onclick={() => {
 						if (confirm("Remove the library from this browser?")) {
@@ -144,9 +144,6 @@ const busy = $derived($session.busy || $pairing.active);
 .settings {
 	max-width: 44rem;
 	margin: auto;
-}
-.content {
-	margin-top: 1rem;
 }
 .address {
 	overflow-wrap: anywhere;

@@ -15,7 +15,7 @@ let { state, busy, onsend, onapprove, onreject, oncancel }: Props = $props();
 </script>
 <details class="panel">
 	<summary>Connect another browser</summary>
-	<div class="stack content">
+	<div class="stack">
 		{#if !state.active}
 			<p>
 				Give another browser full access to this library using a temporary code.
@@ -27,8 +27,3 @@ let { state, busy, onsend, onapprove, onreject, oncancel }: Props = $props();
 		<PairingProgress {state} {onapprove} {onreject} {oncancel} />
 	</div>
 </details>
-<style>
-.content {
-	margin-top: 1rem;
-}
-</style>

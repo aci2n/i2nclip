@@ -105,7 +105,7 @@ async function persist(next: string[], clear = false) {
 		{#if tags.length > 6}
 			<button
 				type="button"
-				class="disclosure"
+				class="chip disclosure"
 				aria-label={expanded ? "Show fewer tags" : "Show all tags"}
 				aria-expanded={expanded}
 				onclick={() => (expanded = !expanded)}
@@ -189,46 +189,22 @@ async function persist(next: string[], clear = false) {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
-	gap: 0.25rem;
-	min-width: 0;
-	border: 0;
-	padding: 0;
-	margin: 0;
-	min-height: 2rem;
-	font-size: 0.85rem;
+	gap: var(--space-2);
+	min-height: var(--target);
+	font-size: var(--text-sm);
 }
 .tag-actions {
 	display: inline-flex;
 	align-items: center;
-	gap: 0.5rem;
+	gap: var(--space-2);
 }
 .disclosure {
-	min-height: 2rem;
-	padding: 0.125rem 0.375rem;
-	gap: 0.25rem;
 	background: transparent;
 	color: var(--muted);
-	font-size: inherit;
-}
-.chip {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.25rem;
-	max-width: 100%;
-	min-height: 2rem;
-	line-height: 1.5;
-	padding: 0.125rem 0.375rem;
-	border: 0;
-	border-radius: 0.25rem;
-	background: var(--soft);
-	color: var(--accent);
-	font-size: 0.85rem;
 }
 .tag-list button {
-	display: inline-flex;
-	align-items: center;
 	justify-content: center;
-	line-height: inherit;
+	min-width: var(--target);
 }
 .tag-list button svg {
 	width: 1rem;
@@ -237,33 +213,16 @@ async function persist(next: string[], clear = false) {
 }
 .tags {
 	display: grid;
-	gap: 0.5rem;
+	gap: var(--space-2);
 	flex: 1 1 100%;
 	min-width: 0;
 }
 .entry {
 	display: flex;
 	align-items: center;
-	gap: 0.25rem;
+	gap: var(--space-2);
 }
 .entry button {
 	flex: none;
-}
-@media (max-width: 32rem), (pointer: coarse) {
-	.tag-list {
-		gap: 0.5rem;
-	}
-	.chip,
-	.disclosure {
-		min-height: 3rem;
-		font-size: 1rem;
-	}
-	.tag-actions button,
-	.entry button {
-		min-width: 3rem;
-	}
-	.entry {
-		gap: 0.5rem;
-	}
 }
 </style>
