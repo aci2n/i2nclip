@@ -10,8 +10,10 @@ import {
 	sameBytes,
 } from "../protocol/chain.ts";
 import {
+	type ChainState,
 	encodeOperation,
 	type FileOperation,
+	fileInState,
 	type MaterializedFile,
 	type ObjectReference,
 } from "../protocol/chain-state.ts";
@@ -36,12 +38,12 @@ import {
 } from "../protocol/file-objects.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import { uniqueTags } from "../protocol/tags.ts";
-import { type Checkpoint, equalCheckpoint } from "../storage/chain.ts";
-import { type ChainStore, stateCheckpoint } from "../stores/chain.ts";
+import type { ChainStore } from "../stores/chain.ts";
 import type { ChainApi } from "./library-api.ts";
 
 export interface PreparedFileChange {
-	readonly expected: Checkpoint;
+	/** Throws when the change no longer applies to the current verified state. */
+	readonly check?: (state: ChainState) => void;
 	readonly operation: FileOperation;
 	readonly effects: readonly StorageEffect[];
 }
@@ -49,7 +51,6 @@ export interface FileUpload {
 	readonly file: Blob;
 	readonly attributes: Metadata;
 	readonly thumbnail?: Bytes | null;
-	readonly expected: Checkpoint;
 	readonly signal: AbortSignal;
 	readonly onProgress?: (percent: number) => void;
 }
@@ -65,6 +66,17 @@ export function createFiles(
 }
 function reference(object: ObjectReference): ObjectReference {
 	return { hash: object.hash, key: object.key };
+}
+// Concurrent writers may advance the head; only this file's metadata must be unchanged.
+function metadataCheck(file: MaterializedFile) {
+	return (state: ChainState) => {
+		const current = fileInState(state, file.id, false);
+		if (!current || !sameBytes(current.metadata.hash, file.metadata.hash)) {
+			throw new Error(
+				"This file changed. Review your metadata draft and retry.",
+			);
+		}
+	};
 }
 function objectLength(plain: number) {
 	const ciphertext = plain + 16;
@@ -230,15 +242,10 @@ class FilesImpl {
 		}
 	}
 	private async uploadFile(options: FileUpload) {
-		const { file, expected, onProgress } = options;
+		const { file, onProgress } = options;
 		const signal = this.combined(options.signal);
 		const manifestBytes = manifestSize(file.size);
 		const shape = contentShape(file.size);
-		const state = await this.chain.sync();
-		signal.throwIfAborted();
-		if (!equalCheckpoint(stateCheckpoint(state), expected)) {
-			throw new Error("The library changed. Select the file again to retry.");
-		}
 		const quota = await this.api.quota(signal);
 		if (
 			quota.retainedFiles >= quota.maximumFiles ||
@@ -331,7 +338,6 @@ class FilesImpl {
 			]);
 			await this.commitChange(
 				{
-					expected,
 					operation: {
 						kind: "AddFile",
 						id,
@@ -353,26 +359,13 @@ class FilesImpl {
 		file: MaterializedFile,
 		attributes: Metadata,
 		thumbnail: Bytes | null | undefined,
-		expected: Checkpoint,
 		own: AbortSignal,
 	): Promise<PreparedFileChange> {
 		this.available(file);
 		const signal = this.combined(own);
-		const state = await this.chain.sync();
+		const check = metadataCheck(file);
+		check(await this.chain.sync());
 		signal.throwIfAborted();
-		const current = state.files.get(bytesToHex(file.id));
-		if (
-			!equalCheckpoint(stateCheckpoint(state), expected) ||
-			!current ||
-			current.deleted ||
-			current.purged ||
-			!sameBytes(current.metadata.hash, file.metadata.hash) ||
-			!sameBytes(current.metadata.key, file.metadata.key)
-		) {
-			throw new Error(
-				"The library changed. Review your metadata draft and retry.",
-			);
-		}
 		const previous = await this.readMetadata(file, signal);
 		let nextThumbnail = previous.thumbnail;
 		const hashes: Bytes[] = [];
@@ -392,7 +385,7 @@ class FilesImpl {
 		signal.throwIfAborted();
 		hashes.sort(compareBytes);
 		return {
-			expected,
+			check,
 			operation: {
 				kind: "ReplaceMetadata",
 				id: file.id,
@@ -406,7 +399,7 @@ class FilesImpl {
 		const plaintext = encodeOperation(change.operation);
 		try {
 			return await this.chain.append({
-				expected: change.expected,
+				check: change.check,
 				effects: change.effects,
 				plaintext,
 				signal,

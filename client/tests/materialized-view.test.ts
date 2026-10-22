@@ -35,7 +35,6 @@ function chain(initial: ChainState) {
 	const state = writable<ChainView>({
 		live: initial,
 		syncing: false,
-		mutating: false,
 		error: "",
 		storageError: "",
 	});

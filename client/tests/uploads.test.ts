@@ -31,7 +31,6 @@ async function fixture(t: test.TestContext, uninitialized = false) {
 	const state = writable<ChainView>({
 		live: uninitialized ? null : initial,
 		syncing: false,
-		mutating: false,
 		error: "",
 		storageError: "",
 	});

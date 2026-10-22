@@ -99,12 +99,8 @@ test("fixed-authority replay verifies cache publication and historical views", a
 	const initial = await f.chain.sync();
 	assert.equal(initial.sequence, 0);
 	const id = filled(9);
-	const first = await f.chain.append({
-		expected: stateCheckpoint(initial),
-		...publication(id),
-	});
+	await f.chain.append(publication(id));
 	const second = await f.chain.append({
-		expected: stateCheckpoint(first),
 		effects: [],
 		plaintext: encodeOperation({ kind: "DeleteFile", id }),
 	});
@@ -115,22 +111,18 @@ test("fixed-authority replay verifies cache publication and historical views", a
 	assert.equal(f.history.records.length, 2);
 	await assert.rejects(
 		f.chain.append({
-			expected: stateCheckpoint(first),
 			effects: [],
 			plaintext: encodeOperation({ kind: "DeleteFile", id }),
 		}),
-		/changed/,
+		/file lifecycle transition/,
 	);
 	assert.equal(f.history.records.length, 2);
 });
 
 test("a signed malformed operation never advances the trusted cached head", async (t) => {
 	const f = await fixture(t);
-	const initial = await f.chain.sync();
-	const first = await f.chain.append({
-		expected: stateCheckpoint(initial),
-		...publication(filled(9)),
-	});
+	await f.chain.sync();
+	const first = await f.chain.append(publication(filled(9)));
 	const malformed = await createRecord(
 		{ library: first.library, sequence: 2, previous: first.head, effects: [] },
 		f.created.identity.signing,
@@ -144,11 +136,8 @@ test("a signed malformed operation never advances the trusted cached head", asyn
 
 test("a server withholding a previously observed suffix is rejected", async (t) => {
 	const f = await fixture(t);
-	const initial = await f.chain.sync();
-	await f.chain.append({
-		expected: stateCheckpoint(initial),
-		...publication(filled(9)),
-	});
+	await f.chain.sync();
+	await f.chain.append(publication(filled(9)));
 	f.history.records.length = 0;
 	await assert.rejects(f.chain.sync());
 	assert.equal((await f.storage.head(signal()))?.sequence, 1);

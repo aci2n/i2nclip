@@ -1,7 +1,6 @@
 import { get } from "svelte/store";
 import { authorizationHeader, freshNonce } from "../src/lib/protocol/auth.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
-import { stateCheckpoint } from "../src/lib/stores/chain.ts";
 import { liveLibrary } from "../tests/live-library.ts";
 import { startServer, stopServer } from "../tests/process.ts";
 import { expect, issueOtc, test } from "./fixtures.ts";
@@ -22,7 +21,6 @@ for (const crossOrigin of [false, true]) {
 			const saved = await client.files.upload({
 				file: new Blob([new Uint8Array(4 * 1024 * 1024 + 17).fill(7)]),
 				attributes: { name: "cache.bin" },
-				expected: stateCheckpoint(state),
 				signal: client.signal,
 			});
 			const file = get(client.chain).live?.files.get(saved.id);

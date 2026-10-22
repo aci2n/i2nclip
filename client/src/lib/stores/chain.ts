@@ -18,6 +18,7 @@ import {
 	initialChainState,
 	reduceBlock,
 } from "../protocol/chain-state.ts";
+import { HttpError } from "../services/library-api.ts";
 import {
 	type CachedBlock,
 	type ChainStorage,
@@ -50,12 +51,12 @@ export interface ChainCredentials {
 export interface ChainView {
 	readonly live: ChainState | null;
 	readonly syncing: boolean;
-	readonly mutating: boolean;
 	readonly error: string;
 	readonly storageError: string;
 }
 export interface ChainMutation {
-	readonly expected: Checkpoint;
+	/** Throws when the draft no longer applies to the current verified state. */
+	readonly check?: (state: ChainState) => void;
 	readonly effects: Effects;
 	readonly plaintext: Bytes;
 	readonly signal?: AbortSignal;
@@ -71,6 +72,8 @@ function cached(record: VerifiedBlock): CachedBlock {
 		bytes: record.bytes,
 	};
 }
+// A concurrent writer can win the race for the same parent; rebase onto it.
+const APPEND_ATTEMPTS = 3;
 function validCheckpoint(value: Checkpoint) {
 	if (
 		!Number.isSafeInteger(value.sequence) ||
@@ -99,12 +102,12 @@ class ChainStoreImpl {
 	private readonly state: Writable<ChainView> = writable({
 		live: null,
 		syncing: false,
-		mutating: false,
 		error: "",
 		storageError: "",
 	});
 	private syncing: Promise<ChainState> | null = null;
-	private mutating = false;
+	private mutations: Promise<unknown> = Promise.resolve();
+	private queued = 0;
 	private disposed = false;
 	readonly subscribe = this.state.subscribe;
 	readonly sync = this.refresh.bind(this);
@@ -178,14 +181,12 @@ class ChainStoreImpl {
 			this.update({ live: state, storageError: "" });
 		}
 	}
+	// Wait for queued mutations so a refresh never races storing their records.
 	private refresh() {
 		this.check();
-		if (this.mutating) {
-			return Promise.reject(
-				new Error("A chain mutation is already in progress."),
-			);
-		}
-		return this.runSync();
+		return this.queued
+			? this.mutations.then(() => this.runSync())
+			: this.runSync();
 	}
 
 	private async replayAt(
@@ -373,75 +374,89 @@ class ChainStoreImpl {
 			}
 		}
 	}
-	private async appendMutation(mutation: ChainMutation): Promise<ChainState> {
+	private appendMutation(mutation: ChainMutation): Promise<ChainState> {
 		this.check();
+		this.queued++;
+		const run = this.mutations
+			.then(() => this.commitMutation(mutation))
+			.finally(() => {
+				this.queued--;
+			});
+		this.mutations = run.catch(() => {});
+		return run;
+	}
+	private async commitMutation(mutation: ChainMutation): Promise<ChainState> {
 		const signal = mutation.signal
 			? AbortSignal.any([this.signal, mutation.signal])
 			: this.signal;
-		signal.throwIfAborted();
-		if (this.mutating) {
-			throw new Error("A chain mutation is already in progress.");
-		}
-		this.mutating = true;
-		this.update({ mutating: true, error: "" });
 		try {
-			const state = await this.runSync();
-			signal.throwIfAborted();
-			const parent = stateCheckpoint(state);
-			if (!equalCheckpoint(parent, mutation.expected)) {
-				throw new Error("The library changed. Review your draft and retry.");
-			}
-			const record = await createRecord(
-				{
-					library: state.library,
-					sequence: state.sequence + 1,
-					previous: state.head,
-					effects: mutation.effects,
-				},
-				this.credentials.signing,
-				this.credentials.encryption,
-				mutation.plaintext,
-			);
-			const candidate = (await this.apply(state, record.bytes)).next;
-			signal.throwIfAborted();
-			try {
-				const receipt = await this.transport.append(record.bytes, signal);
-				signal.throwIfAborted();
-				this.check();
-				if (!equalCheckpoint(receipt.accepted, stateCheckpoint(candidate))) {
-					throw new Error("Server acknowledged a different chain record.");
-				}
-			} catch (error) {
-				signal.throwIfAborted();
-				this.check();
-				// Reconcile an uncertain outcome by locating this exact signed record.
+			for (let attempt = 1; ; attempt++) {
 				try {
-					const reconciled = await this.runSync();
-					const found = await this.storage.read(parent.sequence, this.signal);
-					if (found[0]?.hash === bytesToHex(record.hash)) {
-						return reconciled;
+					return await this.appendOnce(mutation, signal);
+				} catch (error) {
+					const conflict = error instanceof HttpError && error.status === 409;
+					if (!conflict || attempt === APPEND_ATTEMPTS) {
+						throw error;
 					}
-				} catch {
-					this.check();
 				}
-				throw error;
 			}
-			await this.durable(() =>
-				this.storage.append(parent, parent, [cached(record)], signal),
-			);
-			this.update({ live: candidate, storageError: "" });
-			return candidate;
 		} catch (error) {
 			if (!this.signal.aborted) {
 				this.update({ error: errorMessage(error) });
 			}
 			throw error;
-		} finally {
-			this.mutating = false;
-			if (!this.signal.aborted) {
-				this.update({ mutating: false });
-			}
 		}
+	}
+	private async appendOnce(
+		mutation: ChainMutation,
+		signal: AbortSignal,
+	): Promise<ChainState> {
+		signal.throwIfAborted();
+		this.update({ error: "" });
+		const state = await this.runSync();
+		signal.throwIfAborted();
+		mutation.check?.(state);
+		const parent = stateCheckpoint(state);
+		const record = await createRecord(
+			{
+				library: state.library,
+				sequence: state.sequence + 1,
+				previous: state.head,
+				effects: mutation.effects,
+			},
+			this.credentials.signing,
+			this.credentials.encryption,
+			mutation.plaintext,
+		);
+		const candidate = (await this.apply(state, record.bytes)).next;
+		signal.throwIfAborted();
+		try {
+			const receipt = await this.transport.append(record.bytes, signal);
+			signal.throwIfAborted();
+			this.check();
+			if (!equalCheckpoint(receipt.accepted, stateCheckpoint(candidate))) {
+				throw new Error("Server acknowledged a different chain record.");
+			}
+		} catch (error) {
+			signal.throwIfAborted();
+			this.check();
+			// Reconcile an uncertain outcome by locating this exact signed record.
+			try {
+				const reconciled = await this.runSync();
+				const found = await this.storage.read(parent.sequence, this.signal);
+				if (found[0]?.hash === bytesToHex(record.hash)) {
+					return reconciled;
+				}
+			} catch {
+				this.check();
+			}
+			throw error;
+		}
+		await this.durable(() =>
+			this.storage.append(parent, parent, [cached(record)], signal),
+		);
+		this.update({ live: candidate, storageError: "" });
+		return candidate;
 	}
 	private disposeChain() {
 		if (this.disposed) {
@@ -453,7 +468,6 @@ class ChainStoreImpl {
 		this.state.set({
 			live: null,
 			syncing: false,
-			mutating: false,
 			error: "",
 			storageError: "",
 		});

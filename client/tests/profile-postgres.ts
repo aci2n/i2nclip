@@ -7,7 +7,6 @@ import { promisify } from "node:util";
 import { get } from "svelte/store";
 import { authorizationHeader, freshNonce } from "../src/lib/protocol/auth.ts";
 import { bytesToHex } from "../src/lib/protocol/bytes.ts";
-import { stateCheckpoint } from "../src/lib/stores/chain.ts";
 import { liveLibrary } from "./live-library.ts";
 import { database, issueOtc, startServer, stopServer } from "./process.ts";
 
@@ -96,7 +95,6 @@ async function run() {
 			const result = await client.files.upload({
 				file: new Blob([new Uint8Array(32 * 1024 * 1024).fill(7)]),
 				attributes: { name: "profile.bin" },
-				expected: stateCheckpoint(live),
 				signal: client.signal,
 			});
 			const file = get(client.chain).live?.files.get(result.id);

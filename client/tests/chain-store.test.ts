@@ -14,6 +14,7 @@ import {
 	initialChainState,
 	reduceBlock,
 } from "../src/lib/protocol/chain-state.ts";
+import { HttpError } from "../src/lib/services/library-api.ts";
 import {
 	type ChainStorage,
 	type Checkpoint,
@@ -88,7 +89,7 @@ class Transport implements ChainTransport {
 			bytesToHex(record.body.previous) !==
 			(current ? bytesToHex(current.hash) : this.genesis.hash)
 		) {
-			throw new Error("Conflict");
+			throw new HttpError(409);
 		}
 		this.records.push(record);
 		if (this.loseResponse) {
@@ -270,24 +271,62 @@ test("a persistence failure prevents accepted state from reaching the UI", async
 	);
 });
 
-test("mutations reject stale drafts and reconcile a lost append response by exact hash", async (t) => {
+function addOperation(id: Bytes) {
+	return {
+		effects: [["publish", id, bytes(6)]] as const,
+		plaintext: encodeOperation({
+			kind: "AddFile",
+			id,
+			manifest: { hash: bytes(2), key: bytes(3) },
+			metadata: { hash: bytes(4), key: bytes(5) },
+		}),
+	};
+}
+
+test("mutations rebase onto concurrent writers and retry a lost parent race", async (t) => {
 	const f = await fixture(t);
-	const stale = stateCheckpoint(await f.store.sync());
-	const current = await f.addFile(10);
+	await f.store.sync();
+	await f.addFile(10);
+	const append = f.transport.append.bind(f.transport);
+	let raced = false;
+	f.transport.append = async (data, signal) => {
+		if (!raced) {
+			raced = true;
+			await f.addFile(11);
+		}
+		return append(data, signal);
+	};
+	const result = await f.store.append(addOperation(bytes(12)));
+	assert.equal(result.sequence, 3);
+	assert.deepEqual(
+		[...result.files.keys()],
+		[10, 11, 12].map((n) => bytesToHex(bytes(n))),
+	);
+	assert.equal(f.transport.writes, 2);
+	assert.equal(get(f.store).error, "");
+	assert.equal(
+		(await f.storage.head(new AbortController().signal))?.sequence,
+		3,
+	);
+});
+
+test("mutation preconditions run against the current state and lost responses reconcile", async (t) => {
+	const f = await fixture(t);
+	await f.addFile(10);
 	await assert.rejects(
 		f.store.append({
-			expected: stale,
-
+			check: (state) => {
+				assert.equal(state.sequence, 1);
+				throw new Error("This file changed.");
+			},
 			effects: [],
 			plaintext: encodeOperation({ kind: "DeleteFile", id: bytes(10) }),
 		}),
-		/changed/,
+		/file changed/,
 	);
 	assert.equal(f.transport.writes, 0);
 	f.transport.loseResponse = true;
 	const result = await f.store.append({
-		expected: stateCheckpoint(current),
-
 		effects: [],
 		plaintext: encodeOperation({ kind: "DeleteFile", id: bytes(10) }),
 	});
@@ -297,6 +336,29 @@ test("mutations reject stale drafts and reconcile a lost append response by exac
 		(await f.storage.head(new AbortController().signal))?.sequence,
 		2,
 	);
+});
+
+test("concurrent mutations queue in order and a refresh waits for them", async (t) => {
+	const f = await fixture(t);
+	const first = f.store.append(addOperation(bytes(10)));
+	const second = f.store.append({
+		effects: [],
+		plaintext: encodeOperation({ kind: "DeleteFile", id: bytes(10) }),
+	});
+	const refreshed = f.store.sync();
+	assert.equal((await first).sequence, 1);
+	assert.equal((await second).sequence, 2);
+	const state = await refreshed;
+	assert.equal(state.sequence, 2);
+	assert.equal(state.files.get(bytesToHex(bytes(10)))?.deleted, true);
+	assert.equal(get(f.store).storageError, "");
+	const aborted = new AbortController();
+	aborted.abort();
+	await assert.rejects(
+		f.store.append({ ...addOperation(bytes(11)), signal: aborted.signal }),
+		/abort/i,
+	);
+	assert.equal((await f.store.append(addOperation(bytes(12)))).sequence, 3);
 });
 
 test("disposal during a read suppresses late state publication", async (t) => {

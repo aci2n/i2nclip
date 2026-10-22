@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { writable } from "svelte/store";
-import { bytesToHex } from "../src/lib/protocol/bytes.ts";
+import { bytesToHex, hexToBytes } from "../src/lib/protocol/bytes.ts";
 import {
 	compareBytes,
 	createRecord,
@@ -11,11 +11,10 @@ import {
 import { reduceBlock } from "../src/lib/protocol/chain-state.ts";
 import { CHUNK_BYTES } from "../src/lib/protocol/content.ts";
 import { createFiles, type FileApi } from "../src/lib/services/files.ts";
-import {
-	type ChainMutation,
-	type ChainStore,
-	type ChainView,
-	stateCheckpoint,
+import type {
+	ChainMutation,
+	ChainStore,
+	ChainView,
 } from "../src/lib/stores/chain.ts";
 import { createIdentity, initialIdentityState } from "./library-fixture.ts";
 
@@ -26,7 +25,6 @@ async function fixture(t: test.TestContext) {
 	const view = writable<ChainView>({
 		live: state,
 		syncing: false,
-		mutating: false,
 		error: "",
 		storageError: "",
 	});
@@ -50,7 +48,7 @@ async function fixture(t: test.TestContext) {
 			if (failCommit) {
 				throw new Error("Temporary failure");
 			}
-			assert.deepEqual(mutation.expected, stateCheckpoint(state));
+			mutation.check?.(state);
 			for (const effect of mutation.effects) {
 				if (!Array.isArray(effect)) {
 					continue;
@@ -84,7 +82,6 @@ async function fixture(t: test.TestContext) {
 			view.set({
 				live: state,
 				syncing: false,
-				mutating: false,
 				error: "",
 				storageError: "",
 			});
@@ -148,7 +145,6 @@ test("sequential upload publishes the exact ciphertext inventory and rebuilds ha
 		file: new Blob([bytes]),
 		attributes: { name: "photo.bin", tags: ["Home"], custom: "kept" },
 		thumbnail: new Uint8Array([1, 2, 3]),
-		expected: stateCheckpoint(f.current()),
 		signal: f.controller.signal,
 		onProgress: (value) => progress.push(value),
 	});
@@ -208,7 +204,6 @@ test("quota and manifest preflight reject a source before its bytes are read", a
 		f.files.upload({
 			file,
 			attributes: {},
-			expected: stateCheckpoint(f.current()),
 			signal: f.controller.signal,
 		}),
 		/quota/,
@@ -222,7 +217,6 @@ test("quota and manifest preflight reject a source before its bytes are read", a
 		f.files.upload({
 			file: enormous,
 			attributes: {},
-			expected: stateCheckpoint(f.current()),
 			signal: f.controller.signal,
 		}),
 		/manifest larger/,
@@ -235,7 +229,6 @@ test("metadata edits preserve unknown fields and retry the same staged reference
 		file: new Blob(["text"]),
 		attributes: { name: "original", custom: { a: 1 } },
 		thumbnail: new Uint8Array([1]),
-		expected: stateCheckpoint(f.current()),
 		signal: f.controller.signal,
 	});
 	const file = f.current().files.get(uploaded.id);
@@ -245,7 +238,6 @@ test("metadata edits preserve unknown fields and retry the same staged reference
 		file,
 		{ name: "renamed" },
 		undefined,
-		stateCheckpoint(f.current()),
 		f.controller.signal,
 	);
 	const staged = f.blobs.size;
@@ -265,16 +257,80 @@ test("metadata edits preserve unknown fields and retry the same staged reference
 	assert.deepEqual(after.thumbnail, before.thumbnail);
 	const count = f.blobs.size;
 	await assert.rejects(
-		f.files.prepareEdit(
-			file,
-			{ name: "stale" },
-			null,
-			stateCheckpoint(f.current()),
-			f.controller.signal,
-		),
+		f.files.prepareEdit(file, { name: "stale" }, null, f.controller.signal),
 		/changed/,
 	);
 	assert.equal(f.blobs.size, count);
+});
+
+test("metadata drafts survive unrelated blocks but not a change to the same file", async (t) => {
+	const f = await fixture(t);
+	const upload = (name: string) =>
+		f.files.upload({
+			file: new Blob([name]),
+			attributes: { name },
+			signal: f.controller.signal,
+		});
+	const target = await upload("target");
+	const file = f.current().files.get(target.id);
+	assert.ok(file);
+	const first = await f.files.prepareEdit(
+		file,
+		{ name: "first" },
+		undefined,
+		f.controller.signal,
+	);
+	const second = await f.files.prepareEdit(
+		file,
+		{ name: "second" },
+		undefined,
+		f.controller.signal,
+	);
+	await upload("unrelated");
+	await f.files.commit(first, f.controller.signal);
+	const count = f.mutations.length;
+	await assert.rejects(
+		f.files.commit(second, f.controller.signal),
+		/file changed/,
+	);
+	assert.equal(f.mutations.length, count);
+	const current = f.current().files.get(target.id);
+	assert.ok(current);
+	const metadata = await f.files.metadata(current, f.controller.signal);
+	assert.equal(metadata.attributes.name, "first");
+});
+
+test("an upload commits after another block lands while its chunks are staged", async (t) => {
+	const f = await fixture(t);
+	const first = await f.files.upload({
+		file: new Blob(["first"]),
+		attributes: { name: "first" },
+		signal: f.controller.signal,
+	});
+	const put = f.api.putBlob;
+	let landed = false;
+	t.mock.method(f.api, "putBlob", async (...args: Parameters<typeof put>) => {
+		if (!landed) {
+			landed = true;
+			await f.files.commit(
+				{
+					operation: { kind: "DeleteFile", id: hexToBytes(first.id) },
+					effects: [],
+				},
+				f.controller.signal,
+			);
+		}
+		return put(...args);
+	});
+	const second = await f.files.upload({
+		file: new Blob(["second"]),
+		attributes: { name: "second" },
+		signal: f.controller.signal,
+	});
+	const state = f.current();
+	assert.equal(state.sequence, 3);
+	assert.equal(state.files.get(first.id)?.deleted, true);
+	assert.equal(state.files.get(second.id)?.deleted, false);
 });
 
 test("disposal cancels owned file operations without publishing an upload", async (t) => {
@@ -288,7 +344,6 @@ test("disposal cancels owned file operations without publishing an upload", asyn
 		f.files.upload({
 			file: new Blob(["text"]),
 			attributes: {},
-			expected: stateCheckpoint(f.current()),
 			signal: f.controller.signal,
 		}),
 		/abort/i,

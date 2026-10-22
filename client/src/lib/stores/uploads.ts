@@ -9,7 +9,6 @@ import { manifestSize } from "../protocol/file-objects.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
 import type { Files } from "../services/files.ts";
 import type { ChainApi } from "../services/library-api.ts";
-import { stateCheckpoint } from "./chain.ts";
 import type { MaterializedView } from "./materialized-view.ts";
 import type { Preferences } from "./preferences.ts";
 import type { Session } from "./session.ts";
@@ -180,11 +179,9 @@ class UploadsImpl {
 					) {
 						throw new Error("This file exceeds the available storage quota.");
 					}
-					const selected = get(this.view).selected;
-					if (!selected || !this.allowed()) {
+					if (!get(this.view).selected || !this.allowed()) {
 						throw new Error("Upload requires the live view.");
 					}
-					const expected = stateCheckpoint(selected);
 					const prepared = await this.prepare({
 						file,
 						compressImages,
@@ -212,7 +209,6 @@ class UploadsImpl {
 							...(thumb ? { image: thumb.image } : {}),
 						},
 						thumbnail: thumb?.thumb,
-						expected,
 						signal,
 						onProgress: this.progress.bind(this, current, "uploading"),
 					});

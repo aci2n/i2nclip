@@ -5,6 +5,7 @@ import { bytesToHex } from "../protocol/bytes.ts";
 import { type Bytes, sameBytes } from "../protocol/chain.ts";
 import {
 	encodeOperation,
+	fileInState,
 	type MaterializedFile,
 } from "../protocol/chain-state.ts";
 import type { Metadata } from "../protocol/meta-plain.ts";
@@ -12,7 +13,6 @@ import { encode } from "../protocol/msgpack.ts";
 import { normalizeTag } from "../protocol/tags.ts";
 import type { Files, PreparedFileChange } from "../services/files.ts";
 import type { ChainStore } from "./chain.ts";
-import { stateCheckpoint } from "./chain.ts";
 import type { ContentStreams } from "./content-streams.ts";
 import {
 	createFileMedia,
@@ -337,7 +337,7 @@ class LibraryImpl {
 			...resource,
 			id,
 			createdSequence: file.createdSequence,
-			revision: source.selected ? bytesToHex(source.selected.head) : "",
+			revision: bytesToHex(file.metadata.hash),
 			metadata: metadata?.attributes ?? null,
 			deleted: file.deleted,
 			unavailable: file.purged || source.unavailable.has(id),
@@ -524,7 +524,7 @@ class LibraryImpl {
 		) {
 			throw new Error("Changes require an available file in the live view.");
 		}
-		return { file, expected: stateCheckpoint(view.selected) };
+		return file;
 	}
 	private async mutateFile(
 		kind: "metadata" | "delete" | "restore" | "purge",
@@ -541,11 +541,9 @@ class LibraryImpl {
 		this.failures.delete(id);
 		this.publish();
 		try {
-			const { file, expected } = this.writableFile(id);
-			if (kind === "metadata" && expected.hash !== revision) {
-				throw new Error(
-					"The library changed. Review your draft and save again.",
-				);
+			const file = this.writableFile(id);
+			if (kind === "metadata" && bytesToHex(file.metadata.hash) !== revision) {
+				throw new Error("This file changed. Review your draft and save again.");
 			}
 			if (
 				kind === "purge" &&
@@ -565,7 +563,6 @@ class LibraryImpl {
 								file,
 								patch ?? {},
 								undefined,
-								expected,
 								signal,
 							);
 				this.prepared.set(id, { draft, change });
@@ -579,9 +576,14 @@ class LibraryImpl {
 						: kind === "restore"
 							? { kind: "RestoreFile" as const, id: file.id }
 							: { kind: "PurgeFiles" as const, ids: [file.id] };
+				// Delete needs a live file; restore and purge need a deleted one.
+				const deleted = kind !== "delete";
 				await this.chain.append({
-					expected,
-
+					check: (state) => {
+						if (!fileInState(state, file.id, deleted)) {
+							throw new Error("This file changed. Refresh and try again.");
+						}
+					},
 					effects: kind === "purge" ? [["purge", [file.id]]] : [],
 					plaintext: encodeOperation(operation),
 					signal,

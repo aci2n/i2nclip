@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { get, writable } from "svelte/store";
-import { bytesToHex } from "../src/lib/protocol/bytes.ts";
+import { bytesToHex, hexToBytes } from "../src/lib/protocol/bytes.ts";
 import { createRecord } from "../src/lib/protocol/chain.ts";
 import {
 	type ChainState,
@@ -15,7 +15,6 @@ import {
 import type { Files } from "../src/lib/services/files.ts";
 import { createSessionStorage } from "../src/lib/storage/session.ts";
 import type { ChainStore, ChainView } from "../src/lib/stores/chain.ts";
-import { stateCheckpoint } from "../src/lib/stores/chain.ts";
 import type { ContentStreams } from "../src/lib/stores/content-streams.ts";
 import { createLibrary } from "../src/lib/stores/library.ts";
 import { createMaterializedView } from "../src/lib/stores/materialized-view.ts";
@@ -46,7 +45,6 @@ async function fixture(t: test.TestContext) {
 	const source = writable<ChainView>({
 		live: state,
 		syncing: false,
-		mutating: false,
 		error: "",
 		storageError: "",
 	});
@@ -64,7 +62,7 @@ async function fixture(t: test.TestContext) {
 		},
 		append: async (change) => {
 			change.signal?.throwIfAborted();
-			assert.deepEqual(change.expected, stateCheckpoint(state));
+			change.check?.(state);
 			const record = await createRecord(
 				{
 					library: state.library,
@@ -84,8 +82,6 @@ async function fixture(t: test.TestContext) {
 		dispose() {},
 	};
 	await chain.append({
-		expected: stateCheckpoint(state),
-
 		effects: [["publish", id, filled(9)]],
 		plaintext: encodeOperation({
 			kind: "AddFile",
@@ -121,7 +117,7 @@ async function fixture(t: test.TestContext) {
 		manifest: async () => ({ content: content.content, hashes: [filled(6)] }),
 		thumbnail: async () => null,
 		readRange: async () => new TextEncoder().encode("hello"),
-		prepareEdit: async (file, patch, _thumb, expected, signal) => {
+		prepareEdit: async (file, patch, _thumb, signal) => {
 			signal.throwIfAborted();
 			stages++;
 			const hash = filled(20 + stages);
@@ -132,7 +128,6 @@ async function fixture(t: test.TestContext) {
 				attributes: { ...previous.attributes, ...patch },
 			});
 			return {
-				expected,
 				operation: {
 					kind: "ReplaceMetadata",
 					id: file.id,
@@ -147,8 +142,7 @@ async function fixture(t: test.TestContext) {
 			await commitWait;
 			signal.throwIfAborted();
 			return chain.append({
-				expected: change.expected,
-
+				check: change.check,
 				effects: change.effects,
 				plaintext: encodeOperation(change.operation),
 				signal,
@@ -226,7 +220,7 @@ test("metadata changes render only after acceptance and historical views reject 
 	const update = f.library.updateMetadata(
 		f.id,
 		{ name: "updated.txt" },
-		stateCheckpoint(f.current()).hash,
+		get(f.library).cards[0].revision,
 	);
 	await new Promise((resolve) => setTimeout(resolve, 0));
 	assert.equal(get(f.library).cards[0].metadata?.name, "original.txt");
@@ -242,7 +236,7 @@ test("metadata changes render only after acceptance and historical views reject 
 		await f.library.updateMetadata(
 			f.id,
 			{ name: "forbidden" },
-			stateCheckpoint(f.current()).hash,
+			get(f.library).cards[0].revision,
 		),
 		false,
 	);
@@ -295,7 +289,7 @@ test("root-owned downloads survive preview closure and time travel but abort on 
 
 test("an editor's old source revision is rejected before staging and requires explicit retry", async (t) => {
 	const f = await fixture(t);
-	const original = stateCheckpoint(f.current()).hash;
+	const original = get(f.library).cards[0].revision;
 	assert.equal(
 		await f.library.updateMetadata(f.id, { name: "first.txt" }, original),
 		true,
@@ -312,12 +306,25 @@ test("an editor's old source revision is rejected before staging and requires ex
 		await f.library.updateMetadata(
 			f.id,
 			{ name: "draft.txt" },
-			stateCheckpoint(f.current()).hash,
+			get(f.library).cards[0].revision,
 		),
 		true,
 	);
 	await f.view.index();
 	assert.equal(get(f.library).cards[0].metadata?.name, "draft.txt");
+});
+
+test("lifecycle changes reject when another writer already applied them", async (t) => {
+	const f = await fixture(t);
+	await f.chain.append({
+		effects: [],
+		plaintext: encodeOperation({ kind: "DeleteFile", id: hexToBytes(f.id) }),
+	});
+	assert.equal(await f.library.remove(f.id), false);
+	f.library.showDeleted(true);
+	await f.view.index(true);
+	assert.match(get(f.library).cards[0]?.message ?? "", /file changed/);
+	assert.equal(f.current().files.get(f.id)?.deleted, true);
 });
 
 test("invalid private links fail locally before chain or metadata reads", async (t) => {

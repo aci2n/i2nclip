@@ -140,12 +140,15 @@ export async function initialChainState(bytes: Bytes): Promise<ChainState> {
 		files: new Map(),
 	};
 }
-function fileById(state: ChainState, id: Bytes, deleted: boolean) {
+/** The unpurged file with this deletion state, or null when a transition no longer applies. */
+export function fileInState(state: ChainState, id: Bytes, deleted: boolean) {
 	const file = state.files.get(bytesToHex(id));
-	if (!file || file.purged || file.deleted !== deleted) {
-		invalid("file lifecycle transition");
-	}
-	return file;
+	return file && !file.purged && file.deleted === deleted ? file : null;
+}
+function fileById(state: ChainState, id: Bytes, deleted: boolean) {
+	return (
+		fileInState(state, id, deleted) ?? invalid("file lifecycle transition")
+	);
 }
 function sameIDs(left: readonly Bytes[], right: readonly Bytes[]) {
 	return (
