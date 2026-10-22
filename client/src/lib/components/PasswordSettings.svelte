@@ -1,4 +1,6 @@
 <script lang="ts">
+import PasswordStrength from "./PasswordStrength.svelte";
+
 interface Props {
 	busy: boolean;
 	error: string;
@@ -42,6 +44,7 @@ function submit(event: SubmitEvent) {
 				disabled={busy}
 			></label
 		>
+		<PasswordStrength {password} />
 		<label class="field"
 			>Confirm new master password<input
 				type="password"

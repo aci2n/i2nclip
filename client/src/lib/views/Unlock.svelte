@@ -1,4 +1,5 @@
 <script lang="ts">
+import PasswordStrength from "../components/PasswordStrength.svelte";
 import type { Session } from "../stores/session.ts";
 
 interface Props {
@@ -64,6 +65,7 @@ async function submit(event: SubmitEvent) {
 				></label
 			>
 			{#if $session.status === "new"}
+				<PasswordStrength {password} />
 				<label class="field"
 					>Confirm master password<input
 						type="password"
