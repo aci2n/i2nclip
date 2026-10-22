@@ -29,25 +29,34 @@
 		font:
 			15px / 1.5 system-ui,
 			sans-serif;
-		color: #2c2a28;
-		background: #f4f0ea;
-		--paper: #fffdf8;
-		--muted: #6a645c;
-		--line: #e6dfd6;
-		--accent: #27675b;
-		--soft: #e5eee9;
-		--error: #a4372e;
+		color: light-dark(#2c2a28, #f3efe8);
+		background: light-dark(#f4f0ea, #1c1b19);
+		--paper: light-dark(#fffdf8, #262522);
+		--muted: light-dark(#6a645c, #b7b0a6);
+		--line: light-dark(#e6dfd6, #403d37);
+		--accent: light-dark(#27675b, #a4d9c9);
+		--soft: light-dark(#e5eee9, #303e37);
+		--error: light-dark(#a4372e, #f3a49a);
+		--backdrop: #000b;
+		--shadow: 0 0.25rem 0.75rem #0002;
+		--space-1: 0.25rem;
+		--space-2: 0.5rem;
+		--space-3: 0.75rem;
+		--space-4: 1rem;
+		--space-6: 1.5rem;
+		--space-8: 2rem;
+		--space-12: 3rem;
+		--radius-sm: 0.25rem;
+		--radius: 0.5rem;
+		--text-xs: 0.75rem;
+		--text-sm: 0.875rem;
+		/* Minimum touch target, and the compact target that grows to it on touch. */
+		--touch: 3rem;
+		--target: 2rem;
 	}
-	@media (prefers-color-scheme: dark) {
+	@media (max-width: 32rem), (pointer: coarse) {
 		:root {
-			color: #f3efe8;
-			background: #1c1b19;
-			--paper: #262522;
-			--muted: #b7b0a6;
-			--line: #403d37;
-			--accent: #a4d9c9;
-			--soft: #303e37;
-			--error: #f3a49a;
+			--target: var(--touch);
 		}
 	}
 	body {
@@ -55,7 +64,7 @@
 	}
 	a {
 		color: var(--accent);
-		text-underline-offset: 0.25rem;
+		text-underline-offset: var(--space-1);
 	}
 	h2 {
 		font-size: 1.05rem;
@@ -66,7 +75,7 @@
 	label {
 		display: block;
 		margin: 0;
-		font-size: 0.9rem;
+		font-size: var(--text-sm);
 	}
 	summary {
 		cursor: pointer;
@@ -80,8 +89,8 @@
 	a.button {
 		font: inherit;
 		border: 1px solid var(--line);
-		border-radius: 0.4rem;
-		padding: 0.5rem 0.75rem;
+		border-radius: var(--radius);
+		padding: var(--space-2) var(--space-3);
 	}
 	input,
 	select {
@@ -130,14 +139,14 @@
 		input:not([type="checkbox"]):not([type="hidden"]),
 		select,
 		summary {
-			min-height: 3rem;
+			min-height: var(--touch);
 		}
 		input:not([type="checkbox"]):not([type="hidden"]),
 		select {
 			font-size: 1.1rem;
 		}
 		summary {
-			padding-block: 0.75rem;
+			padding-block: var(--space-3);
 		}
 	}
 }
@@ -147,7 +156,7 @@
 	.stack {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: var(--space-4);
 		> button {
 			align-self: flex-start;
 		}
@@ -155,17 +164,17 @@
 	.field {
 		display: flex;
 		flex-direction: column;
-		gap: 0.5rem;
+		gap: var(--space-2);
 		min-width: 0;
 		> p {
 			margin: 0;
-			font-size: 0.9rem;
+			font-size: var(--text-sm);
 		}
 	}
 	.bar {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
+		gap: var(--space-2);
 		input {
 			flex: 1;
 		}
@@ -178,14 +187,14 @@
 	.panel {
 		background: var(--paper);
 		border: 1px solid var(--line);
-		border-radius: 0.6rem;
-		padding: 1rem;
+		border-radius: var(--radius);
+		padding: var(--space-4);
 		min-width: 0;
 	}
 	.feedback {
 		color: var(--muted);
-		font-size: 0.9rem;
-		margin-top: 0.5rem;
+		font-size: var(--text-sm);
+		margin-top: var(--space-2);
 	}
 	.error {
 		color: var(--error);
